@@ -93,7 +93,7 @@ impl LspAdapter for VtslsLspAdapter {
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
-        _delegate: &dyn LspAdapterDelegate,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
@@ -245,8 +245,8 @@ impl LspAdapter for VtslsLspAdapter {
                         "entriesLimit": 5000,
                     }
                 },
-                "autoUseWorkspaceTsdk": true,
-            },
+               "autoUseWorkspaceTsdk": true
+            }
         });
 
         let override_options = cx.update(|cx| {

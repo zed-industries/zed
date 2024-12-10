@@ -73,7 +73,6 @@ impl TypeScriptLspAdapter {
     const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("typescript-language-server");
-
     pub fn new(node: NodeRuntime) -> Self {
         TypeScriptLspAdapter { node }
     }
@@ -119,15 +118,13 @@ impl LspAdapter for TypeScriptLspAdapter {
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
-        _delegate: &dyn LspAdapterDelegate,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
         let package_name = "typescript";
 
-        let mut packages_to_install = Vec::new();
-
-        if self
+        let should_install_language_server = self
             .node
             .should_install_npm_package(
                 package_name,
@@ -135,18 +132,20 @@ impl LspAdapter for TypeScriptLspAdapter {
                 &container_dir,
                 latest_version.typescript_version.as_str(),
             )
-            .await
-        {
-            packages_to_install.push((package_name, latest_version.typescript_version.as_str()));
-            packages_to_install.push((
-                "typescript-language-server",
-                latest_version.server_version.as_str(),
-            ));
-        }
+            .await;
 
-        if !packages_to_install.is_empty() {
+        if should_install_language_server {
             self.node
-                .npm_install_packages(&container_dir, &packages_to_install)
+                .npm_install_packages(
+                    &container_dir,
+                    &[
+                        (package_name, latest_version.typescript_version.as_str()),
+                        (
+                            "typescript-language-server",
+                            latest_version.server_version.as_str(),
+                        ),
+                    ],
+                )
                 .await?;
         }
 
@@ -209,7 +208,6 @@ impl LspAdapter for TypeScriptLspAdapter {
         adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         let tsdk_path = Self::tsdk_path(adapter).await;
-
         Ok(Some(json!({
             "provideFormatter": true,
             "hostInfo": "zed",
