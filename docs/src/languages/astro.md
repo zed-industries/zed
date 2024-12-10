@@ -7,7 +7,7 @@ Astro support is available through the [Astro extension](https://github.com/zed-
 
 ## Astro Configuration
 
-To use the Astro Language Server with TypeScript and TSX files, you will likely wish to to disable the default language servers and enable deno by adding the following to your settings.json:
+To enable importing Astro files in TypeScript and TSX files, you will likely wish to disable the default language servers by adding the following to your settings.json:
 
 ```jsonc
 {
@@ -17,18 +17,18 @@ To use the Astro Language Server with TypeScript and TSX files, you will likely 
         "astro-typescript",
         "!typescript-language-server",
         "!vtsls",
-        "!eslint"
-      ]
+        "!eslint",
+      ],
     },
     "TSX": {
       "language_servers": [
         "astro-typescript",
         "!typescript-language-server",
         "!vtsls",
-        "!eslint"
-      ]
-    }
-  }
+        "!eslint",
+      ],
+    },
+  },
 }
 ```
 
