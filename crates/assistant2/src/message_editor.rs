@@ -10,6 +10,7 @@ use ui::{
     PopoverMenuHandle, Tooltip,
 };
 
+use crate::context::Context;
 use crate::context_picker::{ContextPicker, ContextPickerDelegate};
 use crate::thread::{RequestKind, Thread};
 use crate::{Chat, ToggleModelSelector};
@@ -17,12 +18,34 @@ use crate::{Chat, ToggleModelSelector};
 pub struct MessageEditor {
     thread: Model<Thread>,
     editor: View<Editor>,
+    context: Vec<Context>,
     pub(crate) context_picker_handle: PopoverMenuHandle<Picker<ContextPickerDelegate>>,
     use_tools: bool,
 }
 
 impl MessageEditor {
     pub fn new(thread: Model<Thread>, cx: &mut ViewContext<Self>) -> Self {
+        let mut mocked_context = vec![
+            Context {
+                name: "icon.rs".into(),
+                text: "".into(),
+            },
+            Context {
+                name: "decoration.rs".into(),
+                text: "".into(),
+            },
+            Context {
+                name: "something.rs".into(),
+                text: "".into(),
+            },
+        ];
+        for n in 1..=10 {
+            mocked_context.push(Context {
+                name: format!("file{n}.rs").into(),
+                text: "".into(),
+            });
+        }
+
         Self {
             thread,
             editor: cx.new_view(|cx| {
@@ -31,6 +54,7 @@ impl MessageEditor {
 
                 editor
             }),
+            context: mocked_context,
             context_picker_handle: PopoverMenuHandle::default(),
             use_tools: false,
         }
@@ -84,6 +108,15 @@ impl MessageEditor {
         });
 
         None
+    }
+
+    fn render_context(&self, context: &Context, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+            .px_1()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_md()
+            .child(Label::new(context.name.clone()).size(LabelSize::Small))
     }
 
     fn render_language_model_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -158,12 +191,20 @@ impl Render for MessageEditor {
             .p_2()
             .bg(cx.theme().colors().editor_background)
             .child(
-                h_flex().gap_2().child(ContextPicker::new(
-                    cx.view().downgrade(),
-                    IconButton::new("add-context", IconName::Plus)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::Small),
-                )),
+                h_flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(ContextPicker::new(
+                        cx.view().downgrade(),
+                        IconButton::new("add-context", IconName::Plus)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small),
+                    ))
+                    .children(
+                        self.context
+                            .iter()
+                            .map(|context| self.render_context(&context, cx)),
+                    ),
             )
             .child({
                 let settings = ThemeSettings::get_global(cx);
