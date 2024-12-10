@@ -2843,19 +2843,7 @@ impl Workspace {
         let Some(target_pane) = panes.get(action.0).map(|p| (*p).clone()) else {
             return;
         };
-        if target_pane == source_pane {
-            return;
-        }
-        let Some(active_item) = source_pane.read(cx).active_item() else {
-            return;
-        };
-        source_pane.update(cx, |pane, cx| {
-            let item_id = active_item.item_id();
-            pane.remove_item(item_id, false, true, cx);
-            target_pane.update(cx, |target_pane, cx| {
-                target_pane.add_item(active_item, true, true, Some(target_pane.items_len()), cx);
-            });
-        });
+        move_active_item(&source_pane, &target_pane, true, true, cx);
     }
 
     pub fn activate_next_pane(&mut self, cx: &mut WindowContext) {
@@ -2981,27 +2969,9 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut WindowContext,
     ) {
-        if let Some(target_pane) = self.find_pane_in_direction(direction, cx) {
+        if let Some(destination_pane) = self.find_pane_in_direction(direction, cx) {
             let source_pane = self.active_pane.clone();
-            if target_pane == source_pane {
-                return;
-            }
-            let Some(active_item) = source_pane.read(cx).active_item() else {
-                return;
-            };
-            source_pane.update(cx, |pane, cx| {
-                let item_id = active_item.item_id();
-                pane.remove_item(item_id, false, true, cx);
-                target_pane.update(cx, |target_pane, cx| {
-                    target_pane.add_item(
-                        active_item,
-                        true,
-                        true,
-                        Some(target_pane.items_len()),
-                        cx,
-                    );
-                });
-            });
+            move_active_item(&source_pane, &destination_pane, true, true, cx);
         }
     }
 
@@ -6242,6 +6212,34 @@ pub fn move_item(
     destination.update(cx, |destination, cx| {
         destination.add_item(item_handle, true, true, Some(destination_index), cx);
         destination.focus(cx)
+    });
+}
+
+pub fn move_active_item(
+    source: &View<Pane>,
+    destination: &View<Pane>,
+    focus_destination: bool,
+    close_if_empty: bool,
+    cx: &mut WindowContext<'_>,
+) {
+    if source == destination {
+        return;
+    }
+    let Some(active_item) = source.read(cx).active_item() else {
+        return;
+    };
+    source.update(cx, |source_pane, cx| {
+        let item_id = active_item.item_id();
+        source_pane.remove_item(item_id, false, close_if_empty, cx);
+        destination.update(cx, |target_pane, cx| {
+            target_pane.add_item(
+                active_item,
+                focus_destination,
+                focus_destination,
+                Some(target_pane.items_len()),
+                cx,
+            );
+        });
     });
 }
 
