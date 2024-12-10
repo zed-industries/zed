@@ -221,21 +221,21 @@ impl EditorDb {
     }
 
     query! {
-        pub fn get_manual_language_selection(path: &Path) -> Result<Option<String>> {
+        pub fn get_manual_language_selection(path: &str) -> Result<Option<String>> {
             SELECT language FROM manual_language_selections
             WHERE path = ?
         }
     }
 
     query! {
-        pub fn set_manual_language_selection(path: &Path, language: &str) -> Result<()> {
+        pub fn set_manual_language_selection(path: &str, language: &str) -> Result<()> {
             INSERT OR REPLACE INTO manual_language_selections (path, language)
             VALUES (?, ?)
         }
     }
 
     query! {
-        pub fn remove_manual_language_selection(path: &Path) -> Result<()> {
+        pub fn remove_manual_language_selection(path: &str) -> Result<()> {
             DELETE FROM manual_language_selections
             WHERE path = ?
         }
