@@ -214,8 +214,16 @@ impl InlineAssistant {
                         assistant.assist(&active_editor, Some(cx.view().downgrade()), cx)
                     })
                 }
-                InlineAssistTarget::Terminal(_active_terminal) => {
-                    // TODO show the terminal inline assistant
+                InlineAssistTarget::Terminal(active_terminal) => {
+                    // TerminalInlineAssistant::update_global(cx, |assistant, cx| {
+                    //     assistant.assist(
+                    //         &active_terminal,
+                    //         Some(cx.view().downgrade()),
+                    //         Some(&assistant_panel),
+                    //         initial_prompt,
+                    //         cx,
+                    //     )
+                    // })
                 }
             }
         };
