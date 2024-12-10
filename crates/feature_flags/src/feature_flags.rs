@@ -59,6 +59,11 @@ impl FeatureFlag for ToolUseFeatureFlag {
     }
 }
 
+pub struct ZetaFeatureFlag;
+impl FeatureFlag for ZetaFeatureFlag {
+    const NAME: &'static str = "zeta";
+}
+
 pub struct Remoting {}
 impl FeatureFlag for Remoting {
     const NAME: &'static str = "remoting";
