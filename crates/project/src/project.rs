@@ -3033,7 +3033,7 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         position: Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<LspDiagnostics>>> {
+    ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.document_diagnostic(buffer_handle, position, cx)
         })

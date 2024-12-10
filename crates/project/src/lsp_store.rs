@@ -3194,7 +3194,7 @@ impl LspStore {
         buffer_handle: &Model<Buffer>,
         position: Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<LspDiagnostics>>> {
+    ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 
