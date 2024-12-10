@@ -1,4 +1,5 @@
 #![allow(unused, dead_code)]
+use component_system::{get_all_component_previews, ComponentPreview as _};
 use gpui::{actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
@@ -27,7 +28,6 @@ pub fn init(cx: &mut AppContext) {
 enum ThemePreviewPage {
     Overview,
     Typography,
-    Components,
 }
 
 impl ThemePreviewPage {
@@ -35,7 +35,6 @@ impl ThemePreviewPage {
         match self {
             Self::Overview => "Overview",
             Self::Typography => "Typography",
-            Self::Components => "Components",
         }
     }
 }
@@ -61,7 +60,6 @@ impl ThemePreview {
         match page {
             ThemePreviewPage::Overview => self.render_overview_page(cx).into_any_element(),
             ThemePreviewPage::Typography => self.render_typography_page(cx).into_any_element(),
-            ThemePreviewPage::Components => self.render_components_page(cx).into_any_element(),
         }
     }
 }
@@ -500,28 +498,6 @@ impl ThemePreview {
                 .child(Headline::new("Body Text").size(HeadlineSize::Small))
                 .child(Label::new("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."))
             )
-    }
-
-    fn render_components_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        let layer = ElevationIndex::Surface;
-
-        v_flex()
-            .id("theme-preview-components")
-            .overflow_scroll()
-            .size_full()
-            .gap_2()
-            .child(ContentGroup::render_component_previews(cx))
-            .child(IconDecoration::render_component_previews(cx))
-            .child(DecoratedIcon::render_component_previews(cx))
-            .child(Checkbox::render_component_previews(cx))
-            .child(CheckboxWithLabel::render_component_previews(cx))
-            .child(Facepile::render_component_previews(cx))
-            .child(Button::render_component_previews(cx))
-            .child(Indicator::render_component_previews(cx))
-            .child(Icon::render_component_previews(cx))
-            .child(Table::render_component_previews(cx))
-            .child(self.render_avatars(cx))
-            .child(self.render_buttons(layer, cx))
     }
 
     fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {

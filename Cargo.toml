@@ -21,6 +21,8 @@ members = [
     "crates/collab",
     "crates/collab_ui",
     "crates/collections",
+    "crates/component_preview",
+    "crates/component_system",
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/context_server",
@@ -208,6 +210,8 @@ clock = { path = "crates/clock" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
+component_system = { path = "crates/component_system" }
+component_preview = { path = "crates/component_preview" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 context_server = { path = "crates/context_server" }
@@ -395,9 +399,11 @@ itertools = "0.13.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { version = "0.5.0" }
 jupyter-websocket-client = { version = "0.8.0" }
+lazy_static = "1.5.0"
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
+linkme = "0.3"
 livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="799f10133d93ba2a88642cd480d01ec4da53408c", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"

@@ -1,3 +1,4 @@
+mod derive_into_component;
 mod derive_path_str;
 mod dynamic_spacing;
 
@@ -57,4 +58,28 @@ pub fn path_str(_args: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn derive_dynamic_spacing(input: TokenStream) -> TokenStream {
     dynamic_spacing::derive_spacing(input)
+}
+
+/// Derives the `IntoComponent` trait for a struct.
+///
+/// This macro generates implementations for the `Component` trait and associated
+/// registration functions for the component system.
+///
+/// # Attributes
+///
+/// - `#[component(scope = "...")]`: Required. Specifies the scope of the component.
+/// - `#[component(description = "...")]`: Optional. Provides a description for the component.
+///
+/// # Example
+///
+/// ```
+/// use ui_macros::IntoComponent;
+///
+/// #[derive(IntoComponent)]
+/// #[component(scope = "my_scope", description = "A sample component")]
+/// struct MyComponent;
+/// ```
+#[proc_macro_derive(IntoComponent, attributes(component))]
+pub fn derive_into_component(input: TokenStream) -> TokenStream {
+    derive_into_component::derive_into_component(input)
 }

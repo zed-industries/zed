@@ -1,14 +1,10 @@
 #![allow(missing_docs)]
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Point, Rems, Transformation};
 use serde::{Deserialize, Serialize};
-use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
+use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::DerivePathStr;
 
-use crate::{
-    prelude::*,
-    traits::component_preview::{ComponentExample, ComponentPreview},
-    Indicator,
-};
+use crate::{prelude::*, Indicator};
 
 #[derive(IntoElement)]
 pub enum AnyIcon {
@@ -492,26 +488,6 @@ impl RenderOnce for IconDecoration {
     }
 }
 
-impl ComponentPreview for IconDecoration {
-    fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
-
-        let examples = all_kinds
-            .iter()
-            .map(|kind| {
-                let name = format!("{:?}", kind).to_string();
-
-                single_example(
-                    name,
-                    IconDecoration::new(*kind, cx.theme().colors().surface_background, cx),
-                )
-            })
-            .collect();
-
-        vec![example_group(examples)]
-    }
-}
-
 #[derive(IntoElement)]
 pub struct DecoratedIcon {
     icon: Icon,
@@ -531,66 +507,6 @@ impl RenderOnce for DecoratedIcon {
             .size(self.icon.size)
             .child(self.icon)
             .when_some(self.decoration, |this, decoration| this.child(decoration))
-    }
-}
-
-impl ComponentPreview for DecoratedIcon {
-    fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        let icon_1 = Icon::new(IconName::FileDoc);
-        let icon_2 = Icon::new(IconName::FileDoc);
-        let icon_3 = Icon::new(IconName::FileDoc);
-        let icon_4 = Icon::new(IconName::FileDoc);
-
-        let decoration_x = IconDecoration::new(
-            IconDecorationKind::X,
-            cx.theme().colors().surface_background,
-            cx,
-        )
-        .color(cx.theme().status().error)
-        .position(Point {
-            x: px(-2.),
-            y: px(-2.),
-        });
-
-        let decoration_triangle = IconDecoration::new(
-            IconDecorationKind::Triangle,
-            cx.theme().colors().surface_background,
-            cx,
-        )
-        .color(cx.theme().status().error)
-        .position(Point {
-            x: px(-2.),
-            y: px(-2.),
-        });
-
-        let decoration_dot = IconDecoration::new(
-            IconDecorationKind::Dot,
-            cx.theme().colors().surface_background,
-            cx,
-        )
-        .color(cx.theme().status().error)
-        .position(Point {
-            x: px(-2.),
-            y: px(-2.),
-        });
-
-        let examples = vec![
-            single_example("no_decoration", DecoratedIcon::new(icon_1, None)),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_2, Some(decoration_x)),
-            ),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_3, Some(decoration_triangle)),
-            ),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_4, Some(decoration_dot)),
-            ),
-        ];
-
-        vec![example_group(examples)]
     }
 }
 
@@ -650,28 +566,5 @@ impl RenderOnce for IconWithIndicator {
                         .child(indicator),
                 )
             })
-    }
-}
-
-impl ComponentPreview for Icon {
-    fn examples(_cx: &WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
-        let arrow_icons = vec![
-            IconName::ArrowDown,
-            IconName::ArrowLeft,
-            IconName::ArrowRight,
-            IconName::ArrowUp,
-            IconName::ArrowCircle,
-        ];
-
-        vec![example_group_with_title(
-            "Arrow Icons",
-            arrow_icons
-                .into_iter()
-                .map(|icon| {
-                    let name = format!("{:?}", icon).to_string();
-                    ComponentExample::new(name, Icon::new(icon))
-                })
-                .collect(),
-        )]
     }
 }
