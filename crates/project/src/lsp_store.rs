@@ -360,6 +360,71 @@ impl LocalLspStore {
         self.language_server_ids.insert(key, server_id);
     }
 
+    pub fn start_language_servers(
+        &mut self,
+        worktree: &Model<Worktree>,
+        language: LanguageName,
+        delegate: LocalLspAdapterDelegate,
+        cx: &mut ModelContext<LspStore>,
+    ) {
+        let root_file = worktree
+            .update(cx, |tree, cx| tree.root_file(cx))
+            .map(|f| f as _);
+        let settings = language_settings(Some(language.clone()), root_file.as_ref(), cx);
+        if !settings.enable_language_server {
+            return;
+        }
+
+        let available_lsp_adapters = self.languages.clone().lsp_adapters(&language);
+        let available_language_servers = available_lsp_adapters
+            .iter()
+            .map(|lsp_adapter| lsp_adapter.name.clone())
+            .collect::<Vec<_>>();
+
+        let desired_language_servers =
+            settings.customized_language_servers(&available_language_servers);
+
+        let mut enabled_lsp_adapters: Vec<Arc<CachedLspAdapter>> = Vec::new();
+        for desired_language_server in desired_language_servers {
+            if let Some(adapter) = available_lsp_adapters
+                .iter()
+                .find(|adapter| adapter.name == desired_language_server)
+            {
+                enabled_lsp_adapters.push(adapter.clone());
+                continue;
+            }
+
+            if let Some(adapter) = self
+                .languages
+                .load_available_lsp_adapter(&desired_language_server)
+            {
+                self.languages
+                    .register_lsp_adapter(language.clone(), adapter.adapter.clone());
+                enabled_lsp_adapters.push(adapter);
+                continue;
+            }
+
+            log::warn!(
+                "no language server found matching '{}'",
+                desired_language_server.0
+            );
+        }
+
+        for adapter in &enabled_lsp_adapters {
+            let delegate = LocalLspAdapterDelegate::for_local(self, &worktree, cx);
+            self.start_language_server(worktree, delegate, adapter.clone(), language.clone(), cx);
+        }
+
+        // After starting all the language servers, reorder them to reflect the desired order
+        // based on the settings.
+        //
+        // This is done, in part, to ensure that language servers loaded at different points
+        // (e.g., native vs extension) still end up in the right order at the end, rather than
+        // it being based on which language server happened to be loaded in first.
+        self.languages
+            .reorder_language_servers(&language, enabled_lsp_adapters);
+    }
+
     fn get_language_server_binary(
         &self,
         adapter: Arc<CachedLspAdapter>,
@@ -1873,7 +1938,7 @@ impl LocalLspStore {
             None => return,
         };
         let file_url = lsp::Url::from_file_path(old_path).unwrap();
-        self.unregister_buffer_from_language_servers(buffer, file_url, cx);
+        seter_buffer_from_language_servers(buffer, file_url, cx);
     }
 
     pub(crate) fn unregister_buffer_from_language_servers(
@@ -6838,76 +6903,6 @@ impl LspStore {
         Ok(proto::FormatBuffersResponse {
             transaction: Some(project_transaction),
         })
-    }
-
-    pub fn start_language_servers(
-        &mut self,
-        worktree: &Model<Worktree>,
-        language: LanguageName,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let root_file = worktree
-            .update(cx, |tree, cx| tree.root_file(cx))
-            .map(|f| f as _);
-        let settings = language_settings(Some(language.clone()), root_file.as_ref(), cx);
-        if !settings.enable_language_server || self.mode.is_remote() {
-            return;
-        }
-
-        let available_lsp_adapters = self.languages.clone().lsp_adapters(&language);
-        let available_language_servers = available_lsp_adapters
-            .iter()
-            .map(|lsp_adapter| lsp_adapter.name.clone())
-            .collect::<Vec<_>>();
-
-        let desired_language_servers =
-            settings.customized_language_servers(&available_language_servers);
-
-        let mut enabled_lsp_adapters: Vec<Arc<CachedLspAdapter>> = Vec::new();
-        for desired_language_server in desired_language_servers {
-            if let Some(adapter) = available_lsp_adapters
-                .iter()
-                .find(|adapter| adapter.name == desired_language_server)
-            {
-                enabled_lsp_adapters.push(adapter.clone());
-                continue;
-            }
-
-            if let Some(adapter) = self
-                .languages
-                .load_available_lsp_adapter(&desired_language_server)
-            {
-                self.languages
-                    .register_lsp_adapter(language.clone(), adapter.adapter.clone());
-                enabled_lsp_adapters.push(adapter);
-                continue;
-            }
-
-            log::warn!(
-                "no language server found matching '{}'",
-                desired_language_server.0
-            );
-        }
-
-        for adapter in &enabled_lsp_adapters {
-            let delegate = LocalLspAdapterDelegate::for_local(self, &worktree, cx);
-            self.as_local_mut().unwrap().start_language_server(
-                worktree,
-                delegate,
-                adapter.clone(),
-                language.clone(),
-                cx,
-            );
-        }
-
-        // After starting all the language servers, reorder them to reflect the desired order
-        // based on the settings.
-        //
-        // This is done, in part, to ensure that language servers loaded at different points
-        // (e.g., native vs extension) still end up in the right order at the end, rather than
-        // it being based on which language server happened to be loaded in first.
-        self.languages
-            .reorder_language_servers(&language, enabled_lsp_adapters);
     }
 
     async fn shutdown_language_server(
