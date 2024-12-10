@@ -2821,6 +2821,8 @@ impl LspStore {
         client.add_model_message_handler(Self::handle_update_language_server);
         client.add_model_message_handler(Self::handle_language_server_log);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
+        client.add_model_message_handler(Self::handle_register_buffer_with_language_servers);
+        client.add_model_message_handler(Self::handle_unregister_buffer_from_language_servers);
         client.add_model_request_handler(Self::handle_format_buffers);
         client.add_model_request_handler(Self::handle_resolve_completion_documentation);
         client.add_model_request_handler(Self::handle_apply_code_action);
@@ -3180,22 +3182,7 @@ impl LspStore {
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
             local.initialize_buffer(buffer, cx);
-            // local.register_buffer_with_language_servers(buffer, cx);
         }
-        // cx.observe_release(buffer, |this, buffer, cx| {
-        //     let Some(file) = File::from_dyn(buffer.file()) else {
-        //         return;
-        //     };
-        //     if !file.is_local() {
-        //         return;
-        //     }
-        //     let Some(local) = this.as_local() else {
-        //         return;
-        //     };
-        //     local.unregister_buffer_from_language_servers(buffer.read(cx).remote_id(), cx);
-        //     self.register_buffers.remove(buffer.remote_id())
-        // })
-        // .detach();
 
         Ok(())
     }
@@ -3235,6 +3222,23 @@ impl LspStore {
                         local.unregister_old_buffer_from_language_servers(&buffer, &file, cx);
                     }
                 }
+            })
+            .detach();
+        } else if let Some((upstream_client, project_id)) = self.upstream_client() {
+            upstream_client
+                .send(proto::RegisterBufferWithLanguageServers {
+                    project_id,
+                    buffer_id: buffer.read(cx).remote_id().to_proto(),
+                })
+                .ok();
+
+            cx.observe_release(&handle, move |_, buffer, cx| {
+                upstream_client
+                    .send(proto::UnregisterBufferFromLanguageServers {
+                        project_id,
+                        buffer_id: buffer.read(cx).remote_id().to_proto(),
+                    })
+                    .ok();
             })
             .detach();
         }
@@ -5784,6 +5788,40 @@ impl LspStore {
         Ok(proto::ApplyCodeActionResponse {
             transaction: Some(project_transaction),
         })
+    }
+
+    async fn handle_register_buffer_with_language_servers(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::RegisterBufferWithLanguageServers>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        this.update(&mut cx, |this, cx| {
+            if let Some((upstream_client, upstream_project_id)) = this.upstream_client() {
+                return upstream_client.send(proto::RegisterBufferWithLanguageServers {
+                    project_id: upstream_project_id,
+                    buffer_id: buffer_id.to_proto(),
+                });
+            }
+
+            let Some(local) = this.as_local() else {
+                return Ok(());
+            };
+
+            let Some(buffer) = this.buffer_store().read(cx).get(buffer_id) else {
+                anyhow::bail!("buffer is not open")
+            };
+
+            Ok(())
+        })??;
+        Ok(())
+    }
+
+    async fn handle_unregister_buffer_from_language_servers(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::UnregisterBufferFromLanguageServers>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
     }
 
     async fn handle_update_diagnostic_summary(

@@ -1648,6 +1648,22 @@ impl Editor {
         self.collapse_matches = collapse_matches;
     }
 
+    pub fn register_buffers_with_language_servers(&mut self, cx: &mut ViewContext<Self>) {
+        let buffers = self.buffer.read(cx).all_buffers();
+        let Some(lsp_store) = self.lsp_store(cx) else {
+            return;
+        };
+        lsp_store.update(cx, |lsp_store, cx| {
+            for buffer in buffers {
+                self.registered_buffers
+                    .entry(buffer.read(cx).remote_id())
+                    .or_insert_with(|| {
+                        lsp_store.register_buffer_with_language_servers(&buffer, cx)
+                    });
+            }
+        })
+    }
+
     pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
         if self.collapse_matches {
             return range.start..range.start;
@@ -9661,6 +9677,7 @@ impl Editor {
                 |theme| theme.editor_highlighted_line_background,
                 cx,
             );
+            editor.register_buffers_with_language_servers(cx);
         });
 
         let item = Box::new(editor);
