@@ -108,10 +108,11 @@ impl Item for ImageView {
             params.text_color()
         };
 
-        let title = project_path
-            .path
-            .file_name()
-            .unwrap_or_else(|| project_path.path.as_os_str())
+        let title = self
+            .image_item
+            .read(cx)
+            .file
+            .file_name(cx)
             .to_string_lossy()
             .to_string();
         Label::new(title)
@@ -160,7 +161,7 @@ impl Item for ImageView {
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &AppContext) -> String {
-    let path = image.path();
+    let path = image.file.file_name(cx);
     if project.visible_worktrees(cx).count() <= 1 {
         return path.to_string_lossy().to_string();
     }
