@@ -360,7 +360,6 @@ cargo_metadata = "0.19"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
-clickhouse = "0.11.6"
 cocoa = "0.26"
 cocoa-foundation = "0.2.0"
 convert_case = "0.6.0"

@@ -38,6 +38,7 @@ pub struct WindowsWindowState {
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
+    pub is_minimized: Option<bool>,
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
@@ -92,6 +93,7 @@ impl WindowsWindowState {
             size: logical_size,
         };
         let border_offset = WindowBorderOffset::default();
+        let is_minimized = None;
         let renderer = windows_renderer::windows_renderer(hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
@@ -109,6 +111,7 @@ impl WindowsWindowState {
             fullscreen_restore_bounds,
             border_offset,
             scale_factor,
+            is_minimized,
             callbacks,
             input_handler,
             system_key_handled,

@@ -1,35 +1,46 @@
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AppContext, FocusableView, Model, TextStyle, View};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
+use language_model_selector::LanguageModelSelector;
 use picker::Picker;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, IconButtonShape, KeyBinding,
-    PopoverMenuHandle,
+    PopoverMenuHandle, Tooltip,
 };
 
+use crate::context::{Context, ContextKind};
 use crate::context_picker::{ContextPicker, ContextPickerDelegate};
 use crate::thread::{RequestKind, Thread};
-use crate::Chat;
+use crate::ui::ContextPill;
+use crate::{Chat, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
     editor: View<Editor>,
+    context: Vec<Context>,
     pub(crate) context_picker_handle: PopoverMenuHandle<Picker<ContextPickerDelegate>>,
     use_tools: bool,
 }
 
 impl MessageEditor {
     pub fn new(thread: Model<Thread>, cx: &mut ViewContext<Self>) -> Self {
+        let mocked_context = vec![Context {
+            name: "shape.rs".into(),
+            kind: ContextKind::File,
+            text: "```rs\npub enum Shape {\n    Circle,\n    Square,\n    Triangle,\n}".into(),
+        }];
+
         Self {
             thread,
             editor: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(80, cx);
-                editor.set_placeholder_text("Ask anything…", cx);
+                editor.set_placeholder_text("Ask anything or type @ to add context", cx);
 
                 editor
             }),
+            context: mocked_context,
             context_picker_handle: PopoverMenuHandle::default(),
             use_tools: false,
         }
@@ -61,9 +72,10 @@ impl MessageEditor {
             editor.clear(cx);
             text
         });
+        let context = self.context.drain(..).collect::<Vec<_>>();
 
         self.thread.update(cx, |thread, cx| {
-            thread.insert_user_message(user_message, cx);
+            thread.insert_user_message(user_message, context, cx);
             let mut request = thread.to_completion_request(request_kind, cx);
 
             if self.use_tools {
@@ -83,6 +95,57 @@ impl MessageEditor {
         });
 
         None
+    }
+
+    fn render_language_model_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+
+        LanguageModelSelector::new(
+            |model, _cx| {
+                println!("Selected {:?}", model.name());
+            },
+            ButtonLike::new("active-model")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .overflow_x_hidden()
+                                .flex_grow()
+                                .whitespace_nowrap()
+                                .child(match (active_provider, active_model) {
+                                    (Some(provider), Some(model)) => h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Icon::new(
+                                                model.icon().unwrap_or_else(|| provider.icon()),
+                                            )
+                                            .color(Color::Muted)
+                                            .size(IconSize::XSmall),
+                                        )
+                                        .child(
+                                            Label::new(model.name().0)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .into_any_element(),
+                                    _ => Label::new("No model selected")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .into_any_element(),
+                                }),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
+                        ),
+                )
+                .tooltip(move |cx| Tooltip::for_action("Change Model", &ToggleModelSelector, cx)),
+        )
     }
 }
 
@@ -106,12 +169,32 @@ impl Render for MessageEditor {
             .p_2()
             .bg(cx.theme().colors().editor_background)
             .child(
-                h_flex().gap_2().child(ContextPicker::new(
-                    cx.view().downgrade(),
-                    IconButton::new("add-context", IconName::Plus)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::Small),
-                )),
+                h_flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(ContextPicker::new(
+                        cx.view().downgrade(),
+                        IconButton::new("add-context", IconName::Plus)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small),
+                    ))
+                    .children(
+                        self.context
+                            .iter()
+                            .map(|context| ContextPill::new(context.clone())),
+                    )
+                    .when(!self.context.is_empty(), |parent| {
+                        parent.child(
+                            IconButton::new("remove-all-context", IconName::Eraser)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
+                                .on_click(cx.listener(|this, _event, cx| {
+                                    this.context.clear();
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             )
             .child({
                 let settings = ThemeSettings::get_global(cx);
@@ -152,13 +235,12 @@ impl Render for MessageEditor {
                     .child(
                         h_flex()
                             .gap_2()
-                            .child(Button::new("codebase", "Codebase").style(ButtonStyle::Filled))
-                            .child(Label::new("or"))
+                            .child(self.render_language_model_selector(cx))
                             .child(
                                 ButtonLike::new("chat")
                                     .style(ButtonStyle::Filled)
                                     .layer(ElevationIndex::ModalSurface)
-                                    .child(Label::new("Chat"))
+                                    .child(Label::new("Submit"))
                                     .children(
                                         KeyBinding::for_action_in(&Chat, &focus_handle, cx)
                                             .map(|binding| binding.into_any_element()),
