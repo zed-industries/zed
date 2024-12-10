@@ -409,7 +409,7 @@ impl Zeta {
         offset: usize,
         snapshot: &BufferSnapshot,
     ) -> Vec<(Range<Anchor>, String)> {
-        let diff = similar::TextDiff::from_chars(old_text.as_str(), new_text);
+        let diff = similar::TextDiff::from_words(old_text.as_str(), new_text);
 
         let mut edits: Vec<(Range<usize>, String)> = Vec::new();
         let mut old_start = offset;
