@@ -229,7 +229,7 @@
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-enter": "assistant2::Chat"
+      "enter": "assistant2::Chat"
     }
   },
   {
