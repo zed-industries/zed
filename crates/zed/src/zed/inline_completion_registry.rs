@@ -49,12 +49,19 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         });
     }
 
+    if cx.has_flag::<ZetaFeatureFlag>() {
+        cx.on_action(clear_zeta_edit_history);
+    }
+
     cx.observe_flag::<ZetaFeatureFlag, _>({
         let editors = editors.clone();
         let client = client.clone();
-        move |_flag, cx| {
+        move |active, cx| {
             let provider = all_language_settings(None, cx).inline_completions.provider;
-            assign_inline_completion_providers(&editors, provider, &client, cx)
+            assign_inline_completion_providers(&editors, provider, &client, cx);
+            if active && !cx.is_action_available(&zeta::ClearHistory) {
+                cx.on_action(clear_zeta_edit_history);
+            }
         }
     })
     .detach();
@@ -71,6 +78,12 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         }
     })
     .detach();
+}
+
+fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut AppContext) {
+    if let Some(zeta) = zeta::Zeta::global(cx) {
+        zeta.update(cx, |zeta, _| zeta.clear_history());
+    }
 }
 
 fn assign_inline_completion_providers(
