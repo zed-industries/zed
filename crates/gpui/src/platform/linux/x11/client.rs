@@ -1,13 +1,17 @@
 use core::str;
-use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet};
-use std::ops::Deref;
-use std::path::PathBuf;
-use std::rc::{Rc, Weak};
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashSet},
+    ops::Deref,
+    path::PathBuf,
+    rc::{Rc, Weak},
+    time::{Duration, Instant},
+};
 
-use calloop::generic::{FdWrapper, Generic};
-use calloop::{EventLoop, LoopHandle, RegistrationToken};
+use calloop::{
+    generic::{FdWrapper, Generic},
+    EventLoop, LoopHandle, RegistrationToken,
+};
 
 use anyhow::Context as _;
 use collections::HashMap;
@@ -15,33 +19,25 @@ use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
 
-use x11rb::connection::{Connection, RequestConnection};
-use x11rb::cursor;
-use x11rb::errors::ConnectionError;
-use x11rb::protocol::randr::ConnectionExt as _;
-use x11rb::protocol::xinput::ConnectionExt;
-use x11rb::protocol::xkb::ConnectionExt as _;
-use x11rb::protocol::xproto::{
-    AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent, ConnectionExt as _,
-    EventMask, KeyPressEvent,
+use x11rb::{
+    connection::{Connection, RequestConnection},
+    cursor,
+    errors::ConnectionError,
+    protocol::randr::ConnectionExt as _,
+    protocol::xinput::ConnectionExt,
+    protocol::xkb::ConnectionExt as _,
+    protocol::xproto::{
+        AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
+        ConnectionExt as _, EventMask, KeyPressEvent,
+    },
+    protocol::{randr, render, xinput, xkb, xproto, Event},
+    resource_manager::Database,
+    wrapper::ConnectionExt as _,
+    xcb_ffi::XCBConnection,
 };
-use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
-use x11rb::resource_manager::Database;
-use x11rb::wrapper::ConnectionExt as _;
-use x11rb::xcb_ffi::XCBConnection;
-use xim::{x11rb::X11rbClient, Client};
-use xim::{AttributeName, InputStyle};
+use xim::{x11rb::X11rbClient, AttributeName, Client, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask};
-
-use crate::platform::linux::LinuxClient;
-use crate::platform::{LinuxCommon, PlatformWindow};
-use crate::{
-    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
-    Platform, PlatformDisplay, PlatformInput, Point, RequestFrameOptions, ScaledPixels,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
-};
 
 use super::{
     button_or_scroll_from_event_detail, get_valuator_axis_index, modifiers_from_state,
@@ -49,10 +45,23 @@ use super::{
 };
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
-use crate::platform::linux::platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES};
-use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
-use crate::platform::linux::{
-    get_xkb_compose_state, is_within_click_distance, open_uri_internal, reveal_path_internal,
+
+use crate::platform::{
+    blade::BladeContext,
+    linux::{
+        get_xkb_compose_state, is_within_click_distance, open_uri_internal,
+        platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
+        reveal_path_internal,
+        xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+        LinuxClient,
+    },
+    LinuxCommon, PlatformWindow,
+};
+use crate::{
+    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
+    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
+    Platform, PlatformDisplay, PlatformInput, Point, RequestFrameOptions, ScaledPixels,
+    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -157,6 +166,8 @@ pub struct X11ClientState {
     pub(crate) last_mouse_button: Option<MouseButton>,
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
+
+    gpu_context: BladeContext,
 
     pub(crate) scale_factor: f32,
 
@@ -360,6 +371,8 @@ impl X11Client {
         let compose_state = get_xkb_compose_state(&xkb_context);
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection).unwrap();
 
+        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
+
         let scale_factor = resource_database
             .get_value("Xft.dpi", "Xft.dpi")
             .ok()
@@ -428,6 +441,7 @@ impl X11Client {
             last_mouse_button: None,
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
+            gpu_context,
             scale_factor,
 
             xkb_context,
@@ -1299,6 +1313,7 @@ impl LinuxClient for X11Client {
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
             state.common.foreground_executor.clone(),
+            &state.gpu_context,
             params,
             &state.xcb_connection,
             state.client_side_decorations_supported,
