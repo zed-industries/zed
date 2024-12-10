@@ -1506,6 +1506,7 @@ impl Pane {
             self.pinned_tab_count -= 1;
         }
         if item_index == self.active_item_index {
+            let left_neighbour_index = || item_index.min(self.items.len()).saturating_sub(1);
             let index_to_activate = match activate_on_close {
                 ActivateOnClose::History => self
                     .activation_history
@@ -1517,7 +1518,7 @@ impl Pane {
                     })
                     // We didn't have a valid activation history entry, so fallback
                     // to activating the item to the left
-                    .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1)),
+                    .unwrap_or_else(left_neighbour_index),
                 ActivateOnClose::Neighbour => {
                     self.activation_history.pop();
                     if item_index + 1 < self.items.len() {
@@ -1525,6 +1526,10 @@ impl Pane {
                     } else {
                         item_index.saturating_sub(1)
                     }
+                }
+                ActivateOnClose::LeftNeighbour => {
+                    self.activation_history.pop();
+                    left_neighbour_index()
                 }
             };
 
