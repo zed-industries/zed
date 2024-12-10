@@ -149,6 +149,7 @@ pub struct LocalLspStore {
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     prettier_store: Model<PrettierStore>,
     current_lsp_settings: HashMap<LanguageServerName, LspSettings>,
+    next_diagnostic_group_id: usize,
     diagnostics: HashMap<
         WorktreeId,
         HashMap<
@@ -725,7 +726,6 @@ pub struct LspStore {
     active_entry: Option<ProjectEntryId>,
     _maintain_workspace_config: (Task<Result<()>>, watch::Sender<()>),
     _maintain_buffer_languages: Task<()>,
-    next_diagnostic_group_id: usize,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
 }
@@ -911,10 +911,11 @@ impl LspStore {
                 http_client,
                 fs,
                 yarn,
+                next_diagnostic_group_id: Default::default(),
+                diagnostics: Default::default(),
                 _subscription: cx.on_app_quit(|this, cx| {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)
                 }),
-                diagnostics: Default::default(),
             }),
             last_formatting_failure: None,
             downstream_client: None,
@@ -926,7 +927,6 @@ impl LspStore {
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().gen(),
             buffer_snapshots: Default::default(),
-            next_diagnostic_group_id: Default::default(),
             diagnostic_summaries: Default::default(),
             active_entry: None,
 
@@ -984,7 +984,6 @@ impl LspStore {
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().gen(),
             buffer_snapshots: Default::default(),
-            next_diagnostic_group_id: Default::default(),
             diagnostic_summaries: Default::default(),
             active_entry: None,
             toolchain_store,
@@ -6626,6 +6625,9 @@ impl LspStore {
         disk_based_sources: &[String],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        if !self.mode.is_local() {
+            anyhow::bail!("called update_diagnostics on remote");
+        }
         let abs_path = params
             .uri
             .to_file_path()
@@ -6668,7 +6670,7 @@ impl LspStore {
                     (diagnostic.severity, is_unnecessary),
                 );
             } else {
-                let group_id = post_inc(&mut self.next_diagnostic_group_id);
+                let group_id = post_inc(&mut self.as_local_mut().unwrap().next_diagnostic_group_id);
                 let is_disk_based =
                     source.map_or(false, |source| disk_based_sources.contains(source));
 
