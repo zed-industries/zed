@@ -9923,7 +9923,8 @@ async fn go_to_prev_overlapping_diagnostic(
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let project = cx.update_editor(|editor, _| editor.project.clone().unwrap());
+    let lsp_store =
+        cx.update_editor(|editor, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
 
     cx.set_state(indoc! {"
         ˇfn func(abc def: i32) -> u32 {
@@ -9931,8 +9932,8 @@ async fn go_to_prev_overlapping_diagnostic(
     "});
 
     cx.update(|cx| {
-        project.update(cx, |project, cx| {
-            project
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
@@ -10021,11 +10022,12 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
         fn func(abˇc def: i32) -> u32 {
         }
     "});
-    let project = cx.update_editor(|editor, _| editor.project.clone().unwrap());
+    let lsp_store =
+        cx.update_editor(|editor, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
 
     cx.update(|cx| {
-        project.update(cx, |project, cx| {
-            project.update_diagnostics(
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
                     uri: lsp::Url::from_file_path("/root/file").unwrap(),

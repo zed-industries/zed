@@ -809,7 +809,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
                 updated_language_servers.insert(server_id);
 
-                project.update(cx, |project, cx| {
+                lsp_store.update(cx, |lsp_store, cx| {
                     log::info!("updating diagnostics. language server {server_id} path {path:?}");
                     randomly_update_diagnostics_for_path(
                         &fs,
@@ -818,7 +818,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                         &mut next_group_id,
                         &mut rng,
                     );
-                    project
+                    lsp_store
                         .update_diagnostic_entries(server_id, path, None, diagnostics.clone(), cx)
                         .unwrap()
                 });
