@@ -3771,9 +3771,7 @@ impl LspStore {
         let text_document = lsp::TextDocumentIdentifier {
             uri: lsp::Url::from_file_path(abs_path).log_err()?,
         };
-        let Some(local) = self.as_local() else {
-            return None;
-        };
+        let local = self.as_local()?;
 
         for server in local.language_servers_for_worktree(worktree_id) {
             if let Some(include_text) = include_text(server.as_ref()) {
@@ -3890,20 +3888,17 @@ impl LspStore {
         buffer: &'a Buffer,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)> {
-        self.as_local()
-            .into_iter()
-            .map(|local| {
-                local
-                    .language_server_ids_for_buffer(buffer, cx)
-                    .into_iter()
-                    .filter_map(|server_id| match local.language_servers.get(&server_id)? {
-                        LanguageServerState::Running {
-                            adapter, server, ..
-                        } => Some((adapter, server)),
-                        _ => None,
-                    })
-            })
-            .flatten()
+        self.as_local().into_iter().flat_map(|local| {
+            local
+                .language_server_ids_for_buffer(buffer, cx)
+                .into_iter()
+                .filter_map(|server_id| match local.language_servers.get(&server_id)? {
+                    LanguageServerState::Running {
+                        adapter, server, ..
+                    } => Some((adapter, server)),
+                    _ => None,
+                })
+        })
     }
 
     pub fn language_server_for_local_buffer<'a>(
