@@ -14031,7 +14031,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
         "After folding the first buffer, its text should not be displayed"
     );
 
@@ -14040,7 +14040,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "\n\n\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
         "After folding the second buffer, its text should not be displayed"
     );
 
@@ -14063,32 +14063,31 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n",
+        "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
         "After unfolding the second buffer, its text should be displayed"
     );
 
-    // TODO kb
-    // multi_buffer_editor.update(cx, |editor, cx| {
-    //     editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
-    // });
-    // assert_eq!(
-    //     multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-    //     "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n",
-    //     "After unfolding the first buffer, its text should be displayed"
-    // );
-    //
-    // // multi_buffer_editor.update(cx, |editor, cx| {
-    //     editor.unfold_buffer(buffer_2.read(cx).remote_id(), cx)
-    // });
-    // assert_eq!(
-    //     multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-    //     "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
-    //     "After unfolding the second buffer, all original text should be displayed"
-    // );
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
+        "After unfolding the first buffer, its and 2nd buffer's text should be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_3.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        full_text,
+        "After unfolding the all buffers, all original text should be displayed"
+    );
 }
 
 #[gpui::test]
-async fn test_multi_buffer_folding_with_fewer_excerpts(cx: &mut gpui::TestAppContext) {
+async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let sample_text_1 = "1111\n2222\n3333".to_string();

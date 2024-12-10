@@ -503,7 +503,6 @@ impl BlockMap {
         if edits.is_empty() {
             return;
         }
-        dbg!(&edits);
 
         let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::default();
@@ -669,7 +668,6 @@ impl BlockMap {
                 ));
             }
 
-            dbg!(new_start..new_end, &blocks_in_edit);
             BlockMap::sort_blocks(&mut blocks_in_edit);
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
@@ -720,7 +718,6 @@ impl BlockMap {
         }
 
         new_transforms.append(cursor.suffix(&()), &());
-        dbg!(new_transforms.items(&()));
         debug_assert_eq!(
             new_transforms.summary().input_rows,
             wrap_snapshot.max_point().row() + 1
@@ -1259,7 +1256,9 @@ impl<'a> BlockMapWriter<'a> {
                 + 1;
             let last_edit_row = wrap_snapshot
                 .clip_point(WrapPoint(Point::new(last_edit_row, 0)), Bias::Right)
-                .row();
+                .row()
+                // make range exclusive, as it got clipped
+                + 1;
             let range = wrap_snapshot.make_wrap_point(range.start, Bias::Left).row()..last_edit_row;
             edits.push(Edit {
                 old: range.clone(),
