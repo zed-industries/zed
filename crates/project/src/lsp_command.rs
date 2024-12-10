@@ -3736,7 +3736,7 @@ impl GetDocumentDiagnostics {
 
 #[async_trait(?Send)]
 impl LspCommand for GetDocumentDiagnostics {
-    type Response = LspDiagnostics;
+    type Response = Option<LspDiagnostics>;
     type LspRequest = lsp::request::DocumentDiagnosticRequest;
     type ProtoRequest = proto::GetDocumentDiagnostics;
 
@@ -3786,24 +3786,28 @@ impl LspCommand for GetDocumentDiagnostics {
             Some(lsp::Url::from_file_path(file.abs_path(cx).clone()).unwrap())
         })?;
 
+        if uri.is_none() {
+            return Ok(None);
+        }
+
         match message {
             lsp::DocumentDiagnosticReportResult::Report(report) => match report {
-                lsp::DocumentDiagnosticReport::Full(report) => Ok(LspDiagnostics {
+                lsp::DocumentDiagnosticReport::Full(report) => Ok(Some(LspDiagnostics {
                     server_id,
                     uri,
                     diagnostics: Some(report.full_document_diagnostic_report.items.clone()),
-                }),
-                lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(LspDiagnostics {
+                })),
+                lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(Some(LspDiagnostics {
                     server_id,
                     uri,
                     diagnostics: None,
-                }),
+                })),
             },
-            lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(LspDiagnostics {
+            lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(Some(LspDiagnostics {
                 server_id,
                 uri,
                 diagnostics: None,
-            }),
+            })),
         }
     }
 
@@ -3843,19 +3847,27 @@ impl LspCommand for GetDocumentDiagnostics {
         _: &clock::Global,
         _: &mut AppContext,
     ) -> proto::GetDocumentDiagnosticsResponse {
-        let diagnostics = if let Some(diagnostics) = response.diagnostics {
-            diagnostics
-                .into_iter()
-                .map(GetDocumentDiagnostics::serialize_lsp_diagnostic)
-                .collect()
-        } else {
-            Vec::new()
-        };
+        if let Some(response) = response {
+            let diagnostics = if let Some(diagnostics) = response.diagnostics {
+                diagnostics
+                    .into_iter()
+                    .map(GetDocumentDiagnostics::serialize_lsp_diagnostic)
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
-        proto::GetDocumentDiagnosticsResponse {
-            server_id: LanguageServerId::to_proto(response.server_id),
-            uri: response.uri.unwrap().to_string(),
-            diagnostics,
+            proto::GetDocumentDiagnosticsResponse {
+                server_id: LanguageServerId::to_proto(response.server_id),
+                uri: response.uri.unwrap().to_string(),
+                diagnostics,
+            }
+        } else {
+            proto::GetDocumentDiagnosticsResponse {
+                server_id: 0,
+                uri: Default::default(),
+                diagnostics: Vec::new(),
+            }
         }
     }
 
@@ -3872,11 +3884,11 @@ impl LspCommand for GetDocumentDiagnostics {
             .map(GetDocumentDiagnostics::deserialize_lsp_diagnostic)
             .collect();
 
-        Ok(LspDiagnostics {
+        Ok(Some(LspDiagnostics {
             server_id: LanguageServerId::from_proto(response.server_id),
             uri: Some(lsp::Url::from_str(response.uri.as_str()).unwrap()),
             diagnostics: Some(diagnostics),
-        })
+        }))
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentDiagnostics) -> Result<BufferId> {

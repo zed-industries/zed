@@ -3665,12 +3665,24 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         position: Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<LspDiagnostics>>> {
+    ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.document_diagnostic(buffer_handle, position, cx)
         })
     }
     
+    pub fn update_diagnostics(
+        &mut self,
+        language_server_id: LanguageServerId,
+        params: lsp::PublishDiagnosticsParams,
+        disk_based_sources: &[String],
+        cx: &mut ModelContext<Self>,
+    ) -> Result<(), anyhow::Error> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(language_server_id, params, disk_based_sources, cx)
+        })
+    }
+
     pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
         let (result_tx, result_rx) = smol::channel::unbounded();
 
