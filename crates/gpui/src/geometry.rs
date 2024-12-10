@@ -16,7 +16,7 @@ use std::{
 use crate::{AppContext, DisplayId};
 
 /// An axis along which a measurement can be made.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum Axis {
     /// The y axis, or up and down
     Vertical,
@@ -58,7 +58,21 @@ pub trait Along {
 /// let point = Point { x: 10, y: 20 };
 /// println!("{:?}", point); // Outputs: Point { x: 10, y: 20 }
 /// ```
-#[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(
+    Refineable,
+    Default,
+    Add,
+    AddAssign,
+    Sub,
+    SubAssign,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Hash,
+)]
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Point<T: Default + Clone + Debug> {
@@ -694,7 +708,7 @@ impl Size<Length> {
 /// assert_eq!(bounds.origin, origin);
 /// assert_eq!(bounds.size, size);
 /// ```
-#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Bounds<T: Clone + Default + Debug> {
