@@ -54,7 +54,7 @@
       "cmd-f12": "outline::Toggle",
       "cmd-7": "outline::Toggle",
       "cmd-shift-o": "file_finder::Toggle",
-      "cmd-l": "go_to::Toggle",
+      "cmd-l": "go_to_line::Toggle",
       "alt-enter": "editor::ToggleCodeActions"
     }
   },

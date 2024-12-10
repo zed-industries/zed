@@ -27,14 +27,14 @@ impl FocusableView for GoToFile {
 impl EventEmitter<DismissEvent> for GoToFile {}
 
 impl GoToFile {
-    pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(move |workspace, _: &Toggle, cx| {
             let project = workspace.project().clone();
             workspace.toggle_modal(cx, |cx| Self::new(project, cx));
         });
     }
 
-    pub fn new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
         let number_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Enter file number...", cx);
@@ -60,6 +60,17 @@ impl GoToFile {
     ) {
         match event {
             editor::EditorEvent::Blurred => cx.emit(DismissEvent),
+            editor::EditorEvent::InputHandled {
+                utf16_range_to_replace: _,
+                text: _,
+            } => {
+                let input = self.number_editor.read(cx).text(cx);
+                if let Some(last_char) = input.trim().chars().last() {
+                    if last_char == 'j' || last_char == 'k' {
+                        self.confirm(&menu::Confirm, cx);
+                    }
+                }
+            }
             _ => {}
         }
     }

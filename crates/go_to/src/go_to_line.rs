@@ -29,7 +29,7 @@ impl EventEmitter<DismissEvent> for GoToLine {}
 enum GoToLineRowHighlights {}
 
 impl GoToLine {
-    pub fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+    pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         let handle = cx.view().downgrade();
         editor
             .register_action(move |_: &editor::actions::ToggleGoToLine, cx| {

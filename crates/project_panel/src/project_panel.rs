@@ -3875,20 +3875,20 @@ impl ProjectPanel {
                         0
                     };
                     if down {
-                        selection_line_number + number
+                        let number = selection_line_number.saturating_add(number);
+                        if number > total_entries {
+                            total_entries
+                        } else {
+                            number
+                        }
                     } else {
-                        dbg!(selection_line_number, number);
-                        selection_line_number - number
+                        selection_line_number.saturating_sub(number)
                     }
                 }
                 FileNumber::Absolute(_) => return,
             },
             ShowFileNumbers::Off => return,
         };
-
-        if file_index > total_entries {
-            return;
-        }
 
         // Get the entry at the specified index (subtract 1 because UI numbers start at 1)
         if let Some((_, entry)) = self.entry_at_index(file_index) {
