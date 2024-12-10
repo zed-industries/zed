@@ -46,6 +46,11 @@ pub enum AssistantProviderContentV1 {
         default_model: Option<OllamaModel>,
         api_url: Option<String>,
     },
+    #[serde(rename = "bedrock")]
+    Bedrock {
+        default_model: Option<CloudModel>,
+        region: Option<String>,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -406,6 +411,7 @@ pub struct LanguageModelSelection {
 fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
     schemars::schema::SchemaObject {
         enum_values: Some(vec![
+            "bedrock".into(),
             "anthropic".into(),
             "google".into(),
             "ollama".into(),
