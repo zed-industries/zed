@@ -78,7 +78,7 @@ impl Vim {
                 vim.copy_selections_content(editor, line_mode, cx);
                 let selections = editor.selections.all::<Point>(cx).into_iter();
                 let edits = selections.map(|selection| (selection.start..selection.end, ""));
-                editor.edit(edits, cx);
+                editor.edit(edits, model, cx);
             });
         });
         self.switch_mode(Mode::Insert, true, cx);

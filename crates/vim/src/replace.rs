@@ -115,7 +115,7 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
 
-                editor.edit(edits, cx);
+                editor.edit(edits, model, cx);
 
                 editor.change_selections(None, cx, |s| {
                     s.select_ranges(new_selections);

@@ -164,8 +164,8 @@ impl ChannelStore {
         cx: &mut AppContext,
     ) -> Self {
         let rpc_subscriptions = [
-            client.add_message_handler(cx.weak_model(), Self::handle_update_channels),
-            client.add_message_handler(cx.weak_model(), Self::handle_update_user_channels),
+            client.add_message_handler(model.downgrade(), Self::handle_update_channels),
+            client.add_message_handler(model.downgrade(), Self::handle_update_user_channels),
         ];
 
         let mut connection_status = client.status();
@@ -498,8 +498,8 @@ impl ChannelStore {
                     }
                 },
                 hash_map::Entry::Vacant(e) => {
-                    let task = cx
-                        .spawn(move |this, mut cx| async move {
+                    let task = model
+                        .spawn(cx, move |this, mut cx| async move {
                             let channel = this.update(&mut cx, |this, _, _| {
                                 this.channel_for_id(channel_id).cloned().ok_or_else(|| {
                                     Arc::new(anyhow!("no channel for id: {}", channel_id))
@@ -511,25 +511,26 @@ impl ChannelStore {
                         .shared();
 
                     e.insert(OpenedModelHandle::Loading(task.clone()));
-                    cx.spawn({
-                        let task = task.clone();
-                        move |this, mut cx| async move {
-                            let result = task.await;
-                            this.update(&mut cx, |this, _, _| match result {
-                                Ok(model) => {
-                                    get_map(this).insert(
-                                        channel_id,
-                                        OpenedModelHandle::Open(model.downgrade()),
-                                    );
-                                }
-                                Err(_) => {
-                                    get_map(this).remove(&channel_id);
-                                }
-                            })
-                            .ok();
-                        }
-                    })
-                    .detach();
+                    model
+                        .spawn(cx, {
+                            let task = task.clone();
+                            move |this, mut cx| async move {
+                                let result = task.await;
+                                this.update(&mut cx, |this, _, _| match result {
+                                    Ok(model) => {
+                                        get_map(this).insert(
+                                            channel_id,
+                                            OpenedModelHandle::Open(model.downgrade()),
+                                        );
+                                    }
+                                    Err(_) => {
+                                        get_map(this).remove(&channel_id);
+                                    }
+                                })
+                                .ok();
+                            }
+                        })
+                        .detach();
                     break task;
                 }
             }
@@ -592,7 +593,7 @@ impl ChannelStore {
     ) -> Task<Result<ChannelId>> {
         let client = self.client.clone();
         let name = name.trim_start_matches('#').to_owned();
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let response = client
                 .request(proto::CreateChannel {
                     name,
@@ -611,6 +612,7 @@ impl ChannelStore {
                         channels: vec![channel],
                         ..Default::default()
                     },
+                    model,
                     cx,
                 );
                 assert!(task.is_none());
@@ -634,7 +636,7 @@ impl ChannelStore {
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(move |_, _| async move {
+        cx.spawn(move |_| async move {
             let _ = client
                 .request(proto::MoveChannel {
                     channel_id: channel_id.0,
@@ -654,7 +656,7 @@ impl ChannelStore {
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(move |_, _| async move {
+        cx.spawn(move |_| async move {
             let _ = client
                 .request(proto::SetChannelVisibility {
                     channel_id: channel_id.0,
@@ -680,7 +682,7 @@ impl ChannelStore {
 
         model.notify(cx);
         let client = self.client.clone();
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let result = client
                 .request(proto::InviteChannelMember {
                     channel_id: channel_id.0,
@@ -713,7 +715,7 @@ impl ChannelStore {
 
         model.notify(cx);
         let client = self.client.clone();
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let result = client
                 .request(proto::RemoveChannelMember {
                     channel_id: channel_id.0,
@@ -744,7 +746,7 @@ impl ChannelStore {
 
         model.notify(cx);
         let client = self.client.clone();
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let result = client
                 .request(proto::SetChannelMemberRole {
                     channel_id: channel_id.0,
@@ -772,7 +774,7 @@ impl ChannelStore {
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         let name = new_name.to_string();
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let channel = client
                 .request(proto::RenameChannel {
                     channel_id: channel_id.0,
@@ -787,6 +789,7 @@ impl ChannelStore {
                         channels: vec![channel],
                         ..Default::default()
                     },
+                    model,
                     cx,
                 );
                 assert!(task.is_none());
@@ -829,7 +832,7 @@ impl ChannelStore {
     ) -> Task<Result<Vec<ChannelMembership>>> {
         let client = self.client.clone();
         let user_store = self.user_store.downgrade();
-        cx.spawn(move |_, mut cx| async move {
+        cx.spawn(move |mut cx| async move {
             let response = client
                 .request(proto::GetChannelMembers {
                     channel_id: channel_id.0,
@@ -837,7 +840,7 @@ impl ChannelStore {
                     limit: limit as u64,
                 })
                 .await?;
-            user_store.update(&mut cx, |user_store, _| {
+            user_store.update(&mut cx, |user_store, model, _| {
                 user_store.insert(response.users);
                 response
                     .members
@@ -1047,7 +1050,7 @@ impl ChannelStore {
         model.notify(cx);
         self.did_subscribe = false;
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
-            cx.spawn(move |this, mut cx| async move {
+            model.spawn(cx, move |this, mut cx| async move {
                 if wait_for_reconnect {
                     cx.background_executor().timer(RECONNECT_TIMEOUT).await;
                 }
@@ -1057,7 +1060,9 @@ impl ChannelStore {
                         for (_, buffer) in this.opened_buffers.drain() {
                             if let OpenedModelHandle::Open(buffer) = buffer {
                                 if let Some(buffer) = buffer.upgrade() {
-                                    buffer.update(cx, |buffer, model, cx| buffer.disconnect(cx));
+                                    buffer.update(cx, |buffer, model, cx| {
+                                        buffer.disconnect(model, cx)
+                                    });
                                 }
                             }
                         }

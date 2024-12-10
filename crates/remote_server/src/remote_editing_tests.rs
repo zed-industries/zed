@@ -101,7 +101,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     // The user saves the buffer. The new contents are written to the
     // remote filesystem.
     project
-        .update(cx, |project, model, cx| project.save_buffer(buffer.clone(), cx))
+        .update(cx, |project, model, cx| {
+            project.save_buffer(buffer.clone(), cx)
+        })
         .await
         .unwrap();
     assert_eq!(
@@ -932,14 +934,18 @@ async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut 
     let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
 
     // Open a buffer on the client but cancel after a random amount of time.
-    let buffer = project.update(cx, |p, model, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx));
+    let buffer = project.update(cx, |p, model, cx| {
+        p.open_buffer((worktree_id, "src/lib.rs"), cx)
+    });
     cx.executor().simulate_random_delay().await;
     drop(buffer);
 
     // Try opening the same buffer again as the client, and ensure we can
     // still do it despite the cancellation above.
     let buffer = project
-        .update(cx, |p, model, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx))
+        .update(cx, |p, model, cx| {
+            p.open_buffer((worktree_id, "src/lib.rs"), cx)
+        })
         .await
         .unwrap();
 
@@ -987,7 +993,9 @@ async fn test_adding_then_removing_then_adding_worktrees(
         .unwrap();
     let worktree_id_2 = worktree_2.read_with(cx, |tree, _| tree.id());
 
-    project.update(cx, |project, model, cx| project.remove_worktree(worktree_id_2, cx));
+    project.update(cx, |project, model, cx| {
+        project.remove_worktree(worktree_id_2, cx)
+    });
 
     let (worktree_2, _) = project
         .update(cx, |project, model, cx| {
@@ -1085,7 +1093,9 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
         .detach();
 
     project
-        .update(cx, |project, model, cx| project.save_buffer(buffer.clone(), cx))
+        .update(cx, |project, model, cx| {
+            project.save_buffer(buffer.clone(), cx)
+        })
         .await
         .unwrap();
 
@@ -1165,7 +1175,9 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.run_until_parked();
 
     let remote_branches = project
-        .update(cx, |project, model, cx| project.branches(root_path.clone(), cx))
+        .update(cx, |project, model, cx| {
+            project.branches(root_path.clone(), cx)
+        })
         .await
         .unwrap();
 
@@ -1267,7 +1279,7 @@ pub async fn init_test(
     project
         .update(cx, {
             let headless = headless.clone();
-            |_, cx| cx.on_release(|_, _| drop(headless))
+            |_, cx| model.on_release(cx, |_, _| drop(headless))
         })
         .detach();
     (project, headless)
@@ -1296,7 +1308,7 @@ fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<
     });
 
     let node = NodeRuntime::unavailable();
-    let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), cx));
+    let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), model, cx));
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
     let fs = FakeFs::new(cx.executor());
 

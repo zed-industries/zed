@@ -2059,7 +2059,7 @@ async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
     // on screen, the editor autoscrolls to reveal the newest cursor, and
     // allows the vertical scroll margin below that cursor.
     cx.update_editor(|editor, cx| {
-        editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
+        editor.change_selections(Some(Autoscroll::fit()), model, cx, |selections| {
             selections.select_ranges([
                 Point::new(0, 0)..Point::new(0, 0),
                 Point::new(6, 0)..Point::new(6, 0),
@@ -2087,7 +2087,7 @@ async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
     // Add a cursor above the visible area. Since both cursors fit on screen,
     // the editor scrolls to show both.
     cx.update_editor(|editor, cx| {
-        editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
+        editor.change_selections(Some(Autoscroll::fit()), model, cx, |selections| {
             selections.select_ranges([
                 Point::new(1, 0)..Point::new(1, 0),
                 Point::new(6, 0)..Point::new(6, 0),

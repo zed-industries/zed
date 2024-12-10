@@ -518,7 +518,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     if !prior_selections.is_empty() {
                         self.update_editor(cx, |_, editor, cx| {
-                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                                 s.select_ranges(prior_selections.iter().cloned())
                             })
                         });

@@ -1834,7 +1834,8 @@ impl ContextEditor {
         if let Some(command) = self.slash_commands.command(name, cx) {
             self.editor.update(cx, |editor, model, cx| {
                 editor.transact(model, cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel());
+                    editor
+                        .change_selections(Some(Autoscroll::fit()), model, cx, |s| s.try_cancel());
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     let newest_cursor = editor.selections.newest::<Point>(cx).head();
                     if newest_cursor.column > 0

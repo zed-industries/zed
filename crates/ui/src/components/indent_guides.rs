@@ -2,8 +2,7 @@
 use std::{cmp::Ordering, ops::Range, rc::Rc};
 
 use gpui::{
-    fill, l, point, size, AnyElement, AppContext, Bounds, Hsla, Mode, Model, Point,
-    UniformListDecoration,
+    fill, point, size, AnyElement, AppContext, Bounds, Hsla, Model, Point, UniformListDecoration,
 };
 use smallvec::SmallVec;
 
@@ -57,7 +56,9 @@ pub fn indent_guides<V: Render>(
 ) -> IndentGuides {
     let compute_indents_fn = Box::new(
         move |range, window: &mut gpui::Window, cx: &mut gpui::AppContext| {
-            view.update(cx, |this, model, cx| compute_indents_fn(this, range, cx))
+            view.update(cx, |this, model, cx| {
+                compute_indents_fn(this, range, model, cx)
+            })
         },
     );
     IndentGuides {

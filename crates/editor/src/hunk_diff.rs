@@ -534,7 +534,7 @@ impl Editor {
         let snapshot = self.snapshot(model, cx);
         let hunks = hunks_for_selections(&snapshot, &self.selections.all(cx));
         let mut ranges_by_buffer = HashMap::default();
-        self.transact(cx, model, |editor, cx| {
+        self.transact(model, cx, |editor, model, cx| {
             for hunk in hunks {
                 if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
                     ranges_by_buffer

@@ -178,13 +178,13 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
 
-        client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
-        client.add_request_handler(cx.weak_model(), Self::handle_get_path_metadata);
-        client.add_request_handler(cx.weak_model(), Self::handle_shutdown_remote_server);
-        client.add_request_handler(cx.weak_model(), Self::handle_ping);
+        client.add_request_handler(model.downgrade(), Self::handle_list_remote_directory);
+        client.add_request_handler(model.downgrade(), Self::handle_get_path_metadata);
+        client.add_request_handler(model.downgrade(), Self::handle_shutdown_remote_server);
+        client.add_request_handler(model.downgrade(), Self::handle_ping);
 
         client.add_model_request_handler(Self::handle_add_worktree);
-        client.add_request_handler(cx.weak_model(), Self::handle_remove_worktree);
+        client.add_request_handler(model.downgrade(), Self::handle_remove_worktree);
 
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_open_new_buffer);

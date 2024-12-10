@@ -47,7 +47,7 @@ impl Vim {
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
         self.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
 
@@ -100,7 +100,7 @@ impl Vim {
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
         self.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
 
@@ -158,7 +158,7 @@ impl Vim {
     ) {
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.move_with(|map, selection| {
                     let goal = selection.goal;
                     let cursor = if selection.is_empty() || selection.reversed {
@@ -245,7 +245,7 @@ impl Vim {
             // Specifically:
             //  - Make sure that each cursor acts as a 1 character wide selection
             editor.transact(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.move_with(|map, selection| {
                         if selection.is_empty() && !selection.reversed {
                             selection.end = movement::right(map, selection.end);

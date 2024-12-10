@@ -112,7 +112,7 @@ impl PrettierStore {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<Option<(Option<PathBuf>, PrettierTask)>> {
-        let buffer = buffer.read(cx);
+        let buffer = buffer.read(model, cx);
         let buffer_file = buffer.file();
         if buffer.language().is_none() {
             return Task::ready(None);

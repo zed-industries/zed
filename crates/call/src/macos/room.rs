@@ -125,7 +125,7 @@ impl Room {
                     };
 
                     if status == livekit_client_macos::ConnectionState::Disconnected {
-                        this.update(&mut cx, |this, model, cx| this.leave(cx).log_err())
+                        this.update(&mut cx, |this, model, cx| this.leave(model, cx).log_err())
                             .ok();
                         break;
                     }
@@ -159,7 +159,7 @@ impl Room {
                         if this.can_use_microphone(cx) {
                             if let Some(live_kit) = &this.live_kit {
                                 if !live_kit.muted_by_user && !live_kit.deafened {
-                                    return this.share_microphone(cx);
+                                    return this.share_microphone(model, cx);
                                 }
                             }
                         }
@@ -206,11 +206,11 @@ impl Room {
             pending_participants: Default::default(),
             pending_call_count: 0,
             client_subscriptions: vec![
-                client.add_message_handler(cx.weak_model(), Self::handle_room_updated)
+                client.add_message_handler(model.downgrade(), Self::handle_room_updated)
             ],
             _subscriptions: vec![
-                cx.on_release(Self::released),
-                cx.on_app_quit(Self::app_will_quit),
+                model.on_release(cx, Self::released),
+                model.on_app_quit(cx, Self::app_will_quit),
             ],
             leave_when_empty: false,
             pending_room_update: None,
@@ -395,15 +395,15 @@ impl Room {
         for project in self.shared_projects.drain() {
             if let Some(project) = project.upgrade() {
                 project.update(cx, |project, model, cx| {
-                    project.unshare(cx).log_err();
+                    project.unshare(model, cx).log_err();
                 });
             }
         }
         for project in self.joined_projects.drain() {
             if let Some(project) = project.upgrade() {
                 project.update(cx, |project, model, cx| {
-                    project.disconnected_from_host(cx);
-                    project.close(cx);
+                    project.disconnected_from_host(model, cx);
+                    project.close(model, cx);
                 });
             }
         }
@@ -449,7 +449,8 @@ impl Room {
                                 log::info!("client reconnected, attempting to rejoin room");
 
                                 let Some(this) = this.upgrade() else { break };
-                                match this.update(&mut cx, |this, model, cx| this.rejoin(cx)) {
+                                match this.update(&mut cx, |this, model, cx| this.rejoin(model, cx))
+                                {
                                     Ok(task) => {
                                         if task.await.log_err().is_some() {
                                             return true;
@@ -498,7 +499,7 @@ impl Room {
         // we leave the room and return an error.
         if let Some(this) = this.upgrade() {
             log::info!("reconnection failed, leaving room");
-            this.update(&mut cx, |this, model, cx| this.leave(cx))?
+            this.update(&mut cx, |this, model, cx| this.leave(model, cx))?
                 .await?;
         }
         Err(anyhow!(
@@ -561,7 +562,7 @@ impl Room {
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
             this.update(&mut cx, |this, model, cx| {
                 this.status = RoomStatus::Online;
-                this.apply_room_update(room_proto, cx)?;
+                this.apply_room_update(room_proto, model, cx)?;
 
                 for reshared_project in response.reshared_projects {
                     if let Some(project) = projects.get(&reshared_project.id) {
@@ -712,7 +713,9 @@ impl Room {
             .payload
             .room
             .ok_or_else(|| anyhow!("invalid room"))?;
-        this.update(&mut cx, |this, model, cx| this.apply_room_update(room, cx))?
+        this.update(&mut cx, |this, model, cx| {
+            this.apply_room_update(room, model, cx)
+        })?
     }
 
     fn apply_room_update(
@@ -764,18 +767,20 @@ impl Room {
                         if role == proto::ChannelRole::Guest {
                             for project in mem::take(&mut this.shared_projects) {
                                 if let Some(project) = project.upgrade() {
-                                    this.unshare_project(project, cx).log_err();
+                                    this.unshare_project(project, model, cx).log_err();
                                 }
                             }
                             this.local_participant.projects.clear();
                             if let Some(live_kit_room) = &mut this.live_kit {
-                                live_kit_room.stop_publishing(cx);
+                                live_kit_room.stop_publishing(model, cx);
                             }
                         }
 
                         this.joined_projects.retain(|project| {
                             if let Some(project) = project.upgrade() {
-                                project.update(cx, |project, model, cx| project.set_role(role, cx));
+                                project.update(cx, |project, model, cx| {
+                                    project.set_role(role, model, cx)
+                                });
                                 true
                             } else {
                                 false
@@ -825,7 +830,7 @@ impl Room {
                                 if let Some(project) = project.upgrade() {
                                     project.update(cx, |project, model, cx| {
                                         if project.remote_id() == Some(*unshared_project_id) {
-                                            project.disconnected_from_host(cx);
+                                            project.disconnected_from_host(model, cx);
                                             false
                                         } else {
                                             true
@@ -966,7 +971,7 @@ impl Room {
                 this.pending_room_update.take();
                 if this.should_leave() {
                     log::info!("room is empty, leaving");
-                    this.leave(cx).detach();
+                    this.leave(model, cx).detach();
                 }
 
                 this.user_store.update(cx, |user_store, model, cx| {
@@ -975,7 +980,7 @@ impl Room {
                         .iter()
                         .map(|(user_id, participant)| (*user_id, participant.participant_index))
                         .collect();
-                    user_store.set_participant_indices(participant_indices_by_user_id, cx);
+                    user_store.set_participant_indices(participant_indices_by_user_id, model, cx);
                 });
 
                 this.check_invariants();
@@ -1256,7 +1261,7 @@ impl Room {
                 this.shared_projects.insert(project.downgrade());
                 let active_project = this.local_participant.active_project.as_ref();
                 if active_project.map_or(false, |location| *location == project) {
-                    this.set_location(Some(&project), cx)
+                    this.set_location(Some(&project), model, cx)
                 } else {
                     Task::ready(Ok(()))
                 }
@@ -1279,7 +1284,7 @@ impl Room {
         };
 
         self.client.send(proto::UnshareProject { project_id })?;
-        project.update(cx, |this, model, cx| this.unshare(cx))?;
+        project.update(cx, |this, model, cx| this.unshare(model, cx))?;
 
         if self.local_participant.active_project == Some(project.downgrade()) {
             self.set_location(Some(&project), model, cx)
@@ -1668,7 +1673,7 @@ impl Room {
                 if should_mute {
                     None
                 } else {
-                    Some(self.share_microphone(cx))
+                    Some(self.share_microphone(model, cx))
                 }
             }
             LocalTrack::Pending { .. } => None,

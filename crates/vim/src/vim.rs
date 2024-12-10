@@ -313,7 +313,7 @@ impl Vim {
     }
 
     fn activate(editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContext) {
-        let vim = Vim::new(cx);
+        let vim = Vim::new(model, cx);
 
         editor.register_addon(VimAddon { view: vim.clone() });
 
@@ -382,7 +382,7 @@ impl Vim {
         f: impl Fn(&mut Vim, &A, &Model<Vim>, &mut AppContext) + 'static,
     ) {
         let subscription = editor.register_action(cx.listener(f));
-        cx.on_release(|_, _, _| drop(subscription)).detach();
+        model.on_release(cx, |_, _, _| drop(subscription)).detach();
     }
 
     pub fn editor(&self) -> Option<Model<Editor>> {
@@ -442,7 +442,7 @@ impl Vim {
                     );
                 }
                 _ if !operator.is_waiting(self.mode) => {
-                    self.clear_operator(cx);
+                    self.clear_operator(model, cx);
                     self.stop_recording_immediately(Box::new(ClearOperators), model, cx)
                 }
                 _ => {}
@@ -460,7 +460,7 @@ impl Vim {
             EditorEvent::Focused => self.focused(true, model, cx),
             EditorEvent::Blurred => self.blurred(cx),
             EditorEvent::SelectionsChanged { local: true } => {
-                self.local_selections_changed(cx);
+                self.local_selections_changed(model, cx);
             }
             EditorEvent::InputIgnored { text } => {
                 self.input_ignored(text.clone(), model, cx);
@@ -510,11 +510,11 @@ impl Vim {
         ) {
             self.operator_stack.clear();
             if let Operator::AddSurrounds { target: None } = operator {
-                self.start_recording(cx);
+                self.start_recording(model, cx);
             }
         };
         self.operator_stack.push(operator);
-        self.sync_vim_settings(cx);
+        self.sync_vim_settings(model, cx);
     }
 
     pub fn switch_mode(
@@ -551,7 +551,7 @@ impl Vim {
         }
 
         // Sync editor settings like clip mode
-        self.sync_vim_settings(cx);
+        self.sync_vim_settings(model, cx);
 
         if VimSettings::get_global(cx).toggle_relative_line_numbers
             && self.mode != self.last_mode
@@ -769,7 +769,7 @@ impl Vim {
         }
 
         model.emit(cx, VimEvent::Focused);
-        self.sync_vim_settings(cx);
+        self.sync_vim_settings(model, cx);
 
         if VimSettings::get_global(cx).toggle_relative_line_numbers {
             if let Some(old_vim) = Vim::globals(cx).focused_vim() {
@@ -797,8 +797,8 @@ impl Vim {
 
     fn blurred(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.stop_recording_immediately(NormalBefore.boxed_clone(), model, cx);
-        self.store_visual_marks(cx);
-        self.clear_operator(cx);
+        self.store_visual_marks(model, cx);
+        self.clear_operator(model, cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.set_cursor_shape(language::CursorShape::Hollow, model, cx);
         });
@@ -924,8 +924,8 @@ impl Vim {
 
     /// Explicitly record one action (equivalents to start_recording and stop_recording)
     pub fn record_current_action(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        self.start_recording(cx);
-        self.stop_recording(cx);
+        self.start_recording(model, cx);
+        self.stop_recording(model, cx);
     }
 
     fn push_count_digit(&mut self, number: usize, model: &Model<Self>, cx: &mut AppContext) {
@@ -958,7 +958,7 @@ impl Vim {
                 .replace(register.chars().next().unwrap());
         }
         self.operator_stack.clear();
-        self.sync_vim_settings(cx);
+        self.sync_vim_settings(model, cx);
     }
 
     fn maybe_pop_operator(&mut self) -> Option<Operator> {
@@ -968,7 +968,7 @@ impl Vim {
     fn pop_operator(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Operator {
         let popped_operator = self.operator_stack.pop()
             .expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
-        self.sync_vim_settings(cx);
+        self.sync_vim_settings(model, cx);
         popped_operator
     }
 
@@ -976,7 +976,7 @@ impl Vim {
         Vim::take_count(cx);
         self.selected_register.take();
         self.operator_stack.clear();
-        self.sync_vim_settings(cx);
+        self.sync_vim_settings(model, cx);
     }
 
     fn active_operator(&self) -> Option<Operator> {
@@ -1135,7 +1135,7 @@ impl Vim {
                     }
                 } else {
                     let first_char = text.chars().next();
-                    self.pop_operator(cx);
+                    self.pop_operator(model, cx);
                     self.push_operator(Operator::Digraph { first_char }, model, cx);
                 }
             }
@@ -1146,12 +1146,12 @@ impl Vim {
                 Mode::Normal => {
                     if let Some(target) = target {
                         self.add_surrounds(text, target, cx);
-                        self.clear_operator(cx);
+                        self.clear_operator(model, cx);
                     }
                 }
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     self.add_surrounds(text, SurroundsType::Selection, cx);
-                    self.clear_operator(cx);
+                    self.clear_operator(model, cx);
                 }
                 _ => self.clear_operator(cx),
             },
@@ -1159,7 +1159,7 @@ impl Vim {
                 Mode::Normal => {
                     if let Some(target) = target {
                         self.change_surrounds(text, target, cx);
-                        self.clear_operator(cx);
+                        self.clear_operator(model, cx);
                     }
                 }
                 _ => self.clear_operator(cx),
@@ -1167,7 +1167,7 @@ impl Vim {
             Some(Operator::DeleteSurrounds) => match self.mode {
                 Mode::Normal => {
                     self.delete_surrounds(text, model, cx);
-                    self.clear_operator(cx);
+                    self.clear_operator(model, cx);
                 }
                 _ => self.clear_operator(cx),
             },
@@ -1192,7 +1192,7 @@ impl Vim {
                             )
                         }
                     });
-                    self.clear_operator(cx);
+                    self.clear_operator(model, cx);
                 }
                 _ => {
                     self.select_register(text, model, cx);

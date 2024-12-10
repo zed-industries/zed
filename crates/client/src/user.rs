@@ -5,7 +5,8 @@ use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, Future, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, EventEmitter, Model, SharedString, SharedUri, Task, WeakModel,
+    AppContext, AsyncAppContext, Entity, EventEmitter, Model, SharedString, SharedUri, Task,
+    WeakModel,
 };
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
@@ -139,10 +140,10 @@ impl UserStore {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
-            client.add_message_handler(cx.weak_model(), Self::handle_update_plan),
-            client.add_message_handler(cx.weak_model(), Self::handle_update_contacts),
-            client.add_message_handler(cx.weak_model(), Self::handle_update_invite_info),
-            client.add_message_handler(cx.weak_model(), Self::handle_show_contacts),
+            client.add_message_handler(model.downgrade(), Self::handle_update_plan),
+            client.add_message_handler(model.downgrade(), Self::handle_update_contacts),
+            client.add_message_handler(model.downgrade(), Self::handle_update_invite_info),
+            client.add_message_handler(model.downgrade(), Self::handle_show_contacts),
         ];
         Self {
             users: Default::default(),
@@ -183,7 +184,7 @@ impl UserStore {
                             if let Some(user_id) = client.user_id() {
                                 let fetch_user = if let Ok(fetch_user) = this
                                     .update(&mut cx, |this, model, cx| {
-                                        this.get_user(user_id, cx).log_err()
+                                        this.get_user(user_id, model, cx).log_err()
                                     }) {
                                     fetch_user
                                 } else {
@@ -217,7 +218,7 @@ impl UserStore {
 
                                 current_user_tx.send(user).await.ok();
 
-                                this.update(&mut cx, |_, cx| model.notify(cx))?;
+                                this.update(&mut cx, |_, model, cx| model.notify(cx))?;
                             }
                         }
                         Status::SignedOut => {
@@ -241,7 +242,7 @@ impl UserStore {
                 Ok(())
             }),
             pending_contact_requests: Default::default(),
-            weak_self: cx.weak_model(),
+            weak_self: model.downgrade(),
         }
     }
 
@@ -271,7 +272,7 @@ impl UserStore {
         _: TypedEnvelope<proto::ShowContacts>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |_, cx| model.emit(cx, Event::ShowContacts))?;
+        this.update(&mut cx, |_, model, cx| model.emit(cx, Event::ShowContacts))?;
         Ok(())
     }
 
@@ -543,7 +544,7 @@ impl UserStore {
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let client = self.client.upgrade();
-        cx.spawn(move |_, _| async move {
+        cx.spawn(move |_| async move {
             client
                 .ok_or_else(|| anyhow!("can't upgrade client reference"))?
                 .request(proto::RespondToContactRequest {
@@ -566,7 +567,7 @@ impl UserStore {
         *self.pending_contact_requests.entry(user_id).or_insert(0) += 1;
         model.notify(cx);
 
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let response = client
                 .ok_or_else(|| anyhow!("can't upgrade client reference"))?
                 .request(request)
@@ -623,6 +624,7 @@ impl UserStore {
                         proto::GetUsers {
                             user_ids: user_ids_to_fetch,
                         },
+                        model,
                         cx,
                     )
                 })?
@@ -681,7 +683,7 @@ impl UserStore {
         }
 
         let load_users = self.get_users(vec![user_id], model, cx);
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             load_users.await?;
             this.update(&mut cx, |this, _, _| {
                 this.users
@@ -725,7 +727,7 @@ impl UserStore {
         };
 
         let client = self.client.clone();
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             if let Some(client) = client.upgrade() {
                 let response = client
                     .request(proto::AcceptTermsOfService {})

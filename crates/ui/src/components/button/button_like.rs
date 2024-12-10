@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use std::rc::Rc;
 
-use gpui::{relative, AppContext, CursorStyle, DefiniteLength, MouseButton, Window};
+use gpui::{relative, AnyView, AppContext, CursorStyle, DefiniteLength, MouseButton, Window};
 use gpui::{transparent_black, AnyElement, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
 
@@ -35,9 +35,7 @@ pub trait ButtonCommon: Clickable + Disableable {
     ///
     /// Nearly all interactable elements should have a tooltip. Some example
     /// exceptions might a scroll bar, or a slider.
-    fn tooltip<F>(self, tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F) -> Self
-    where
-        F: 'static + Fn(&mut Window, &mut AppContext) -> AnyElement;
+    fn tooltip(self, tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> AnyView) -> Self;
 
     fn layer(self, elevation: ElevationIndex) -> Self;
 }
@@ -474,10 +472,10 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
-    fn tooltip<F>(mut self, tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F) -> Self
-    where
-        F: 'static + Fn(&mut Window, &mut AppContext) -> AnyElement,
-    {
+    fn tooltip(
+        mut self,
+        tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> AnyView,
+    ) -> Self {
         self.tooltip = Some(Box::new(move |window, cx| {
             let render = tooltip(window, cx);
             Rc::new(move |window, cx| render(window, cx))

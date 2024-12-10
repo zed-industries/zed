@@ -77,10 +77,10 @@ impl Vim {
                 }
             }
             editor.transact(cx, |editor, cx| {
-                editor.edit(edits, cx);
+                editor.edit(edits, model, cx);
 
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     let mut new_ranges = Vec::new();
                     for (visual, anchor) in new_anchors.iter() {
                         let mut point = anchor.to_point(&snapshot);

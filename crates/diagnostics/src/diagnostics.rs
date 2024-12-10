@@ -610,7 +610,7 @@ impl ProjectDiagnosticsEditor {
             } else {
                 groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
                 new_excerpt_ids_by_selection_id =
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.refresh());
+                    editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| s.refresh());
                 selections = editor.selections.all::<usize>(cx);
             }
 

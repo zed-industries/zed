@@ -1,5 +1,5 @@
 use gpui::NoAction;
-use gpui::Render;
+use gpui::{Model, Render};
 use itertools::Itertools;
 use story::Story;
 

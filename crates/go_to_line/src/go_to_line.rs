@@ -86,7 +86,7 @@ impl GoToLine {
             active_editor,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
-            _subscriptions: vec![line_editor_change, cx.on_release(Self::release)],
+            _subscriptions: vec![line_editor_change, model.on_release(cx, Self::release)],
         }
     }
 

@@ -276,7 +276,7 @@ impl LocalToolchainStore {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<Option<()>> {
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             this.update(&mut cx, |this, model, cx| {
                 this.active_toolchains.insert(
                     (worktree_id, toolchain.language_name.clone()),

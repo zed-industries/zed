@@ -40,10 +40,10 @@ impl Manager {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        let manager = cx.weak_model();
+        let manager = model.downgrade();
         project.update(cx, |_, model, cx| {
             let manager = manager.clone();
-            cx.on_release(move |project, cx| {
+            model.on_release(cx, move |project, cx| {
                 manager
                     .update(cx, |manager, model, cx| {
                         manager.projects.retain(|p| {
@@ -123,8 +123,8 @@ impl Manager {
         for project in self.projects.drain() {
             if let Some(project) = project.upgrade() {
                 project.update(cx, |project, model, cx| {
-                    project.disconnected_from_host(cx);
-                    project.close(cx);
+                    project.disconnected_from_hostmodel, (cx);model,
+                project.closemodel, (cx);model,
                 });
             }
         }

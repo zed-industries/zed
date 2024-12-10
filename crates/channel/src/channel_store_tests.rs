@@ -171,7 +171,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     // Join a channel and populate its existing messages.
     let channel = channel_store.update(cx, |store, model, cx| {
         let channel_id = store.ordered_channels().next().unwrap().1.id;
-        store.open_channel_chat(channel_id, cx)
+        store.open_channel_chat(channel_id, model, cx)
     });
     let join_channel = server.receive::<proto::JoinChannelChat>().await.unwrap();
     server.respond(
@@ -282,7 +282,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
 
     // Scroll up to view older messages.
     channel.update(cx, |channel, model, cx| {
-        channel.load_more_messages(cx).unwrap().detach();
+        channel.load_more_messages(model, cx).unwrap().detach();
     });
     let get_messages = server.receive::<proto::GetChannelMessages>().await.unwrap();
     assert_eq!(get_messages.payload.channel_id, 5);
@@ -346,7 +346,7 @@ fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
     let clock = Arc::new(FakeSystemClock::new());
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(clock, http.clone(), cx);
-    let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), cx));
+    let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), model, cx));
 
     client::init(&client, cx);
     crate::init(&client, user_store, cx);
@@ -359,7 +359,9 @@ fn update_channels(
     message: proto::UpdateChannels,
     cx: &mut AppContext,
 ) {
-    let task = channel_store.update(cx, |store, model, cx| store.update_channels(message, cx));
+    let task = channel_store.update(cx, |store, model, cx| {
+        store.update_channels(message, model, cx)
+    });
     assert!(task.is_none());
 }
 

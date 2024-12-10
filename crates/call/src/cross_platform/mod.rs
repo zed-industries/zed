@@ -110,8 +110,8 @@ impl ActiveCall {
             incoming_call: watch::channel(),
             _join_debouncer: OneAtATime { cancel: None },
             _subscriptions: vec![
-                client.add_request_handler(cx.weak_model(), Self::handle_incoming_call),
-                client.add_message_handler(cx.weak_model(), Self::handle_call_canceled),
+                client.add_request_handler(model.downgrade(), Self::handle_incoming_call),
+                client.add_message_handler(model.downgrade(), Self::handle_call_canceled),
             ],
             client,
             user_store,

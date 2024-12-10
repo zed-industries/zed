@@ -539,15 +539,15 @@ impl<T: Item> ItemHandle for Model<T> {
         })
     }
 
-    fn focus_handle(&self, window: &Window, cx: &AppContext) -> FocusHandle {
-        self.focus_handle(cx)
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.read(cx).focus_handle(cx)
     }
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
         self.read(cx).tab_tooltip_text(cx)
     }
 
-    fn telemetry_event_text(&self, window: &Window, cx: &AppContext) -> Option<&'static str> {
+    fn telemetry_event_text(&self, cx: &AppContext) -> Option<&'static str> {
         self.read(cx).telemetry_event_text()
     }
 
@@ -564,7 +564,7 @@ impl<T: Item> ItemHandle for Model<T> {
         self.read(cx).tab_content(params, cx)
     }
 
-    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, cx: &AppContext) -> Option<Icon> {
         self.read(cx).tab_icon(cx)
     }
 
@@ -693,7 +693,7 @@ impl<T: Item> ItemHandle for Model<T> {
 
             let mut send_follower_updates = None;
             if let Some(item) = self.to_followable_item_handle(cx) {
-                let is_project_item = item.is_project_item(cx);
+                let is_project_item = item.is_project_item(model, cx);
                 let item = item.downgrade();
 
                 send_follower_updates = Some(cx.spawn({
@@ -804,7 +804,7 @@ impl<T: Item> ItemHandle for Model<T> {
                 if let Some(item) = weak_item.upgrade() {
                     if item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange {
                         Pane::autosave_item(&item, workspace.project.clone(), cx)
-                            .detach_and_log_err(cx);
+                            .detach_and_log_err(model, cx);
                     }
                 }
             })
@@ -1169,7 +1169,7 @@ pub mod test {
     use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
-        InteractiveElement, IntoElement, Model, Model, Render, SharedString, Task, VisualContext,
+        InteractiveElement, IntoElement, Model, Render, SharedString, Task, VisualContext,
         WeakView,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
@@ -1269,7 +1269,7 @@ pub mod test {
         }
 
         pub fn new_deserialized(id: WorkspaceId, model: &Model<Self>, cx: &mut AppContext) -> Self {
-            let mut this = Self::new(cx);
+            let mut this = Self::new(model, cx);
             this.workspace_id = Some(id);
             this
         }

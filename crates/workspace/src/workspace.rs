@@ -401,8 +401,9 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
             let project_entry_id: Option<ProjectEntryId> =
                 project_item.read_with(&cx, project::ProjectItem::entry_id)?;
             let build_workspace_item = Box::new(|model: &Model<Pane>, cx: &mut AppContext| {
-                Box::new(cx.new_model(|model, cx| I::for_project_item(project, project_item, cx)))
-                    as Box<dyn ItemHandle>
+                Box::new(
+                    cx.new_model(|model, cx| I::for_project_item(project, project_item, model, cx)),
+                ) as Box<dyn ItemHandle>
             }) as Box<_>;
             Ok((project_entry_id, build_workspace_item))
         }))
@@ -619,7 +620,7 @@ impl AppState {
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
         let session = cx.new_model(|model, cx| AppSession::new(Session::test(), model, cx));
-        let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), cx));
+        let user_store = cx.new_model(|model, cx| UserStore::new(client.clone(), model, cx));
         let workspace_store = cx.new_model(|model, cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init(theme::LoadThemes::JustBase, cx);
@@ -1023,7 +1024,7 @@ impl Workspace {
                     })
                     .ok();
                 }));
-                model.notify(cx);
+                model.notify(model, cx);
             }),
             cx.observe_window_appearance(|_, cx| {
                 let window_appearance = cx.appearance();
@@ -1044,7 +1045,7 @@ impl Workspace {
                 this.serialize_workspace(cx);
                 model.notify(cx);
             }),
-            cx.on_release(|this, window, cx| {
+            model.on_release(cx, |this, window, cx| {
                 this.app_state
                     .workspace_store
                     .update(cx, |store, model, _| {
@@ -1842,7 +1843,7 @@ impl Workspace {
 
     fn save_all(&mut self, action: &SaveAll, model: &Model<Self>, cx: &mut AppContext) {
         self.save_all_internal(action.save_intent.unwrap_or(SaveIntent::SaveAll), cx)
-            .detach_and_log_err(cx);
+            .detach_and_log_err(model, cx);
     }
 
     fn send_keystrokes(
@@ -2319,6 +2320,7 @@ impl Workspace {
                         save_intent: None,
                         close_pinned: false,
                     },
+                    model,
                     cx,
                 )
             }) {
@@ -2884,15 +2886,16 @@ impl Workspace {
             return item;
         }
 
-        let item =
-            cx.new_model(|model, cx| T::for_project_item(self.project().clone(), project_item, cx));
+        let item = cx.new_model(|model, cx| {
+            T::for_project_item(self.project().clone(), project_item, model, cx)
+        });
         let item_id = item.item_id();
         let mut destination_index = None;
         pane.update(cx, |pane, model, cx| {
             if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
                 if let Some(preview_item_id) = pane.preview_item_id() {
                     if preview_item_id != item_id {
-                        destination_index = pane.close_current_preview_item(cx);
+                        destination_index = pane.close_current_preview_item(model, cx);
                     }
                 }
             }
@@ -3105,7 +3108,7 @@ impl Workspace {
     ) {
         if let Some(to) = self.find_pane_in_direction(direction, cx) {
             self.center.swap(&self.active_pane.clone(), &to);
-            model.notify(cx);
+            model.notify(model, cx);
         }
     }
 
@@ -3381,7 +3384,7 @@ impl Workspace {
             return;
         };
         move_all_items(&pane, &next_pane, cx);
-        model.notify(cx);
+        model.notify(model, cx);
     }
 
     fn remove_pane(
@@ -3751,7 +3754,7 @@ impl Workspace {
     ) -> proto::FollowResponse {
         let active_view = self.active_view_for_follower(follower_project_id, cx);
 
-        model.notify(cx);
+        model.notify(model, cx);
         proto::FollowResponse {
             // TODO: Remove after version 0.145.x stabilizes.
             active_view_id: active_view.as_ref().and_then(|view| view.id.clone()),
@@ -4183,7 +4186,7 @@ impl Workspace {
             for pane in &self.panes {
                 pane.update(cx, |pane, model, cx| {
                     if let Some(item) = pane.active_item() {
-                        item.workspace_deactivated(cx);
+                        item.workspace_deactivated(model, cx);
                     }
                     for item in pane.items() {
                         if matches!(
@@ -4574,7 +4577,7 @@ impl Workspace {
                 {
                     dock.update(cx, |dock, model, cx| {
                         dock.serialized_dock = Some(serialized_dock.clone());
-                        dock.restore_state(cx);
+                        dock.restore_state(model, cx);
                     });
                 }
 
@@ -5283,8 +5286,8 @@ impl WorkspaceStore {
         Self {
             workspaces: Default::default(),
             _subscriptions: vec![
-                client.add_request_handler(cx.weak_model(), Self::handle_follow),
-                client.add_message_handler(cx.weak_model(), Self::handle_update_followers),
+                client.add_request_handler(model.downgrade(), Self::handle_follow),
+                client.add_message_handler(model.downgrade(), Self::handle_update_followers),
             ],
             client,
         }
@@ -7440,7 +7443,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_join_all_panes(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
+        init_test(model, cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None, model, cx).await;
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
@@ -7469,7 +7472,7 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, model, cx| {
-            workspace.join_all_panes(cx);
+            workspace.join_all_panes(model, cx);
         });
 
         workspace.update(cx, |workspace, model, cx| {

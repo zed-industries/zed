@@ -16,7 +16,7 @@ pub(crate) fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppCont
             editor.transact(cx, |editor, cx| {
                 let mut positions = vim.save_selection_starts(editor, cx);
                 editor.rewrap_impl(IsVimMode::Yes, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.move_with(|map, selection| {
                         if let Some(anchor) = positions.remove(&selection.id) {
                             let mut point = anchor.to_display_point(map);

@@ -1126,7 +1126,7 @@ impl ProjectSearchView {
             self.results_editor.update(cx, |editor, model, cx| {
                 let range_to_select = editor.range_for_match(&range_to_select);
                 editor.unfold_ranges(&[range_to_select.clone()], false, true, model, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.select_ranges([range_to_select])
                 });
             });
@@ -1193,7 +1193,7 @@ impl ProjectSearchView {
                     let range_to_select = match_ranges
                         .first()
                         .map(|range| editor.range_for_match(range));
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                         s.select_ranges(range_to_select)
                     });
                     editor.scroll(Point::default(), Some(Axis::Vertical), cx);

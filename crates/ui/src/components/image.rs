@@ -100,7 +100,7 @@ pub mod story {
     impl Render for VectorStory {
         fn render(
             &mut self,
-            model: &Model<Self>,
+            model: &gpui::Model<Self>,
             _window: &mut gpui::Window,
             _cx: &mut AppContext,
         ) -> impl IntoElement {

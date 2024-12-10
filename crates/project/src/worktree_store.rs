@@ -277,7 +277,7 @@ impl WorktreeStore {
                 })
                 .await?;
 
-            if let Some(existing_worktree) = this.read_with(&cx, |this, cx| {
+            if let Some(existing_worktree) = this.read_with(&cx, |this, model, cx| {
                 this.worktree_for_id(WorktreeId::from_proto(response.worktree_id), cx)
             })? {
                 return Ok(existing_worktree);
@@ -321,7 +321,7 @@ impl WorktreeStore {
         let next_entry_id = self.next_entry_id.clone();
         let path: SanitizedPath = abs_path.into();
 
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;
 
             let worktree = worktree?;
@@ -1050,14 +1050,14 @@ impl WorktreeStore {
             })?
             .ok_or_else(|| anyhow!("worktree not found"))?;
         let (old_abs_path, new_abs_path) = {
-            let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
+            let root_path = worktree.update(&mut cx, |this, model, _| this.abs_path())?;
             (
                 root_path.join(&old_path),
                 root_path.join(&envelope.payload.new_path),
             )
         };
         let lsp_store = this
-            .update(&mut cx, |this, _| this.lsp_store())?
+            .update(&mut cx, |this, model, _| this.lsp_store())?
             .downgrade();
         LspStore::will_rename_entry(
             lsp_store,
@@ -1135,7 +1135,7 @@ impl WorktreeStore {
         };
 
         let branches = this
-            .read_with(&cx, |this, cx| this.branches(project_path, cx))?
+            .read_with(&cx, |this, model, cx| this.branches(project_path, cx))?
             .await?;
 
         Ok(proto::GitBranchesResponse {
@@ -1166,7 +1166,7 @@ impl WorktreeStore {
         };
         let new_branch = update_branch.payload.branch_name;
 
-        this.read_with(&cx, |this, cx| {
+        this.read_with(&cx, |this, model, cx| {
             this.update_or_create_branch(project_path, new_branch, cx)
         })?
         .await?;

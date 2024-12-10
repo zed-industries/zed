@@ -224,7 +224,7 @@ impl Render for KeyContextView {
                                 cx,
                             ))
                             .on_click(|_, cx| {
-                                cx.dispatch_action(workspace::SplitRight.boxed_clone());
+                                model.dispatch_action(cx, workspace::SplitRight.boxed_clone());
                                 cx.dispatch_action(zed_actions::OpenDefaultKeymap.boxed_clone());
                             }),
                     )
@@ -233,7 +233,7 @@ impl Render for KeyContextView {
                             .style(ButtonStyle::Filled)
                             .key_binding(ui::KeyBinding::for_action(&zed_actions::OpenKeymap, model, cx))
                             .on_click(|_, cx| {
-                                cx.dispatch_action(workspace::SplitRight.boxed_clone());
+                                model.dispatch_action(cx, workspace::SplitRight.boxed_clone());
                                 cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
                             }),
                     ),

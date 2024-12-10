@@ -258,7 +258,7 @@ impl Vim {
     ) {
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
                     motion
                         .move_point(map, cursor, goal, times, &text_layout_details)
@@ -272,7 +272,7 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, cx);
         self.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| (right(map, cursor, 1), SelectionGoal::None));
             });
         });
@@ -292,7 +292,7 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, cx);
         self.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
                     (
                         first_non_whitespace(map, false, cursor),
@@ -312,7 +312,7 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, cx);
         self.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
                 });
@@ -330,7 +330,7 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, cx);
         self.update_editor(cx, |vim, editor, cx| {
             if let Some(marks) = vim.marks.get("^") {
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
                 });
             }
@@ -362,7 +362,7 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
                 editor.edit_with_autoindent(edits, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.move_cursors_with(|map, cursor, _| {
                         let previous_line = motion::start_of_relative_buffer_row(map, cursor, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line, 1);
@@ -398,7 +398,7 @@ impl Vim {
                         (end_of_line..end_of_line, "\n".to_string() + &indent)
                     })
                     .collect::<Vec<_>>();
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.maybe_move_cursors_with(|map, cursor, goal| {
                         Motion::CurrentLine.move_point(
                             map,
@@ -465,7 +465,7 @@ impl Vim {
                     ))
                 }
 
-                editor.edit(edits, cx);
+                editor.edit(edits, model, cx);
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(None, cx, |s| {
                     s.move_with(|map, selection| {
@@ -503,7 +503,7 @@ impl Vim {
         cx: &mut AppContext,
         mut positions: HashMap<usize, Anchor>,
     ) {
-        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
             s.move_with(|map, selection| {
                 if let Some(anchor) = positions.remove(&selection.id) {
                     selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);

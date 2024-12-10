@@ -2092,6 +2092,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                             },
                         },
                     ],
+                    model,
                     cx,
                 )
                 .unwrap();
@@ -2944,7 +2945,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     assert!(transaction.0.contains_key(&buffer));
     buffer.update(cx, |buffer, model, cx| {
         assert_eq!(buffer.text(), "Xa");
-        buffer.undo(cx);
+        buffer.undomodel, (cx);model,
         assert_eq!(buffer.text(), "a");
     });
 }
@@ -3039,7 +3040,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
 
     cx.executor().run_until_parked();
     let on_disk_text = fs.load(Path::new("/dir/file1")).await.unwrap();
-    buffer.read_with(cx, |buffer, _| {
+    buffer.read_with(cx, |buffer, model, _| {
         assert_eq!(buffer.text(), on_disk_text);
         assert!(!buffer.is_dirty(), "buffer should not be dirty");
         assert!(!buffer.has_conflict(), "buffer should not be dirty");
@@ -3088,7 +3089,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     // Perform a noop edit, causing the buffer's version to increase.
     buffer.update(cx, |buffer, model, cx| {
         buffer.edit([(0..0, " ")], None, model, cx);
-        buffer.undo(cx);
+        buffer.undomodel, (cx);model,
     });
 
     cx.executor().run_until_parked();
@@ -5469,8 +5470,8 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // [a, b, c] -> [b, a, c]
     project
         .update(cx, |project, model, cx| {
-            let first = worktree_a.read(cx);
-            let second = worktree_b.read(cx);
+            let first = worktree_a.read(model, cx);
+            let second = worktree_b.read(model, cx);
             project.move_worktree(first.id(), second.id(), cx)
         })
         .expect("moving first after second");
@@ -5494,8 +5495,8 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // [b, a, c] -> [a, b, c]
     project
         .update(cx, |project, model, cx| {
-            let second = worktree_a.read(cx);
-            let first = worktree_b.read(cx);
+            let second = worktree_a.read(model, cx);
+            let first = worktree_b.read(model, cx);
             project.move_worktree(first.id(), second.id(), cx)
         })
         .expect("moving second before first");
@@ -5519,8 +5520,8 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // [a, b, c] -> [a, c, b]
     project
         .update(cx, |project, model, cx| {
-            let second = worktree_b.read(cx);
-            let third = worktree_c.read(cx);
+            let second = worktree_b.read(model, cx);
+            let third = worktree_c.read(model, cx);
             project.move_worktree(second.id(), third.id(), cx)
         })
         .expect("moving second after third");
@@ -5544,8 +5545,8 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // [a, c, b] -> [a, b, c]
     project
         .update(cx, |project, model, cx| {
-            let third = worktree_c.read(cx);
-            let second = worktree_b.read(cx);
+            let third = worktree_c.read(model, cx);
+            let second = worktree_b.read(model, cx);
             project.move_worktree(third.id(), second.id(), cx)
         })
         .expect("moving third before second");
@@ -5569,8 +5570,8 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // [a, b, c] -> [b, c, a]
     project
         .update(cx, |project, model, cx| {
-            let first = worktree_a.read(cx);
-            let third = worktree_c.read(cx);
+            let first = worktree_a.read(model, cx);
+            let third = worktree_c.read(model, cx);
             project.move_worktree(first.id(), third.id(), cx)
         })
         .expect("moving first after third");
@@ -5594,8 +5595,8 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
     // [b, c, a] -> [a, b, c]
     project
         .update(cx, |project, model, cx| {
-            let third = worktree_a.read(cx);
-            let first = worktree_b.read(cx);
+            let third = worktree_a.read(model, cx);
+            let first = worktree_b.read(model, cx);
             project.move_worktree(third.id(), first.id(), cx)
         })
         .expect("moving third before first");

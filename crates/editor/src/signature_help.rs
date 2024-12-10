@@ -47,9 +47,9 @@ impl Editor {
 
     pub(super) fn hide_signature_help(
         &mut self,
+        signature_help_hidden_by: SignatureHelpHiddenBy,
         model: &Model<Self>,
         cx: &mut AppContext,
-        signature_help_hidden_by: SignatureHelpHiddenBy,
     ) -> bool {
         if self.signature_help_state.is_shown() {
             self.signature_help_state.kill_task();

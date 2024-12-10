@@ -159,7 +159,7 @@ impl Vim {
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
                 // otherwise vim will insert the next text at (or before) the current cursor position,
                 // the cursor will go to the last (or first, if is_multiline) inserted character.
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.replace_cursors_with(|map| {
                         let mut cursors = Vec::new();
                         for (anchor, line_mode, is_multiline) in &new_selections {

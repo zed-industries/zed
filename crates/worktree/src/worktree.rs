@@ -431,16 +431,17 @@ impl Worktree {
             });
 
             let settings = WorktreeSettings::get(settings_location, cx).clone();
-            cx.observe_global::<SettingsStore>(move |this, cx| {
-                if let Self::Local(this) = this {
-                    let settings = WorktreeSettings::get(settings_location, cx).clone();
-                    if this.settings != settings {
-                        this.settings = settings;
-                        this.restart_background_scanners(model, cx);
+            model
+                .observe_global::<SettingsStore>(cx, move |this, model, cx| {
+                    if let Self::Local(this) = this {
+                        let settings = WorktreeSettings::get(settings_location, cx).clone();
+                        if this.settings != settings {
+                            this.settings = settings;
+                            this.restart_background_scanners(model, cx);
+                        }
                     }
-                }
-            })
-            .detach();
+                })
+                .detach();
 
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
             let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
@@ -603,11 +604,7 @@ impl Worktree {
         !self.is_local()
     }
 
-    pub fn settings_location(
-        &self,
-        _: &Model<Self>,
-        _: &AppContext,
-    ) -> SettingsLocation<'staticmodel> {
+    pub fn settings_location(&self, _: &Model<Self>, _: &AppContext) -> SettingsLocation<'static> {
         SettingsLocation {
             worktree_id: self.id(),
             path: Path::new(EMPTY_PATH),
@@ -1110,7 +1107,7 @@ impl LocalWorktree {
         scan_requests_rx: channel::Receiver<ScanRequest>,
         path_prefixes_to_scan_rx: channel::Receiver<Arc<Path>>,
         model: &Model<Worktree>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) {
         let snapshot = self.snapshot();
         let share_private_files = self.share_private_files;
@@ -1567,7 +1564,7 @@ impl LocalWorktree {
                 .update(&mut cx, |this, model, cx| {
                     this.as_local_mut()
                         .unwrap()
-                        .refresh_entry(path.clone(), None, cx)
+                        .refresh_entry(path.clone(), None, model, cx)
                 })?
                 .await?;
             let worktree = this.upgrade().ok_or_else(|| anyhow!("worktree dropped"))?;
@@ -1698,9 +1695,12 @@ impl LocalWorktree {
             rename.await?;
             Ok(this
                 .update(&mut cx, |this, model, cx| {
-                    this.as_local_mut()
-                        .unwrap()
-                        .refresh_entry(new_path.clone(), Some(old_path), cx)
+                    this.as_local_mut().unwrap().refresh_entry(
+                        new_path.clone(),
+                        Some(old_path),
+                        model,
+                        cx,
+                    )
                 })?
                 .await?
                 .map(CreatedEntry::Included)

@@ -66,13 +66,17 @@ impl ChannelBuffer {
             let capability = channel_store.read(cx).channel_capability(channel.id);
             language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
         })?;
-        buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
+        buffer.update(&mut cx, |buffer, model, cx| {
+            buffer.apply_ops(operations, model, cx)
+        })?;
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
         anyhow::Ok(cx.new_model(|model, cx| {
-            cx.subscribe(&buffer, Self::on_buffer_update).detach();
-            cx.on_release(Self::release).detach();
+            model
+                .subscribe(&buffer, cx, Self::on_buffer_update)
+                .detach();
+            model.on_release(cx, Self::release).detach();
             let mut this = Self {
                 buffer,
                 buffer_epoch: response.epoch,
@@ -151,7 +155,7 @@ impl ChannelBuffer {
         this.update(&mut cx, |this, model, cx| {
             model.notify(cx);
             this.buffer
-                .update(cx, |buffer, model, cx| buffer.apply_ops(ops, cx))
+                .update(cx, |buffer, model, cx| buffer.apply_ops(ops, model, cx))
         })?;
 
         Ok(())
@@ -203,14 +207,14 @@ impl ChannelBuffer {
         }
     }
 
-    pub fn acknowledge_buffer_version(&mut self, model: &Model<_>, cx: &mut AppContext) {
+    pub fn acknowledge_buffer_version(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let buffer = self.buffer.read(cx);
         let version = buffer.version();
         let buffer_id = buffer.remote_id().into();
         let client = self.client.clone();
         let epoch = self.epoch();
 
-        self.acknowledge_task = Some(cx.spawn(move |_, cx| async move {
+        self.acknowledge_task = Some(cx.spawn(move |cx| async move {
             cx.background_executor()
                 .timer(ACKNOWLEDGE_DEBOUNCE_INTERVAL)
                 .await;

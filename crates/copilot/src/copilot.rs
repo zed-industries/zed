@@ -66,7 +66,7 @@ pub fn init(
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(new_server_id, http, node_runtime, model, cx)
     });
-    Copilot::set_global(copilot.clone(), model, cx);
+    Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |handle, cx| {
         let copilot_action_types = [
             TypeId::of::<Suggest>(),
@@ -105,21 +105,21 @@ pub fn init(
     cx.on_action(|_: &SignIn, cx| {
         if let Some(copilot) = Copilot::global(cx) {
             copilot
-                .update(cx, |copilot, model, cx| copilot.sign_in(cx))
+                .update(cx, |copilot, model, cx| copilot.sign_in(model, cx))
                 .detach_and_log_err(cx);
         }
     });
     cx.on_action(|_: &SignOut, cx| {
         if let Some(copilot) = Copilot::global(cx) {
             copilot
-                .update(cx, |copilot, model, cx| copilot.sign_out(cx))
+                .update(cx, |copilot, model, cx| copilot.sign_out(model, cx))
                 .detach_and_log_err(cx);
         }
     });
     cx.on_action(|_: &Reinstall, cx| {
         if let Some(copilot) = Copilot::global(cx) {
             copilot
-                .update(cx, |copilot, model, cx| copilot.reinstall(cx))
+                .update(cx, |copilot, model, cx| copilot.reinstall(model, cx))
                 .detach();
         }
     });
@@ -345,9 +345,9 @@ impl Copilot {
             node_runtime,
             server: CopilotServer::Disabled,
             buffers: Default::default(),
-            _subscription: cx.on_app_quit(Self::shutdown_language_server),
+            _subscription: model.on_app_quit(cx, Self::shutdown_language_server),
         };
-        this.enable_or_disable_copilot(cx);
+        this.enable_or_disable_copilot(model, cx);
         cx.observe_global::<SettingsStore>(move |this, cx| this.enable_or_disable_copilot(cx))
             .detach();
         this
@@ -419,7 +419,7 @@ impl Copilot {
                 sign_in_status: SignInStatus::Authorized,
                 registered_buffers: Default::default(),
             }),
-            _subscription: cx.on_app_quit(Self::shutdown_language_server),
+            _subscription: model.on_app_quit(cx, Self::shutdown_language_server),
             buffers: Default::default(),
         });
         (this, fake_server)
@@ -498,7 +498,7 @@ impl Copilot {
                         registered_buffers: Default::default(),
                     });
                     model.emit(cx, Event::CopilotLanguageServerStarted);
-                    this.update_sign_in_status(status, cx);
+                    this.update_sign_in_status(status, model, cx);
                 }
                 Err(error) => {
                     this.server = CopilotServer::Error(error.to_string().into());
@@ -1147,6 +1147,7 @@ mod tests {
                     abs_path: "/root/child/buffer-1".into(),
                     path: Path::new("child/buffer-1").into(),
                 }),
+                model,
                 cx,
             )
         });
@@ -1176,7 +1177,7 @@ mod tests {
             Ok(request::SignOutResult {})
         });
         copilot
-            .update(cx, |copilot, model, cx| copilot.sign_out(cx))
+            .update(cx, |copilot, model, cx| copilot.sign_out(model, cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1201,7 +1202,7 @@ mod tests {
             })
         });
         copilot
-            .update(cx, |copilot, model, cx| copilot.sign_in(cx))
+            .update(cx, |copilot, model, cx| copilot.sign_in(model, cx))
             .await
             .unwrap();
 

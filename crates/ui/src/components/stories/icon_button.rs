@@ -1,4 +1,4 @@
-use gpui::Render;
+use gpui::{Model, Render};
 use story::{Story, StoryItem, StorySection};
 
 use crate::{prelude::*, IconButtonShape, Tooltip};
@@ -65,9 +65,11 @@ impl Render for IconButtonStory {
 
         let with_on_click_button = StoryItem::new(
             "With `on_click`",
-            IconButton::new("with_on_click_button", IconName::Ai).on_click(|_event, _cx| {
-                println!("Clicked!");
-            }),
+            IconButton::new("with_on_click_button", IconName::Ai).on_click(
+                |_event, _window, _cx| {
+                    println!("Clicked!");
+                },
+            ),
         )
         .description("Displays an icon button which triggers an event on click.")
         .usage(

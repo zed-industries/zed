@@ -1,4 +1,4 @@
-use gpui::{actions, AnchorCorner, Render};
+use gpui::{actions, AnchorCorner, Model, Render};
 use story::Story;
 
 use crate::prelude::*;
@@ -10,14 +10,16 @@ fn build_menu(
     header: impl Into<SharedString>,
     window: &mut gpui::Window,
     cx: &mut gpui::AppContext,
-) -> Model<ContextMenu> {
-    ContextMenu::build(cx, window, |window, menu, cx| {
+) -> gpui::Model<ContextMenu> {
+    ContextMenu::build(window, cx, |menu, model, window, cx| {
         menu.header(header)
             .separator()
             .action("Print current time", Box::new(PrintCurrentDate))
-            .entry("Print best food", Some(Box::new(PrintBestFood)), |cx| {
-                cx.dispatch_action(Box::new(PrintBestFood))
-            })
+            .entry(
+                "Print best food",
+                Some(Box::new(PrintBestFood)),
+                |window, cx| window.dispatch_action(Box::new(PrintBestFood), cx),
+            )
     })
 }
 
@@ -31,13 +33,13 @@ impl Render for ContextMenuStory {
         _cx: &mut AppContext,
     ) -> impl IntoElement {
         Story::container()
-            .on_action(|_: &PrintCurrentDate, _| {
+            .on_action(|_: &PrintCurrentDate, _, _| {
                 println!("printing unix time!");
                 if let Ok(unix_time) = std::time::UNIX_EPOCH.elapsed() {
                     println!("Current Unix time is {:?}", unix_time.as_secs());
                 }
             })
-            .on_action(|_: &PrintBestFood, _| {
+            .on_action(|_: &PrintBestFood, _, _| {
                 println!("burrito");
             })
             .flex()
@@ -51,14 +53,14 @@ impl Render for ContextMenuStory {
                     .child(
                         right_click_menu("test2")
                             .trigger(Label::new("TOP LEFT"))
-                            .menu(move |cx| build_menu("top left", window, cx)),
+                            .menu(move |window, cx| build_menu("top left", window, cx)),
                     )
                     .child(
                         right_click_menu("test1")
                             .trigger(Label::new("BOTTOM LEFT"))
                             .anchor(AnchorCorner::BottomLeft)
                             .attach(AnchorCorner::TopLeft)
-                            .menu(move |cx| build_menu("bottom left", window, cx)),
+                            .menu(move |window, cx| build_menu("bottom left", window, cx)),
                     ),
             )
             .child(
@@ -70,14 +72,14 @@ impl Render for ContextMenuStory {
                         right_click_menu("test3")
                             .trigger(Label::new("TOP RIGHT"))
                             .anchor(AnchorCorner::TopRight)
-                            .menu(move |cx| build_menu("top right", window, cx)),
+                            .menu(move |window, cx| build_menu("top right", window, cx)),
                     )
                     .child(
                         right_click_menu("test4")
                             .trigger(Label::new("BOTTOM RIGHT"))
                             .anchor(AnchorCorner::BottomRight)
                             .attach(AnchorCorner::TopRight)
-                            .menu(move |cx| build_menu("bottom right", window, cx)),
+                            .menu(move |window, cx| build_menu("bottom right", window, cx)),
                     ),
             )
     }

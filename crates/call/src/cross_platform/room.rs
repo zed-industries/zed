@@ -146,11 +146,11 @@ impl Room {
             pending_participants: Default::default(),
             pending_call_count: 0,
             client_subscriptions: vec![
-                client.add_message_handler(cx.weak_model(), Self::handle_room_updated)
+                client.add_message_handler(model.downgrade(), Self::handle_room_updated)
             ],
             _subscriptions: vec![
-                cx.on_release(Self::released),
-                cx.on_app_quit(Self::app_will_quit),
+                model.on_release(cx, Self::released),
+                model.on_app_quit(cx, Self::app_will_quit),
             ],
             leave_when_empty: false,
             pending_room_update: None,

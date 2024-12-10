@@ -818,7 +818,7 @@ fn open_log_file(workspace: &mut Workspace, model: &Model<Workspace>, cx: &mut A
 
                         editor.update(cx, |editor, model, cx| {
                             let last_multi_buffer_offset = editor.buffer().read(cx).len(cx);
-                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                                 s.select_ranges(Some(
                                     last_multi_buffer_offset..last_multi_buffer_offset,
                                 ));
@@ -2665,7 +2665,7 @@ mod tests {
         workspace
             .update(cx, |_, model, cx| {
                 editor1.update(cx, |editor, model, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(10), 0)
                             ..DisplayPoint::new(DisplayRow(10), 0)])
                     });
@@ -2695,7 +2695,7 @@ mod tests {
         workspace
             .update(cx, |_, model, cx| {
                 editor3.update(cx, |editor, model, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(12), 0)
                             ..DisplayPoint::new(DisplayRow(12), 0)])
                     });

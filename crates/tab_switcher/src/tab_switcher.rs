@@ -120,7 +120,7 @@ impl TabSwitcher {
             if self.picker.read(cx).delegate.matches.is_empty() {
                 model.emit(cx, DismissEvent)
             } else {
-                cx.dispatch_action(menu::Confirm.boxed_clone());
+                model.dispatch_action(cx, menu::Confirm.boxed_clone());
             }
         }
     }

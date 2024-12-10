@@ -94,7 +94,7 @@ impl YarnPathStore {
             let zip_file: Arc<Path> = Arc::from(zip_file);
             model.spawn(cx, |this, mut cx| async move {
                 let dir = this
-                    .update(&mut cx, |this, _| {
+                    .update(&mut cx, |this, model, _| {
                         this.temp_dirs
                             .get(&zip_file)
                             .map(|temp| temp.path().to_owned())

@@ -258,14 +258,15 @@ fn start_server(
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
     let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
 
-    cx.on_app_quit(move |_| {
-        let mut app_quit_tx = app_quit_tx.clone();
-        async move {
-            log::info!("app quitting. sending signal to server main loop");
-            app_quit_tx.send(()).await.ok();
-        }
-    })
-    .detach();
+    model
+        .on_app_quit(cx, move |_| {
+            let mut app_quit_tx = app_quit_tx.clone();
+            async move {
+                log::info!("app quitting. sending signal to server main loop");
+                app_quit_tx.send(()).await.ok();
+            }
+        })
+        .detach();
 
     cx.spawn(|cx| async move {
         let mut stdin_incoming = listeners.stdin.incoming();

@@ -93,7 +93,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
         }
 
         vim.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 let map = s.display_map();
                 let ranges = ranges
                     .into_iter()
@@ -138,7 +138,7 @@ impl Vim {
                     motion.move_point(map, point, goal, times, &text_layout_details)
                 })
             } else {
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.move_with(|map, selection| {
                         let was_reversed = selection.reversed;
                         let mut current_head = selection.head();
@@ -210,7 +210,7 @@ impl Vim {
         ) -> Option<(DisplayPoint, SelectionGoal)>,
     ) {
         let text_layout_details = editor.text_layout_details(cx);
-        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
             let map = &s.display_map();
             let mut head = s.newest_anchor().head().to_display_point(map);
             let mut tail = s.oldest_anchor().tail().to_display_point(map);
@@ -316,7 +316,7 @@ impl Vim {
             }
 
             self.update_editor(cx, |_, editor, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.move_with(|map, selection| {
                         let mut mut_selection = selection.clone();
 
@@ -383,7 +383,7 @@ impl Vim {
     ) {
         self.update_editor(cx, |_, editor, cx| {
             editor.split_selection_into_lines(&Default::default(), cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
                 });
@@ -401,7 +401,7 @@ impl Vim {
     ) {
         self.update_editor(cx, |_, editor, cx| {
             editor.split_selection_into_lines(&Default::default(), cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
                     (
                         first_non_whitespace(map, false, cursor),
@@ -424,7 +424,7 @@ impl Vim {
 
     pub fn other_end(&mut self, _: &OtherEnd, model: &Model<Self>, cx: &mut AppContext) {
         self.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.move_with(|_, selection| {
                     selection.reversed = !selection.reversed;
                 })
@@ -439,7 +439,7 @@ impl Vim {
             let line_mode = line_mode || editor.selections.line_mode;
 
             editor.transact(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.move_with(|map, selection| {
                         if line_mode {
                             let mut position = selection.head();
@@ -467,7 +467,7 @@ impl Vim {
 
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.move_with(|map, selection| {
                         let mut cursor = selection.head().to_point(map);
 
@@ -543,7 +543,7 @@ impl Vim {
                     }
                 }
 
-                editor.edit(edits, cx);
+                editor.edit(edits, model, cx);
                 editor.change_selections(None, cx, |s| s.select_ranges(stable_anchors));
             });
         });
@@ -648,7 +648,7 @@ impl Vim {
             if direction == Direction::Prev {
                 std::mem::swap(&mut start_selection, &mut end_selection);
             }
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 s.select_ranges([start_selection..end_selection]);
             });
             editor.set_collapse_matches(true);

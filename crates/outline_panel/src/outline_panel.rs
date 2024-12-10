@@ -1479,7 +1479,7 @@ impl OutlinePanel {
         };
 
         if let Some(working_directory) = working_directory {
-            cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
+            model.dispatch_action(cx, workspace::OpenTerminal { working_directory }.boxed_clone())
         }
     }
 

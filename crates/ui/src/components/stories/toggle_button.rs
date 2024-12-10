@@ -1,4 +1,4 @@
-use gpui::Render;
+use gpui::{Render, Model};
 use story::{Story, StoryItem, StorySection};
 
 use crate::{prelude::*, ToggleButton};

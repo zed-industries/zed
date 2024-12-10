@@ -392,7 +392,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         let action = command.action;
         cx.focus(&self.previous_focus_handle);
         self.dismissed(cx);
-        cx.dispatch_action(action);
+        model.dispatch_action(cx, action);
     }
 
     fn render_match(

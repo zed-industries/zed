@@ -115,7 +115,7 @@ impl TaskStore {
             buffer,
             range: start..end,
         };
-        let context_task = store.update(&mut cx, |store, cx| {
+        let context_task = store.update(&mut cx, |store, model, cx| {
             let captured_variables = {
                 let mut variables = TaskVariables::from_iter(
                     envelope
@@ -310,10 +310,13 @@ impl TaskStore {
                     let result = task_store.update_user_tasks(None, Some(&user_tasks_content), cx);
                     if let Err(err) = &result {
                         log::error!("Failed to load user tasks: {err}");
-                        model.emit(cx, crate::Event::Toast {
-                            notification_id: "load-user-tasks".into(),
-                            message: format!("Invalid global tasks file\n{err}"),
-                        });
+                        model.emit(
+                            cx,
+                            crate::Event::Toast {
+                                notification_id: "load-user-tasks".into(),
+                                message: format!("Invalid global tasks file\n{err}"),
+                            },
+                        );
                     }
                     cx.refresh();
                 }) else {

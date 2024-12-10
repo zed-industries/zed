@@ -103,8 +103,8 @@ impl ActiveCall {
             incoming_call: watch::channel(),
             _join_debouncer: OneAtATime { cancel: None },
             _subscriptions: vec![
-                client.add_request_handler(cx.weak_model(), Self::handle_incoming_call),
-                client.add_message_handler(cx.weak_model(), Self::handle_call_canceled),
+                client.add_request_handler(model.downgrade(), Self::handle_incoming_call),
+                client.add_message_handler(model.downgrade(), Self::handle_call_canceled),
             ],
             client,
             user_store,
@@ -407,7 +407,7 @@ impl ActiveCall {
         cx: &mut AppContext,
     ) -> Task<Result<u64>> {
         if let Some((room, _)) = self.room.as_ref() {
-            self.report_call_event("share project", model, cx);
+            self.report_call_event("share project", cx);
             room.update(cx, |room, model, cx| room.share_project(project, model, cx))
         } else {
             Task::ready(Err(anyhow!("no active call")))
@@ -421,7 +421,7 @@ impl ActiveCall {
         cx: &mut AppContext,
     ) -> Result<()> {
         if let Some((room, _)) = self.room.as_ref() {
-            self.report_call_event("unshare project", cx;
+            self.report_call_event("unshare project", cx);
             room.update(cx, |room, model, cx| {
                 room.unshare_project(project, model, cx)
             })

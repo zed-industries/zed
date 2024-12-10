@@ -203,6 +203,7 @@ impl DisplayMap {
                     )
                 })
                 .collect(),
+            model,
             cx,
         );
     }
@@ -2090,6 +2091,7 @@ pub mod tests {
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
                 }],
+                model,
                 cx,
             )
         });
@@ -2149,6 +2151,7 @@ pub mod tests {
                     }],
                     buffer,
                 ),
+                model,
                 cx,
             )
         });
@@ -2197,6 +2200,7 @@ pub mod tests {
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
                 }],
+                model,
                 cx,
             )
         });
@@ -2428,6 +2432,7 @@ pub mod tests {
                     MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
                     FoldPlaceholder::test(),
                 )],
+                model,
                 cx,
             )
         });
@@ -2659,6 +2664,7 @@ pub mod tests {
                 1,
                 0,
                 FoldPlaceholder::test(),
+                model,
                 cx,
             )
         });

@@ -1962,7 +1962,7 @@ mod tests {
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_model_message_handler(
             move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
-                match model.update(&mut cx, |model, _| model.id).unwrap() {
+                match model.update(&mut cx, |model, _, _| model.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
                     _ => unreachable!(),
@@ -2059,14 +2059,14 @@ mod tests {
             model.clone().downgrade(),
             move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, mut cx| {
                 model
-                    .update(&mut cx, |model, _| model.subscription.take())
+                    .update(&mut cx, |this, model, _| this.subscription.take())
                     .unwrap();
                 done_tx.try_send(()).unwrap();
                 async { Ok(()) }
             },
         );
-        model.update(cx, |model, _| {
-            model.subscription = Some(subscription);
+        model.update(cx, |this, model, _| {
+            this.subscription = Some(subscription);
         });
         server.send(proto::Ping {});
         done_rx.next().await.unwrap();

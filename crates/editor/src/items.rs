@@ -150,7 +150,6 @@ impl FollowableItem for Editor {
                     ..Default::default()
                 },
                 &mut model,
-                model,
                 cx,
             )
             .await?;
@@ -583,7 +582,7 @@ impl Item for Editor {
             } else {
                 let nav_history = self.nav_history.take();
                 self.set_scroll_anchor(scroll_anchor, model, cx);
-                self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                self.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.select_ranges([offset..offset])
                 });
                 self.nav_history = nav_history;
@@ -713,7 +712,7 @@ impl Item for Editor {
     where
         Self: Sized,
     {
-        Some(cx.new_model(|model, cx| self.clone(cx)))
+        Some(cx.new_model(|model, cx| self.clone(model, cx)))
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &Model<Self>, _: &mut AppContext) {
@@ -722,7 +721,7 @@ impl Item for Editor {
 
     fn discarded(&self, _project: Model<Project>, model: &Model<Self>, cx: &mut AppContext) {
         for buffer in self.buffer().clone().read(cx).all_buffers() {
-            buffer.update(cx, |buffer, model, cx| buffer.discarded(cx))
+            buffer.update(cx, |buffer, model, cx| buffer.discarded(model, cx))
         }
     }
 
@@ -1266,7 +1265,7 @@ impl SearchableItem for Editor {
 
     fn clear_matches(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if self
-            .clear_background_highlights::<BufferSearchHighlights>(cx)
+            .clear_background_highlights::<BufferSearchHighlights>(model, cx)
             .is_some()
         {
             model.emit(cx, SearchEvent::MatchesInvalidated);
@@ -1307,7 +1306,7 @@ impl SearchableItem for Editor {
     ) {
         if self.has_filtered_search_ranges() {
             self.previous_search_ranges = self
-                .clear_background_highlights::<SearchWithinRange>(cx)
+                .clear_background_highlights::<SearchWithinRange>(model, cx)
                 .map(|(_, ranges)| ranges)
         }
 
@@ -1325,8 +1324,8 @@ impl SearchableItem for Editor {
 
     fn query_suggestion(&mut self, model: &Model<Self>, cx: &mut AppContext) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
-        let snapshot = &self.snapshot(cx).buffer_snapshot;
-        let selection = self.selections.newest::<usize>(model, cx);
+        let snapshot = &self.snapshot(model, cx).buffer_snapshot;
+        let selection = self.selections.newest::<usize>(cx);
 
         match setting {
             SeedQuerySetting::Never => String::new(),
@@ -1363,7 +1362,7 @@ impl SearchableItem for Editor {
     ) {
         self.unfold_ranges(&[matches[index].clone()], false, true, model, cx);
         let range = self.range_for_match(&matches[index]);
-        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
             s.select_ranges([range]);
         })
     }
@@ -1379,7 +1378,7 @@ impl SearchableItem for Editor {
         for m in matches {
             ranges.push(self.range_for_match(m))
         }
-        self.change_selections(None, cx, |s| s.select_ranges(ranges));
+        self.change_selections(None, model, cx, |s| s.select_ranges(ranges));
     }
     fn replace(
         &mut self,
@@ -1399,7 +1398,7 @@ impl SearchableItem for Editor {
         };
 
         if let Some(replacement) = query.replacement_for(&text) {
-            self.transact(cx, |this, cx| {
+            self.transact(model, cx, |this, model, cx| {
                 this.edit([(identifier.clone(), Arc::from(&*replacement))], model, cx);
             });
         }
@@ -1429,7 +1428,7 @@ impl SearchableItem for Editor {
         }
 
         if !edits.is_empty() {
-            self.transact(cx, |this, cx| {
+            self.transact(model, cx, |this, model, cx| {
                 this.edit(edits, model, cx);
             });
         }

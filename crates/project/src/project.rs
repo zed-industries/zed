@@ -610,7 +610,7 @@ impl Project {
     ) -> Model<Self> {
         cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
             let (tx, rx) = mpsc::unbounded();
-            cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
+            cx.spawn(move |this, model, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new_model(|_, _| WorktreeStore::local(false, fs.clone()));
@@ -698,7 +698,7 @@ impl Project {
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 client_subscriptions: Vec::new(),
-                _subscriptions: vec![cx.on_release(Self::release)],
+                _subscriptions: vec![model.on_release(cx, Self::release)],
                 active_entry: None,
                 snippets,
                 languages,
@@ -737,7 +737,7 @@ impl Project {
     ) -> Model<Self> {
         cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
             let (tx, rx) = mpsc::unbounded();
-            cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
+            cx.spawn(move |this, model, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let global_snippets_dir = paths::config_dir().join("snippets");
             let snippets =
@@ -821,8 +821,8 @@ impl Project {
                 client_state: ProjectClientState::Local,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
-                    cx.on_release(Self::release),
-                    cx.on_app_quit(|this, cx| {
+                    model.on_release(cx, Self::release),
+                    model.on_app_quit(cx, |this, model, cx| {
                         let shutdown = this.ssh_client.take().and_then(|client| {
                             client
                                 .read(cx)
@@ -1027,7 +1027,7 @@ impl Project {
             }
 
             let (tx, rx) = mpsc::unbounded();
-            cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
+            cx.spawn(move |this, model, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
 
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -1056,7 +1056,7 @@ impl Project {
                 ssh_client: None,
                 settings_observer: settings_observer.clone(),
                 client_subscriptions: Default::default(),
-                _subscriptions: vec![cx.on_release(Self::release)],
+                _subscriptions: vec![model.on_release(cx, Self::release)],
                 client: client.clone(),
                 client_state: ProjectClientState::Remote {
                     sharing_has_stopped: false,
@@ -1544,7 +1544,7 @@ impl Project {
         let lsp_store = self.lsp_store().downgrade();
         cx.spawn(|_, mut cx| async move {
             let (old_abs_path, new_abs_path) = {
-                let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
+                let root_path = worktree.update(&mut cx, |this, model, _| this.abs_path())?;
                 (root_path.join(&old_path), root_path.join(&new_path))
             };
             LspStore::will_rename_entry(
@@ -1564,7 +1564,7 @@ impl Project {
                 .await?;
 
             lsp_store
-                .update(&mut cx, |this, _| {
+                .update(&mut cx, |this, model, _| {
                     this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
                 })
                 .ok();
@@ -1704,7 +1704,7 @@ impl Project {
 
     pub fn unshare(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Result<()> {
         self.unshare_internal(cx)?;
-        model.notify(cx);
+        model.notify(model, cx);
         Ok(())
     }
 
@@ -1884,7 +1884,7 @@ impl Project {
         let task = self.open_buffer(path.clone(), model, cx);
         cx.spawn(move |_, cx| async move {
             let buffer = task.await?;
-            let project_entry_id = buffer.read_with(&cx, |buffer, cx| {
+            let project_entry_id = buffer.read_with(&cx, |buffer, model, cx| {
                 File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
             })?;
 
@@ -1951,7 +1951,7 @@ impl Project {
                 project_id,
                 id: id.into(),
             });
-            cx.spawn(move |this, mut cx| async move {
+            model.spawn(cx, move |this, mut cx| async move {
                 let buffer_id = BufferId::new(request.await?.buffer_id)?;
                 this.update(&mut cx, |this, model, cx| {
                     this.wait_for_remote_buffer(buffer_id, cx)
@@ -1969,7 +1969,7 @@ impl Project {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let save_tasks = buffers.into_iter().filter_map(|buffer| {
                 this.update(&mut cx, |this, model, cx| this.save_buffer(buffer, cx))
                     .ok()
@@ -2509,7 +2509,7 @@ impl Project {
             delay
         } else {
             if first_insertion {
-                let this = cx.weak_model();
+                let this = model.downgrade();
                 cx.defer(move |cx| {
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, model, cx| {
@@ -2532,7 +2532,7 @@ impl Project {
     }
 
     fn recalculate_buffer_diffs(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Task<()> {
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             loop {
                 let task = this
                     .update(&mut cx, |this, model, cx| {
@@ -3215,7 +3215,7 @@ impl Project {
                 for buffer in matching_buffer_chunk {
                     let buffer = buffer.clone();
                     let query = query.clone();
-                    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+                    let snapshot = buffer.read_with(&cx, |buffer, model, _| buffer.snapshot())?;
                     chunk_results.push(cx.background_executor().spawn(async move {
                         let ranges = query
                             .search(&snapshot, None)
@@ -3343,22 +3343,23 @@ impl Project {
         });
         let guard = self.retain_remotely_created_models(model, cx);
 
-        cx.spawn(move |this, mut cx| async move {
-            let response = request.await?;
-            for buffer_id in response.buffer_ids {
-                let buffer_id = BufferId::new(buffer_id)?;
-                let buffer = this
-                    .update(&mut cx, |this, model, cx| {
-                        this.wait_for_remote_buffer(buffer_id, cx)
-                    })?
-                    .await?;
-                let _ = tx.send(buffer).await;
-            }
+        model
+            .spawn(cx, move |this, mut cx| async move {
+                let response = request.await?;
+                for buffer_id in response.buffer_ids {
+                    let buffer_id = BufferId::new(buffer_id)?;
+                    let buffer = this
+                        .update(&mut cx, |this, model, cx| {
+                            this.wait_for_remote_buffer(buffer_id, cx)
+                        })?
+                        .await?;
+                    let _ = tx.send(buffer).await;
+                }
 
-            drop(guard);
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                drop(guard);
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         rx
     }
 
@@ -4041,7 +4042,7 @@ impl Project {
         envelope: TypedEnvelope<proto::UpdateBuffer>,
         cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        let buffer_store = this.read_with(&cx, |this, cx| {
+        let buffer_store = this.read_with(&cx, |this, model, cx| {
             if let Some(remote_id) = this.remote_id() {
                 let mut payload = envelope.payload.clone();
                 payload.project_id = remote_id;
@@ -4059,7 +4060,7 @@ impl Project {
         envelope: TypedEnvelope<proto::UpdateBuffer>,
         cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        let buffer_store = this.read_with(&cx, |this, cx| {
+        let buffer_store = this.read_with(&cx, |this, model, cx| {
             if let Some(ssh) = &this.ssh_client {
                 let mut payload = envelope.payload.clone();
                 payload.project_id = SSH_PROJECT_ID;
@@ -4102,6 +4103,7 @@ impl Project {
                     envelope,
                     this.replica_id(),
                     this.capability(),
+                    model,
                     cx,
                 )
             })
@@ -4277,7 +4279,7 @@ impl Project {
         };
 
         let client = self.client.clone();
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let (buffers, incomplete_buffer_ids) = this.update(&mut cx, |this, model, cx| {
                 this.buffer_store.read(cx).buffer_version_info(cx)
             })?;

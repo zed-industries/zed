@@ -120,9 +120,9 @@ impl Vim {
                     }
                 }
 
-                editor.edit(edits, cx);
+                editor.edit(edits, model, cx);
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     if mode == Mode::VisualBlock {
                         s.select_anchor_ranges(anchors.into_iter().take(1))
                     } else {
@@ -215,11 +215,11 @@ impl Vim {
                     }
                 }
 
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.select_ranges(anchors);
                 });
                 edits.sort_by_key(|(range, _)| range.start);
-                editor.edit(edits, cx);
+                editor.edit(edits, model, cx);
                 editor.set_clip_at_line_ends(true, cx);
             });
         });
@@ -323,9 +323,9 @@ impl Vim {
                         })
                         .collect::<Vec<_>>();
                     edits.sort_by_key(|(range, _)| range.start);
-                    editor.edit(edits, cx);
+                    editor.edit(edits, model, cx);
                     editor.set_clip_at_line_ends(true, cx);
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                         s.select_anchor_ranges(stable_anchors);
                     });
                 });
@@ -383,7 +383,7 @@ impl Vim {
                             anchors.push(start..start)
                         }
                     }
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                         s.select_ranges(anchors);
                     });
                     editor.set_clip_at_line_ends(true, cx);

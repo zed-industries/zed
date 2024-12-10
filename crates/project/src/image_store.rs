@@ -203,7 +203,7 @@ impl ImageStore {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
-        let this = cx.weak_model();
+        let this = model.downgrade();
         Self {
             state: Box::new(cx.new_model(|model, cx| {
                 let subscription = cx.subscribe(
@@ -294,17 +294,18 @@ impl ImageStore {
                     .state
                     .open_image(project_path.path.clone(), worktree, cx);
 
-                cx.spawn(move |this, mut cx| async move {
-                    let load_result = load_image.await;
-                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _cx| {
-                        // Record the fact that the image is no longer loading.
-                        this.loading_images_by_path.remove(&project_path);
-                        let image = load_result.map_err(Arc::new)?;
-                        Ok(image)
-                    })?);
-                    anyhow::Ok(())
-                })
-                .detach();
+                model
+                    .spawn(cx, move |this, mut cx| async move {
+                        let load_result = load_image.await;
+                        *tx.borrow_mut() = Some(this.update(&mut cx, |this, _cx| {
+                            // Record the fact that the image is no longer loading.
+                            this.loading_images_by_path.remove(&project_path);
+                            let image = load_result.map_err(Arc::new)?;
+                            Ok(image)
+                        })?);
+                        anyhow::Ok(())
+                    })
+                    .detach();
                 rx
             }
         };

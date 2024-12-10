@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::{prelude::*, HighlightedLabel, Label};
-use gpui::{pulsating_between, Animation, AnimationExt, Render};
+use gpui::{pulsating_between, Animation, AnimationExt, Model, Render};
 use story::Story;
 
 pub struct LabelStory;

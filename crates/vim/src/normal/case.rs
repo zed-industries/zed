@@ -96,7 +96,7 @@ impl Vim {
     }
 
     pub fn change_case(&mut self, _: &ChangeCase, model: &Model<Self>, cx: &mut AppContext) {
-        self.manipulate_text(cx, |c| {
+        self.manipulate_text(model, cx, |c| {
             if c.is_lowercase() {
                 c.to_uppercase().collect::<Vec<char>>()
             } else {
@@ -111,7 +111,7 @@ impl Vim {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.manipulate_text(cx, |c| c.to_uppercase().collect::<Vec<char>>())
+        self.manipulate_text(model, cx, |c| c.to_uppercase().collect::<Vec<char>>())
     }
 
     pub fn convert_to_lower_case(
@@ -120,7 +120,7 @@ impl Vim {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.manipulate_text(cx, |c| c.to_lowercase().collect::<Vec<char>>())
+        self.manipulate_text(model, cx, |c| c.to_lowercase().collect::<Vec<char>>())
     }
 
     fn manipulate_text<F>(&mut self, model: &Model<Self>, cx: &mut AppContext, transform: F)
@@ -183,7 +183,7 @@ impl Vim {
                         .collect::<String>();
                     editor.edit([(range, text)], cx)
                 }
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                     s.select_ranges(cursor_positions)
                 })
             });

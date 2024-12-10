@@ -242,7 +242,7 @@ impl LogStore {
                 if let copilot::Event::CopilotLanguageServerStarted = inline_completion_event {
                     if let Some(server) = copilot.read(cx).language_server() {
                         let server_id = server.server_id();
-                        let weak_this = cx.weak_model();
+                        let weak_this = model.downgrade();
                         this.copilot_log_subscription =
                             Some(server.on_notification::<copilot::request::LogMessage, _>(
                                 move |params, mut cx| {

@@ -8,7 +8,7 @@ pub struct ToolStripStory;
 impl Render for ToolStripStory {
     fn render(
         &mut self,
-        model: &Model<Self>,
+        model: &gpui::Model<Self>,
         _window: &mut gpui::Window,
         _cx: &mut AppContext,
     ) -> impl IntoElement {

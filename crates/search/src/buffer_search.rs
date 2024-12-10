@@ -1398,7 +1398,7 @@ mod tests {
 
         let search_bar = cx.new_model(|model, cx| {
             let mut search_bar = BufferSearchBar::new(model, cx);
-            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.set_active_pane_item(Some(&editor), model, cx);
             search_bar.show(model, cx);
             search_bar
         });
@@ -1766,7 +1766,7 @@ mod tests {
 
         let search_bar = window.build_view(cx, |cx| {
             let mut search_bar = BufferSearchBar::new(model, cx);
-            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.set_active_pane_item(Some(&editor), model, cx);
             search_bar.show(model, cx);
             search_bar
         });
@@ -1971,7 +1971,7 @@ mod tests {
 
         let search_bar = cx.new_model(|model, cx| {
             let mut search_bar = BufferSearchBar::new(model, cx);
-            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.set_active_pane_item(Some(&editor), model, cx);
             search_bar.show(model, cx);
             search_bar
         });
@@ -2042,7 +2042,7 @@ mod tests {
 
         let search_bar = cx.new_model(|model, cx| {
             let mut search_bar = BufferSearchBar::new(model, cx);
-            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.set_active_pane_item(Some(&editor), model, cx);
             search_bar.show(model, cx);
             search_bar
         });
@@ -2408,7 +2408,7 @@ mod tests {
     async fn test_find_matches_in_selections_singleton_buffer_multiple_selections(
         cx: &mut TestAppContext,
     ) {
-        init_globals(model, cx);
+        init_globals(cx);
         let buffer = cx.new_model(|model, cx| {
             Buffer::local(
                 r#"
@@ -2428,7 +2428,7 @@ mod tests {
 
         let search_bar = cx.new_model(|model, cx| {
             let mut search_bar = BufferSearchBar::new(model, cx);
-            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.set_active_pane_item(Some(&editor), model, cx);
             search_bar.show(model, cx);
             search_bar
         });
@@ -2512,7 +2512,7 @@ mod tests {
 
         let search_bar = cx.new_model(|model, cx| {
             let mut search_bar = BufferSearchBar::new(model, cx);
-            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.set_active_pane_item(Some(&editor), model, cx);
             search_bar.show(model, cx);
             search_bar
         });
@@ -2532,7 +2532,7 @@ mod tests {
                 replace_enabled: false,
                 selection_search_enabled: true,
             };
-            search_bar.deploy(&deploy, cx);
+            search_bar.deploy(&deploy, model, cx);
         });
 
         cx.run_until_parked();

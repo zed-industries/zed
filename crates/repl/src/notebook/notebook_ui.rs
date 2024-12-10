@@ -303,7 +303,7 @@ impl NotebookEditor {
                                         Tooltip::for_action("Execute all cells", &RunAll, cx)
                                     })
                                     .on_click(|_, cx| {
-                                        cx.dispatch_action(Box::new(RunAll));
+                                        model.dispatch_action(cx, Box::new(RunAll));
                                     }),
                             )
                             .child(
@@ -317,7 +317,7 @@ impl NotebookEditor {
                                     Tooltip::for_action("Clear all outputs", &ClearOutputs, cx)
                                 })
                                 .on_click(|_, cx| {
-                                    cx.dispatch_action(Box::new(ClearOutputs));
+                                    model.dispatch_action(cx, Box::new(ClearOutputs));
                                 }),
                             ),
                     )
@@ -333,7 +333,7 @@ impl NotebookEditor {
                                     Tooltip::for_action("Move cell up", &MoveCellUp, cx)
                                 })
                                 .on_click(|_, cx| {
-                                    cx.dispatch_action(Box::new(MoveCellUp));
+                                    model.dispatch_action(cx, Box::new(MoveCellUp));
                                 }),
                             )
                             .child(
@@ -346,7 +346,7 @@ impl NotebookEditor {
                                     Tooltip::for_action("Move cell down", &MoveCellDown, cx)
                                 })
                                 .on_click(|_, cx| {
-                                    cx.dispatch_action(Box::new(MoveCellDown));
+                                    model.dispatch_action(cx, Box::new(MoveCellDown));
                                 }),
                             ),
                     )
@@ -362,7 +362,7 @@ impl NotebookEditor {
                                     Tooltip::for_action("Add markdown block", &AddMarkdownBlock, cx)
                                 })
                                 .on_click(|_, cx| {
-                                    cx.dispatch_action(Box::new(AddMarkdownBlock));
+                                    model.dispatch_action(cx, Box::new(AddMarkdownBlock));
                                 }),
                             )
                             .child(
@@ -371,7 +371,7 @@ impl NotebookEditor {
                                         Tooltip::for_action("Add code block", &AddCodeBlock, cx)
                                     })
                                     .on_click(|_, cx| {
-                                        cx.dispatch_action(Box::new(AddCodeBlock));
+                                        model.dispatch_action(cx, Box::new(AddCodeBlock));
                                     }),
                             ),
                     ),

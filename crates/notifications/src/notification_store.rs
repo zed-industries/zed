@@ -88,14 +88,14 @@ impl NotificationStore {
                 match status {
                     client::Status::Connected { .. } => {
                         if let Some(task) = this
-                            .update(&mut cx, |this, model, cx| this.handle_connect(cx))
+                            .update(&mut cx, |this, model, cx| this.handle_connect(model, cx))
                             .log_err()?
                         {
                             task.await.log_err()?;
                         }
                     }
                     _ => this
-                        .update(&mut cx, |this, model, cx| this.handle_disconnect(cx))
+                        .update(&mut cx, |this, model, cx| this.handle_disconnect(model, cx))
                         .log_err()?,
                 }
             }
@@ -109,9 +109,9 @@ impl NotificationStore {
             channel_messages: Default::default(),
             _watch_connection_status: watch_connection_status,
             _subscriptions: vec![
-                client.add_message_handler(cx.weak_model(), Self::handle_new_notification),
-                client.add_message_handler(cx.weak_model(), Self::handle_delete_notification),
-                client.add_message_handler(cx.weak_model(), Self::handle_update_notification),
+                client.add_message_handler(model.downgrade(), Self::handle_new_notification),
+                client.add_message_handler(model.downgrade(), Self::handle_delete_notification),
+                client.add_message_handler(model.downgrade(), Self::handle_update_notification),
             ],
             user_store,
             client,
@@ -247,13 +247,13 @@ impl NotificationStore {
                     Notification::from_proto(&notification)
                 {
                     let fetch_message_task = this.channel_store.update(cx, |this, model, cx| {
-                        this.fetch_channel_messages(vec![message_id], cx)
+                        this.fetch_channel_messages(vec![message_id], model, cx)
                     });
 
                     model
                         .spawn(cx, |this, mut cx| async move {
                             let messages = fetch_message_task.await?;
-                            this.update(&mut cx, move |this, cx| {
+                            this.update(&mut cx, move |this, model, cx| {
                                 for message in messages {
                                     this.channel_messages.insert(message_id, message);
                                 }
@@ -319,15 +319,15 @@ impl NotificationStore {
             }
         }
 
-        let (user_store, channel_store) = this.read_with(&cx, |this, _| {
+        let (user_store, channel_store) = this.read_with(&cx, |this, model, _| {
             (this.user_store.clone(), this.channel_store.clone())
         })?;
 
         user_store
-            .update(&mut cx, |store, cx| store.get_users(user_ids, cx))?
+            .update(&mut cx, |store, model, cx| store.get_users(user_ids, cx))?
             .await?;
         let messages = channel_store
-            .update(&mut cx, |store, cx| {
+            .update(&mut cx, |store, model, cx| {
                 store.fetch_channel_messages(message_ids, cx)
             })?
             .await?;

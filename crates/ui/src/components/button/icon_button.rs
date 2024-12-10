@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{AnyElement, DefiniteLength};
+use gpui::{AnyElement, AnyView, DefiniteLength};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
 use crate::{prelude::*, ElevationIndex, SelectableButton};
@@ -122,10 +122,10 @@ impl ButtonCommon for IconButton {
         self
     }
 
-    fn tooltip<F>(mut self, tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F) -> Self
-    where
-        F: 'static + Fn(&mut Window, &mut AppContext) -> AnyElement,
-    {
+    fn tooltip(
+        mut self,
+        tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> AnyView,
+    ) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }

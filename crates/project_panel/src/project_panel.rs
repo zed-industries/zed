@@ -1185,7 +1185,7 @@ impl ProjectPanel {
                         file_stem.map_or(file_name.len(), |file_stem| file_stem.len());
                     self.filename_editor.update(cx, |editor, model, cx| {
                         editor.set_text(file_name, cx);
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                             s.select_ranges([0..selection_end])
                         });
                         editor.focus(cx);
@@ -1996,7 +1996,7 @@ impl ProjectPanel {
                 abs_path.and_then(|path| Some(path.parent()?.to_path_buf()))
             };
             if let Some(working_directory) = working_directory {
-                cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
+                model.dispatch_action(cx, workspace::OpenTerminal { working_directory }.boxed_clone())
             }
         }
     }

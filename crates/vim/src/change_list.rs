@@ -32,7 +32,7 @@ impl Vim {
             return;
         };
         self.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                 let map = s.display_map();
                 s.select_display_ranges(selections.into_iter().map(|a| {
                     let point = a.to_display_point(&map);

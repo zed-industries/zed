@@ -1308,7 +1308,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .child(
                     Button::new("open-selection", "Open")
                         .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
-                        .on_click(|_, cx| cx.dispatch_action(menu::Confirm.boxed_clone())),
+                        .on_click(|_, cx| model.dispatch_action(cx, menu::Confirm.boxed_clone())),
                 )
                 .child(
                     PopoverMenu::new("menu-popover")

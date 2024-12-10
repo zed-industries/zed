@@ -179,7 +179,7 @@ impl Render for WelcomePage {
                                                 this.telemetry.report_app_event(
                                                     "welcome page: sign in to copilot".to_string(),
                                                 );
-                                                copilot::initiate_sign_in(cx);
+                                                copilot::initiate_sign_in(model, cx);
                                             }),
                                         ),
                                     )
@@ -353,11 +353,12 @@ impl WelcomePage {
         cx: &mut AppContext,
     ) -> Model<Self> {
         let this = cx.new_model(|model, cx| {
-            cx.on_release(|this: &mut Self, _, _| {
-                this.telemetry
-                    .report_app_event("welcome page: close".to_string());
-            })
-            .detach();
+            model
+                .on_release(cx, |this: &mut Self, _, _| {
+                    this.telemetry
+                        .report_app_event("welcome page: close".to_string());
+                })
+                .detach();
 
             WelcomePage {
                 focus_handle: window.focus_handle(),

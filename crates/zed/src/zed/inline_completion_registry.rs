@@ -22,21 +22,20 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
             register_backward_compatible_actions(editor, model, cx);
 
             let editor_handle = cx.view().downgrade();
-            cx.on_release({
-                let editor_handle = editor_handle.clone();
-                let editors = editors.clone();
-                move |_, _, _| {
-                    editors.borrow_mut().remove(&editor_handle);
-                }
-            })
-            .detach();
+            model
+                .on_release(cx, {
+                    let editor_handle = editor_handle.clone();
+                    let editors = editors.clone();
+                    move |_, _, _| {
+                        editors.borrow_mut().remove(&editor_handle);
+                    }
+                })
+                .detach();
             editors
                 .borrow_mut()
                 .insert(editor_handle, cx.window_handle());
-            let provider = all_language_settings(None, model, cx)
-                .inline_completions
-                .provider;
-            assign_inline_completion_provider(editor, provider, &telemetry, cx);
+            let provider = all_language_settings(None, cx).inline_completions.provider;
+            assign_inline_completion_provider(editor, provider, &telemetry, model, cx);
         }
     })
     .detach();
@@ -45,7 +44,7 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, model, cx| {
             _ = editor.update(cx, |editor, model, cx| {
-                assign_inline_completion_provider(editor, provider, &telemetry, cx);
+                assign_inline_completion_provider(editor, provider, &telemetry, model, cx);
             })
         });
     }
@@ -57,7 +56,7 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
             for (editor, window) in editors.borrow().iter() {
                 _ = window.update(cx, |_window, model, cx| {
                     _ = editor.update(cx, |editor, model, cx| {
-                        assign_inline_completion_provider(editor, provider, &telemetry, cx);
+                        assign_inline_completion_provider(editor, provider, &telemetry, model, cx);
                     })
                 });
             }
@@ -124,14 +123,14 @@ fn assign_inline_completion_provider(
                 if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                     if buffer.read(cx).file().is_some() {
                         copilot.update(cx, |copilot, model, cx| {
-                            copilot.register_buffer(&buffer, cx);
+                            copilot.register_buffer(&buffer, model, cx);
                         });
                     }
                 }
                 let provider = cx.new_model(|_, _| {
                     CopilotCompletionProvider::new(copilot).with_telemetry(telemetry.clone())
                 });
-                editor.set_inline_completion_provider(Some(provider), cx);
+                editor.set_inline_completion_provider(Some(provider), model, cx);
             }
         }
         language::language_settings::InlineCompletionProvider::Supermaven => {
@@ -139,7 +138,7 @@ fn assign_inline_completion_provider(
                 let provider = cx.new_model(|_, _| {
                     SupermavenCompletionProvider::new(supermaven).with_telemetry(telemetry.clone())
                 });
-                editor.set_inline_completion_provider(Some(provider), cx);
+                editor.set_inline_completion_provider(Some(provider), model, cx);
             }
         }
     }

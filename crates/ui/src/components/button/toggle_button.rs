@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{AnyElement, ClickEvent};
+use gpui::{AnyElement, AnyView, ClickEvent};
 
 use crate::{prelude::*, ButtonLike, ButtonLikeRounding, ElevationIndex};
 
@@ -108,10 +108,10 @@ impl ButtonCommon for ToggleButton {
         self
     }
 
-    fn tooltip<F>(mut self, tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F) -> Self
-    where
-        F: 'static + Fn(&mut Window, &mut AppContext) -> AnyElement,
-    {
+    fn tooltip(
+        mut self,
+        tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> AnyView,
+    ) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }

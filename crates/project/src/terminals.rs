@@ -132,10 +132,10 @@ impl Project {
             None
         };
 
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let python_venv_directory = if let Some(path) = path.clone() {
                 this.update(&mut cx, |this, model, cx| {
-                    this.python_venv_directory(path, settings.detect_venv.clone(), cx)
+                    this.python_venv_directory(path, settings.detect_venv.clone(), model, cx)
                 })?
                 .await
             } else {
@@ -147,7 +147,7 @@ impl Project {
                 TerminalKind::Shell(_) => {
                     if let Some(python_venv_directory) = python_venv_directory {
                         python_venv_activate_command = this
-                            .update(&mut cx, |this, _| {
+                            .update(&mut cx, |this, model, _| {
                                 this.python_activate_command(
                                     &python_venv_directory,
                                     &settings.detect_venv,
@@ -301,7 +301,7 @@ impl Project {
         model: &Model<Project>,
         cx: &AppContext,
     ) -> Task<Option<PathBuf>> {
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             if let Some((worktree, _)) = this
                 .update(&mut cx, |this, model, cx| this.find_worktree(&abs_path, cx))
                 .ok()?
@@ -323,7 +323,7 @@ impl Project {
                 }
             }
             let venv_settings = venv_settings.as_option()?;
-            this.update(&mut cx, move |this, cx| {
+            this.update(&mut cx, move |this, model, cx| {
                 if let Some(path) = this.find_venv_in_worktree(&abs_path, &venv_settings, cx) {
                     return Some(path);
                 }

@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{AnyElement, AppContext, DefiniteLength, Window};
+use gpui::{AnyElement, AnyView, AppContext, DefiniteLength, Window};
 
 use crate::{
     prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, TintColor,
@@ -368,10 +368,10 @@ impl ButtonCommon for Button {
     /// ```
     ///
     /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
-    fn tooltip<F>(mut self, tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F) -> Self
-    where
-        F: 'static + Fn(&mut Window, &mut AppContext) -> AnyElement,
-    {
+    fn tooltip(
+        mut self,
+        tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> AnyView,
+    ) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }

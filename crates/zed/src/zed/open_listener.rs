@@ -236,9 +236,9 @@ pub async fn open_paths_with_positions(
             workspace
                 .update(cx, |_, model, cx| {
                     active_editor.update(cx, |editor, model, cx| {
-                        let snapshot = editor.snapshot(cx).display_snapshot;
+                        let snapshot = editor.snapshot(window, cx).display_snapshot;
                         let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                        editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                        editor.change_selections(Some(Autoscroll::center()), model, cx, |s| {
                             s.select_ranges([point..point])
                         });
                     });
@@ -339,8 +339,8 @@ async fn open_workspaces(
                     env,
                     ..Default::default()
                 };
-                workspace::open_new(open_options, app_state, cx, |workspace, cx| {
-                    Editor::new_file(workspace, &Default::default(), cx)
+                workspace::open_new(open_options, app_state, cx, |workspace, model, cx| {
+                    Editor::new_file(workspace, &Default::default(), model, cx)
                 })
                 .detach();
             })
@@ -472,7 +472,7 @@ async fn open_local_workspace(
                     if paths_with_position.is_empty() {
                         let (done_tx, done_rx) = oneshot::channel();
                         let _subscription = workspace.update(cx, |_, model, cx| {
-                            cx.on_release(move |_, _, _| {
+                            model.on_release(cx, move |_, _, _| {
                                 let _ = done_tx.send(());
                             })
                         });

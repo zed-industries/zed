@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use gpui::Render;
+use gpui::{Model, Render};
 use story::Story;
 
 use crate::{prelude::*, IconButtonShape, TabPosition};

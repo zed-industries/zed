@@ -118,7 +118,7 @@ impl ChannelChat {
             .await?;
 
         let handle = cx.new_model(|model, cx| {
-            cx.on_release(Self::release).detach();
+            model.on_release(cx, Self::release).detach();
             Self {
                 channel_id: channel.id,
                 user_store: user_store.clone(),
@@ -207,7 +207,7 @@ impl ChannelChat {
         let outgoing_messages_lock = self.outgoing_messages_lock.clone();
 
         // todo - handle messages that fail to send (e.g. >1024 chars)
-        Ok(cx.spawn(move |this, mut cx| async move {
+        Ok(model.spawn(cx, move |this, mut cx| async move {
             let outgoing_message_guard = outgoing_messages_lock.lock().await;
             let request = rpc.request(proto::SendChannelMessage {
                 channel_id: channel_id.0,
@@ -222,7 +222,7 @@ impl ChannelChat {
             let id = response.id;
             let message = ChannelMessage::from_proto(response, &user_store, &mut cx).await?;
             this.update(&mut cx, |this, model, cx| {
-                this.insert_messages(SumTree::from_item(message, &()), cx);
+                this.insert_messages(SumTree::from_item(message, &()), model, cx);
                 if this.first_loaded_message_id.is_none() {
                     this.first_loaded_message_id = Some(id);
                 }
@@ -241,10 +241,10 @@ impl ChannelChat {
             channel_id: self.channel_id.0,
             message_id: id,
         });
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             response.await?;
             this.update(&mut cx, |this, model, cx| {
-                this.message_removed(id, cx);
+                this.message_removed(id, model, cx);
             })?;
             Ok(())
         })
@@ -275,7 +275,7 @@ impl ChannelChat {
             nonce: Some(nonce.into()),
             mentions: mentions_to_proto(&message.mentions),
         });
-        Ok(cx.spawn(move |_, _| async move {
+        Ok(cx.spawn(move |_| async move {
             request.await?;
             Ok(())
         }))
@@ -294,7 +294,7 @@ impl ChannelChat {
         let user_store = self.user_store.clone();
         let channel_id = self.channel_id;
         let before_message_id = self.first_loaded_message_id()?;
-        Some(cx.spawn(move |this, mut cx| {
+        Some(model.spawn(cx, move |this, mut cx| {
             async move {
                 let response = rpc
                     .request(proto::GetChannelMessages {
@@ -340,7 +340,7 @@ impl ChannelChat {
     ) -> Option<usize> {
         loop {
             let step = chat
-                .update(&mut cx, |chat, cx| {
+                .update(&mut cx, |chat, model, cx| {
                     if let Some(first_id) = chat.first_loaded_message_id() {
                         if first_id <= message_id {
                             let mut cursor = chat.messages.cursor::<(ChannelMessageId, Count)>(&());
@@ -358,7 +358,7 @@ impl ChannelChat {
                             );
                         }
                     }
-                    ControlFlow::Continue(chat.load_more_messages(cx))
+                    ControlFlow::Continue(chat.load_more_messages(model, cx))
                 })
                 .log_err()?;
             match step {
@@ -452,52 +452,53 @@ impl ChannelChat {
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
         let channel_id = self.channel_id;
-        cx.spawn(move |this, mut cx| {
-            async move {
-                let response = rpc
-                    .request(proto::JoinChannelChat {
-                        channel_id: channel_id.0,
-                    })
-                    .await?;
-                Self::handle_loaded_messages(
-                    this.clone(),
-                    user_store.clone(),
-                    rpc.clone(),
-                    response.messages,
-                    response.done,
-                    &mut cx,
-                )
-                .await?;
-
-                let pending_messages = this.update(&mut cx, |this, _, _| {
-                    this.pending_messages().cloned().collect::<Vec<_>>()
-                })?;
-
-                for pending_message in pending_messages {
-                    let request = rpc.request(proto::SendChannelMessage {
-                        channel_id: channel_id.0,
-                        body: pending_message.body,
-                        mentions: mentions_to_proto(&pending_message.mentions),
-                        nonce: Some(pending_message.nonce.into()),
-                        reply_to_message_id: pending_message.reply_to_message_id,
-                    });
-                    let response = request.await?;
-                    let message = ChannelMessage::from_proto(
-                        response.message.ok_or_else(|| anyhow!("invalid message"))?,
-                        &user_store,
+        model
+            .spawn(cx, move |this, mut cx| {
+                async move {
+                    let response = rpc
+                        .request(proto::JoinChannelChat {
+                            channel_id: channel_id.0,
+                        })
+                        .await?;
+                    Self::handle_loaded_messages(
+                        this.clone(),
+                        user_store.clone(),
+                        rpc.clone(),
+                        response.messages,
+                        response.done,
                         &mut cx,
                     )
                     .await?;
-                    this.update(&mut cx, |this, model, cx| {
-                        this.insert_messages(SumTree::from_item(message, &()), cx);
-                    })?;
-                }
 
-                anyhow::Ok(())
-            }
-            .log_err()
-        })
-        .detach();
+                    let pending_messages = this.update(&mut cx, |this, _, _| {
+                        this.pending_messages().cloned().collect::<Vec<_>>()
+                    })?;
+
+                    for pending_message in pending_messages {
+                        let request = rpc.request(proto::SendChannelMessage {
+                            channel_id: channel_id.0,
+                            body: pending_message.body,
+                            mentions: mentions_to_proto(&pending_message.mentions),
+                            nonce: Some(pending_message.nonce.into()),
+                            reply_to_message_id: pending_message.reply_to_message_id,
+                        });
+                        let response = request.await?;
+                        let message = ChannelMessage::from_proto(
+                            response.message.ok_or_else(|| anyhow!("invalid message"))?,
+                            &user_store,
+                            &mut cx,
+                        )
+                        .await?;
+                        this.update(&mut cx, |this, model, cx| {
+                            this.insert_messages(SumTree::from_item(message, &()), model, cx);
+                        })?;
+                    }
+
+                    anyhow::Ok(())
+                }
+                .log_err()
+            })
+            .detach();
     }
 
     pub fn message_count(&self) -> usize {
@@ -570,7 +571,7 @@ impl ChannelChat {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, model, cx| {
-            this.message_removed(message.payload.message_id, cx)
+            this.message_removed(message.payload.message_id, model, cx)
         })?;
         Ok(())
     }
@@ -594,6 +595,7 @@ impl ChannelChat {
                 message.body,
                 message.mentions,
                 message.edited_at,
+                model,
                 cx,
             )
         })?;
@@ -812,7 +814,7 @@ impl ChannelMessage {
             .collect();
         user_store
             .update(cx, |user_store, model, cx| {
-                user_store.get_users(unique_user_ids, cx)
+                user_store.get_users(unique_user_ids, model, cx)
             })?
             .await?;
 
