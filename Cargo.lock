@@ -6171,6 +6171,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "db",
+ "editor",
  "file_icons",
  "gpui",
  "project",
