@@ -10,7 +10,7 @@ use ui::{
     PopoverMenuHandle, Tooltip,
 };
 
-use crate::context::Context;
+use crate::context::{Context, ContextKind};
 use crate::context_picker::{ContextPicker, ContextPickerDelegate};
 use crate::thread::{RequestKind, Thread};
 use crate::ui::ContextPill;
@@ -26,26 +26,11 @@ pub struct MessageEditor {
 
 impl MessageEditor {
     pub fn new(thread: Model<Thread>, cx: &mut ViewContext<Self>) -> Self {
-        let mut mocked_context = vec![
-            Context {
-                name: "icon.rs".into(),
-                text: "".into(),
-            },
-            Context {
-                name: "decoration.rs".into(),
-                text: "".into(),
-            },
-            Context {
-                name: "something.rs".into(),
-                text: "".into(),
-            },
-        ];
-        for n in 1..=10 {
-            mocked_context.push(Context {
-                name: format!("file{n}.rs").into(),
-                text: "".into(),
-            });
-        }
+        let mocked_context = vec![Context {
+            name: "shape.rs".into(),
+            kind: ContextKind::File,
+            text: "```rs\npub enum Shape {\n    Circle,\n    Square,\n    Triangle,\n}".into(),
+        }];
 
         Self {
             thread,

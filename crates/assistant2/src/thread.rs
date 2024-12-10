@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
 
-use crate::context::Context;
+use crate::context::{Context, ContextKind};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -189,6 +189,29 @@ impl Thread {
                         .content
                         .push(MessageContent::ToolResult(tool_result.clone()));
                 }
+            }
+
+            if let Some(context) = self.context_for_message(message.id) {
+                let mut file_context = String::new();
+
+                for context in context.iter() {
+                    match context.kind {
+                        ContextKind::File => {
+                            file_context.push_str(&context.text);
+                            file_context.push_str("\n");
+                        }
+                    }
+                }
+
+                let mut context_text = String::new();
+                if !file_context.is_empty() {
+                    context_text.push_str("The following files are available:\n");
+                    context_text.push_str(&file_context);
+                }
+
+                request_message
+                    .content
+                    .push(MessageContent::Text(context_text))
             }
 
             if !message.text.is_empty() {

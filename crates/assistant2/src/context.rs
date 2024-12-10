@@ -4,5 +4,11 @@ use gpui::SharedString;
 #[derive(Debug, Clone)]
 pub struct Context {
     pub name: SharedString,
+    pub kind: ContextKind,
     pub text: SharedString,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ContextKind {
+    File,
 }
