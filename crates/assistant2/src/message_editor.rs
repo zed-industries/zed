@@ -182,7 +182,19 @@ impl Render for MessageEditor {
                         self.context
                             .iter()
                             .map(|context| ContextPill::new(context.clone())),
-                    ),
+                    )
+                    .when(!self.context.is_empty(), |parent| {
+                        parent.child(
+                            IconButton::new("remove-all-context", IconName::Eraser)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
+                                .on_click(cx.listener(|this, _event, cx| {
+                                    this.context.clear();
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             )
             .child({
                 let settings = ThemeSettings::get_global(cx);
