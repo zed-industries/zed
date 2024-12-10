@@ -105,7 +105,6 @@ pub struct ProjectPanel {
     // We keep track of the mouse down state on entries so we don't flash the UI
     // in case a user clicks to open a file.
     mouse_down: bool,
-    hovered_entries: HashSet<ProjectEntryId>,
 }
 
 #[derive(Clone, Debug)]
@@ -144,7 +143,6 @@ struct EntryDetails {
     is_marked: bool,
     is_editing: bool,
     is_processing: bool,
-    is_hovered: bool,
     is_cut: bool,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
@@ -403,7 +401,6 @@ impl ProjectPanel {
                 diagnostics: Default::default(),
                 scroll_handle,
                 mouse_down: false,
-                hovered_entries: Default::default(),
             };
             this.update_visible_entries(None, cx);
 
@@ -2801,7 +2798,6 @@ impl ProjectPanel {
                         is_expanded,
                         is_selected: self.selection == Some(selection),
                         is_marked,
-                        is_hovered: self.hovered_entries.contains(&entry.id),
                         is_editing: false,
                         is_processing: false,
                         is_cut: self
@@ -3157,7 +3153,6 @@ impl ProjectPanel {
         let is_active = self
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
-        let is_hovered = details.is_hovered;
 
         let width = self.size(cx);
         let file_name = details.filename.clone();
@@ -3188,14 +3183,6 @@ impl ProjectPanel {
         let dragged_selection = DraggedSelection {
             active_selection: selection,
             marked_selections: selections,
-        };
-
-        let (bg_color, border_color) = match (is_hovered, is_marked || is_active, self.mouse_down) {
-            (true, _, true) => (item_colors.marked_active, item_colors.hover),
-            (true, false, false) => (item_colors.hover, item_colors.hover),
-            (true, true, false) => (item_colors.hover, item_colors.marked_active),
-            (false, true, _) => (item_colors.marked_active, item_colors.marked_active),
-            _ => (item_colors.default, item_colors.default),
         };
 
         div()
@@ -3275,14 +3262,6 @@ impl ProjectPanel {
                     cx.propagate();
                 }),
             )
-            .on_hover(cx.listener(move |this, hover, cx| {
-                if *hover {
-                    this.hovered_entries.insert(entry_id);
-                } else {
-                    this.hovered_entries.remove(&entry_id);
-                }
-                cx.notify();
-            }))
             .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
                 if event.down.button == MouseButton::Right || event.down.first_mouse || show_editor
                 {
@@ -3344,13 +3323,11 @@ impl ProjectPanel {
                 }
             }))
             .cursor_pointer()
-            .bg(bg_color)
-            .border_color(border_color)
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
-                    .selectable(false)
+                    .selected(is_marked || is_active)
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<AnyElement>(
                             div()
@@ -3390,7 +3367,11 @@ impl ProjectPanel {
                                             } else {
                                                 IconDecorationKind::Dot
                                             },
-                                            bg_color,
+                                            if is_marked || is_active {
+                                                item_colors.marked_active
+                                            } else {
+                                                item_colors.default
+                                            },
                                             cx,
                                         )
                                         .color(decoration_color.color(cx))
@@ -3511,6 +3492,19 @@ impl ProjectPanel {
             .border_1()
             .border_r_2()
             .rounded_none()
+            .hover(|style| {
+                if is_active {
+                    style
+                } else {
+                    style.bg(item_colors.hover).border_color(item_colors.hover)
+                }
+            })
+            .when(is_marked || is_active, |this| {
+                this.when(is_marked, |this| {
+                    this.bg(item_colors.marked_active)
+                        .border_color(item_colors.marked_active)
+                })
+            })
             .when(
                 !self.mouse_down && is_active && self.focus_handle.contains_focused(cx),
                 |this| this.border_color(item_colors.focused),
