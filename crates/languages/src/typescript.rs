@@ -21,12 +21,6 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{fs::remove_matching, maybe, ResultExt};
 
-pub(crate) struct TypeScriptPlugin {
-    pub name: &'static str,
-    pub path: &'static str,
-    pub for_extension: Option<&'static str>,
-}
-
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
         TaskTemplate {
@@ -79,11 +73,6 @@ impl TypeScriptLspAdapter {
     const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("typescript-language-server");
-    const DEFAULT_PLUGINS: &'static [TypeScriptPlugin] = &[TypeScriptPlugin {
-        name: "@astrojs/ts-plugin",
-        path: "node_modules/@astrojs/ts-plugin/dist",
-        for_extension: Some("astro"),
-    }];
 
     pub fn new(node: NodeRuntime) -> Self {
         TypeScriptLspAdapter { node }
@@ -98,31 +87,6 @@ impl TypeScriptLspAdapter {
             ".yarn/sdks/typescript/lib"
         } else {
             "node_modules/typescript/lib"
-        }
-    }
-
-    async fn check_installed_extension(
-        &self,
-        extension_installed: Option<&str>,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<bool> {
-        match extension_installed {
-            Some(extension) => {
-                let language_server_path = delegate
-                    .language_server_download_dir(&Self::SERVER_NAME)
-                    .await
-                    .ok_or_else(|| anyhow!("Could not get language server download directory"))?;
-                let extension_path = language_server_path
-                    .ancestors()
-                    .nth(2)
-                    .ok_or_else(|| anyhow!("Invalid language server path structure"))?
-                    .join("extensions")
-                    .join("installed")
-                    .join(extension)
-                    .join("extension.wasm");
-                Ok(extension_path.try_exists()?)
-            }
-            None => Ok(true),
         }
     }
 }
@@ -155,7 +119,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
+        _delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
@@ -178,32 +142,6 @@ impl LspAdapter for TypeScriptLspAdapter {
                 "typescript-language-server",
                 latest_version.server_version.as_str(),
             ));
-        }
-
-        let mut active_plugins = Vec::new();
-        for plugin in Self::DEFAULT_PLUGINS {
-            if self
-                .check_installed_extension(plugin.for_extension, delegate)
-                .await?
-            {
-                let version = self.node.npm_package_latest_version(plugin.name).await?;
-                active_plugins.push((plugin, version));
-            }
-        }
-
-        for (plugin, version) in &active_plugins {
-            if self
-                .node
-                .should_install_npm_package(
-                    plugin.name,
-                    &container_dir.join(plugin.path),
-                    &container_dir,
-                    version,
-                )
-                .await
-            {
-                packages_to_install.push((plugin.name, version.as_str()));
-            }
         }
 
         if !packages_to_install.is_empty() {
@@ -272,26 +210,9 @@ impl LspAdapter for TypeScriptLspAdapter {
     ) -> Result<Option<serde_json::Value>> {
         let tsdk_path = Self::tsdk_path(adapter).await;
 
-        let mut plugins = Vec::new();
-        for plugin in Self::DEFAULT_PLUGINS {
-            if self
-                .check_installed_extension(plugin.for_extension, adapter.as_ref())
-                .await?
-            {
-                plugins.push(json!({
-                    "name": plugin.name,
-                    "location": adapter
-                        .language_server_download_dir(&Self::SERVER_NAME)
-                        .await
-                        .ok_or_else(|| anyhow!("Could not get language server download directory"))?,
-                }));
-            }
-        }
-
         Ok(Some(json!({
             "provideFormatter": true,
             "hostInfo": "zed",
-            "plugins": plugins,
             "tsserver": {
                 "path": tsdk_path,
             },
