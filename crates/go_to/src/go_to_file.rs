@@ -12,7 +12,6 @@ actions!(go_to_file, [Toggle]);
 pub struct GoToFile {
     number_editor: View<Editor>,
     project: Model<Project>,
-    current_text: SharedString,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -41,13 +40,11 @@ impl GoToFile {
             editor
         });
 
-        let current_text = format!("Total files: {}", 10).into();
         let number_editor_change = cx.subscribe(&number_editor, Self::on_number_editor_event);
 
         Self {
             number_editor,
             project,
-            current_text,
             _subscriptions: vec![number_editor_change],
         }
     }
@@ -99,11 +96,11 @@ impl GoToFile {
         let last_char = trimmed.pop()?;
         Some(match last_char {
             'j' => {
-                let num = trimmed.parse().unwrap_or(1);
+                let num = trimmed.parse().ok()?;
                 FileNumber::Relative(num, true)
             }
             'k' => {
-                let num = trimmed.parse().unwrap_or(1);
+                let num = trimmed.parse().ok()?;
                 FileNumber::Relative(num, false)
             }
             _ => input
@@ -139,8 +136,7 @@ impl Render for GoToFile {
                     .px_2()
                     .py_1()
                     .gap_1()
-                    .child(Label::new("File:").color(Color::Muted))
-                    .child(Label::new(self.current_text.clone()).color(Color::Muted)),
+                    .child(Label::new("Go to numbered file").color(Color::Muted)),
             )
     }
 }
