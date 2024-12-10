@@ -691,11 +691,19 @@ List of `string` values
 }
 ```
 
-2. Activate the neighbour tab (prefers the right one, if present):
+2. Activate the right neighbour tab if present:
 
 ```json
 {
   "activate_on_close": "neighbour"
+}
+```
+
+3. Activate the left neighbour tab if present:
+
+```json
+{
+  "activate_on_close": "left_neighbour"
 }
 ```
 
