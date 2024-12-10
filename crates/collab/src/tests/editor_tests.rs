@@ -23,7 +23,7 @@ use language::{
 use multi_buffer::MultiBufferRow;
 use project::{
     project_settings::{InlineBlameSettings, ProjectSettings},
-    SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
@@ -2399,6 +2399,202 @@ fn main() { let foo = other::foo(); }"};
         third_tabbed_other,
         false,
     );
+}
+
+#[gpui::test]
+async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                "test.txt": "one\ntwo\nthree\nfour\nfive",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_path = ProjectPath {
+        worktree_id,
+        path: Arc::from(Path::new(&"test.txt")),
+    };
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    // Client A opens an editor.
+    let editor_a = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path(project_path.clone(), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Client B opens same editor as A.
+    let editor_b = workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path(project_path.clone(), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    // Client A adds breakpoint on line (1)
+    editor_a.update(cx_a, |editor, cx| {
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx);
+    });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
+        editor
+            .dap_store
+            .clone()
+            .unwrap()
+            .read(cx)
+            .breakpoints()
+            .clone()
+    });
+    let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
+        editor
+            .dap_store
+            .clone()
+            .unwrap()
+            .read(cx)
+            .breakpoints()
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints_a.len());
+    assert_eq!(1, breakpoints_a.get(&project_path).unwrap().len());
+    assert_eq!(breakpoints_a, breakpoints_b);
+
+    // Client B adds breakpoint on line(2)
+    editor_b.update(cx_b, |editor, cx| {
+        editor.move_down(&editor::actions::MoveDown, cx);
+        editor.move_down(&editor::actions::MoveDown, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx);
+    });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
+        editor
+            .dap_store
+            .clone()
+            .unwrap()
+            .read(cx)
+            .breakpoints()
+            .clone()
+    });
+    let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
+        editor
+            .dap_store
+            .clone()
+            .unwrap()
+            .read(cx)
+            .breakpoints()
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints_a.len());
+    assert_eq!(breakpoints_a, breakpoints_b);
+    assert_eq!(2, breakpoints_a.get(&project_path).unwrap().len());
+
+    // Client A removes last added breakpoint from client B
+    editor_a.update(cx_a, |editor, cx| {
+        editor.move_down(&editor::actions::MoveDown, cx);
+        editor.move_down(&editor::actions::MoveDown, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx);
+    });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
+        editor
+            .dap_store
+            .clone()
+            .unwrap()
+            .read(cx)
+            .breakpoints()
+            .clone()
+    });
+    let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
+        editor
+            .dap_store
+            .clone()
+            .unwrap()
+            .read(cx)
+            .breakpoints()
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints_a.len());
+    assert_eq!(breakpoints_a, breakpoints_b);
+    assert_eq!(1, breakpoints_a.get(&project_path).unwrap().len());
+
+    // Client B removes first added breakpoint by client A
+    editor_b.update(cx_b, |editor, cx| {
+        editor.move_up(&editor::actions::MoveUp, cx);
+        editor.move_up(&editor::actions::MoveUp, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx);
+    });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
+        editor
+            .dap_store
+            .clone()
+            .unwrap()
+            .read(cx)
+            .breakpoints()
+            .clone()
+    });
+    let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
+        editor
+            .dap_store
+            .clone()
+            .unwrap()
+            .read(cx)
+            .breakpoints()
+            .clone()
+    });
+
+    assert_eq!(0, breakpoints_a.len());
+    assert_eq!(breakpoints_a, breakpoints_b);
+    assert!(breakpoints_a.get(&project_path).is_none());
 }
 
 #[track_caller]

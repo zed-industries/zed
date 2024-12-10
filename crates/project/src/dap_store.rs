@@ -1317,7 +1317,11 @@ impl DapStore {
     ) -> Task<Result<()>> {
         let upstream_client = self.upstream_client();
 
-        let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
+        let mut breakpoint_set = self
+            .breakpoints
+            .get(project_path)
+            .cloned()
+            .unwrap_or_default();
 
         match edit_action {
             BreakpointEditAction::Toggle => {
@@ -1329,6 +1333,13 @@ impl DapStore {
                 breakpoint_set.remove(&breakpoint);
                 breakpoint_set.insert(breakpoint);
             }
+        }
+
+        if breakpoint_set.is_empty() {
+            self.breakpoints.remove(project_path);
+        } else {
+            self.breakpoints
+                .insert(project_path.clone(), breakpoint_set.clone());
         }
 
         cx.notify();
