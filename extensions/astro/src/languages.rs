@@ -35,7 +35,7 @@ impl zed::Extension for AstroExtension {
                     .get_or_insert_with(AstroTypeScriptServer::new);
                 server.language_server_command(language_server_id, worktree)
             }
-            id => Err(format!("Unknown Language Server: {id}").into()),
+            id => Err(format!("Unknown Language Server: {id}")),
         }
     }
     fn language_server_initialization_options(

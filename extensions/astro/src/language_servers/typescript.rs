@@ -56,7 +56,10 @@ impl AstroTypeScriptServer {
 
         let server_path = VTSLS_SERVER_PATH.to_string();
         if !fs::metadata(&server_path).map_or(false, |stat| stat.is_file()) {
-            return Err(format!("VTSLS server not found at expected path: {}", server_path).into());
+            return Err(format!(
+                "VTSLS server not found at expected path: {}",
+                server_path
+            ));
         }
 
         self.typescript_tsdk_path = env::current_dir()
