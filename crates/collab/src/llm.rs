@@ -744,6 +744,8 @@ impl<S> Drop for TokenCountingStream<S> {
                 );
 
                 let properties = json!({
+                    "has_llm_subscription": claims.has_llm_subscription,
+                    "max_monthly_spend_in_cents": claims.max_monthly_spend_in_cents,
                     "plan": match claims.plan {
                         Plan::Free => "free".to_string(),
                         Plan::ZedPro => "zed_pro".to_string(),
