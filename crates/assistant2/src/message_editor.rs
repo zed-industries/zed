@@ -10,19 +10,28 @@ use ui::{
     PopoverMenuHandle, Tooltip,
 };
 
+use crate::context::{Context, ContextKind};
 use crate::context_picker::{ContextPicker, ContextPickerDelegate};
 use crate::thread::{RequestKind, Thread};
+use crate::ui::ContextPill;
 use crate::{Chat, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
     editor: View<Editor>,
+    context: Vec<Context>,
     pub(crate) context_picker_handle: PopoverMenuHandle<Picker<ContextPickerDelegate>>,
     use_tools: bool,
 }
 
 impl MessageEditor {
     pub fn new(thread: Model<Thread>, cx: &mut ViewContext<Self>) -> Self {
+        let mocked_context = vec![Context {
+            name: "shape.rs".into(),
+            kind: ContextKind::File,
+            text: "```rs\npub enum Shape {\n    Circle,\n    Square,\n    Triangle,\n}".into(),
+        }];
+
         Self {
             thread,
             editor: cx.new_view(|cx| {
@@ -31,6 +40,7 @@ impl MessageEditor {
 
                 editor
             }),
+            context: mocked_context,
             context_picker_handle: PopoverMenuHandle::default(),
             use_tools: false,
         }
@@ -62,9 +72,10 @@ impl MessageEditor {
             editor.clear(cx);
             text
         });
+        let context = self.context.drain(..).collect::<Vec<_>>();
 
         self.thread.update(cx, |thread, cx| {
-            thread.insert_user_message(user_message, cx);
+            thread.insert_user_message(user_message, context, cx);
             let mut request = thread.to_completion_request(request_kind, cx);
 
             if self.use_tools {
@@ -158,12 +169,32 @@ impl Render for MessageEditor {
             .p_2()
             .bg(cx.theme().colors().editor_background)
             .child(
-                h_flex().gap_2().child(ContextPicker::new(
-                    cx.view().downgrade(),
-                    IconButton::new("add-context", IconName::Plus)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::Small),
-                )),
+                h_flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(ContextPicker::new(
+                        cx.view().downgrade(),
+                        IconButton::new("add-context", IconName::Plus)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small),
+                    ))
+                    .children(
+                        self.context
+                            .iter()
+                            .map(|context| ContextPill::new(context.clone())),
+                    )
+                    .when(!self.context.is_empty(), |parent| {
+                        parent.child(
+                            IconButton::new("remove-all-context", IconName::Eraser)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
+                                .on_click(cx.listener(|this, _event, cx| {
+                                    this.context.clear();
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             )
             .child({
                 let settings = ThemeSettings::get_global(cx);
