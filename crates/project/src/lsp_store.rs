@@ -6751,12 +6751,11 @@ impl LspStore {
                             match unreg.method.as_str() {
                                 "workspace/didChangeWatchedFiles" => {
                                     this.update(&mut cx, |this, cx| {
-                                        Some(
-                                            this.as_local_mut()?
-                                                .on_lsp_unregister_did_change_watched_files(
-                                                    server_id, &unreg.id, cx,
-                                                ),
-                                        )
+                                        this.as_local_mut()?
+                                            .on_lsp_unregister_did_change_watched_files(
+                                                server_id, &unreg.id, cx,
+                                            );
+                                        Some(())
                                     })?;
                                 }
                                 "textDocument/rename" => {
