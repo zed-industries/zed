@@ -141,10 +141,6 @@ fn handle_size_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if wparam.0 == SIZE_MINIMIZED as usize {
-        return Some(0);
-    }
-
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
     let mut lock = state_ptr.state.borrow_mut();
@@ -153,6 +149,9 @@ fn handle_size_msg(
     lock.renderer.update_drawable_size(new_size);
     let new_size = new_size.to_pixels(scale_factor);
     lock.logical_size = new_size;
+    if wparam.0 == SIZE_MINIMIZED as usize {
+        return Some(0);
+    }
     if let Some(mut callback) = lock.callbacks.resize.take() {
         drop(lock);
         callback(new_size, scale_factor);
