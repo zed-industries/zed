@@ -6648,12 +6648,10 @@ impl LspStore {
                                     if let Some(options) = reg.register_options {
                                         let options = serde_json::from_value(options)?;
                                         this.update(&mut cx, |this, cx| {
-                                            Some(
-                                                this.as_local_mut()?
-                                                    .on_lsp_did_change_watched_files(
-                                                        server_id, &reg.id, options, cx,
-                                                    ),
-                                            )
+                                            this.as_local_mut()?.on_lsp_did_change_watched_files(
+                                                server_id, &reg.id, options, cx,
+                                            );
+                                            Some(())
                                         })?;
                                     }
                                 }
