@@ -160,6 +160,7 @@ pub struct LocalLspStore {
             )>,
         >,
     >,
+    buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     _subscription: gpui::Subscription,
 }
 
@@ -274,7 +275,7 @@ impl LocalLspStore {
             if !code_actions.is_empty()
                 && !(trigger == FormatTrigger::Save && settings.format_on_save == FormatOnSave::Off)
             {
-                LspStore::execute_code_actions_on_servers(
+                Self::execute_code_actions_on_servers(
                     &lsp_store,
                     &adapters_and_servers,
                     code_actions,
@@ -514,7 +515,6 @@ impl LocalLspStore {
         Ok(project_transaction)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn perform_format(
         formatter: &Formatter,
         format_target: &FormatTarget,
@@ -543,7 +543,7 @@ impl LocalLspStore {
 
                     match format_target {
                         FormatTarget::Buffer => Some(FormatOperation::Lsp(
-                            LspStore::format_via_lsp(
+                            Self::format_via_lsp(
                                 &lsp_store,
                                 &buffer.handle,
                                 buffer_abs_path,
@@ -555,7 +555,7 @@ impl LocalLspStore {
                             .context("failed to format via language server")?,
                         )),
                         FormatTarget::Ranges(selections) => Some(FormatOperation::Lsp(
-                            LspStore::format_range_via_lsp(
+                            Self::format_range_via_lsp(
                                 &lsp_store,
                                 &buffer.handle,
                                 selections.as_slice(),
@@ -592,7 +592,7 @@ impl LocalLspStore {
             Formatter::CodeActions(code_actions) => {
                 let code_actions = deserialize_code_actions(code_actions);
                 if !code_actions.is_empty() {
-                    LspStore::execute_code_actions_on_servers(
+                    Self::execute_code_actions_on_servers(
                         &lsp_store,
                         adapters_and_servers,
                         code_actions,
@@ -607,6 +607,124 @@ impl LocalLspStore {
             }
         };
         anyhow::Ok(result)
+    }
+
+    pub async fn format_range_via_lsp(
+        this: &WeakModel<LspStore>,
+        buffer: &Model<Buffer>,
+        selections: &[Selection<Point>],
+        abs_path: &Path,
+        language_server: &Arc<LanguageServer>,
+        settings: &LanguageSettings,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
+        let capabilities = &language_server.capabilities();
+        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
+        if range_formatting_provider.map_or(false, |provider| provider == &OneOf::Left(false)) {
+            return Err(anyhow!(
+                "{} language server does not support range formatting",
+                language_server.name()
+            ));
+        }
+
+        let uri = lsp::Url::from_file_path(abs_path)
+            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
+        let text_document = lsp::TextDocumentIdentifier::new(uri);
+
+        let lsp_edits = {
+            let ranges = selections.into_iter().map(|s| {
+                let start = lsp::Position::new(s.start.row, s.start.column);
+                let end = lsp::Position::new(s.end.row, s.end.column);
+                lsp::Range::new(start, end)
+            });
+
+            let mut edits = None;
+            for range in ranges {
+                if let Some(mut edit) = language_server
+                    .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
+                        text_document: text_document.clone(),
+                        range,
+                        options: lsp_command::lsp_formatting_options(settings),
+                        work_done_progress_params: Default::default(),
+                    })
+                    .await?
+                {
+                    edits.get_or_insert_with(Vec::new).append(&mut edit);
+                }
+            }
+            edits
+        };
+
+        if let Some(lsp_edits) = lsp_edits {
+            this.update(cx, |this, cx| {
+                this.as_local_mut().unwrap().edits_from_lsp(
+                    buffer,
+                    lsp_edits,
+                    language_server.server_id(),
+                    None,
+                    cx,
+                )
+            })?
+            .await
+        } else {
+            Ok(Vec::with_capacity(0))
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn format_via_lsp(
+        this: &WeakModel<LspStore>,
+        buffer: &Model<Buffer>,
+        abs_path: &Path,
+        language_server: &Arc<LanguageServer>,
+        settings: &LanguageSettings,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
+        let uri = lsp::Url::from_file_path(abs_path)
+            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
+        let text_document = lsp::TextDocumentIdentifier::new(uri);
+        let capabilities = &language_server.capabilities();
+
+        let formatting_provider = capabilities.document_formatting_provider.as_ref();
+        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
+
+        let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
+            language_server
+                .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
+                    text_document,
+                    options: lsp_command::lsp_formatting_options(settings),
+                    work_done_progress_params: Default::default(),
+                })
+                .await?
+        } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
+            let buffer_start = lsp::Position::new(0, 0);
+            let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
+            language_server
+                .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
+                    text_document: text_document.clone(),
+                    range: lsp::Range::new(buffer_start, buffer_end),
+                    options: lsp_command::lsp_formatting_options(settings),
+                    work_done_progress_params: Default::default(),
+                })
+                .await?
+        } else {
+            None
+        };
+
+        if let Some(lsp_edits) = lsp_edits {
+            this.update(cx, |this, cx| {
+                this.as_local_mut().unwrap().edits_from_lsp(
+                    buffer,
+                    lsp_edits,
+                    language_server.server_id(),
+                    None,
+                    cx,
+                )
+            })?
+            .await
+        } else {
+            Ok(Vec::with_capacity(0))
+        }
     }
 
     async fn format_via_external_command(
@@ -681,6 +799,606 @@ impl LocalLspStore {
                 .await,
         ))
     }
+
+    async fn try_resolve_code_action(
+        lang_server: &LanguageServer,
+        action: &mut CodeAction,
+    ) -> anyhow::Result<()> {
+        if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
+            && action.lsp_action.data.is_some()
+            && (action.lsp_action.command.is_none() || action.lsp_action.edit.is_none())
+        {
+            action.lsp_action = lang_server
+                .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action.clone())
+                .await?;
+        }
+
+        anyhow::Ok(())
+    }
+
+    fn update_buffer_diagnostics(
+        &mut self,
+        buffer: &Model<Buffer>,
+        server_id: LanguageServerId,
+        version: Option<i32>,
+        mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        cx: &mut ModelContext<LspStore>,
+    ) -> Result<()> {
+        fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
+            Ordering::Equal
+                .then_with(|| b.is_primary.cmp(&a.is_primary))
+                .then_with(|| a.is_disk_based.cmp(&b.is_disk_based))
+                .then_with(|| a.severity.cmp(&b.severity))
+                .then_with(|| a.message.cmp(&b.message))
+        }
+
+        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
+
+        diagnostics.sort_unstable_by(|a, b| {
+            Ordering::Equal
+                .then_with(|| a.range.start.cmp(&b.range.start))
+                .then_with(|| b.range.end.cmp(&a.range.end))
+                .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
+        });
+
+        let mut sanitized_diagnostics = Vec::new();
+        let edits_since_save = Patch::new(
+            snapshot
+                .edits_since::<Unclipped<PointUtf16>>(buffer.read(cx).saved_version())
+                .collect(),
+        );
+        for entry in diagnostics {
+            let start;
+            let end;
+            if entry.diagnostic.is_disk_based {
+                // Some diagnostics are based on files on disk instead of buffers'
+                // current contents. Adjust these diagnostics' ranges to reflect
+                // any unsaved edits.
+                start = edits_since_save.old_to_new(entry.range.start);
+                end = edits_since_save.old_to_new(entry.range.end);
+            } else {
+                start = entry.range.start;
+                end = entry.range.end;
+            }
+
+            let mut range = snapshot.clip_point_utf16(start, Bias::Left)
+                ..snapshot.clip_point_utf16(end, Bias::Right);
+
+            // Expand empty ranges by one codepoint
+            if range.start == range.end {
+                // This will be go to the next boundary when being clipped
+                range.end.column += 1;
+                range.end = snapshot.clip_point_utf16(Unclipped(range.end), Bias::Right);
+                if range.start == range.end && range.end.column > 0 {
+                    range.start.column -= 1;
+                    range.start = snapshot.clip_point_utf16(Unclipped(range.start), Bias::Left);
+                }
+            }
+
+            sanitized_diagnostics.push(DiagnosticEntry {
+                range,
+                diagnostic: entry.diagnostic,
+            });
+        }
+        drop(edits_since_save);
+
+        let set = DiagnosticSet::new(sanitized_diagnostics, &snapshot);
+        buffer.update(cx, |buffer, cx| {
+            buffer.update_diagnostics(server_id, set, cx)
+        });
+        Ok(())
+    }
+
+    fn buffer_snapshot_for_lsp_version(
+        &mut self,
+        buffer: &Model<Buffer>,
+        server_id: LanguageServerId,
+        version: Option<i32>,
+        cx: &AppContext,
+    ) -> Result<TextBufferSnapshot> {
+        const OLD_VERSIONS_TO_RETAIN: i32 = 10;
+
+        if let Some(version) = version {
+            let buffer_id = buffer.read(cx).remote_id();
+            let snapshots = self
+                .buffer_snapshots
+                .get_mut(&buffer_id)
+                .and_then(|m| m.get_mut(&server_id))
+                .ok_or_else(|| {
+                    anyhow!("no snapshots found for buffer {buffer_id} and server {server_id}")
+                })?;
+
+            let found_snapshot = snapshots
+                    .binary_search_by_key(&version, |e| e.version)
+                    .map(|ix| snapshots[ix].snapshot.clone())
+                    .map_err(|_| {
+                        anyhow!("snapshot not found for buffer {buffer_id} server {server_id} at version {version}")
+                    })?;
+
+            snapshots.retain(|snapshot| snapshot.version + OLD_VERSIONS_TO_RETAIN >= version);
+            Ok(found_snapshot)
+        } else {
+            Ok((buffer.read(cx)).text_snapshot())
+        }
+    }
+
+    async fn execute_code_actions_on_servers(
+        this: &WeakModel<LspStore>,
+        adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
+        code_actions: Vec<lsp::CodeActionKind>,
+        buffer: &Model<Buffer>,
+        push_to_history: bool,
+        project_transaction: &mut ProjectTransaction,
+        cx: &mut AsyncAppContext,
+    ) -> Result<(), anyhow::Error> {
+        for (lsp_adapter, language_server) in adapters_and_servers.iter() {
+            let code_actions = code_actions.clone();
+
+            let actions = this
+                .update(cx, move |this, cx| {
+                    let request = GetCodeActions {
+                        range: text::Anchor::MIN..text::Anchor::MAX,
+                        kinds: Some(code_actions),
+                    };
+                    let server = LanguageServerToQuery::Other(language_server.server_id());
+                    this.request_lsp(buffer.clone(), server, request, cx)
+                })?
+                .await?;
+
+            for mut action in actions {
+                Self::try_resolve_code_action(language_server, &mut action)
+                    .await
+                    .context("resolving a formatting code action")?;
+
+                if let Some(edit) = action.lsp_action.edit {
+                    if edit.changes.is_none() && edit.document_changes.is_none() {
+                        continue;
+                    }
+
+                    let new = Self::deserialize_workspace_edit(
+                        this.upgrade().ok_or_else(|| anyhow!("project dropped"))?,
+                        edit,
+                        push_to_history,
+                        lsp_adapter.clone(),
+                        language_server.clone(),
+                        cx,
+                    )
+                    .await?;
+                    project_transaction.0.extend(new.0);
+                }
+
+                if let Some(command) = action.lsp_action.command {
+                    this.update(cx, |this, _| {
+                        if let LspStoreMode::Local(mode) = &mut this.mode {
+                            mode.last_workspace_edits_by_language_server
+                                .remove(&language_server.server_id());
+                        }
+                    })?;
+
+                    language_server
+                        .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
+                            command: command.command,
+                            arguments: command.arguments.unwrap_or_default(),
+                            ..Default::default()
+                        })
+                        .await?;
+
+                    this.update(cx, |this, _| {
+                        if let LspStoreMode::Local(mode) = &mut this.mode {
+                            project_transaction.0.extend(
+                                mode.last_workspace_edits_by_language_server
+                                    .remove(&language_server.server_id())
+                                    .unwrap_or_default()
+                                    .0,
+                            )
+                        }
+                    })?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn deserialize_text_edits(
+        this: Model<LspStore>,
+        buffer_to_edit: Model<Buffer>,
+        edits: Vec<lsp::TextEdit>,
+        push_to_history: bool,
+        _: Arc<CachedLspAdapter>,
+        language_server: Arc<LanguageServer>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Option<Transaction>> {
+        let edits = this
+            .update(cx, |this, cx| {
+                this.as_local_mut().unwrap().edits_from_lsp(
+                    &buffer_to_edit,
+                    edits,
+                    language_server.server_id(),
+                    None,
+                    cx,
+                )
+            })?
+            .await?;
+
+        let transaction = buffer_to_edit.update(cx, |buffer, cx| {
+            buffer.finalize_last_transaction();
+            buffer.start_transaction();
+            for (range, text) in edits {
+                buffer.edit([(range, text)], None, cx);
+            }
+
+            if buffer.end_transaction(cx).is_some() {
+                let transaction = buffer.finalize_last_transaction().unwrap().clone();
+                if !push_to_history {
+                    buffer.forget_transaction(transaction.id);
+                }
+                Some(transaction)
+            } else {
+                None
+            }
+        })?;
+
+        Ok(transaction)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn edits_from_lsp(
+        &mut self,
+        buffer: &Model<Buffer>,
+        lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
+        server_id: LanguageServerId,
+        version: Option<i32>,
+        cx: &mut ModelContext<LspStore>,
+    ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
+        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx);
+        cx.background_executor().spawn(async move {
+            let snapshot = snapshot?;
+            let mut lsp_edits = lsp_edits
+                .into_iter()
+                .map(|edit| (range_from_lsp(edit.range), edit.new_text))
+                .collect::<Vec<_>>();
+            lsp_edits.sort_by_key(|(range, _)| range.start);
+
+            let mut lsp_edits = lsp_edits.into_iter().peekable();
+            let mut edits = Vec::new();
+            while let Some((range, mut new_text)) = lsp_edits.next() {
+                // Clip invalid ranges provided by the language server.
+                let mut range = snapshot.clip_point_utf16(range.start, Bias::Left)
+                    ..snapshot.clip_point_utf16(range.end, Bias::Left);
+
+                // Combine any LSP edits that are adjacent.
+                //
+                // Also, combine LSP edits that are separated from each other by only
+                // a newline. This is important because for some code actions,
+                // Rust-analyzer rewrites the entire buffer via a series of edits that
+                // are separated by unchanged newline characters.
+                //
+                // In order for the diffing logic below to work properly, any edits that
+                // cancel each other out must be combined into one.
+                while let Some((next_range, next_text)) = lsp_edits.peek() {
+                    if next_range.start.0 > range.end {
+                        if next_range.start.0.row > range.end.row + 1
+                            || next_range.start.0.column > 0
+                            || snapshot.clip_point_utf16(
+                                Unclipped(PointUtf16::new(range.end.row, u32::MAX)),
+                                Bias::Left,
+                            ) > range.end
+                        {
+                            break;
+                        }
+                        new_text.push('\n');
+                    }
+                    range.end = snapshot.clip_point_utf16(next_range.end, Bias::Left);
+                    new_text.push_str(next_text);
+                    lsp_edits.next();
+                }
+
+                // For multiline edits, perform a diff of the old and new text so that
+                // we can identify the changes more precisely, preserving the locations
+                // of any anchors positioned in the unchanged regions.
+                if range.end.row > range.start.row {
+                    let mut offset = range.start.to_offset(&snapshot);
+                    let old_text = snapshot.text_for_range(range).collect::<String>();
+
+                    let diff = TextDiff::from_lines(old_text.as_str(), &new_text);
+                    let mut moved_since_edit = true;
+                    for change in diff.iter_all_changes() {
+                        let tag = change.tag();
+                        let value = change.value();
+                        match tag {
+                            ChangeTag::Equal => {
+                                offset += value.len();
+                                moved_since_edit = true;
+                            }
+                            ChangeTag::Delete => {
+                                let start = snapshot.anchor_after(offset);
+                                let end = snapshot.anchor_before(offset + value.len());
+                                if moved_since_edit {
+                                    edits.push((start..end, String::new()));
+                                } else {
+                                    edits.last_mut().unwrap().0.end = end;
+                                }
+                                offset += value.len();
+                                moved_since_edit = false;
+                            }
+                            ChangeTag::Insert => {
+                                if moved_since_edit {
+                                    let anchor = snapshot.anchor_after(offset);
+                                    edits.push((anchor..anchor, value.to_string()));
+                                } else {
+                                    edits.last_mut().unwrap().1.push_str(value);
+                                }
+                                moved_since_edit = false;
+                            }
+                        }
+                    }
+                } else if range.end == range.start {
+                    let anchor = snapshot.anchor_after(range.start);
+                    edits.push((anchor..anchor, new_text));
+                } else {
+                    let edit_start = snapshot.anchor_after(range.start);
+                    let edit_end = snapshot.anchor_before(range.end);
+                    edits.push((edit_start..edit_end, new_text));
+                }
+            }
+
+            Ok(edits)
+        })
+    }
+
+    pub(crate) async fn deserialize_workspace_edit(
+        this: Model<LspStore>,
+        edit: lsp::WorkspaceEdit,
+        push_to_history: bool,
+        lsp_adapter: Arc<CachedLspAdapter>,
+        language_server: Arc<LanguageServer>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<ProjectTransaction> {
+        let fs = this.read_with(cx, |this, _| this.as_local().unwrap().fs.clone())?;
+
+        let mut operations = Vec::new();
+        if let Some(document_changes) = edit.document_changes {
+            match document_changes {
+                lsp::DocumentChanges::Edits(edits) => {
+                    operations.extend(edits.into_iter().map(lsp::DocumentChangeOperation::Edit))
+                }
+                lsp::DocumentChanges::Operations(ops) => operations = ops,
+            }
+        } else if let Some(changes) = edit.changes {
+            operations.extend(changes.into_iter().map(|(uri, edits)| {
+                lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                    text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                        uri,
+                        version: None,
+                    },
+                    edits: edits.into_iter().map(Edit::Plain).collect(),
+                })
+            }));
+        }
+
+        let mut project_transaction = ProjectTransaction::default();
+        for operation in operations {
+            match operation {
+                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
+                    let abs_path = op
+                        .uri
+                        .to_file_path()
+                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+
+                    if let Some(parent_path) = abs_path.parent() {
+                        fs.create_dir(parent_path).await?;
+                    }
+                    if abs_path.ends_with("/") {
+                        fs.create_dir(&abs_path).await?;
+                    } else {
+                        fs.create_file(
+                            &abs_path,
+                            op.options
+                                .map(|options| fs::CreateOptions {
+                                    overwrite: options.overwrite.unwrap_or(false),
+                                    ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+                                })
+                                .unwrap_or_default(),
+                        )
+                        .await?;
+                    }
+                }
+
+                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(op)) => {
+                    let source_abs_path = op
+                        .old_uri
+                        .to_file_path()
+                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                    let target_abs_path = op
+                        .new_uri
+                        .to_file_path()
+                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                    fs.rename(
+                        &source_abs_path,
+                        &target_abs_path,
+                        op.options
+                            .map(|options| fs::RenameOptions {
+                                overwrite: options.overwrite.unwrap_or(false),
+                                ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+                            })
+                            .unwrap_or_default(),
+                    )
+                    .await?;
+                }
+
+                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
+                    let abs_path = op
+                        .uri
+                        .to_file_path()
+                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                    let options = op
+                        .options
+                        .map(|options| fs::RemoveOptions {
+                            recursive: options.recursive.unwrap_or(false),
+                            ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
+                        })
+                        .unwrap_or_default();
+                    if abs_path.ends_with("/") {
+                        fs.remove_dir(&abs_path, options).await?;
+                    } else {
+                        fs.remove_file(&abs_path, options).await?;
+                    }
+                }
+
+                lsp::DocumentChangeOperation::Edit(op) => {
+                    let buffer_to_edit = this
+                        .update(cx, |this, cx| {
+                            this.open_local_buffer_via_lsp(
+                                op.text_document.uri.clone(),
+                                language_server.server_id(),
+                                lsp_adapter.name.clone(),
+                                cx,
+                            )
+                        })?
+                        .await?;
+
+                    let edits = this
+                        .update(cx, |this, cx| {
+                            let path = buffer_to_edit.read(cx).project_path(cx);
+                            let active_entry = this.active_entry;
+                            let is_active_entry = path.clone().map_or(false, |project_path| {
+                                this.worktree_store
+                                    .read(cx)
+                                    .entry_for_path(&project_path, cx)
+                                    .map_or(false, |entry| Some(entry.id) == active_entry)
+                            });
+                            let local = this.as_local_mut().unwrap();
+
+                            let (mut edits, mut snippet_edits) = (vec![], vec![]);
+                            for edit in op.edits {
+                                match edit {
+                                    Edit::Plain(edit) => edits.push(edit),
+                                    Edit::Annotated(edit) => edits.push(edit.text_edit),
+                                    Edit::Snippet(edit) => {
+                                        let Ok(snippet) = Snippet::parse(&edit.snippet.value)
+                                        else {
+                                            continue;
+                                        };
+
+                                        if is_active_entry {
+                                            snippet_edits.push((edit.range, snippet));
+                                        } else {
+                                            // Since this buffer is not focused, apply a normal edit.
+                                            edits.push(TextEdit {
+                                                range: edit.range,
+                                                new_text: snippet.text,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            if !snippet_edits.is_empty() {
+                                let buffer_id = buffer_to_edit.read(cx).remote_id();
+                                let version = if let Some(buffer_version) = op.text_document.version
+                                {
+                                    local
+                                        .buffer_snapshot_for_lsp_version(
+                                            &buffer_to_edit,
+                                            language_server.server_id(),
+                                            Some(buffer_version),
+                                            cx,
+                                        )
+                                        .ok()
+                                        .map(|snapshot| snapshot.version)
+                                } else {
+                                    Some(buffer_to_edit.read(cx).saved_version().clone())
+                                };
+
+                                let most_recent_edit = version.and_then(|version| {
+                                    version.iter().max_by_key(|timestamp| timestamp.value)
+                                });
+                                // Check if the edit that triggered that edit has been made by this participant.
+
+                                if let Some(most_recent_edit) = most_recent_edit {
+                                    cx.emit(LspStoreEvent::SnippetEdit {
+                                        buffer_id,
+                                        edits: snippet_edits,
+                                        most_recent_edit,
+                                    });
+                                }
+                            }
+
+                            local.edits_from_lsp(
+                                &buffer_to_edit,
+                                edits,
+                                language_server.server_id(),
+                                op.text_document.version,
+                                cx,
+                            )
+                        })?
+                        .await?;
+
+                    let transaction = buffer_to_edit.update(cx, |buffer, cx| {
+                        buffer.finalize_last_transaction();
+                        buffer.start_transaction();
+                        for (range, text) in edits {
+                            buffer.edit([(range, text)], None, cx);
+                        }
+                        let transaction = if buffer.end_transaction(cx).is_some() {
+                            let transaction = buffer.finalize_last_transaction().unwrap().clone();
+                            if !push_to_history {
+                                buffer.forget_transaction(transaction.id);
+                            }
+                            Some(transaction)
+                        } else {
+                            None
+                        };
+
+                        transaction
+                    })?;
+                    if let Some(transaction) = transaction {
+                        project_transaction.0.insert(buffer_to_edit, transaction);
+                    }
+                }
+            }
+        }
+
+        Ok(project_transaction)
+    }
+
+    async fn on_lsp_workspace_edit(
+        this: WeakModel<LspStore>,
+        params: lsp::ApplyWorkspaceEditParams,
+        server_id: LanguageServerId,
+        adapter: Arc<CachedLspAdapter>,
+        mut cx: AsyncAppContext,
+    ) -> Result<lsp::ApplyWorkspaceEditResponse> {
+        let this = this
+            .upgrade()
+            .ok_or_else(|| anyhow!("project project closed"))?;
+        let language_server = this
+            .update(&mut cx, |this, _| this.language_server_for_id(server_id))?
+            .ok_or_else(|| anyhow!("language server not found"))?;
+        let transaction = Self::deserialize_workspace_edit(
+            this.clone(),
+            params.edit,
+            true,
+            adapter.clone(),
+            language_server.clone(),
+            &mut cx,
+        )
+        .await
+        .log_err();
+        this.update(&mut cx, |this, _| {
+            if let Some(transaction) = transaction {
+                this.as_local_mut()
+                    .unwrap()
+                    .last_workspace_edits_by_language_server
+                    .insert(server_id, transaction);
+            }
+        })?;
+        Ok(lsp::ApplyWorkspaceEditResponse {
+            applied: true,
+            failed_change: None,
+            failure_reason: None,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -719,7 +1437,6 @@ pub struct LspStore {
     buffer_store: Model<BufferStore>,
     worktree_store: Model<WorktreeStore>,
     toolchain_store: Option<Model<ToolchainStore>>,
-    buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     pub languages: Arc<LanguageRegistry>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     pub language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
@@ -906,6 +1623,7 @@ impl LspStore {
                 language_server_watcher_registrations: Default::default(),
                 current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 buffers_being_formatted: Default::default(),
+                buffer_snapshots: Default::default(),
                 prettier_store,
                 environment,
                 http_client,
@@ -926,7 +1644,6 @@ impl LspStore {
             language_server_ids: Default::default(),
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().gen(),
-            buffer_snapshots: Default::default(),
             diagnostic_summaries: Default::default(),
             active_entry: None,
 
@@ -983,7 +1700,6 @@ impl LspStore {
             language_server_ids: Default::default(),
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().gen(),
-            buffer_snapshots: Default::default(),
             diagnostic_summaries: Default::default(),
             active_entry: None,
             toolchain_store,
@@ -1126,7 +1842,6 @@ impl LspStore {
         buffer.update(cx, |buffer, _| {
             buffer.set_language_registry(self.languages.clone())
         });
-        self.initialize_buffer_diagnostics(buffer, cx);
 
         cx.subscribe(buffer, |this, buffer, event, cx| {
             this.on_buffer_event(buffer, event, cx);
@@ -1521,100 +2236,6 @@ impl LspStore {
         cx.notify();
     }
 
-    pub async fn execute_code_actions_on_servers(
-        this: &WeakModel<LspStore>,
-        adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
-        code_actions: Vec<lsp::CodeActionKind>,
-        buffer: &Model<Buffer>,
-        push_to_history: bool,
-        project_transaction: &mut ProjectTransaction,
-        cx: &mut AsyncAppContext,
-    ) -> Result<(), anyhow::Error> {
-        for (lsp_adapter, language_server) in adapters_and_servers.iter() {
-            let code_actions = code_actions.clone();
-
-            let actions = this
-                .update(cx, move |this, cx| {
-                    let request = GetCodeActions {
-                        range: text::Anchor::MIN..text::Anchor::MAX,
-                        kinds: Some(code_actions),
-                    };
-                    let server = LanguageServerToQuery::Other(language_server.server_id());
-                    this.request_lsp(buffer.clone(), server, request, cx)
-                })?
-                .await?;
-
-            for mut action in actions {
-                Self::try_resolve_code_action(language_server, &mut action)
-                    .await
-                    .context("resolving a formatting code action")?;
-
-                if let Some(edit) = action.lsp_action.edit {
-                    if edit.changes.is_none() && edit.document_changes.is_none() {
-                        continue;
-                    }
-
-                    let new = Self::deserialize_workspace_edit(
-                        this.upgrade().ok_or_else(|| anyhow!("project dropped"))?,
-                        edit,
-                        push_to_history,
-                        lsp_adapter.clone(),
-                        language_server.clone(),
-                        cx,
-                    )
-                    .await?;
-                    project_transaction.0.extend(new.0);
-                }
-
-                if let Some(command) = action.lsp_action.command {
-                    this.update(cx, |this, _| {
-                        if let LspStoreMode::Local(mode) = &mut this.mode {
-                            mode.last_workspace_edits_by_language_server
-                                .remove(&language_server.server_id());
-                        }
-                    })?;
-
-                    language_server
-                        .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                            command: command.command,
-                            arguments: command.arguments.unwrap_or_default(),
-                            ..Default::default()
-                        })
-                        .await?;
-
-                    this.update(cx, |this, _| {
-                        if let LspStoreMode::Local(mode) = &mut this.mode {
-                            project_transaction.0.extend(
-                                mode.last_workspace_edits_by_language_server
-                                    .remove(&language_server.server_id())
-                                    .unwrap_or_default()
-                                    .0,
-                            )
-                        }
-                    })?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn try_resolve_code_action(
-        lang_server: &LanguageServer,
-        action: &mut CodeAction,
-    ) -> anyhow::Result<()> {
-        if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
-            && action.lsp_action.data.is_some()
-            && (action.lsp_action.command.is_none() || action.lsp_action.edit.is_none())
-        {
-            action.lsp_action = lang_server
-                .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action.clone())
-                .await?;
-        }
-
-        anyhow::Ok(())
-    }
-
     pub fn apply_code_action(
         &self,
         buffer_handle: Model<Buffer>,
@@ -1652,12 +2273,12 @@ impl LspStore {
                 return Task::ready(Ok(Default::default()));
             };
             cx.spawn(move |this, mut cx| async move {
-                Self::try_resolve_code_action(&lang_server, &mut action)
+                LocalLspStore::try_resolve_code_action(&lang_server, &mut action)
                     .await
                     .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit {
                     if edit.changes.is_some() || edit.document_changes.is_some() {
-                        return Self::deserialize_workspace_edit(
+                        return LocalLspStore::deserialize_workspace_edit(
                             this.upgrade().ok_or_else(|| anyhow!("no app present"))?,
                             edit,
                             push_to_history,
@@ -1909,111 +2530,6 @@ impl LspStore {
             cx,
         )
     }
-
-    pub async fn format_via_lsp(
-        this: &WeakModel<Self>,
-        buffer: &Model<Buffer>,
-        abs_path: &Path,
-        language_server: &Arc<LanguageServer>,
-        settings: &LanguageSettings,
-        cx: &mut AsyncAppContext,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
-        let uri = lsp::Url::from_file_path(abs_path)
-            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
-        let text_document = lsp::TextDocumentIdentifier::new(uri);
-        let capabilities = &language_server.capabilities();
-
-        let formatting_provider = capabilities.document_formatting_provider.as_ref();
-        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
-
-        let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            language_server
-                .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
-                    text_document,
-                    options: lsp_command::lsp_formatting_options(settings),
-                    work_done_progress_params: Default::default(),
-                })
-                .await?
-        } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            let buffer_start = lsp::Position::new(0, 0);
-            let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
-            language_server
-                .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
-                    text_document: text_document.clone(),
-                    range: lsp::Range::new(buffer_start, buffer_end),
-                    options: lsp_command::lsp_formatting_options(settings),
-                    work_done_progress_params: Default::default(),
-                })
-                .await?
-        } else {
-            None
-        };
-
-        if let Some(lsp_edits) = lsp_edits {
-            this.update(cx, |this, cx| {
-                this.edits_from_lsp(buffer, lsp_edits, language_server.server_id(), None, cx)
-            })?
-            .await
-        } else {
-            Ok(Vec::with_capacity(0))
-        }
-    }
-    pub async fn format_range_via_lsp(
-        this: &WeakModel<Self>,
-        buffer: &Model<Buffer>,
-        selections: &[Selection<Point>],
-        abs_path: &Path,
-        language_server: &Arc<LanguageServer>,
-        settings: &LanguageSettings,
-        cx: &mut AsyncAppContext,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
-        let capabilities = &language_server.capabilities();
-        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
-        if range_formatting_provider.map_or(false, |provider| provider == &OneOf::Left(false)) {
-            return Err(anyhow!(
-                "{} language server does not support range formatting",
-                language_server.name()
-            ));
-        }
-
-        let uri = lsp::Url::from_file_path(abs_path)
-            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
-        let text_document = lsp::TextDocumentIdentifier::new(uri);
-
-        let lsp_edits = {
-            let ranges = selections.into_iter().map(|s| {
-                let start = lsp::Position::new(s.start.row, s.start.column);
-                let end = lsp::Position::new(s.end.row, s.end.column);
-                lsp::Range::new(start, end)
-            });
-
-            let mut edits = None;
-            for range in ranges {
-                if let Some(mut edit) = language_server
-                    .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
-                        text_document: text_document.clone(),
-                        range,
-                        options: lsp_command::lsp_formatting_options(settings),
-                        work_done_progress_params: Default::default(),
-                    })
-                    .await?
-                {
-                    edits.get_or_insert_with(Vec::new).append(&mut edit);
-                }
-            }
-            edits
-        };
-
-        if let Some(lsp_edits) = lsp_edits {
-            this.update(cx, |this, cx| {
-                this.edits_from_lsp(buffer, lsp_edits, language_server.server_id(), None, cx)
-            })?
-            .await
-        } else {
-            Ok(Vec::with_capacity(0))
-        }
-    }
-
     pub fn code_actions(
         &mut self,
         buffer_handle: &Model<Buffer>,
@@ -2494,7 +3010,7 @@ impl LspStore {
                 if let Some(edits) = additional_text_edits {
                     let edits = this
                         .update(&mut cx, |this, cx| {
-                            this.edits_from_lsp(
+                            this.as_local_mut().unwrap().edits_from_lsp(
                                 &buffer_handle,
                                 edits,
                                 lang_server.server_id(),
@@ -2982,6 +3498,8 @@ impl LspStore {
             let language_server = language_server.clone();
 
             let buffer_snapshots = self
+                .as_local_mut()
+                .unwrap()
                 .buffer_snapshots
                 .get_mut(&buffer.remote_id())
                 .and_then(|m| m.get_mut(&language_server.server_id()))?;
@@ -3398,7 +3916,9 @@ impl LspStore {
                         version: 0,
                         snapshot: initial_snapshot.clone(),
                     };
-                    self.buffer_snapshots
+                    self.as_local_mut()
+                        .unwrap()
+                        .buffer_snapshots
                         .entry(buffer_id)
                         .or_default()
                         .insert(server.server_id(), vec![snapshot]);
@@ -3432,7 +3952,10 @@ impl LspStore {
                 }
             }
 
-            self.buffer_snapshots.remove(&buffer.remote_id());
+            self.as_local_mut()
+                .unwrap()
+                .buffer_snapshots
+                .remove(&buffer.remote_id());
             let file_url = lsp::Url::from_file_path(old_path).unwrap();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
                 language_server
@@ -3467,7 +3990,13 @@ impl LspStore {
         };
 
         if let Some(buffer) = self.buffer_store.read(cx).get_by_path(&project_path, cx) {
-            self.update_buffer_diagnostics(&buffer, server_id, version, diagnostics.clone(), cx)?;
+            self.as_local_mut().unwrap().update_buffer_diagnostics(
+                &buffer,
+                server_id,
+                version,
+                diagnostics.clone(),
+                cx,
+            )?;
         }
 
         let updated = worktree.update(cx, |worktree, cx| {
@@ -3694,106 +4223,6 @@ impl LspStore {
                 })?
                 .await
         })
-    }
-
-    fn initialize_buffer_diagnostics(
-        &mut self,
-        buffer_handle: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let buffer = buffer_handle.read(cx);
-        let Some(file) = File::from_dyn(buffer.file()) else {
-            return;
-        };
-        if !file.is_local() {
-            return;
-        };
-
-        let Some(diagnostics) = self
-            .as_local()
-            .unwrap()
-            .diagnostics
-            .get(&file.worktree_id(cx))
-        else {
-            return;
-        };
-        for (server_id, diagnostics) in diagnostics.get(file.path()).cloned().unwrap_or_default() {
-            self.update_buffer_diagnostics(buffer_handle, server_id, None, diagnostics, cx)
-                .log_err();
-        }
-    }
-
-    fn update_buffer_diagnostics(
-        &mut self,
-        buffer: &Model<Buffer>,
-        server_id: LanguageServerId,
-        version: Option<i32>,
-        mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
-            Ordering::Equal
-                .then_with(|| b.is_primary.cmp(&a.is_primary))
-                .then_with(|| a.is_disk_based.cmp(&b.is_disk_based))
-                .then_with(|| a.severity.cmp(&b.severity))
-                .then_with(|| a.message.cmp(&b.message))
-        }
-
-        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
-
-        diagnostics.sort_unstable_by(|a, b| {
-            Ordering::Equal
-                .then_with(|| a.range.start.cmp(&b.range.start))
-                .then_with(|| b.range.end.cmp(&a.range.end))
-                .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
-        });
-
-        let mut sanitized_diagnostics = Vec::new();
-        let edits_since_save = Patch::new(
-            snapshot
-                .edits_since::<Unclipped<PointUtf16>>(buffer.read(cx).saved_version())
-                .collect(),
-        );
-        for entry in diagnostics {
-            let start;
-            let end;
-            if entry.diagnostic.is_disk_based {
-                // Some diagnostics are based on files on disk instead of buffers'
-                // current contents. Adjust these diagnostics' ranges to reflect
-                // any unsaved edits.
-                start = edits_since_save.old_to_new(entry.range.start);
-                end = edits_since_save.old_to_new(entry.range.end);
-            } else {
-                start = entry.range.start;
-                end = entry.range.end;
-            }
-
-            let mut range = snapshot.clip_point_utf16(start, Bias::Left)
-                ..snapshot.clip_point_utf16(end, Bias::Right);
-
-            // Expand empty ranges by one codepoint
-            if range.start == range.end {
-                // This will be go to the next boundary when being clipped
-                range.end.column += 1;
-                range.end = snapshot.clip_point_utf16(Unclipped(range.end), Bias::Right);
-                if range.start == range.end && range.end.column > 0 {
-                    range.start.column -= 1;
-                    range.start = snapshot.clip_point_utf16(Unclipped(range.start), Bias::Left);
-                }
-            }
-
-            sanitized_diagnostics.push(DiagnosticEntry {
-                range,
-                diagnostic: entry.diagnostic,
-            });
-        }
-        drop(edits_since_save);
-
-        let set = DiagnosticSet::new(sanitized_diagnostics, &snapshot);
-        buffer.update(cx, |buffer, cx| {
-            buffer.update_diagnostics(server_id, set, cx)
-        });
-        Ok(())
     }
 
     fn request_multiple_lsp_locally<P, R>(
@@ -4430,7 +4859,7 @@ impl LspStore {
                                     .await
                                     .flatten()?;
 
-                                Self::deserialize_workspace_edit(
+                                LocalLspStore::deserialize_workspace_edit(
                                     this.upgrade()?,
                                     edit,
                                     false,
@@ -4709,44 +5138,6 @@ impl LspStore {
         }
     }
 
-    async fn on_lsp_workspace_edit(
-        this: WeakModel<Self>,
-        params: lsp::ApplyWorkspaceEditParams,
-        server_id: LanguageServerId,
-        adapter: Arc<CachedLspAdapter>,
-        mut cx: AsyncAppContext,
-    ) -> Result<lsp::ApplyWorkspaceEditResponse> {
-        let this = this
-            .upgrade()
-            .ok_or_else(|| anyhow!("project project closed"))?;
-        let language_server = this
-            .update(&mut cx, |this, _| this.language_server_for_id(server_id))?
-            .ok_or_else(|| anyhow!("language server not found"))?;
-        let transaction = Self::deserialize_workspace_edit(
-            this.clone(),
-            params.edit,
-            true,
-            adapter.clone(),
-            language_server.clone(),
-            &mut cx,
-        )
-        .await
-        .log_err();
-        this.update(&mut cx, |this, _| {
-            if let Some(transaction) = transaction {
-                this.as_local_mut()
-                    .unwrap()
-                    .last_workspace_edits_by_language_server
-                    .insert(server_id, transaction);
-            }
-        })?;
-        Ok(lsp::ApplyWorkspaceEditResponse {
-            applied: true,
-            failed_change: None,
-            failure_reason: None,
-        })
-    }
-
     fn on_lsp_progress(
         &mut self,
         progress: lsp::ProgressParams,
@@ -4966,111 +5357,6 @@ impl LspStore {
 
             self.rebuild_watched_paths(language_server_id, cx);
         }
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn edits_from_lsp(
-        &mut self,
-        buffer: &Model<Buffer>,
-        lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
-        server_id: LanguageServerId,
-        version: Option<i32>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
-        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx);
-        cx.background_executor().spawn(async move {
-            let snapshot = snapshot?;
-            let mut lsp_edits = lsp_edits
-                .into_iter()
-                .map(|edit| (range_from_lsp(edit.range), edit.new_text))
-                .collect::<Vec<_>>();
-            lsp_edits.sort_by_key(|(range, _)| range.start);
-
-            let mut lsp_edits = lsp_edits.into_iter().peekable();
-            let mut edits = Vec::new();
-            while let Some((range, mut new_text)) = lsp_edits.next() {
-                // Clip invalid ranges provided by the language server.
-                let mut range = snapshot.clip_point_utf16(range.start, Bias::Left)
-                    ..snapshot.clip_point_utf16(range.end, Bias::Left);
-
-                // Combine any LSP edits that are adjacent.
-                //
-                // Also, combine LSP edits that are separated from each other by only
-                // a newline. This is important because for some code actions,
-                // Rust-analyzer rewrites the entire buffer via a series of edits that
-                // are separated by unchanged newline characters.
-                //
-                // In order for the diffing logic below to work properly, any edits that
-                // cancel each other out must be combined into one.
-                while let Some((next_range, next_text)) = lsp_edits.peek() {
-                    if next_range.start.0 > range.end {
-                        if next_range.start.0.row > range.end.row + 1
-                            || next_range.start.0.column > 0
-                            || snapshot.clip_point_utf16(
-                                Unclipped(PointUtf16::new(range.end.row, u32::MAX)),
-                                Bias::Left,
-                            ) > range.end
-                        {
-                            break;
-                        }
-                        new_text.push('\n');
-                    }
-                    range.end = snapshot.clip_point_utf16(next_range.end, Bias::Left);
-                    new_text.push_str(next_text);
-                    lsp_edits.next();
-                }
-
-                // For multiline edits, perform a diff of the old and new text so that
-                // we can identify the changes more precisely, preserving the locations
-                // of any anchors positioned in the unchanged regions.
-                if range.end.row > range.start.row {
-                    let mut offset = range.start.to_offset(&snapshot);
-                    let old_text = snapshot.text_for_range(range).collect::<String>();
-
-                    let diff = TextDiff::from_lines(old_text.as_str(), &new_text);
-                    let mut moved_since_edit = true;
-                    for change in diff.iter_all_changes() {
-                        let tag = change.tag();
-                        let value = change.value();
-                        match tag {
-                            ChangeTag::Equal => {
-                                offset += value.len();
-                                moved_since_edit = true;
-                            }
-                            ChangeTag::Delete => {
-                                let start = snapshot.anchor_after(offset);
-                                let end = snapshot.anchor_before(offset + value.len());
-                                if moved_since_edit {
-                                    edits.push((start..end, String::new()));
-                                } else {
-                                    edits.last_mut().unwrap().0.end = end;
-                                }
-                                offset += value.len();
-                                moved_since_edit = false;
-                            }
-                            ChangeTag::Insert => {
-                                if moved_since_edit {
-                                    let anchor = snapshot.anchor_after(offset);
-                                    edits.push((anchor..anchor, value.to_string()));
-                                } else {
-                                    edits.last_mut().unwrap().1.push_str(value);
-                                }
-                                moved_since_edit = false;
-                            }
-                        }
-                    }
-                } else if range.end == range.start {
-                    let anchor = snapshot.anchor_after(range.start);
-                    edits.push((anchor..anchor, new_text));
-                } else {
-                    let edit_start = snapshot.anchor_after(range.start);
-                    let edit_end = snapshot.anchor_before(range.end);
-                    edits.push((edit_start..edit_end, new_text));
-                }
-            }
-
-            Ok(edits)
-        })
     }
 
     pub async fn handle_resolve_completion_documentation(
@@ -6417,7 +6703,7 @@ impl LspStore {
                 let adapter = adapter.clone();
                 let this = this.clone();
                 move |params, cx| {
-                    Self::on_lsp_workspace_edit(
+                    LocalLspStore::on_lsp_workspace_edit(
                         this.clone(),
                         params,
                         server_id,
@@ -6824,7 +7110,7 @@ impl LspStore {
         }
 
         // Tell the language server about every open buffer in the worktree that matches the language.
-        self.buffer_store.update(cx, |buffer_store, cx| {
+        self.buffer_store.clone().update(cx, |buffer_store, cx| {
             for buffer_handle in buffer_store.buffers() {
                 let buffer = buffer_handle.read(cx);
                 let file = match File::from_dyn(buffer.file()) {
@@ -6852,6 +7138,8 @@ impl LspStore {
                 };
 
                 let versions = self
+                    .as_local_mut()
+                    .unwrap()
                     .buffer_snapshots
                     .entry(buffer.remote_id())
                     .or_default()
@@ -6901,39 +7189,6 @@ impl LspStore {
         });
 
         cx.notify();
-    }
-
-    fn buffer_snapshot_for_lsp_version(
-        &mut self,
-        buffer: &Model<Buffer>,
-        server_id: LanguageServerId,
-        version: Option<i32>,
-        cx: &AppContext,
-    ) -> Result<TextBufferSnapshot> {
-        const OLD_VERSIONS_TO_RETAIN: i32 = 10;
-
-        if let Some(version) = version {
-            let buffer_id = buffer.read(cx).remote_id();
-            let snapshots = self
-                .buffer_snapshots
-                .get_mut(&buffer_id)
-                .and_then(|m| m.get_mut(&server_id))
-                .ok_or_else(|| {
-                    anyhow!("no snapshots found for buffer {buffer_id} and server {server_id}")
-                })?;
-
-            let found_snapshot = snapshots
-                    .binary_search_by_key(&version, |e| e.version)
-                    .map(|ix| snapshots[ix].snapshot.clone())
-                    .map_err(|_| {
-                        anyhow!("snapshot not found for buffer {buffer_id} server {server_id} at version {version}")
-                    })?;
-
-            snapshots.retain(|snapshot| snapshot.version + OLD_VERSIONS_TO_RETAIN >= version);
-            Ok(found_snapshot)
-        } else {
-            Ok((buffer.read(cx)).text_snapshot())
-        }
     }
 
     pub fn language_servers_running_disk_based_diagnostics(
@@ -7213,261 +7468,6 @@ impl LspStore {
         } else {
             Vec::new()
         }
-    }
-
-    pub async fn deserialize_text_edits(
-        this: Model<Self>,
-        buffer_to_edit: Model<Buffer>,
-        edits: Vec<lsp::TextEdit>,
-        push_to_history: bool,
-        _: Arc<CachedLspAdapter>,
-        language_server: Arc<LanguageServer>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<Option<Transaction>> {
-        let edits = this
-            .update(cx, |this, cx| {
-                this.edits_from_lsp(
-                    &buffer_to_edit,
-                    edits,
-                    language_server.server_id(),
-                    None,
-                    cx,
-                )
-            })?
-            .await?;
-
-        let transaction = buffer_to_edit.update(cx, |buffer, cx| {
-            buffer.finalize_last_transaction();
-            buffer.start_transaction();
-            for (range, text) in edits {
-                buffer.edit([(range, text)], None, cx);
-            }
-
-            if buffer.end_transaction(cx).is_some() {
-                let transaction = buffer.finalize_last_transaction().unwrap().clone();
-                if !push_to_history {
-                    buffer.forget_transaction(transaction.id);
-                }
-                Some(transaction)
-            } else {
-                None
-            }
-        })?;
-
-        Ok(transaction)
-    }
-
-    pub(crate) async fn deserialize_workspace_edit(
-        this: Model<Self>,
-        edit: lsp::WorkspaceEdit,
-        push_to_history: bool,
-        lsp_adapter: Arc<CachedLspAdapter>,
-        language_server: Arc<LanguageServer>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<ProjectTransaction> {
-        let fs = this.read_with(cx, |this, _| this.as_local().unwrap().fs.clone())?;
-
-        let mut operations = Vec::new();
-        if let Some(document_changes) = edit.document_changes {
-            match document_changes {
-                lsp::DocumentChanges::Edits(edits) => {
-                    operations.extend(edits.into_iter().map(lsp::DocumentChangeOperation::Edit))
-                }
-                lsp::DocumentChanges::Operations(ops) => operations = ops,
-            }
-        } else if let Some(changes) = edit.changes {
-            operations.extend(changes.into_iter().map(|(uri, edits)| {
-                lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
-                    text_document: lsp::OptionalVersionedTextDocumentIdentifier {
-                        uri,
-                        version: None,
-                    },
-                    edits: edits.into_iter().map(Edit::Plain).collect(),
-                })
-            }));
-        }
-
-        let mut project_transaction = ProjectTransaction::default();
-        for operation in operations {
-            match operation {
-                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
-                    let abs_path = op
-                        .uri
-                        .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
-
-                    if let Some(parent_path) = abs_path.parent() {
-                        fs.create_dir(parent_path).await?;
-                    }
-                    if abs_path.ends_with("/") {
-                        fs.create_dir(&abs_path).await?;
-                    } else {
-                        fs.create_file(
-                            &abs_path,
-                            op.options
-                                .map(|options| fs::CreateOptions {
-                                    overwrite: options.overwrite.unwrap_or(false),
-                                    ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
-                                })
-                                .unwrap_or_default(),
-                        )
-                        .await?;
-                    }
-                }
-
-                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(op)) => {
-                    let source_abs_path = op
-                        .old_uri
-                        .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
-                    let target_abs_path = op
-                        .new_uri
-                        .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
-                    fs.rename(
-                        &source_abs_path,
-                        &target_abs_path,
-                        op.options
-                            .map(|options| fs::RenameOptions {
-                                overwrite: options.overwrite.unwrap_or(false),
-                                ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
-                            })
-                            .unwrap_or_default(),
-                    )
-                    .await?;
-                }
-
-                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
-                    let abs_path = op
-                        .uri
-                        .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
-                    let options = op
-                        .options
-                        .map(|options| fs::RemoveOptions {
-                            recursive: options.recursive.unwrap_or(false),
-                            ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
-                        })
-                        .unwrap_or_default();
-                    if abs_path.ends_with("/") {
-                        fs.remove_dir(&abs_path, options).await?;
-                    } else {
-                        fs.remove_file(&abs_path, options).await?;
-                    }
-                }
-
-                lsp::DocumentChangeOperation::Edit(op) => {
-                    let buffer_to_edit = this
-                        .update(cx, |this, cx| {
-                            this.open_local_buffer_via_lsp(
-                                op.text_document.uri.clone(),
-                                language_server.server_id(),
-                                lsp_adapter.name.clone(),
-                                cx,
-                            )
-                        })?
-                        .await?;
-
-                    let edits = this
-                        .update(cx, |this, cx| {
-                            let path = buffer_to_edit.read(cx).project_path(cx);
-                            let active_entry = this.active_entry;
-                            let is_active_entry = path.clone().map_or(false, |project_path| {
-                                this.worktree_store
-                                    .read(cx)
-                                    .entry_for_path(&project_path, cx)
-                                    .map_or(false, |entry| Some(entry.id) == active_entry)
-                            });
-
-                            let (mut edits, mut snippet_edits) = (vec![], vec![]);
-                            for edit in op.edits {
-                                match edit {
-                                    Edit::Plain(edit) => edits.push(edit),
-                                    Edit::Annotated(edit) => edits.push(edit.text_edit),
-                                    Edit::Snippet(edit) => {
-                                        let Ok(snippet) = Snippet::parse(&edit.snippet.value)
-                                        else {
-                                            continue;
-                                        };
-
-                                        if is_active_entry {
-                                            snippet_edits.push((edit.range, snippet));
-                                        } else {
-                                            // Since this buffer is not focused, apply a normal edit.
-                                            edits.push(TextEdit {
-                                                range: edit.range,
-                                                new_text: snippet.text,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                            if !snippet_edits.is_empty() {
-                                let buffer_id = buffer_to_edit.read(cx).remote_id();
-                                let version = if let Some(buffer_version) = op.text_document.version
-                                {
-                                    this.buffer_snapshot_for_lsp_version(
-                                        &buffer_to_edit,
-                                        language_server.server_id(),
-                                        Some(buffer_version),
-                                        cx,
-                                    )
-                                    .ok()
-                                    .map(|snapshot| snapshot.version)
-                                } else {
-                                    Some(buffer_to_edit.read(cx).saved_version().clone())
-                                };
-
-                                let most_recent_edit = version.and_then(|version| {
-                                    version.iter().max_by_key(|timestamp| timestamp.value)
-                                });
-                                // Check if the edit that triggered that edit has been made by this participant.
-
-                                if let Some(most_recent_edit) = most_recent_edit {
-                                    cx.emit(LspStoreEvent::SnippetEdit {
-                                        buffer_id,
-                                        edits: snippet_edits,
-                                        most_recent_edit,
-                                    });
-                                }
-                            }
-
-                            this.edits_from_lsp(
-                                &buffer_to_edit,
-                                edits,
-                                language_server.server_id(),
-                                op.text_document.version,
-                                cx,
-                            )
-                        })?
-                        .await?;
-
-                    let transaction = buffer_to_edit.update(cx, |buffer, cx| {
-                        buffer.finalize_last_transaction();
-                        buffer.start_transaction();
-                        for (range, text) in edits {
-                            buffer.edit([(range, text)], None, cx);
-                        }
-                        let transaction = if buffer.end_transaction(cx).is_some() {
-                            let transaction = buffer.finalize_last_transaction().unwrap().clone();
-                            if !push_to_history {
-                                buffer.forget_transaction(transaction.id);
-                            }
-                            Some(transaction)
-                        } else {
-                            None
-                        };
-
-                        transaction
-                    })?;
-                    if let Some(transaction) = transaction {
-                        project_transaction.0.insert(buffer_to_edit, transaction);
-                    }
-                }
-            }
-        }
-
-        Ok(project_transaction)
     }
 
     fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
