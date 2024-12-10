@@ -29,11 +29,8 @@ Generate {{content_type}} based on the following prompt:
 
 Match the indentation in the original file in the inserted {{content_type}}, don't include any indentation on blank lines.
 
-Immediately start with the following format with no remarks:
+Immediately start your response with no remarks before nor after, only the code to insert:
 
-```
-\{{INSERTED_CODE}}
-```
 {{else}}
 Edit the section of {{content_type}} in <rewrite_this></rewrite_this> tags based on the following prompt:
 
@@ -67,9 +64,6 @@ Only make changes that are necessary to fulfill the prompt, leave everything els
 
 Start at the indentation level in the original file in the rewritten {{content_type}}. Don't stop until you've rewritten the entire section, even if you have no more changes to make, always write out the whole section with no unnecessary elisions.
 
-Immediately start with the following format with no remarks:
+Immediately start your response with no remarks before nor after, only the rewritten code:
 
-```
-\{{REWRITTEN_CODE}}
-```
 {{/if}}
