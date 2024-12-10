@@ -56,6 +56,7 @@ pub struct BlockSnapshot {
     wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
+    folded_buffers: HashSet<BufferId>,
     pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
     pub(super) excerpt_footer_height: u32,
@@ -464,6 +465,7 @@ impl BlockMap {
             blocks: &self.custom_blocks,
             snapshot: BlockSnapshot {
                 wrap_snapshot,
+                folded_buffers: self.folded_buffers.clone(),
                 transforms: self.transforms.borrow().clone(),
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
                 buffer_header_height: self.buffer_header_height,
@@ -818,9 +820,15 @@ impl BlockMap {
                         BlockPlacement::Replace(WrapRow(wrap_row)..WrapRow(wrap_end_row)),
                         Block::ExcerptBoundary {
                             prev_excerpt,
-                            next_excerpt,
                             height: height + buffer_header_height,
+                            // TODO kb how to return the separator as last?
+                            // kind: if next_excerpt.is_some() {
+                            //     ExcerptBoundaryKind::FoldedBufferBoundary
+                            // } else {
+                            //     ExcerptBoundaryKind::ExcerptSeparator
+                            // },
                             kind: ExcerptBoundaryKind::FoldedBufferBoundary,
+                            next_excerpt,
                             show_excerpt_controls,
                         },
                     ));
@@ -1216,7 +1224,6 @@ impl<'a> BlockMapWriter<'a> {
     }
 
     // TODO kb the last buffer folded disappears
-    // TODO kb custom blocks (e.g. diagnostics in the tab) are not removed on fold
     // TODO kb indent guides and gutter buttons for folded blocks are pushed upwards, and can be seen between the blocks
     pub fn fold_buffer(
         &mut self,
@@ -1401,6 +1408,19 @@ impl BlockSnapshot {
                 }
                 if let Some(block) = &transform.block {
                     cursor.next(&());
+                    // TODO kb extra offsets appear still, need to update .chunks()? or buffer_rows()?
+                    if let Block::Custom(custom_block) = block {
+                        if let Some(buffer_id) = custom_block.placement.start().buffer_id {
+                            if self.folded_buffers.contains(&buffer_id) {
+                                continue;
+                            }
+                        }
+                        if let Some(buffer_id) = custom_block.placement.end().buffer_id {
+                            if self.folded_buffers.contains(&buffer_id) {
+                                continue;
+                            }
+                        }
+                    }
                     return Some((start_row, block));
                 } else {
                     cursor.next(&());
@@ -1926,6 +1946,7 @@ mod tests {
         fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
     };
     use gpui::{div, font, px, AppContext, Context as _, Element};
+    use itertools::Itertools;
     use language::{Buffer, Capability};
     use multi_buffer::{ExcerptRange, MultiBuffer};
     use rand::prelude::*;
@@ -2462,6 +2483,155 @@ mod tests {
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\n\n\nline5");
     }
 
+    // TODO kb finish
+    #[gpui::test]
+    fn test_folding_unfolding_last_block(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "111\n222\n333\n444\n555\n666";
+
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_multi(
+                [
+                    (text, vec![Point::new(0, 0)..Point::new(0, 3)]),
+                    (
+                        text,
+                        vec![
+                            Point::new(1, 0)..Point::new(1, 3),
+                            Point::new(2, 0)..Point::new(2, 3),
+                            Point::new(3, 0)..Point::new(3, 3),
+                        ],
+                    ),
+                    (
+                        text,
+                        vec![
+                            Point::new(4, 0)..Point::new(4, 3),
+                            Point::new(5, 0)..Point::new(5, 3),
+                        ],
+                    ),
+                ],
+                cx,
+            )
+        });
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let buffer_ids = buffer_snapshot
+            .excerpts()
+            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .dedup()
+            .collect::<Vec<_>>();
+        assert_eq!(buffer_ids.len(), 3);
+        let first_buffer_id = buffer_ids[0];
+        let second_buffer_id = buffer_ids[1];
+        let third_buffer_id = buffer_ids[2];
+
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wrap_snapshot.clone(), true, 2, 1, 1);
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+
+        assert_eq!(
+            blocks_snapshot.text(),
+            "\n\n\n111\n\n\n\n\n222\n\n\n333\n\n\n444\n\n\n\n\n555\n\n\n666\n"
+        );
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let second_excerpt_blocks = writer.insert(vec![
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
+                height: 1,
+                render: Arc::new(|_| div().into_any()),
+                priority: 0,
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(2, 0))),
+                height: 1,
+                render: Arc::new(|_| div().into_any()),
+                priority: 0,
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 0))),
+                height: 1,
+                render: Arc::new(|_| div().into_any()),
+                priority: 0,
+            },
+        ]);
+        let third_excerpt_blocks = writer.insert(vec![
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(4, 0))),
+                height: 1,
+                render: Arc::new(|_| div().into_any()),
+                priority: 0,
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(5, 0))),
+                height: 1,
+                render: Arc::new(|_| div().into_any()),
+                priority: 0,
+            },
+        ]);
+
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        assert_eq!(
+            blocks_snapshot.text(),
+            "\n\n\n111\n\n\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n\n\n555\n\n\n666\n\n"
+        );
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        buffer.read_with(cx, |buffer, cx| {
+            writer.fold_buffer(first_buffer_id, buffer, cx);
+        });
+        let first_excerpt_blocks = writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 0))),
+            height: 1,
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+        }]);
+
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks = blocks_snapshot
+            .blocks_in_range(0..u32::MAX)
+            .collect::<Vec<_>>();
+        for (_, block) in &blocks {
+            if let BlockId::Custom(custom_block_id) = block.id() {
+                assert!(
+                    !first_excerpt_blocks.contains(&custom_block_id),
+                    "Should have no blocks from the folded buffer"
+                );
+            }
+        }
+        assert_eq!(
+            1,
+            blocks
+                .iter()
+                .filter(|(_, block)| {
+                    match block {
+                        Block::Custom(_) => false,
+                        Block::ExcerptBoundary { kind, .. } => {
+                            matches!(kind, ExcerptBoundaryKind::FoldedBufferBoundary)
+                        }
+                    }
+                })
+                .count(),
+            "Should have one folded block, a header of the second buffer"
+        );
+
+        assert_eq!(
+            blocks_snapshot.text(),
+            "\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n555\n\n\n666\n\n"
+        );
+        // TODO kb unfold first to get the block back + fold another excerpt and check its blocks are gone
+    }
+
+    // TODO kb add block folding
     #[gpui::test(iterations = 100)]
     fn test_random_blocks(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
         cx.update(init_test);
