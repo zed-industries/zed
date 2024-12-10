@@ -3,6 +3,7 @@ mod language_servers;
 use std::env;
 
 use crate::language_servers::{AstroLanguageServer, AstroTypeScriptServer};
+use language_servers::merge_json_value_into;
 use zed_extension_api::{self as zed, serde_json, settings::LspSettings, LanguageServerId, Result};
 
 pub struct AstroExtension {
@@ -54,6 +55,30 @@ impl zed::Extension for AstroExtension {
             }
             AstroTypeScriptServer::LANGUAGE_SERVER_ID => {
                 let server = self.typescript.as_ref().unwrap();
+                Ok(Some(serde_json::json!({
+                    "provideFormatter": true,
+                    "typescript": {
+                        "tsdk": server.typescript_tsdk_path()
+                    }
+                })))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        language_server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        let settings = LspSettings::for_worktree(language_server_id.as_ref(), worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .unwrap_or_default();
+        match language_server_id.as_ref() {
+            AstroLanguageServer::LANGUAGE_SERVER_ID => Ok(Some(settings)),
+            AstroTypeScriptServer::LANGUAGE_SERVER_ID => {
+                let server = self.typescript.as_ref().unwrap();
                 let current_dir = env::current_dir().unwrap().to_string_lossy().to_string();
                 let config = serde_json::json!({
                     "tsdk": server.typescript_tsdk_path(),
@@ -87,7 +112,7 @@ impl zed::Extension for AstroExtension {
                     },
                 });
 
-                let initial_options = serde_json::json!({
+                let mut workspace_config = serde_json::json!({
                     "typescript": config,
                     "javascript": config,
                     "vtsls": {
@@ -99,7 +124,6 @@ impl zed::Extension for AstroExtension {
                         },
                         "autoUseWorkspaceTsdk": true,
                         "tsserver": {
-                            "maxTsServerMemory": 8092,
                             "globalPlugins": [{
                                 "name": "@astrojs/ts-plugin",
                                 "location": current_dir,
@@ -109,24 +133,14 @@ impl zed::Extension for AstroExtension {
                     },
                 });
 
-                println!("{}", initial_options);
+                if !settings.is_null() {
+                    merge_json_value_into(settings, &mut workspace_config);
+                }
 
-                Ok(Some(initial_options))
+                Ok(Some(workspace_config))
             }
             _ => Ok(None),
         }
-    }
-
-    fn language_server_workspace_configuration(
-        &mut self,
-        language_server_id: &zed::LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<Option<serde_json::Value>> {
-        let settings = LspSettings::for_worktree(language_server_id.as_ref(), worktree)
-            .ok()
-            .and_then(|lsp_settings| lsp_settings.settings.clone())
-            .unwrap_or_default();
-        Ok(Some(settings))
     }
 }
 

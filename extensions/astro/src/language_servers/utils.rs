@@ -49,3 +49,27 @@ pub fn install_typescript_if_needed(worktree: &zed::Worktree) -> Result<String> 
         .to_string_lossy()
         .to_string())
 }
+
+pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
+    use serde_json::Value;
+
+    match (source, target) {
+        (Value::Object(source), Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    merge_json_value_into(value, target);
+                } else {
+                    target.insert(key.clone(), value);
+                }
+            }
+        }
+
+        (Value::Array(source), Value::Array(target)) => {
+            for value in source {
+                target.push(value);
+            }
+        }
+
+        (source, target) => *target = source,
+    }
+}
