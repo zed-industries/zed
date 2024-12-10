@@ -183,7 +183,7 @@ if [[ -n $pacman ]]; then
     git
   )
   $maysudo "$pacman" -Sy
-  $maysudo "$pacman" -Q glibc || $maysudo "$pacman" -Q musl || { echo "Please install 'glibc' or 'musl' and try again."; exit 1; }
+  "$pacman" -Q glibc || "$pacman" -Q musl || { echo "Please install 'glibc' or 'musl' and try again."; exit 1; }
   $maysudo "$pacman" -Syu --needed --noconfirm "${deps[@]}"
   finalize
   exit 0
