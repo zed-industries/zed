@@ -72,7 +72,7 @@ use std::{
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
     str,
-    sync::{atomic::AtomicBool, Arc},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use text::{Anchor, BufferId, LineEnding, Point, Selection};
@@ -2742,10 +2742,6 @@ impl LspStoreMode {
     fn is_local(&self) -> bool {
         matches!(self, LspStoreMode::Local(_))
     }
-
-    fn is_remote(&self) -> bool {
-        matches!(self, LspStoreMode::Remote(_))
-    }
 }
 
 pub struct LspStore {
@@ -3444,7 +3440,6 @@ impl LspStore {
                 cx,
             );
         }
-        let handle = self.register_buffer_with_language_servers(&buffer_handle, cx);
         let buffer = buffer_handle.read(cx);
         let language_server = match server {
             LanguageServerToQuery::Primary => {
@@ -3528,7 +3523,6 @@ impl LspStore {
                         cx.clone(),
                     )
                     .await;
-                drop(handle);
                 response
             });
         }
@@ -7331,6 +7325,7 @@ impl LspStore {
             language_server.name(),
             Some(key.0),
         ));
+        cx.emit(LspStoreEvent::RefreshInlayHints);
 
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client

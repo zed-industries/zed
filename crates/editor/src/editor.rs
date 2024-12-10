@@ -129,10 +129,10 @@ use multi_buffer::{
 };
 use parking_lot::RwLock;
 use project::{
-    lsp_store::{FormatTarget, FormatTrigger},
+    lsp_store::{FormatTarget, FormatTrigger, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
-    Project, ProjectItem, ProjectTransaction, TaskSourceKind,
+    LspStore, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -663,6 +663,7 @@ pub struct Editor {
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
+    registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
 }
 
@@ -1308,6 +1309,7 @@ impl Editor {
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: HashMap::default(),
+            registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             text_style_refinement: None,
         };
@@ -1324,6 +1326,17 @@ impl Editor {
             if this.git_blame_inline_enabled {
                 this.git_blame_inline_enabled = true;
                 this.start_git_blame_inline(false, cx);
+            }
+
+            if let Some(buffer) = buffer.read(cx).as_singleton() {
+                if let Some(project) = this.project.as_ref() {
+                    let lsp_store = project.read(cx).lsp_store();
+                    let handle = lsp_store.update(cx, |lsp_store, cx| {
+                        lsp_store.register_buffer_with_language_servers(&buffer, cx)
+                    });
+                    this.registered_buffers
+                        .insert(buffer.read(cx).remote_id(), handle);
+                }
             }
         }
 
@@ -11844,6 +11857,12 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn lsp_store(&self, cx: &AppContext) -> Option<Model<LspStore>> {
+        self.project
+            .as_ref()
+            .map(|project| project.read(cx).lsp_store())
+    }
+
     fn on_buffer_changed(&mut self, _: Model<MultiBuffer>, cx: &mut ViewContext<Self>) {
         cx.notify();
     }
@@ -11857,6 +11876,7 @@ impl Editor {
         match event {
             multi_buffer::Event::Edited {
                 singleton_buffer_edited,
+                edited_buffer: buffer_edited,
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
@@ -11864,6 +11884,19 @@ impl Editor {
                 self.refresh_code_actions(cx);
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(cx);
+                }
+                if let Some(buffer) = buffer_edited {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    if !self.registered_buffers.contains_key(&buffer_id) {
+                        if let Some(lsp_store) = self.lsp_store(cx) {
+                            lsp_store.update(cx, |lsp_store, cx| {
+                                self.registered_buffers.insert(
+                                    buffer_id,
+                                    lsp_store.register_buffer_with_language_servers(&buffer, cx),
+                                );
+                            })
+                        }
+                    }
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
