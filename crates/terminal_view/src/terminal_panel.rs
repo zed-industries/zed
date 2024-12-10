@@ -912,10 +912,15 @@ pub fn new_terminal_pane(
 
                         let new_pane = pane.drag_split_direction().and_then(|split_direction| {
                             terminal_panel.update(cx, |terminal_panel, cx| {
+                                let is_zoomed = if terminal_panel.active_pane == this_pane {
+                                    pane.is_zoomed()
+                                } else {
+                                    terminal_panel.active_pane.read(cx).is_zoomed()
+                                };
                                 let new_pane = new_terminal_pane(
                                     workspace.clone(),
                                     project.clone(),
-                                    terminal_panel.active_pane.read(cx).is_zoomed(),
+                                    is_zoomed,
                                     cx,
                                 );
                                 terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
