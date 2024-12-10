@@ -1830,6 +1830,7 @@ impl LspStore {
                     self.unregister_buffer_from_language_servers(buffer, old_file, cx);
                 }
 
+                self.detect_language_for_buffer(buffer, cx);
                 self.register_buffer_with_language_servers(buffer, cx);
             }
             BufferStoreEvent::BufferDropped(_) => {}
@@ -1944,6 +1945,7 @@ impl LspStore {
         })
         .detach();
 
+        self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
@@ -2012,6 +2014,7 @@ impl LspStore {
                             }
                         }
                         for buffer in plain_text_buffers {
+                            this.detect_language_for_buffer(&buffer, cx)
                             this.register_buffer_with_language_servers(&buffer, cx);
                         }
 
@@ -3941,7 +3944,6 @@ impl LspStore {
         buffer_handle: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.detect_language_for_buffer(buffer_handle, cx);
         match &mut self.mode {
             LspStoreMode::Local(local) => {
                 local.register_buffer_with_language_servers(
