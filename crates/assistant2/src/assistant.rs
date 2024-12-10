@@ -63,12 +63,6 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mu
         client.telemetry().clone(),
         cx,
     );
-    // terminal_inline_assistant::init(
-    //     fs.clone(),
-    //     prompt_builder.clone(),
-    //     client.telemetry().clone(),
-    //     cx,
-    // );
 
     feature_gate_assistant2_actions(cx);
 }
