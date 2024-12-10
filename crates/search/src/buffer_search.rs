@@ -530,7 +530,7 @@ impl BufferSearchBar {
             }
         }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleRegex, cx| {
-            if this.supported_options().word {
+            if this.supported_options().regex {
                 this.toggle_regex(action, cx);
             }
         }));
