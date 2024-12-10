@@ -13,7 +13,7 @@ use smol::{
     io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader},
     lock::Mutex,
     net::{TcpListener, TcpStream},
-    process::{self, Child},
+    process::Child,
 };
 use std::{
     any::Any,
@@ -491,7 +491,7 @@ impl Transport for TcpTransport {
         binary: &DebugAdapterBinary,
         cx: &mut AsyncAppContext,
     ) -> Result<TransportPipe> {
-        let mut command = process::Command::new(&binary.command);
+        let mut command = util::command::new_smol_command(&binary.command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
@@ -590,7 +590,7 @@ impl Transport for StdioTransport {
         binary: &DebugAdapterBinary,
         _: &mut AsyncAppContext,
     ) -> Result<TransportPipe> {
-        let mut command = process::Command::new(&binary.command);
+        let mut command = util::command::new_smol_command(&binary.command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);

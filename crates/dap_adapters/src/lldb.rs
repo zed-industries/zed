@@ -34,9 +34,10 @@ impl DebugAdapter for LldbDebugAdapter {
         user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         let lldb_dap_path = if cfg!(target_os = "macos") {
-            std::process::Command::new("xcrun")
+            util::command::new_smol_command("xcrun")
                 .args(&["-f", "lldb-dap"])
                 .output()
+                .await
                 .ok()
                 .and_then(|output| String::from_utf8(output.stdout).ok())
                 .map(|path| path.trim().to_string())

@@ -12,7 +12,7 @@ pub use http_client::{github::latest_github_release, HttpClient};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use smol::{self, fs::File, lock::Mutex, process};
+use smol::{self, fs::File, lock::Mutex};
 use std::{
     collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
@@ -162,7 +162,7 @@ pub async fn download_adapter_from_github(
             futures::io::copy(response.body_mut(), &mut file).await?;
 
             // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
-            process::Command::new("unzip")
+            util::command::new_smol_command("unzip")
                 .arg(&zip_path)
                 .arg("-d")
                 .arg(&version_path)
