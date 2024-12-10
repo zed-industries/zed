@@ -515,6 +515,7 @@ impl LocalLspStore {
         Ok(project_transaction)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn perform_format(
         formatter: &Formatter,
         format_target: &FormatTarget,
