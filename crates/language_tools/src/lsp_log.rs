@@ -207,7 +207,7 @@ actions!(debug, [OpenLanguageServerLogs]);
 pub fn init(cx: &mut AppContext) {
     let log_store = cx.new_model(LogStore::new);
 
-    cx.observe_new_views(move |workspace: &mut Workspace, cx| {
+    cx.observe_new_views(move |workspace: &mut Workspace, model, cx| {
         let project = workspace.project();
         if project.read(cx).is_local() || project.read(cx).is_via_ssh() {
             log_store.update(cx, |store, model, cx| {
@@ -939,7 +939,7 @@ impl LspLogView {
                 .expect("log buffer should be a singleton")
                 .update(cx, |_, model, cx| {
                     cx.spawn({
-                        let buffer = cx.handle();
+                        let buffer = model.clone();
                         |_, mut cx| async move {
                             let language = language.await.ok();
                             buffer.update(&mut cx, |buffer, cx| {
@@ -1247,11 +1247,11 @@ impl Render for LspLogToolbarItemView {
             ))
             .menu({
                 let log_view = log_view.clone();
-                move |cx| {
+                move |window, cx| {
                     let menu_rows = menu_rows.clone();
                     let log_view = log_view.clone();
                     let log_toolbar_view = log_toolbar_view.clone();
-                    ContextMenu::build(window, cx, move |mut menu, model, window, cx| {
+                    ContextMenu::build(window, cx, move |mut menu, window, cx| {
                         for (ix, row) in menu_rows.into_iter().enumerate() {
                             let server_selected = Some(row.server_id) == current_server_id;
                             menu = menu
@@ -1372,7 +1372,7 @@ impl Render for LspLogToolbarItemView {
                     .ml_2(),
             )
             .child(
-                log_view.update(cx, |this, model, _| match this.active_entry_kind {
+                log_view.update(cx, |this, model, cx| match this.active_entry_kind {
                     LogKind::Trace => {
                         let log_view = log_view.clone();
                         div().child(
@@ -1385,7 +1385,7 @@ impl Render for LspLogToolbarItemView {
                                 .menu({
                                     let log_view = log_view.clone();
 
-                                    move |cx| {
+                                    move |window, cx| {
                                         let id = log_view.read(cx).current_server_id?;
 
                                         let trace_level =
@@ -1398,42 +1398,34 @@ impl Render for LspLogToolbarItemView {
                                                 })
                                             })?;
 
-                                        ContextMenu::build(
-                                            window,
-                                            cx,
-                                            |mut menu, model, window, _| {
-                                                let log_view = log_view.clone();
+                                        ContextMenu::build(window, cx, |mut menu, window, _| {
+                                            let log_view = log_view.clone();
 
-                                                for (option, label) in [
-                                                    (TraceValue::Off, "Off"),
-                                                    (TraceValue::Messages, "Messages"),
-                                                    (TraceValue::Verbose, "Verbose"),
-                                                ] {
-                                                    menu = menu.entry(label, None, {
-                                                        let log_view = log_view.clone();
-                                                        move |cx| {
-                                                            log_view.update(
-                                                                cx,
-                                                                |this, model, cx| {
-                                                                    if let Some(id) =
-                                                                        this.current_server_id
-                                                                    {
-                                                                        this.update_trace_level(
-                                                                            id, option, model, cx,
-                                                                        );
-                                                                    }
-                                                                },
-                                                            );
-                                                        }
-                                                    });
-                                                    if option == trace_level {
-                                                        menu.select_last();
+                                            for (option, label) in [
+                                                (TraceValue::Off, "Off"),
+                                                (TraceValue::Messages, "Messages"),
+                                                (TraceValue::Verbose, "Verbose"),
+                                            ] {
+                                                menu = menu.entry(label, None, {
+                                                    let log_view = log_view.clone();
+                                                    move |cx| {
+                                                        log_view.update(cx, |this, model, cx| {
+                                                            if let Some(id) = this.current_server_id
+                                                            {
+                                                                this.update_trace_level(
+                                                                    id, option, model, cx,
+                                                                );
+                                                            }
+                                                        });
                                                     }
+                                                });
+                                                if option == trace_level {
+                                                    menu.select_last();
                                                 }
+                                            }
 
-                                                menu
-                                            },
-                                        )
+                                            menu
+                                        })
                                         .into()
                                     }
                                 }),
@@ -1451,7 +1443,7 @@ impl Render for LspLogToolbarItemView {
                                 .menu({
                                     let log_view = log_view.clone();
 
-                                    move |cx| {
+                                    move |window, cx| {
                                         let id = log_view.read(cx).current_server_id?;
 
                                         let log_level =
@@ -1464,43 +1456,35 @@ impl Render for LspLogToolbarItemView {
                                                 })
                                             })?;
 
-                                        ContextMenu::build(
-                                            cx,
-                                            window,
-                                            |mut menu, model, window, cx| {
-                                                let log_view = log_view.clone();
+                                        ContextMenu::build(cx, window, |mut menu, window, cx| {
+                                            let log_view = log_view.clone();
 
-                                                for (option, label) in [
-                                                    (MessageType::LOG, "Log"),
-                                                    (MessageType::INFO, "Info"),
-                                                    (MessageType::WARNING, "Warning"),
-                                                    (MessageType::ERROR, "Error"),
-                                                ] {
-                                                    menu = menu.entry(label, None, {
-                                                        let log_view = log_view.clone();
-                                                        move |cx| {
-                                                            log_view.update(
-                                                                cx,
-                                                                |this, model, cx| {
-                                                                    if let Some(id) =
-                                                                        this.current_server_id
-                                                                    {
-                                                                        this.update_log_level(
-                                                                            id, option, model, cx,
-                                                                        );
-                                                                    }
-                                                                },
-                                                            );
-                                                        }
-                                                    });
-                                                    if option == log_level {
-                                                        menu.select_last();
+                                            for (option, label) in [
+                                                (MessageType::LOG, "Log"),
+                                                (MessageType::INFO, "Info"),
+                                                (MessageType::WARNING, "Warning"),
+                                                (MessageType::ERROR, "Error"),
+                                            ] {
+                                                menu = menu.entry(label, None, {
+                                                    let log_view = log_view.clone();
+                                                    move |cx| {
+                                                        log_view.update(cx, |this, model, cx| {
+                                                            if let Some(id) = this.current_server_id
+                                                            {
+                                                                this.update_log_level(
+                                                                    id, option, model, cx,
+                                                                );
+                                                            }
+                                                        });
                                                     }
+                                                });
+                                                if option == log_level {
+                                                    menu.select_last();
                                                 }
+                                            }
 
-                                                menu
-                                            },
-                                        )
+                                            menu
+                                        })
                                         .into()
                                     }
                                 }),

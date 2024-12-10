@@ -215,7 +215,7 @@ impl ChannelStore {
                     while let Some(update_channels) = update_channels_rx.next().await {
                         if let Some(this) = this.upgrade() {
                             let update_task = this.update(&mut cx, |this, model, cx| {
-                                this.update_channels(update_channels, cx)
+                                this.update_channels(update_channels, model, cx)
                             })?;
                             if let Some(update_task) = update_task {
                                 update_task.await.log_err();
@@ -317,11 +317,11 @@ impl ChannelStore {
     ) -> Task<Result<Model<ChannelBuffer>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let channel_store = cx.handle();
+        let channel_store = model.clone();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_buffers,
-            |channel, cx| ChannelBuffer::new(channel, client, user_store, channel_store, model, cx),
+            |channel, cx| ChannelBuffer::new(channel, client, user_store, channel_store, cx),
             model,
             cx,
         )
@@ -454,11 +454,11 @@ impl ChannelStore {
     ) -> Task<Result<Model<ChannelChat>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let this = cx.handle();
+        let this = model.clone();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_chats,
-            |channel, cx| ChannelChat::new(channel, this, user_store, client, model, cx),
+            |channel, cx| ChannelChat::new(channel, this, user_store, client, cx),
             model,
             cx,
         )
@@ -899,6 +899,7 @@ impl ChannelStore {
                     ChannelId(buffer_version.channel_id),
                     buffer_version.epoch,
                     &version,
+                    model,
                     cx,
                 );
             }
@@ -906,6 +907,7 @@ impl ChannelStore {
                 this.acknowledge_message_id(
                     ChannelId(message_id.channel_id),
                     message_id.message_id,
+                    model,
                     cx,
                 );
             }
@@ -984,6 +986,7 @@ impl ChannelStore {
 
                                 channel_buffer.replace_collaborators(
                                     mem::take(&mut remote_buffer.collaborators),
+                                    model,
                                     cx,
                                 );
 

@@ -350,7 +350,8 @@ impl<T: PopoverTrigger> RenderOnce for LanguageModelSelector<T> {
         };
 
         let picker_view = cx.new_model(|model, cx| {
-            let picker = Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into()));
+            let picker =
+                Picker::uniform_list(delegate, model, cx).max_height(Some(rems(20.).into()));
             picker
         });
 

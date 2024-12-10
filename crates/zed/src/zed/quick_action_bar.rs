@@ -179,7 +179,7 @@ impl Render for QuickActionBar {
                 )
                 .with_handle(self.toggle_selections_handle.clone())
                 .anchor(AnchorCorner::TopRight)
-                .menu(move |cx| {
+                .menu(move |window, cx| {
                     let focus = focus.clone();
                     let menu = ContextMenu::build(window, cx, move |menu, model, window, _| {
                         menu.context(focus.clone())
@@ -226,8 +226,8 @@ impl Render for QuickActionBar {
             )
             .anchor(AnchorCorner::TopRight)
             .with_handle(self.toggle_settings_handle.clone())
-            .menu(move |cx| {
-                let menu = ContextMenu::build(cx, |mut menu, model, window, cx| {
+            .menu(move |window, cx| {
+                let menu = ContextMenu::build(window, cx, |mut menu, window, cx| {
                     if supports_inlay_hints {
                         menu = menu.toggleable_entry(
                             "Inlay Hints",

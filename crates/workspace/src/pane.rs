@@ -444,33 +444,28 @@ impl Pane {
                             )
                             .anchor(AnchorCorner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
-                            .menu(move |cx| {
-                                Some(ContextMenu::build(
-                                    model,
-                                    window,
-                                    cx | menu,
-                                    _ | {
-                                        menu.action("New File", NewFile.boxed_clone())
-                                            .action(
-                                                "Open File",
-                                                ToggleFileFinder::default().boxed_clone(),
-                                            )
-                                            .separator()
-                                            .action(
-                                                "Search Project",
-                                                DeploySearch {
-                                                    replace_enabled: false,
-                                                }
-                                                .boxed_clone(),
-                                            )
-                                            .action(
-                                                "Search Symbols",
-                                                ToggleProjectSymbols.boxed_clone(),
-                                            )
-                                            .separator()
-                                            .action("New Terminal", NewTerminal.boxed_clone())
-                                    },
-                                ))
+                            .menu(move |window, cx| {
+                                Some(ContextMenu::build(window, cx, |menu, window, cx| {
+                                    menu.action("New File", NewFile.boxed_clone())
+                                        .action(
+                                            "Open File",
+                                            ToggleFileFinder::default().boxed_clone(),
+                                        )
+                                        .separator()
+                                        .action(
+                                            "Search Project",
+                                            DeploySearch {
+                                                replace_enabled: false,
+                                            }
+                                            .boxed_clone(),
+                                        )
+                                        .action(
+                                            "Search Symbols",
+                                            ToggleProjectSymbols.boxed_clone(),
+                                        )
+                                        .separator()
+                                        .action("New Terminal", NewTerminal.boxed_clone())
+                                }))
                             }),
                     )
                     .child(
@@ -482,7 +477,7 @@ impl Pane {
                             )
                             .anchor(AnchorCorner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
-                            .menu(move |cx| {
+                            .menu(move |window, cx| {
                                 ContextMenu::build(cx, window, |menu, model, window, cx| {
                                     menu.action("Split Right", SplitRight.boxed_clone())
                                         .action("Split Left", SplitLeft.boxed_clone())
@@ -567,9 +562,9 @@ impl Pane {
         // to the item, and `focus_handle.contains_focus` returns false because the `active_item`
         // is not hooked up to us in the dispatch tree.
         self.focus_handle.contains_focused(cx)
-            || self
-                .active_item()
-                .map_or(false, |item| item.focus_handle(cx).contains_focused(cx))
+            || self.active_item().map_or(false, |item| {
+                item.focus_handle(window, cx).contains_focused(cx)
+            })
     }
 
     fn focus_in(&mut self, model: &Model<Self>, cx: &mut AppContext) {
@@ -596,7 +591,7 @@ impl Pane {
                     }
                 }
 
-                active_item.focus_handle(cx).focus(model, cx);
+                active_item.focus_handle(window, cx).focus(window);
             } else if let Some(focused) = cx.focused() {
                 if !self.context_menu_focused(cx) {
                     self.last_focus_handle_by_item
@@ -606,7 +601,7 @@ impl Pane {
         }
     }
 
-    pub fn context_menu_focused(&self, model: &Model<Self>, cx: &mut AppContext) -> bool {
+    pub fn context_menu_focused(&self, window: &Window, cx: &mut AppContext) -> bool {
         self.new_item_context_menu_handle.is_focused(window)
             || self.split_item_context_menu_handle.is_focused(window)
     }
@@ -703,7 +698,7 @@ impl Pane {
         cx: &mut AppContext,
     ) {
         self.toolbar.update(cx, |toolbar, model, cx| {
-            toolbar.set_can_navigate(can_navigate, cx);
+            toolbar.set_can_navigate(can_navigate, model, cx);
         });
         model.notify(cx);
     }
@@ -877,13 +872,13 @@ impl Pane {
                 }
             }
 
-            self.activate_item(index, focus_item, focus_item, cx);
+            self.activate_item(index, focus_item, focus_item, model, cx);
             existing_item
         } else {
             // If the item is being opened as preview and we have an existing preview tab,
             // open the new item in the position of the existing preview tab.
             let destination_index = if allow_preview {
-                self.close_current_preview_item(cx)
+                self.close_current_preview_item(model, cx)
             } else {
                 suggested_position
             };
@@ -894,7 +889,14 @@ impl Pane {
                 self.set_preview_item_id(Some(new_item.item_id()), cx);
             }
 
-            self.add_item(new_item.clone(), true, focus_item, destination_index, cx);
+            self.add_item(
+                new_item.clone(),
+                true,
+                focus_item,
+                destination_index,
+                model,
+                cx,
+            );
 
             new_item
         }
@@ -1005,7 +1007,7 @@ impl Pane {
                 model.notify(cx);
             }
 
-            self.activate_item(insertion_index, activate_pane, focus_item, cx);
+            self.activate_item(insertion_index, activate_pane, focus_item, model, cx);
         } else {
             self.items.insert(insertion_index, item.clone());
 
@@ -1015,7 +1017,7 @@ impl Pane {
                 self.active_item_index += 1;
             }
 
-            self.activate_item(insertion_index, activate_pane, focus_item, cx);
+            self.activate_item(insertion_index, activate_pane, focus_item, model, cx);
             model.notify(cx);
         }
 
@@ -1163,7 +1165,7 @@ impl Pane {
         } else if !self.items.is_empty() {
             index = self.items.len() - 1;
         }
-        self.activate_item(index, activate_pane, activate_pane, cx);
+        self.activate_item(index, activate_pane, activate_pane, model, cx);
     }
 
     pub fn activate_next_item(
@@ -1178,7 +1180,7 @@ impl Pane {
         } else {
             index = 0;
         }
-        self.activate_item(index, activate_pane, activate_pane, cx);
+        self.activate_item(index, activate_pane, activate_pane, model, cx);
     }
 
     pub fn swap_item_left(&mut self, model: &Model<Self>, cx: &mut AppContext) {
@@ -1597,11 +1599,17 @@ impl Pane {
                 }
             };
 
-            let should_activate = activate_pane || self.has_focus(model, cx);
+            let should_activate = activate_pane || self.has_focus(window);
             if self.items.len() == 1 && should_activate {
-                self.focus_handle.focus(model, cx);
+                self.focus_handle.focus(window);
             } else {
-                self.activate_item(index_to_activate, should_activate, should_activate, cx);
+                self.activate_item(
+                    index_to_activate,
+                    should_activate,
+                    should_activate,
+                    model,
+                    cx,
+                );
             }
         }
 
@@ -1982,9 +1990,9 @@ impl Pane {
         }
         let active_tab_ix = self.active_item_index();
         if self.is_tab_pinned(active_tab_ix) {
-            self.unpin_tab_at(active_tab_ix, cx);
+            self.unpin_tab_at(active_tab_ix, model, cx);
         } else {
-            self.pin_tab_at(active_tab_ix, cx);
+            self.pin_tab_at(active_tab_ix, model, cx);
         }
     }
 
@@ -2106,7 +2114,7 @@ impl Pane {
         let settings = ItemSettings::get_global(cx);
         let close_side = &settings.close_position;
         let always_show_close_button = settings.always_show_close_button;
-        let indicator = render_item_indicator(item.boxed_clone(), cx);
+        let indicator = render_item_indicator(item.boxed_clone(), model, cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
@@ -2675,7 +2683,7 @@ impl Pane {
                     }
                     let old_ix = from_pane.read(cx).index_for_item_id(item_id);
                     let old_len = to_pane.read(cx).items.len();
-                    move_item(&from_pane, &to_pane, item_id, ix, cx);
+                    move_item(&from_pane, &to_pane, item_id, ix, model, cx);
                     if to_pane == from_pane {
                         if let Some(old_index) = old_ix {
                             to_pane.update(cx, |this, model, _| {
@@ -2948,10 +2956,10 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
             .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
             .on_action(cx.listener(|pane, _: &SplitHorizontal, cx| {
-                pane.split(SplitDirection::horizontal(cx), cx)
+                pane.split(SplitDirection::horizontal(model, cx), cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitVertical, cx| {
-                pane.split(SplitDirection::vertical(cx), cx)
+                pane.split(SplitDirection::vertical(model, cx), cx)
             }))
             .on_action(
                 cx.listener(|pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx)),
@@ -3168,7 +3176,7 @@ impl ItemNavHistory {
         cx: &mut gpui::AppContext,
     ) {
         self.history
-            .push(data, self.item.clone(), self.is_preview, cx);
+            .push(data, self.item.clone(), self.is_preview, model, cx);
     }
 
     pub fn pop_backward(
@@ -3559,7 +3567,7 @@ mod tests {
         //   1c. Add at the end of the item list (including off the length)
         let [a, _, _, _] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
         pane.update(cx, |pane, model, cx| {
-            pane.add_item(a, false, false, Some(5), cx);
+            pane.add_item(a, false, false, Some(5), model, cx);
         });
         assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
 

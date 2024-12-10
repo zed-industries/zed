@@ -107,7 +107,7 @@ impl SyntaxTreeView {
                 return;
             }
             editor.update(cx, |editor, model, cx| {
-                editor.clear_background_highlights::<Self>(cx)
+                editor.clear_background_highlights::<Self>(model, cx)
             });
         }
 
@@ -454,7 +454,7 @@ impl SyntaxTreeToolbarItemView {
         Some(
             PopoverMenu::new("Syntax Tree")
                 .trigger(Self::render_header(&active_layer))
-                .menu(move |cx| {
+                .menu(move |window, cx| {
                     ContextMenu::build(cx, window, |mut menu, model, window, cx| {
                         for (layer_ix, layer) in active_buffer.syntax_layers().enumerate() {
                             menu = menu.entry(

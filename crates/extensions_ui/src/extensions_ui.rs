@@ -446,7 +446,7 @@ impl ExtensionsPage {
                                 )
                                 .on_click({
                                     let extension_id = extension.id.clone();
-                                    move |_, cx| {
+                                    move |event, window, cx| {
                                         ExtensionStore::global(cx).update(
                                             cx,
                                             |store, model, cx| {
@@ -466,12 +466,13 @@ impl ExtensionsPage {
                                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
                                     .on_click({
                                         let extension_id = extension.id.clone();
-                                        move |_, cx| {
+                                        move |event, window, cx| {
                                             ExtensionStore::global(cx).update(
                                                 cx,
                                                 |store, model, cx| {
                                                     store.uninstall_extension(
                                                         extension_id.clone(),
+                                                        model,
                                                         cx,
                                                     )
                                                 },
@@ -522,9 +523,9 @@ impl ExtensionsPage {
                         .icon_color(Color::Accent)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Filled)
-                        .on_click(cx.listener({
+                        .on_click(model.listener({
                             let repository_url = repository_url.clone();
-                            move |_, _, cx| {
+                            move |_, _, model, cx| {
                                 cx.open_url(&repository_url);
                             }
                         }))
@@ -633,9 +634,9 @@ impl ExtensionsPage {
                                 .icon_color(Color::Accent)
                                 .icon_size(IconSize::Small)
                                 .style(ButtonStyle::Filled)
-                                .on_click(cx.listener({
+                                .on_click(model.listener({
                                     let repository_url = repository_url.clone();
-                                    move |_, _, cx| {
+                                    move |_, _, model, cx| {
                                         cx.open_url(&repository_url);
                                     }
                                 }))
@@ -657,11 +658,11 @@ impl ExtensionsPage {
                                     .icon_size(IconSize::Small)
                                     .style(ButtonStyle::Filled),
                                 )
-                                .menu(move |cx| {
+                                .menu(move |window, cx| {
                                     Some(Self::render_remote_extension_context_menu(
                                         &this,
                                         extension_id.clone(),
-                                        model,
+                                        window,
                                         cx,
                                     ))
                                 }),
@@ -707,33 +708,34 @@ impl ExtensionsPage {
             return;
         };
 
-        cx.spawn(move |this, mut cx| async move {
-            let extension_versions_task = this.update(&mut cx, |_, cx| {
-                let extension_store = ExtensionStore::global(cx);
+        model
+            .spawn(cx, move |this, mut cx| async move {
+                let extension_versions_task = this.update(&mut cx, |model, cx| {
+                    let extension_store = ExtensionStore::global(cx);
 
-                extension_store.update(cx, |store, model, cx| {
-                    store.fetch_extension_versions(&extension_id, model, cx)
-                })
-            })?;
+                    extension_store.update(cx, |store, model, cx| {
+                        store.fetch_extension_versions(&extension_id, model, cx)
+                    })
+                })?;
 
-            let extension_versions = extension_versions_task.await?;
+                let extension_versions = extension_versions_task.await?;
 
-            workspace.update(&mut cx, |workspace, cx| {
-                let fs = workspace.project().read(cx).fs().clone();
-                workspace.toggle_modal(cx, |cx| {
-                    let delegate = ExtensionVersionSelectorDelegate::new(
-                        fs,
-                        cx.view().downgrade(),
-                        extension_versions,
-                    );
+                workspace.update(&mut cx, |workspace, cx| {
+                    let fs = workspace.project().read(cx).fs().clone();
+                    workspace.toggle_modal(cx, |cx| {
+                        let delegate = ExtensionVersionSelectorDelegate::new(
+                            fs,
+                            cx.view().downgrade(),
+                            extension_versions,
+                        );
 
-                    ExtensionVersionSelector::new(delegate, model, cx)
-                });
-            })?;
+                        ExtensionVersionSelector::new(delegate, model, cx)
+                    });
+                })?;
 
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
     }
 
     fn buttons_for_entry(
@@ -759,9 +761,9 @@ impl ExtensionsPage {
         match status.clone() {
             ExtensionStatus::NotInstalled => (
                 Button::new(SharedString::from(extension.id.clone()), "Install").on_click(
-                    cx.listener({
+                    model.listener({
                         let extension_id = extension.id.clone();
-                        move |this, _, cx| {
+                        move |this, _, model, cx| {
                             this.telemetry
                                 .report_app_event("extensions: install extension".to_string());
                             ExtensionStore::global(cx).update(cx, |store, model, cx| {
@@ -784,9 +786,9 @@ impl ExtensionsPage {
             ),
             ExtensionStatus::Installed(installed_version) => (
                 Button::new(SharedString::from(extension.id.clone()), "Uninstall").on_click(
-                    cx.listener({
+                    model.listener({
                         let extension_id = extension.id.clone();
-                        move |this, _, cx| {
+                        move |this, _, model, cx| {
                             this.telemetry
                                 .report_app_event("extensions: uninstall extension".to_string());
                             ExtensionStore::global(cx).update(cx, |store, model, cx| {
@@ -814,10 +816,10 @@ impl ExtensionsPage {
                                 })
                             })
                             .disabled(!is_compatible)
-                            .on_click(cx.listener({
+                            .on_click(model.listener({
                                 let extension_id = extension.id.clone();
                                 let version = extension.manifest.version.clone();
-                                move |this, _, window, cx| {
+                                move |this, _, window, model, cx| {
                                     this.telemetry.report_app_event(
                                         "extensions: install extension".to_string(),
                                     );
@@ -951,7 +953,7 @@ impl ExtensionsPage {
     }
 
     fn render_empty_state(&self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
-        let has_search = self.search_query(cx).is_some();
+        let has_search = self.search_query(model, cx).is_some();
 
         let message = if self.is_fetching_extensions {
             "Loading extensions..."
@@ -1007,7 +1009,7 @@ impl ExtensionsPage {
     }
 
     fn refresh_feature_upsells(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        let Some(search) = self.search_query(cx) else {
+        let Some(search) = self.search_query(model, cx) else {
             self.upsells.clear();
             return;
         };
@@ -1056,7 +1058,7 @@ impl ExtensionsPage {
                         } else {
                             ui::Selection::Unselected
                         },
-                        model.listener(move |this, selection, cx| {
+                        model.listener(move |this, selection, window, model, cx| {
                             this.telemetry
                                 .report_app_event("feature upsell: toggle vim".to_string());
                             this.update_settings::<VimModeSetting>(
@@ -1142,7 +1144,7 @@ impl Render for ExtensionsPage {
                             .w_full()
                             .gap_2()
                             .justify_between()
-                            .child(h_flex().child(self.render_search(cx)))
+                            .child(h_flex().child(self.render_search(model, cx)))
                             .child(
                                 h_flex()
                                     .child(
@@ -1150,7 +1152,7 @@ impl Render for ExtensionsPage {
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Large)
                                             .selected(self.filter == ExtensionFilter::All)
-                                            .on_click(cx.listener(|this, _event, cx| {
+                                            .on_click(model.listener(|this, _event, model, cx| {
                                                 this.filter = ExtensionFilter::All;
                                                 this.filter_extension_entries(cx);
                                             }))
@@ -1164,7 +1166,7 @@ impl Render for ExtensionsPage {
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Large)
                                             .selected(self.filter == ExtensionFilter::Installed)
-                                            .on_click(cx.listener(|this, _event, cx| {
+                                            .on_click(model.listener(|this, _event, model, cx| {
                                                 this.filter = ExtensionFilter::Installed;
                                                 this.filter_extension_entries(cx);
                                             }))
@@ -1178,7 +1180,7 @@ impl Render for ExtensionsPage {
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Large)
                                             .selected(self.filter == ExtensionFilter::NotInstalled)
-                                            .on_click(cx.listener(|this, _event, cx| {
+                                            .on_click(model.listener(|this, _event, model, cx| {
                                                 this.filter = ExtensionFilter::NotInstalled;
                                                 this.filter_extension_entries(cx);
                                             }))
@@ -1190,7 +1192,7 @@ impl Render for ExtensionsPage {
                             ),
                     ),
             )
-            .child(self.render_feature_upsells(cx))
+            .child(self.render_feature_upsells(model, cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let mut count = self.filtered_remote_extension_indices.len();
                 if self.filter.include_dev_extensions() {
@@ -1198,7 +1200,7 @@ impl Render for ExtensionsPage {
                 }
 
                 if count == 0 {
-                    return this.py_4().child(self.render_empty_state(cx));
+                    return this.py_4().child(self.render_empty_state(model, cx));
                 }
 
                 let view = cx.view().clone();

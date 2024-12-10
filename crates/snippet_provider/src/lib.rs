@@ -92,7 +92,7 @@ async fn process_updates(
             None
         };
 
-        this.update(&mut cx, move |this, _| {
+        this.update(&mut cx, move |this, model, _| {
             let snippets_of_kind = this.snippets.entry(key).or_default();
             if entry_exists {
                 let Some(file_contents) = contents else {
@@ -147,7 +147,7 @@ impl GlobalSnippetWatcher {
             watch_tasks: vec![],
         });
         provider.update(cx, |this, model, cx| {
-            this.watch_directory(&global_snippets_dir, cx)
+            this.watch_directory(&global_snippets_dir, model, cx)
         });
         Self(provider)
     }
@@ -159,9 +159,10 @@ impl SnippetProvider {
     pub fn new(
         fs: Arc<dyn Fs>,
         dirs_to_watch: BTreeSet<PathBuf>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.new_model(move |cx| {
+        cx.new_model(move |model, cx| {
             if !cx.has_global::<GlobalSnippetWatcher>() {
                 let global_watcher = GlobalSnippetWatcher::new(fs.clone(), cx);
                 cx.set_global(global_watcher);
@@ -173,7 +174,7 @@ impl SnippetProvider {
             };
 
             for dir in dirs_to_watch {
-                this.watch_directory(&dir, cx);
+                this.watch_directory(&dir, model, cx);
             }
 
             this
@@ -181,26 +182,27 @@ impl SnippetProvider {
     }
 
     /// Add directory to be watched for content changes
-    fn watch_directory(&mut self, path: &Path, model: &Model<Self>, cx: &AppContext) {
+    fn watch_directory(&mut self, path: &Path, model: &Model<Self>, cx: &mut AppContext) {
         let path: Arc<Path> = Arc::from(path);
 
-        self.watch_tasks.push(model.spawn(cx, |this, mut cx| async move {
-            let fs = this.update(&mut cx, |this, _, _| this.fs.clone())?;
-            let watched_path = path.clone();
-            let watcher = fs.watch(&watched_path, Duration::from_secs(1));
-            initial_scan(this.clone(), path, cx.clone()).await?;
+        self.watch_tasks
+            .push(model.spawn(cx, |this, mut cx| async move {
+                let fs = this.update(&mut cx, |this, _, _| this.fs.clone())?;
+                let watched_path = path.clone();
+                let watcher = fs.watch(&watched_path, Duration::from_secs(1));
+                initial_scan(this.clone(), path, cx.clone()).await?;
 
-            let (mut entries, _) = watcher.await;
-            while let Some(entries) = entries.next().await {
-                process_updates(
-                    this.clone(),
-                    entries.into_iter().map(|event| event.path).collect(),
-                    cx.clone(),
-                )
-                .await?;
-            }
-            Ok(())
-        }));
+                let (mut entries, _) = watcher.await;
+                while let Some(entries) = entries.next().await {
+                    process_updates(
+                        this.clone(),
+                        entries.into_iter().map(|event| event.path).collect(),
+                        cx.clone(),
+                    )
+                    .await?;
+                }
+                Ok(())
+            }));
     }
 
     fn lookup_snippets<'a, const LOOKUP_GLOBALS: bool>(

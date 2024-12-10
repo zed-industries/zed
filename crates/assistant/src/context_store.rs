@@ -251,7 +251,7 @@ impl ContextStore {
             if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
                 let operation_proto = envelope.payload.operation.context("invalid operation")?;
                 let operation = ContextOperation::from_proto(operation_proto)?;
-                context.update(cx, |context, model, cx| context.apply_ops([operation], cx));
+                context.update(cx, |context, model, cx| context.apply_ops([operation], model, cx));
             }
             Ok(())
         })?
@@ -378,6 +378,7 @@ impl ContextStore {
                 self.prompt_builder.clone(),
                 self.slash_commands.clone(),
                 self.tools.clone(),
+                model,
                 cx,
             )
         });

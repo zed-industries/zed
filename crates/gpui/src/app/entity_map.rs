@@ -513,7 +513,7 @@ impl<T: 'static> Model<T> {
     /// The returned task must be held or detached.
     pub fn spawn<Fut, R>(
         &self,
-        cx: &mut AppContext,
+        cx: &AppContext,
         f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut,
     ) -> Task<R>
     where

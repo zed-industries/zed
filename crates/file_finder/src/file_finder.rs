@@ -51,7 +51,7 @@ impl ModalView for FileFinder {
         cx: &mut AppContext,
     ) -> workspace::DismissDecision {
         let submenu_focused = self.picker.update(cx, |picker, model, cx| {
-            picker.delegate.popover_menu_handle.is_focused(window)
+            picker.delegate.popover_menu_handle.is_focused(window, cx)
         });
         workspace::DismissDecision::Dismiss(!submenu_focused)
     }
@@ -78,7 +78,7 @@ impl FileFinder {
     fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
         workspace.register_action(|workspace, action: &workspace::ToggleFileFinder, cx| {
             let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, action.separate_history, cx).detach();
+                Self::open(workspace, action.separate_history, model, cx).detach();
                 return;
             };
 
@@ -162,7 +162,7 @@ impl FileFinder {
     }
 
     fn new(delegate: FileFinderDelegate, model: &Model<Self>, cx: &mut AppContext) -> Self {
-        let picker = cx.new_model(|model, cx| Picker::uniform_list(delegate, cx));
+        let picker = cx.new_model(|model, cx| Picker::uniform_list(delegate, model, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, model, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
@@ -186,7 +186,7 @@ impl FileFinder {
         if self.picker.read(cx).delegate.has_changed_selected_index {
             if !event.modified() || !init_modifiers.is_subset_of(&event) {
                 self.init_modifiers = None;
-                cx.dispatch_action(menu::Confirm.boxed_clone());
+                window.dispatch_action(menu::Confirm.boxed_clone(), cx);
             }
         }
     }
@@ -196,13 +196,13 @@ impl FileFinder {
         cx.dispatch_action(Box::new(menu::SelectPrev));
     }
 
-    fn handle_toggle_menu(&mut self, _: &ToggleMenu, model: &Model<Self>, cx: &mut AppContext) {
+    fn handle_toggle_menu(&mut self, _: &ToggleMenu, window: &mut Window, cx: &mut AppContext) {
         self.picker.update(cx, |picker, model, cx| {
             let menu_handle = &picker.delegate.popover_menu_handle;
             if menu_handle.is_deployed() {
-                menu_handle.hide(cx);
+                menu_handle.hide(window, cx);
             } else {
-                menu_handle.show(cx);
+                menu_handle.show(window, cx);
             }
         });
     }
@@ -213,7 +213,7 @@ impl FileFinder {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.go_to_file_split_inner(SplitDirection::Left, cx)
+        self.go_to_file_split_inner(SplitDirection::Left, model, cx)
     }
 
     fn go_to_file_split_right(
@@ -222,11 +222,11 @@ impl FileFinder {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.go_to_file_split_inner(SplitDirection::Right, cx)
+        self.go_to_file_split_inner(SplitDirection::Right, model, cx)
     }
 
     fn go_to_file_split_up(&mut self, _: &pane::SplitUp, model: &Model<Self>, cx: &mut AppContext) {
-        self.go_to_file_split_inner(SplitDirection::Up, cx)
+        self.go_to_file_split_inner(SplitDirection::Up, model, cx)
     }
 
     fn go_to_file_split_down(
@@ -235,7 +235,7 @@ impl FileFinder {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.go_to_file_split_inner(SplitDirection::Down, cx)
+        self.go_to_file_split_inner(SplitDirection::Down, model, cx)
     }
 
     fn go_to_file_split_inner(
@@ -297,7 +297,12 @@ impl FocusableView for FileFinder {
 }
 
 impl Render for FileFinder {
-    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let key_context = self.picker.read(cx).delegate.key_context(cx);
 
         let file_finder_settings = FileFinderSettings::get_global(cx);
@@ -989,7 +994,7 @@ impl FileFinderDelegate {
     fn key_context(&self, window: &Window, cx: &AppContext) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("FileFinder");
-        if self.popover_menu_handle.is_focused(window) {
+        if self.popover_menu_handle.is_focused(window, cx) {
             key_context.add("menu_open");
         }
         key_context
@@ -1090,9 +1095,9 @@ impl PickerDelegate for FileFinderDelegate {
             };
 
             if Path::new(query.path_query()).is_absolute() {
-                self.lookup_absolute_path(query, cx)
+                self.lookup_absolute_path(query, model, cx)
             } else {
-                self.spawn_search(query, cx)
+                self.spawn_search(query, model, cx)
             }
         }
     }
@@ -1109,7 +1114,13 @@ impl PickerDelegate for FileFinderDelegate {
                             let allow_preview =
                                 PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
                             if secondary {
-                                workspace.split_path_preview(project_path, allow_preview, None, model, cx)
+                                workspace.split_path_preview(
+                                    project_path,
+                                    allow_preview,
+                                    None,
+                                    model,
+                                    cx,
+                                )
                             } else {
                                 workspace.open_path_preview(
                                     project_path,
@@ -1211,7 +1222,9 @@ impl PickerDelegate for FileFinderDelegate {
                                 .log_err();
                         }
                     }
-                    finder.update(&mut cx, |_, cx| model.emit(cx, DismissEvent)).ok()?;
+                    finder
+                        .update(&mut cx, |_, cx| model.emit(cx, DismissEvent))
+                        .ok()?;
 
                     Some(())
                 })
@@ -1293,8 +1306,8 @@ impl PickerDelegate for FileFinderDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("open-selection", model, "Open")
-                        .key_binding(KeyBindingmodel, ::for_action(&menu::Confirm, cx))
+                    Button::new("open-selection", "Open")
+                        .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
                         .on_click(|_, cx| cx.dispatch_action(menu::Confirm.boxed_clone())),
                 )
                 .child(
@@ -1305,10 +1318,15 @@ impl PickerDelegate for FileFinderDelegate {
                         .trigger(
                             Button::new("actions-trigger", "Split Options")
                                 .selected_label_color(Color::Accent)
-                                .key_binding(KeyBinding::for_action_in(&ToggleMenu, &context, cx)),
+                                .key_binding(KeyBinding::for_action_in(
+                                    &ToggleMenu,
+                                    &context,
+                                    window,
+                                    cx,
+                                )),
                         )
                         .menu({
-                            move |cx| {
+                            move |window, cx| {
                                 Some(ContextMenu::build(cx, {
                                     let context = context.clone();
                                     move |menu, _| {
@@ -1320,7 +1338,7 @@ impl PickerDelegate for FileFinderDelegate {
                                     }
                                 }))
                             }
-                            model, }),
+                        }),
                 )
                 .into_any(),
         )

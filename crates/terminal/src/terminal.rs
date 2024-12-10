@@ -479,7 +479,7 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(mut self, model: &Model<Terminal>, cx: &AppContext) -> Terminal {
+    pub fn subscribe(mut self, model: &Model<Terminal>, cx: &mut AppContext) -> Terminal {
         //Event loop
         model
             .spawn(cx, |terminal, mut cx| async move {
@@ -1749,7 +1749,7 @@ impl Terminal {
     fn register_task_finished(
         &mut self,
         error_code: Option<i32>,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) {
         self.completion_tx.try_send(()).ok();

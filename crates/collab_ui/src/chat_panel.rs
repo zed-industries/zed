@@ -712,7 +712,7 @@ impl ChatPanel {
                                         ("trigger", message_id),
                                         IconName::Ellipsis,
                                     ))
-                                    .menu(move |cx| {
+                                    .menu(move |window, cx| {
                                         Some(Self::render_message_menu(
                                             &this,
                                             message_id,
@@ -825,7 +825,7 @@ impl ChatPanel {
         if let Some((chat, _)) = self.active_chat.as_ref() {
             let message = self
                 .message_editor
-                .update(cx, |editor, model, cx| editor.take_message(cx));
+                .update(cx, |editor, model, cx| editor.take_message(model, cx));
 
             if let Some(id) = self.message_editor.read(cx).edit_message_id() {
                 self.message_editor.update(cx, |editor, model, _| {
@@ -891,7 +891,7 @@ impl ChatPanel {
             let chat = open_chat.await?;
             let highlight_message_id = scroll_to_message_id;
             let scroll_to_message_id = this.update(&mut cx, |this, model, cx| {
-                this.set_active_chat(chat.clone(), cx);
+                this.set_active_chat(chat.clone(), model, cx);
 
                 scroll_to_message_id.or(this.last_acknowledged_message_id)
             })?;
@@ -954,7 +954,7 @@ impl ChatPanel {
                 .as_singleton()
                 .expect("message editor must be singleton");
 
-            buffer.update(cx, |buffer, model, cx| buffer.set_text("", cx));
+            buffer.update(cx, |buffer, model, cx| buffer.set_text("", model, cx));
         });
     }
 }

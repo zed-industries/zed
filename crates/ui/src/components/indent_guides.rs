@@ -1,7 +1,10 @@
 #![allow(missing_docs)]
 use std::{cmp::Ordering, ops::Range, rc::Rc};
 
-use gpui::{fill, point, size, AnyElement, AppContext, Bounds, Hsla, Point, UniformListDecoration};
+use gpui::{
+    fill, l, point, size, AnyElement, AppContext, Bounds, Hsla, Mode, Model, Point,
+    UniformListDecoration,
+};
 use smallvec::SmallVec;
 
 use crate::prelude::*;

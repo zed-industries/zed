@@ -525,7 +525,7 @@ impl Render for ActivityIndicator {
                     ),
                 )
                 .anchor(gpui::AnchorCorner::BottomLeft)
-                .menu(move |cx| {
+                .menu(move |window, cx| {
                     let strong_this = this.upgrade()?;
                     let mut has_work = false;
                     let menu = ContextMenu::build(window, cx, |mut menu, model, window, cx| {

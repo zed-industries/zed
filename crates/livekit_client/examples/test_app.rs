@@ -140,17 +140,16 @@ impl LivekitWindow {
                     ..Default::default()
                 },
                 |model, window, cx| {
-                    let on_event =
-                        model.bind_in_window(window, |this: &mut Self, model, window, app| {
-                            this.handle_room_event(event, model, window, cx)
-                        });
+                    let window = window.handle();
 
                     let _events_task = model.spawn(cx, |this, mut cx| async move {
                         while let Some(event) = events.recv().await {
-                            x.window
+                            window
                                 .update(&mut cx, |window, cx| {
-                                    this.update(cx, |this: &mut LivekitWindow, model, cx| {})
-                                        .ok();
+                                    this.update(cx, |this: &mut LivekitWindow, model, cx| {
+                                        this.handle_room_event(event, model, window, cx)
+                                    })
+                                    .ok()
                                 })
                                 .ok();
                         }

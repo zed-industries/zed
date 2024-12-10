@@ -5,7 +5,7 @@ use crate::{
 };
 use gpui::{
     px, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    IntoElement, Render, Subscription, Window,
+    IntoElement, Model, Render, Subscription, Window,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use std::{rc::Rc, time::Duration};
@@ -59,10 +59,10 @@ impl ContextMenu {
     ) -> gpui::Model<Self> {
         cx.new_model(|model, cx| {
             let focus_handle = window.focus_handle();
-            let this = cx.handle();
+            let this = model.clone();
             let _on_blur_subscription = window.on_blur(&focus_handle, cx, move |window, cx| {
-                this.update(cx, |this, model: &mut Self, cx| {
-                    this.cancel(&menu::Cancel, window, cx)
+                this.update(cx, |this: &mut Self, model, cx| {
+                    this.cancel(&menu::Cancel, model, window, cx)
                 })
             });
             cx.refresh();
@@ -77,6 +77,7 @@ impl ContextMenu {
                     _on_blur_subscription,
                 },
                 window,
+                model,
                 cx,
             )
         })
@@ -224,8 +225,8 @@ impl ContextMenu {
     pub fn confirm(
         &mut self,
         _: &menu::Confirm,
-        window: &mut Window,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         let context = self.action_context.as_ref();
@@ -247,8 +248,8 @@ impl ContextMenu {
     pub fn cancel(
         &mut self,
         _: &menu::Cancel,
-        _window: &mut Window,
         model: &Model<Self>,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) {
         model.emit(cx, DismissEvent);
@@ -258,8 +259,8 @@ impl ContextMenu {
     fn select_first(
         &mut self,
         _: &SelectFirst,
-        window: &mut Window,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         self.selected_index = self.items.iter().position(|item| item.is_selectable());
@@ -279,8 +280,8 @@ impl ContextMenu {
     fn handle_select_last(
         &mut self,
         _: &SelectLast,
-        window: &mut Window,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         if self.select_last().is_some() {
@@ -291,8 +292,8 @@ impl ContextMenu {
     fn select_next(
         &mut self,
         _: &SelectNext,
-        window: &mut Window,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         if let Some(ix) = self.selected_index {
@@ -316,8 +317,8 @@ impl ContextMenu {
     pub fn select_prev(
         &mut self,
         _: &SelectPrev,
-        window: &mut Window,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         if let Some(ix) = self.selected_index {
@@ -340,8 +341,8 @@ impl ContextMenu {
     pub fn on_action_dispatch(
         &mut self,
         dispatched: &dyn Action,
-        window: &mut Window,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         if self.clicked {
@@ -373,7 +374,7 @@ impl ContextMenu {
                         .await;
                     window.update(&mut cx, |window, cx| {
                         this.update(cx, |this, model, cx| {
-                            this.cancel(&menu::Cancel, window, cx);
+                            this.cancel(&menu::Cancel, window, model, cx);
                             window.dispatch_action(action, cx);
                         })
                     })
@@ -405,134 +406,159 @@ impl ContextMenuItem {
 impl Render for ContextMenu {
     fn render(
         &mut self,
-        window: &mut Window,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> impl IntoElement {
         use settings::Settings;
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
 
         div().occlude().elevation_2(cx).flex().flex_row().child(
-            WithRemSize::new(ui_font_size).flex().child(
-                v_flex()
-                    .id("context-menu")
-                    .min_w(px(200.))
-                    .max_h(vh(0.75, window, cx))
-                    .overflow_y_scroll()
-                    .track_focus(&self.focus_handle(cx))
-                    .on_mouse_down_out(cx.listener(|this, _event, window, cx| {
-                        this.cancel(&menu::Cancel, window, cx)
-                    }))
-                    .key_context("menu")
-                    .on_action(cx.listener(ContextMenu::select_first))
-                    .on_action(cx.listener(ContextMenu::handle_select_last))
-                    .on_action(cx.listener(ContextMenu::select_next))
-                    .on_action(cx.listener(ContextMenu::select_prev))
-                    .on_action(cx.listener(ContextMenu::confirm))
-                    .on_action(cx.listener(ContextMenu::cancel))
-                    .when(!self.delayed, |mut el| {
-                        for item in self.items.iter() {
-                            if let ContextMenuItem::Entry {
-                                action: Some(action),
-                                disabled: false,
-                                ..
-                            } = item
-                            {
-                                el = el.on_boxed_action(
-                                    &**action,
-                                    cx.listener(ContextMenu::on_action_dispatch),
-                                );
-                            }
+            WithRemSize::new(ui_font_size)
+                .flex()
+                .child(
+                    v_flex()
+                        .id("context-menu")
+                        .min_w(px(200.))
+                        .max_h(vh(0.75, window, cx))
+                        .overflow_y_scroll()
+                        .track_focus(&self.focus_handle(cx)),
+                )
+                .on_mouse_down_out(model.listener(|this, _event, model, window, cx| {
+                    this.cancel(&menu::Cancel, model, window, cx)
+                }))
+                .key_context("menu")
+                .on_action(model.listener(ContextMenu::select_first))
+                .on_action(model.listener(ContextMenu::handle_select_last))
+                .on_action(model.listener(ContextMenu::select_next))
+                .on_action(model.listener(ContextMenu::select_prev))
+                .on_action(model.listener(ContextMenu::confirm))
+                .on_action(model.listener(ContextMenu::cancel))
+                .when(!self.delayed, |mut el| {
+                    for item in self.items.iter() {
+                        if let ContextMenuItem::Entry {
+                            action: Some(action),
+                            disabled: false,
+                            ..
+                        } = item
+                        {
+                            el = el.on_boxed_action(
+                                &**action,
+                                model.listener(ContextMenu::on_action_dispatch),
+                            );
                         }
-                        el
-                    })
-                    .flex_none()
-                    .child(List::new().children(self.items.iter_mut().enumerate().map(
-                        |(ix, item)| {
-                            match item {
-                                ContextMenuItem::Separator => ListSeparator.into_any_element(),
-                                ContextMenuItem::Header(header) => {
-                                    ListSubHeader::new(header.clone())
-                                        .inset(true)
+                    }
+                    el
+                })
+                .flex_none()
+                .child(List::new().children(self.items.iter_mut().enumerate().map(
+                    |(ix, item)| {
+                        match item {
+                            ContextMenuItem::Separator => ListSeparator.into_any_element(),
+                            ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())
+                                .inset(true)
+                                .into_any_element(),
+                            ContextMenuItem::Label(label) => ListItem::new(ix)
+                                .inset(true)
+                                .disabled(true)
+                                .child(Label::new(label.clone()))
+                                .into_any_element(),
+                            ContextMenuItem::Entry {
+                                toggle,
+                                label,
+                                handler,
+                                icon,
+                                icon_size,
+                                action,
+                                disabled,
+                            } => {
+                                let handler = handler.clone();
+                                let menu = model.downgrade();
+                                let color = if *disabled {
+                                    Color::Muted
+                                } else {
+                                    Color::Default
+                                };
+                                let label_element = if let Some(icon_name) = icon {
+                                    h_flex()
+                                        .gap_1()
+                                        .child(Label::new(label.clone()).color(color))
+                                        .child(Icon::new(*icon_name).size(*icon_size).color(color))
                                         .into_any_element()
-                                }
-                                ContextMenuItem::Label(label) => ListItem::new(ix)
-                                    .inset(true)
-                                    .disabled(true)
-                                    .child(Label::new(label.clone()))
-                                    .into_any_element(),
-                                ContextMenuItem::Entry {
-                                    toggle,
-                                    label,
-                                    handler,
-                                    icon,
-                                    icon_size,
-                                    action,
-                                    disabled,
-                                } => {
-                                    let handler = handler.clone();
-                                    let menu = model.downgrade();
-                                    let color = if *disabled {
-                                        Color::Muted
-                                    } else {
-                                        Color::Default
-                                    };
-                                    let label_element = if let Some(icon_name) = icon {
-                                        h_flex()
-                                            .gap_1()
-                                            .child(Label::new(label.clone()).color(color))
-                                            .child(
-                                                Icon::new(*icon_name).size(*icon_size).color(color),
-                                            )
-                                            .into_any_element()
-                                    } else {
-                                        Label::new(label.clone()).color(color).into_any_element()
-                                    };
+                                } else {
+                                    Label::new(label.clone()).color(color).into_any_element()
+                                };
 
-                                    ListItem::new(ix)
-                                        .inset(true)
-                                        .disabled(*disabled)
-                                        .selected(Some(ix) == self.selected_index)
-                                        .when_some(*toggle, |list_item, (position, toggled)| {
-                                            let contents = if toggled {
-                                                v_flex().flex_none().child(
-                                                    Icon::new(IconName::Check).color(Color::Accent),
-                                                )
-                                            } else {
-                                                v_flex()
-                                                    .flex_none()
-                                                    .size(IconSize::default().rems())
-                                            };
-                                            match position {
-                                                IconPosition::Start => {
-                                                    list_item.start_slot(contents)
-                                                }
-                                                IconPosition::End => list_item.end_slot(contents),
-                                            }
-                                        })
-                                        .child(
-                                            h_flex()
-                                                .w_full()
-                                                .justify_between()
-                                                .child(label_element)
-                                                .debug_selector(|| format!("MENU_ITEM-{}", label))
-                                                .children(action.as_ref().and_then(|action| {
-                                                    self.action_context
-                                                        .as_ref()
-                                                        .map(|focus| {
-                                                            KeyBinding::for_action_in(
-                                                                &**action, focus, window, cx,
-                                                            )
-                                                        })
-                                                        .unwrap_or_else(|| {
-                                                            KeyBinding::for_action(
-                                                                &**action, window, cx,
-                                                            )
-                                                        })
-                                                        .map(|binding| div().ml_4().child(binding))
-                                                })),
-                                        )
-                                        .on_click({
+                                ListItem::new(ix)
+                                    .inset(true)
+                                    .disabled(*disabled)
+                                    .selected(Some(ix) == self.selected_index)
+                                    .when_some(*toggle, |list_item, (position, toggled)| {
+                                        let contents = if toggled {
+                                            v_flex().flex_none().child(
+                                                Icon::new(IconName::Check).color(Color::Accent),
+                                            )
+                                        } else {
+                                            v_flex().flex_none().size(IconSize::default().rems())
+                                        };
+                                        match position {
+                                            IconPosition::Start => list_item.start_slot(contents),
+                                            IconPosition::End => list_item.end_slot(contents),
+                                        }
+                                    })
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(label_element)
+                                            .debug_selector(|| format!("MENU_ITEM-{}", label))
+                                            .children(action.as_ref().and_then(|action| {
+                                                self.action_context
+                                                    .as_ref()
+                                                    .map(|focus| {
+                                                        KeyBinding::for_action_in(
+                                                            &**action, focus, window, cx,
+                                                        )
+                                                    })
+                                                    .unwrap_or_else(|| {
+                                                        KeyBinding::for_action(
+                                                            &**action, window, cx,
+                                                        )
+                                                    })
+                                                    .map(|binding| div().ml_4().child(binding))
+                                            })),
+                                    )
+                                    .on_click({
+                                        let context = self.action_context.clone();
+                                        move |_, window, cx| {
+                                            handler(context.as_ref(), window, cx);
+                                            menu.update(cx, |menu, model, cx| {
+                                                menu.clicked = true;
+                                                model.emit(cx, DismissEvent);
+                                            })
+                                            .ok();
+                                        }
+                                    })
+                                    .into_any_element()
+                            }
+                            ContextMenuItem::CustomEntry {
+                                entry_render,
+                                handler,
+                                selectable,
+                            } => {
+                                let handler = handler.clone();
+                                let menu = model.downgrade();
+                                let selectable = *selectable;
+                                ListItem::new(ix)
+                                    .inset(true)
+                                    .selected(if selectable {
+                                        Some(ix) == self.selected_index
+                                    } else {
+                                        false
+                                    })
+                                    .selectable(selectable)
+                                    .when(selectable, |item| {
+                                        item.on_click({
                                             let context = self.action_context.clone();
                                             move |_, window, cx| {
                                                 handler(context.as_ref(), window, cx);
@@ -543,44 +569,13 @@ impl Render for ContextMenu {
                                                 .ok();
                                             }
                                         })
-                                        .into_any_element()
-                                }
-                                ContextMenuItem::CustomEntry {
-                                    entry_render,
-                                    handler,
-                                    selectable,
-                                } => {
-                                    let handler = handler.clone();
-                                    let menu = model.downgrade();
-                                    let selectable = *selectable;
-                                    ListItem::new(ix)
-                                        .inset(true)
-                                        .selected(if selectable {
-                                            Some(ix) == self.selected_index
-                                        } else {
-                                            false
-                                        })
-                                        .selectable(selectable)
-                                        .when(selectable, |item| {
-                                            item.on_click({
-                                                let context = self.action_context.clone();
-                                                move |_, window, cx| {
-                                                    handler(context.as_ref(), window, cx);
-                                                    menu.update(cx, |menu, model, cx| {
-                                                        menu.clicked = true;
-                                                        model.emit(cx, DismissEvent);
-                                                    })
-                                                    .ok();
-                                                }
-                                            })
-                                        })
-                                        .child(entry_render(window, cx))
-                                        .into_any_element()
-                                }
+                                    })
+                                    .child(entry_render(window, cx))
+                                    .into_any_element()
                             }
-                        },
-                    ))),
-            ),
+                        }
+                    },
+                ))),
         )
     }
 }

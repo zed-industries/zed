@@ -82,7 +82,7 @@ impl QuickActionBar {
 
         let editor = editor.downgrade();
         let dropdown_menu = PopoverMenu::new(element_id("menu"))
-            .menu(move |cx| {
+            .menu(move |window, cx| {
                 let editor = editor.clone();
                 let session = session.clone();
                 ContextMenu::build(window, cx, move |menu, model, window, cx| {

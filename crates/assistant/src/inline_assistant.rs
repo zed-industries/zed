@@ -3330,7 +3330,7 @@ impl CodegenAlternative {
             buffer.finalize_last_transaction(model, cx);
             buffer.start_transaction(model, cx);
             buffer.edit(edits, None, model, cx);
-            buffer.end_transaction(cx)
+            buffer.end_transaction(model, cx)
         });
 
         if let Some(transaction) = transaction {
@@ -3835,6 +3835,7 @@ mod tests {
                 true,
                 None,
                 prompt_builder,
+                model,
                 cx,
             )
         });
@@ -3900,6 +3901,7 @@ mod tests {
                 true,
                 None,
                 prompt_builder,
+                model,
                 cx,
             )
         });
@@ -3968,6 +3970,7 @@ mod tests {
                 true,
                 None,
                 prompt_builder,
+                model,
                 cx,
             )
         });
@@ -4034,6 +4037,7 @@ mod tests {
                 true,
                 None,
                 prompt_builder,
+                model,
                 cx,
             )
         });
@@ -4090,6 +4094,7 @@ mod tests {
                 false,
                 None,
                 prompt_builder,
+                model,
                 cx,
             )
         });

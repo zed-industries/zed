@@ -20,7 +20,7 @@ impl Render for ApplicationMenu {
         _cx: &mut AppContext,
     ) -> impl IntoElement {
         PopoverMenu::new("application-menu")
-            .menu(move |cx| {
+            .menu(move |window, cx| {
                 ContextMenu::build(window, cx, move |menu, model, window, cx| {
                     menu.header("Workspace")
                         .action(

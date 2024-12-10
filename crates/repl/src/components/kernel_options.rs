@@ -93,7 +93,12 @@ impl PickerDelegate for KernelPickerDelegate {
         "Select a kernel...".into()
     }
 
-    fn update_matches(&mut self, query: String, model: &Model<>Picker, _cx: &mut AppContext) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        model: &Model<Picker>,
+        _cx: &mut AppContext,
+    ) -> Task<()> {
         let all_kernels = self.all_kernels.clone();
 
         if query.is_empty() {
@@ -120,13 +125,14 @@ impl PickerDelegate for KernelPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, model: &Model<>Picker, _cx: &mut AppContext) {}
+    fn dismissed(&mut self, model: &Model<Picker>, _cx: &mut AppContext) {}
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
-        model: &Model<Picker>, cx: &mut AppContext,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let kernelspec = self.filtered_kernels.get(ix)?;
         let is_selected = self.selected_kernelspec.as_ref() == Some(kernelspec);
@@ -204,7 +210,11 @@ impl PickerDelegate for KernelPickerDelegate {
         )
     }
 
-    fn render_footer(&self, model: &Model<Picker>, cx: &mut AppContext) -> Option<gpui::AnyElement> {
+    fn render_footer(
+        &self,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
+    ) -> Option<gpui::AnyElement> {
         Some(
             h_flex()
                 .w_full()

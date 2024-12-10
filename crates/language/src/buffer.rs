@@ -817,7 +817,7 @@ impl Buffer {
     }
 
     pub fn branch(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Model<Self> {
-        let this = cx.handle();
+        let this = model.clone();
         cx.new_model(|model, cx| {
             let mut branch = Self {
                 branch_state: Some(BufferBranchState {
@@ -1025,7 +1025,7 @@ impl Buffer {
     pub fn reload(
         &mut self,
         model: &Model<Self>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();

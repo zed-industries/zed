@@ -113,7 +113,7 @@ impl TerminalPanel {
                 .active_pane
                 .read(cx)
                 .active_item()
-                .map(|item| item.focus_handle(cx))
+                .map(|item| item.focus_handle(window, cx))
                 .unwrap_or(self.focus_handle(cx));
             self.assistant_tab_bar_button = Some(
                 cx.new_model(move |_| InlineAssistTabBarButton { focus_handle })
@@ -155,7 +155,7 @@ impl TerminalPanel {
                             )
                             .anchor(AnchorCorner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
-                            .menu(move |cx| {
+                            .menu(move |window, cx| {
                                 let focus_handle = focus_handle.clone();
                                 let menu =
                                     ContextMenu::build(cx, window, |menu, model, window, cx| {
@@ -188,7 +188,7 @@ impl TerminalPanel {
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu({
                                 let split_context = split_context.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     ContextMenu::build(window, cx, |menu, _model, _window, cx| {
                                         menu.when_some(
                                             split_context.clone(),
@@ -595,7 +595,7 @@ impl TerminalPanel {
                     this.deferred_tasks.insert(
                         id,
                         cx.spawn(|terminal_panel, mut cx| async move {
-                            wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
+                            wait_for_terminals_tasks(terminals_for_task, model, &mut cx).await;
                             let Ok(Some(new_terminal_task)) =
                                 terminal_panel.update(&mut cx, |terminal_panel, cx| {
                                     if use_new_terminal {

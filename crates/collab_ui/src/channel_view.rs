@@ -248,7 +248,7 @@ impl ChannelView {
                 .find(|item| &Channel::slug(&item.text).to_lowercase() == &position)
             {
                 self.editor.update(cx, |editor, model, cx| {
-                    editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
+                    editor.change_selections(Some(Autoscroll::focused()), model, cx, |s| {
                         s.replace_cursors_with(|map| vec![item.range.start.to_display_point(map)])
                     })
                 });
@@ -550,7 +550,7 @@ impl FollowableItem for ChannelView {
             proto::view::ChannelView {
                 channel_id: channel_buffer.channel_id.0,
                 editor: if let Some(proto::view::Variant::Editor(proto)) =
-                    self.editor.read(cx).to_state_proto(cx)
+                    self.editor.read(cx).to_state_proto(model, cx)
                 {
                     Some(proto)
                 } else {
@@ -594,6 +594,7 @@ impl FollowableItem for ChannelView {
                                 scroll_y: state.scroll_y,
                                 ..Default::default()
                             }),
+                            model,
                             cx,
                         )
                     }))

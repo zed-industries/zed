@@ -1204,13 +1204,15 @@ impl CompletionsMenu {
             EditorSettings::get_global(cx).completion_documentation_secondary_query_debounce;
         let delay = Duration::from_millis(delay_ms);
 
-        completion_resolve.lock().fire_new(delay, cx, |_, cx| {
-            cx.spawn(move |editor, mut cx| async move {
-                if let Some(true) = resolve_task.await.log_err() {
-                    editor.update(&mut cx, |_, cx| model.notify(cx)).ok();
-                }
-            })
-        });
+        completion_resolve
+            .lock()
+            .fire_new(delay, model, cx, |_, model, cx| {
+                cx.spawn(move |editor, mut cx| async move {
+                    if let Some(true) = resolve_task.await.log_err() {
+                        editor.update(&mut cx, |_, cx| model.notify(cx)).ok();
+                    }
+                })
+            });
     }
 
     fn visible(&self) -> bool {
@@ -2196,7 +2198,7 @@ impl Editor {
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| model.notify(cx)),
                 cx.observe_global::<SettingsStore>(Self::settings_changed),
-                observe_buffer_font_size_adjustment(cx, |_, cx| model.notify(cx)),
+                observe_buffer_font_size_adjustment(cx, model, |_, model, cx| model.notify(cx)),
                 cx.observe_window_activation(|editor, cx| {
                     let active = cx.is_window_active();
                     editor.blink_manager.update(cx, |blink_manager, model, cx| {
@@ -2276,8 +2278,8 @@ impl Editor {
         }
 
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
-        if !self.focus_handle(cx).contains_focused(cx)
-            || (self.is_focused(window) || self.mouse_menu_is_focused(window))
+        if !self.focus_handle(cx).contains_focused(window)
+            || (self.is_focused(window) || self.mouse_menu_is_focused(window, cx))
         {
             for addon in self.addons.values() {
                 addon.extend_key_context(&mut key_context, cx)
@@ -2326,7 +2328,7 @@ impl Editor {
         cx: &mut AppContext,
     ) -> Task<Result<Model<Editor>>> {
         let project = workspace.project().clone();
-        let create = project.update(cx, |project, model, cx| project.create_buffer(cx));
+        let create = project.update(cx, |project, model, cx| project.create_buffer(cx, model));
 
         cx.spawn(|workspace, mut cx| async move {
             let buffer = create.await?;
@@ -2365,7 +2367,7 @@ impl Editor {
         cx: &mut AppContext,
     ) {
         let project = workspace.project().clone();
-        let create = project.update(cx, |project, model, cx| project.create_buffer(cx));
+        let create = project.update(cx, |project, model, cx| project.create_buffer(cx, model));
 
         cx.spawn(|workspace, mut cx| async move {
             let buffer = create.await?;

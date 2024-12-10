@@ -150,6 +150,7 @@ impl FollowableItem for Editor {
                     ..Default::default()
                 },
                 &mut model,
+                model,
                 cx,
             )
             .await?;

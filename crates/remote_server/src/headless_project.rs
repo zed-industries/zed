@@ -89,6 +89,7 @@ impl HeadlessProject {
                 fs.clone(),
                 languages.clone(),
                 worktree_store.clone(),
+                model,
                 cx,
             )
         });
@@ -98,6 +99,7 @@ impl HeadlessProject {
                 languages.clone(),
                 worktree_store.clone(),
                 environment.clone(),
+                model,
                 cx,
             )
         });
@@ -109,6 +111,7 @@ impl HeadlessProject {
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 environment.clone(),
+                model,
                 cx,
             );
             task_store.shared(SSH_PROJECT_ID, session.clone().into(), model, cx);
@@ -119,6 +122,7 @@ impl HeadlessProject {
                 fs.clone(),
                 worktree_store.clone(),
                 task_store.clone(),
+                model,
                 cx,
             );
             observer.shared(SSH_PROJECT_ID, session.clone().into(), model, cx);
@@ -135,6 +139,7 @@ impl HeadlessProject {
                 languages.clone(),
                 http_client.clone(),
                 fs.clone(),
+                model,
                 cx,
             );
             lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), model, cx);

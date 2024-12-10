@@ -534,7 +534,7 @@ impl Editor {
         let snapshot = self.snapshot(model, cx);
         let hunks = hunks_for_selections(&snapshot, &self.selections.all(cx));
         let mut ranges_by_buffer = HashMap::default();
-        self.transact(cx, |editor, cx| {
+        self.transact(cx, model, |editor, cx| {
             for hunk in hunks {
                 if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
                     ranges_by_buffer
@@ -794,7 +794,7 @@ impl Editor {
                                                         )
                                                         .anchor(AnchorCorner::TopRight)
                                                         .with_handle(hunk_controls_menu_handle)
-                                                        .menu(move |cx| {
+                                                        .menu(move |window, cx| {
                                                             let focus = focus.clone();
                                                             let menu = ContextMenu::build(
                                                                 window,
@@ -1215,6 +1215,7 @@ fn editor_with_deleted_text(
                     context: hunk.diff_base_byte_range.clone(),
                     primary: None,
                 }),
+                model,
                 cx,
             );
         });
@@ -1469,6 +1470,7 @@ mod tests {
                         primary: Default::default(),
                     },
                 ],
+                model,
                 cx,
             );
             multibuffer

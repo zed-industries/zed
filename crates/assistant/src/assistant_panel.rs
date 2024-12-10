@@ -1125,7 +1125,7 @@ impl AssistantPanel {
             self.model_summary_editor
                 .update(cx, |summary_editor, model, cx| {
                     if summary_editor.text(cx) != new_summary {
-                        summary_editor.set_text(new_summary, cx);
+                        summary_editor.set_text(new_summary, model, cx);
                     }
                 });
         });
@@ -1983,6 +1983,7 @@ impl ContextEditor {
                             cursor_point.row().as_f32() - scroll_position.offset_before_cursor.y;
                         editor.set_scroll_position(
                             point(scroll_position.offset_before_cursor.x, scroll_top),
+                            model,
                             cx,
                         );
                     }
@@ -2345,6 +2346,7 @@ impl ContextEditor {
             } else {
                 editor.remove_creases(
                     HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
+                    model,
                     cx,
                 );
                 model.notify(cx);
@@ -2672,7 +2674,13 @@ impl ContextEditor {
 
             this.workspace
                 .update(cx, |workspace, model, cx| {
-                    workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
+                    workspace.add_item_to_active_pane(
+                        Box::new(editor.clone()),
+                        None,
+                        false,
+                        model,
+                        cx,
+                    )
                 })
                 .log_err();
         })?;
@@ -2708,7 +2716,7 @@ impl ContextEditor {
                     editor.update(cx, |editor, model, cx| {
                         editor.set_title(patch.title.clone(), model, cx);
                         editor.reset_locations(locations, model, cx);
-                        resolved_patch.apply(editor, model, cx);
+                        resolved_patch.apply(editor, cx);
                     });
 
                     state.opened_patch = patch;
@@ -2845,7 +2853,7 @@ impl ContextEditor {
                                             )
                                             .into_any_element(),
                                     );
-                                    note = Some(Self::esc_kbd(cx).into_any_element());
+                                    note = Some(Self::esc_kbd(model, cx).into_any_element());
                                 }
                                 (animated_label, spinner, note)
                             }
@@ -3101,7 +3109,7 @@ impl ContextEditor {
         {
             active_editor_view.update(cx, |editor, model, cx| {
                 editor.insert(&text, model, cx);
-                editor.focus(window);
+                editor.focus(model, window);
             })
         }
     }
@@ -3310,11 +3318,11 @@ impl ContextEditor {
             let (copied_text, metadata, selections) = self.get_clipboard_contents(model, cx);
 
             self.editor.update(cx, |editor, model, cx| {
-                editor.transact(cx, |this, cx| {
-                    this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.transact(cx, model, |this, model, cx| {
+                    this.change_selections(Some(Autoscroll::fit()), model, cx, |s, model| {
                         s.select(selections);
                     });
-                    this.insert("", cx);
+                    this.insert("", model, cx);
                     cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
                         copied_text,
                         metadata,
@@ -3353,7 +3361,7 @@ impl ContextEditor {
                 selection.clone(),
                 editor.display_map.update(cx, |display_map, model, cx| {
                     display_map
-                        .snapshot(cx)
+                        .snapshot(model, cx)
                         .crease_snapshot
                         .creases_in_range(
                             MultiBufferRow(selection.start.row)
@@ -3446,7 +3454,7 @@ impl ContextEditor {
         if images.is_empty() {
             self.editor.update(cx, |editor, model, cx| {
                 let paste_position = editor.selections.newest::<usize>(cx).head();
-                editor.paste(action, cx);
+                editor.paste(action, model, cx);
 
                 if let Some(metadata) = metadata {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
@@ -3490,7 +3498,7 @@ impl ContextEditor {
         } else {
             let mut image_positions = Vec::new();
             self.editor.update(cx, |editor, model, cx| {
-                editor.transact(cx, |editor, cx| {
+                editor.transact(cx, model, |editor, cx| {
                     let edits = editor
                         .selections
                         .all::<usize>(cx)
@@ -3522,6 +3530,7 @@ impl ContextEditor {
                                 image: image_task.clone(),
                                 render_image: render_image.clone(),
                             },
+                            model,
                             cx,
                         );
                     }
@@ -3596,14 +3605,14 @@ impl ContextEditor {
                 let range = selection
                     .map(|endpoint| endpoint.to_offset(&buffer))
                     .range();
-                context.split_message(range, cx);
+                context.split_message(range, model, cx);
             }
         });
     }
 
     fn save(&mut self, _: &Save, model: &Model<Self>, cx: &mut AppContext) {
         self.context.update(cx, |context, model, cx| {
-            context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx)
+            context.save(Some(Duration::from_millis(500)), self.fs.clone(), model, cx)
         });
     }
 
@@ -3953,10 +3962,10 @@ impl ContextEditor {
                 .elevation_2(cx)
                 .occlude()
                 .child(match last_error {
-                    AssistError::FileRequired => self.render_file_required_error(cx),
-                    AssistError::PaymentRequired => self.render_payment_required_error(cx),
+                    AssistError::FileRequired => self.render_file_required_error(model, cx),
+                    AssistError::PaymentRequired => self.render_payment_required_error(model, cx),
                     AssistError::MaxMonthlySpendReached => {
-                        self.render_max_monthly_spend_reached_error(cx)
+                        self.render_max_monthly_spend_reached_error(model, cx)
                     }
                     AssistError::Message(error_message) => {
                         self.render_assist_error(error_message, model, cx)
@@ -4323,7 +4332,7 @@ impl Render for ContextEditor {
         let accept_terms = if self.show_accept_terms {
             provider
                 .as_ref()
-                .and_then(|provider| provider.render_accept_terms(cx))
+                .and_then(|provider| provider.render_accept_terms(model, cx))
         } else {
             None
         };
@@ -4341,7 +4350,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
             .size_full()
-            .children(self.render_notice(cx))
+            .children(self.render_notice(model, cx))
             .child(
                 div()
                     .flex_grow()
@@ -4363,7 +4372,7 @@ impl Render for ContextEditor {
                         .child(element),
                 )
             })
-            .children(self.render_last_error(cx))
+            .children(self.render_last_error(model, cx))
             .child(
                 h_flex().w_full().relative().child(
                     h_flex()
@@ -4372,7 +4381,11 @@ impl Render for ContextEditor {
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .bg(cx.theme().colors().editor_background)
-                        .child(h_flex().gap_1().child(self.render_inject_context_menu(cx)))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(self.render_inject_context_menu(model, cx)),
+                        )
                         .child(
                             h_flex()
                                 .w_full()
@@ -4383,7 +4396,7 @@ impl Render for ContextEditor {
                                         buttons
                                             .items_center()
                                             .gap_1p5()
-                                            .child(self.render_edit_button(cx))
+                                            .child(self.render_edit_button(model, cx))
                                             .child(
                                                 Label::new("or")
                                                     .size(LabelSize::Small)
@@ -4391,7 +4404,7 @@ impl Render for ContextEditor {
                                             )
                                     },
                                 )
-                                .child(self.render_send_button(cx)),
+                                .child(self.render_send_button(model, cx)),
                         ),
                 ),
             )
@@ -4478,7 +4491,7 @@ impl SearchableItem for ContextEditor {
 
     fn clear_matches(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.editor.update(cx, |editor, model, cx| {
-            editor.clear_matches(cx);
+            editor.clear_matches(model, cx);
         });
     }
 
@@ -4488,13 +4501,14 @@ impl SearchableItem for ContextEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.editor
-            .update(cx, |editor, model, cx| editor.update_matches(matches, cx));
+        self.editor.update(cx, |editor, model, cx| {
+            editor.update_matches(matches, model, cx)
+        });
     }
 
     fn query_suggestion(&mut self, model: &Model<Self>, cx: &mut AppContext) -> String {
         self.editor
-            .update(cx, |editor, model, cx| editor.query_suggestion(cx))
+            .update(cx, |editor, model, cx| editor.query_suggestion(model, cx))
     }
 
     fn activate_match(
@@ -4505,7 +4519,7 @@ impl SearchableItem for ContextEditor {
         cx: &mut AppContext,
     ) {
         self.editor.update(cx, |editor, model, cx| {
-            editor.activate_match(index, matches, cx);
+            editor.activate_match(index, matches, model, cx);
         });
     }
 
@@ -4515,8 +4529,9 @@ impl SearchableItem for ContextEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.editor
-            .update(cx, |editor, model, cx| editor.select_matches(matches, cx));
+        self.editor.update(cx, |editor, model, cx| {
+            editor.select_matches(matches, model, cx)
+        });
     }
 
     fn replace(
@@ -4527,7 +4542,7 @@ impl SearchableItem for ContextEditor {
         cx: &mut AppContext,
     ) {
         self.editor.update(cx, |editor, model, cx| {
-            editor.replace(identifier, query, cx)
+            editor.replace(identifier, query, model, cx)
         });
     }
 
@@ -4537,8 +4552,9 @@ impl SearchableItem for ContextEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<Vec<Self::Match>> {
-        self.editor
-            .update(cx, |editor, model, cx| editor.find_matches(query, cx))
+        self.editor.update(cx, |editor, model, cx| {
+            editor.find_matches(query, model, cx)
+        })
     }
 
     fn active_match_index(
@@ -4548,7 +4564,7 @@ impl SearchableItem for ContextEditor {
         cx: &mut AppContext,
     ) -> Option<usize> {
         self.editor.update(cx, |editor, model, cx| {
-            editor.active_match_index(matches, cx)
+            editor.active_match_index(matches, model, cx)
         })
     }
 }
@@ -4564,7 +4580,7 @@ impl FollowableItem for ContextEditor {
             proto::view::ContextEditor {
                 context_id: context.id().to_proto(),
                 editor: if let Some(proto::view::Variant::Editor(proto)) =
-                    self.editor.read(cx).to_state_proto(cx)
+                    self.editor.read(cx).to_state_proto(model, cx)
                 {
                     Some(proto)
                 } else {
@@ -4640,7 +4656,7 @@ impl FollowableItem for ContextEditor {
     ) -> bool {
         self.editor
             .read(cx)
-            .add_event_to_update_proto(event, update, cx)
+            .add_event_to_update_proto(event, update, model, cx)
     }
 
     fn apply_update_proto(
@@ -4651,7 +4667,7 @@ impl FollowableItem for ContextEditor {
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
         self.editor.update(cx, |editor, model, cx| {
-            editor.apply_update_proto(project, message, cx)
+            editor.apply_update_proto(project, message, model, cx)
         })
     }
 
@@ -4666,7 +4682,7 @@ impl FollowableItem for ContextEditor {
         cx: &mut AppContext,
     ) {
         self.editor.update(cx, |editor, model, cx| {
-            editor.set_leader_peer_id(leader_peer_id, cx)
+            editor.set_leader_peer_id(leader_peer_id, model, cx)
         })
     }
 

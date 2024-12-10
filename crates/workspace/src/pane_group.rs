@@ -745,14 +745,14 @@ impl SplitDirection {
         [Self::Up, Self::Down, Self::Left, Self::Right]
     }
 
-    pub fn vertical(window: &Window, cx: &AppContext) -> Self {
+    pub fn vertical(cx: &AppContext) -> Self {
         match WorkspaceSettings::get_global(cx).pane_split_direction_vertical {
             PaneSplitDirectionVertical::Left => SplitDirection::Left,
             PaneSplitDirectionVertical::Right => SplitDirection::Right,
         }
     }
 
-    pub fn horizontal(window: &Window, cx: &AppContext) -> Self {
+    pub fn horizontal(cx: &AppContext) -> Self {
         match WorkspaceSettings::get_global(cx).pane_split_direction_horizontal {
             PaneSplitDirectionHorizontal::Down => SplitDirection::Down,
             PaneSplitDirectionHorizontal::Up => SplitDirection::Up,

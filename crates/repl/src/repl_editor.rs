@@ -504,7 +504,7 @@ mod tests {
         ));
 
         let buffer = cx.new_model(|model, cx| {
-            Buffer::local(
+            Buffer::lomodel, cal(
                 indoc! { r#"
                     print(1 + 1)
                     print(2 + 2)
@@ -570,7 +570,7 @@ mod tests {
         ));
 
         let buffer = cx.new_model(|model, cx| {
-            Buffer::local(
+            Buffer::lomodel, cal(
                 indoc! { r#"
                     # Hello!
                     # %% [markdown]
@@ -650,7 +650,7 @@ mod tests {
 
         // Two code blocks intersecting with selection
         let buffer = cx.new_model(|model, cx| {
-            let mut buffer = Buffer::local(
+            let mut buffer = Buffer::lomodel, cal(
                 indoc! { r#"
                     Hey this is Markdown!
 
@@ -692,7 +692,7 @@ mod tests {
 
         // Three code blocks intersecting with selection
         let buffer = cx.new_model(|model, cx| {
-            let mut buffer = Buffer::local(
+            let mut buffer = Buffer::lomodel, cal(
                 indoc! { r#"
                     Hey this is Markdown!
 
@@ -738,7 +738,7 @@ mod tests {
 
         // Python code block
         let buffer = cx.new_model(|model, cx| {
-            let mut buffer = Buffer::local(
+            let mut buffer = Buffer::lomodel, cal(
                 indoc! { r#"
                     Hey this is Markdown!
 

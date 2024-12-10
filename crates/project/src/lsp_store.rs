@@ -7319,7 +7319,7 @@ impl LspStore {
                 buffer.edit([(range, text)], None, model, cx);
             }
 
-            if buffer.end_transaction(cx).is_some() {
+            if buffer.end_transaction(model, cx).is_some() {
                 let transaction = buffer.finalize_last_transaction().unwrap().clone();
                 if !push_to_history {
                     buffer.forget_transaction(transaction.id);
@@ -7524,7 +7524,7 @@ impl LspStore {
                         for (range, text) in edits {
                             buffer.edit([(range, text)], None, model, cx);
                         }
-                        let transaction = if buffer.end_transaction(cx).is_some() {
+                        let transaction = if buffer.end_transaction(model, cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
                             if !push_to_history {
                                 buffer.forget_transaction(transaction.id);

@@ -487,7 +487,7 @@ impl LocalBufferStore {
             if worktree.read(cx).is_local() {
                 match event {
                     worktree::Event::UpdatedEntries(changes) => {
-                        Self::local_worktree_entries_changed(this, &worktree, changes, model, cx);
+                        Self::local_worktree_entries_changed(this, &worktree, &changes, model, cx);
                     }
                     worktree::Event::UpdatedGitRepositories(updated_repos) => {
                         Self::local_worktree_git_repos_changed(
@@ -701,7 +701,7 @@ impl LocalBufferStore {
                     buffer_id,
                 );
                 events.push(BufferStoreEvent::BufferChangedFilePath {
-                    buffer: cx.handle(),
+                    buffer: model.clone(),
                     old_file: buffer.file().cloned(),
                 });
             }
@@ -869,9 +869,9 @@ impl LocalBufferStore {
         model: &Model<BufferStore>,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
-        cx.spawn(|buffer_store, mut cx| async move {
+        model.spawn(cx, |buffer_store, mut cx| async move {
             let buffer = cx.new_model(|model, cx| {
-                Buffer::local("", cx).with_language(language::PLAIN_TEXT.clone(), cx)
+                Buffer::local("", model, cx).with_language(language::PLAIN_TEXT.clone(), model, cx)
             })?;
             buffer_store.update(&mut cx, |buffer_store, cx| {
                 buffer_store.add_buffer(buffer.clone(), cx).log_err();
@@ -898,7 +898,7 @@ impl LocalBufferStore {
                         if !push_to_history {
                             buffer.forget_transaction(transaction.id);
                         }
-                        project_transaction.0.insert(cx.handle(), transaction);
+                        project_transaction.0.insert(model.clone(), transaction);
                     }
                 })?;
             }
@@ -1016,8 +1016,8 @@ impl BufferStore {
                     return Task::ready(Err(anyhow!("no such worktree")));
                 };
                 let load_buffer = match &self.state {
-                    BufferStoreState::Local(this) => this.open_buffer(path, worktree, cx),
-                    BufferStoreState::Remote(this) => this.open_buffer(path, worktree, cx),
+                    BufferStoreState::Local(this) => this.open_buffer(path, worktree, model, cx),
+                    BufferStoreState::Remote(this) => this.open_buffer(path, worktree, model, cx),
                 };
 
                 entry
@@ -1134,8 +1134,8 @@ impl BufferStore {
         cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         match &self.state {
-            BufferStoreState::Local(this) => this.create_buffer(cx),
-            BufferStoreState::Remote(this) => this.create_buffer(cx),
+            BufferStoreState::Local(this) => this.create_buffer(model, cx),
+            BufferStoreState::Remote(this) => this.create_buffer(model, cx),
         }
     }
 
@@ -1146,7 +1146,7 @@ impl BufferStore {
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
         match &mut self.state {
-            BufferStoreState::Local(this) => this.save_buffer(buffer, cx),
+            BufferStoreState::Local(this) => this.save_buffer(buffer, model, cx),
             BufferStoreState::Remote(this) => {
                 this.save_remote_buffer(buffer.clone(), None, model, cx)
             }
@@ -1162,7 +1162,7 @@ impl BufferStore {
     ) -> Task<Result<()>> {
         let old_file = buffer.read(cx).file().cloned();
         let task = match &self.state {
-            BufferStoreState::Local(this) => this.save_buffer_as(buffer.clone(), path, cx),
+            BufferStoreState::Local(this) => this.save_buffer_as(buffer.clone(), path, model, cx),
             BufferStoreState::Remote(this) => {
                 this.save_remote_buffer(buffer.clone(), Some(path.to_proto()), cx)
             }
@@ -1727,7 +1727,7 @@ impl BufferStore {
         if let Some(buffer) =
             remote.handle_create_buffer_for_peer(envelope, replica_id, capability, cx)?
         {
-            self.add_buffer(buffer, cx)?;
+            self.add_buffer(buffer, model, cx)?;
         }
 
         Ok(())
@@ -2031,8 +2031,12 @@ impl BufferStore {
             return Task::ready(Ok(ProjectTransaction::default()));
         }
         match &self.state {
-            BufferStoreState::Local(this) => this.reload_buffers(buffers, push_to_history, cx),
-            BufferStoreState::Remote(this) => this.reload_buffers(buffers, push_to_history, cx),
+            BufferStoreState::Local(this) => {
+                this.reload_buffers(buffers, push_to_history, model, cx)
+            }
+            BufferStoreState::Remote(this) => {
+                this.reload_buffers(buffers, push_to_history, model, cx)
+            }
         }
     }
 
@@ -2053,7 +2057,7 @@ impl BufferStore {
 
         let project_transaction = reload.await?;
         let project_transaction = this.update(&mut cx, |this, model, cx| {
-            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
+            this.serialize_project_transaction_for_peer(project_transaction, sender_id, model, cx)
         })?;
         Ok(proto::ReloadBuffersResponse {
             transaction: Some(project_transaction),
@@ -2153,11 +2157,14 @@ impl BufferStore {
         cx: &mut AppContext,
     ) -> Model<Buffer> {
         let buffer = cx.new_model(|model, cx| {
-            Buffer::local(text, model, cx)
-                .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
+            Buffer::local(text, model, cx).with_language(
+                language.unwrap_or_else(|| language::PLAIN_TEXT.clone()),
+                model,
+                cx,
+            )
         });
 
-        self.add_buffer(buffer.clone(), cx).log_err();
+        self.add_buffer(buffer.clone(), model, cx).log_err();
         let buffer_id = buffer.read(cx).remote_id();
 
         let this = self

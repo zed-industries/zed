@@ -594,7 +594,7 @@ impl TitleBar {
         if let Some(user) = user_store.current_user() {
             let plan = user_store.current_plan();
             PopoverMenu::new("user-menu")
-                .menu(move |cx| {
+                .menu(move |window, cx| {
                     ContextMenu::build(cx, window, |menu, model, window, cx| {
                         menu.when(cx.has_flag::<ZedPro>(), |menu| {
                             menu.action(
@@ -651,7 +651,7 @@ impl TitleBar {
                 .anchor(gpui::AnchorCorner::TopRight)
         } else {
             PopoverMenu::new("user-menu")
-                .menu(|cx| {
+                .menu(|window, cx| {
                     ContextMenu::build(cx, window, |menu, model, window, cx| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))

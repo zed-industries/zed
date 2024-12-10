@@ -78,7 +78,7 @@ impl Render for InlineCompletionButton {
                     return div().child(
                         IconButton::new("copilot-error", icon)
                             .icon_size(IconSize::Small)
-                            .on_click(model.listener(move |_, _, model, window, cx| {
+                            .on_click(model.listener(move |_, _, window, model, cx| {
                                 if let Some(workspace) = cx.window_handle().downcast::<Workspace>()
                                 {
                                     workspace
@@ -88,11 +88,11 @@ impl Render for InlineCompletionButton {
                                                     NotificationId::unique::<CopilotErrorToast>(),
                                                     format!("Copilot can't be started: {}", e),
                                                 )
-                                                .on_click("Reinstall Copilot", |cx| {
+                                                .on_click("Reinstall Copilot", |window, cx| {
                                                     if let Some(copilot) = Copilot::global(cx) {
                                                         copilot
                                                             .update(cx, |copilot, model, cx| {
-                                                                copilot.reinstall(cx)
+                                                                copilot.reinstall(model, cx)
                                                             })
                                                             .detach();
                                                     }
@@ -110,7 +110,7 @@ impl Render for InlineCompletionButton {
 
                 div().child(
                     PopoverMenu::new("copilot")
-                        .menu(move |cx| {
+                        .menu(move |window, cx| {
                             Some(match status {
                                 Status::Authorized => {
                                     this.update(cx, |this, model, cx| this.build_copilot_context_menu(cx))
@@ -396,7 +396,7 @@ async fn configure_disabled_globs(
 ) -> Result<()> {
     let settings_editor = workspace
         .update(&mut cx, |_, cx| {
-            create_and_open_local_file(paths::settings_file(), cx, || {
+            create_and_open_local_file(paths::settings_file(), model, cx, || {
                 settings::initial_user_settings_content().as_ref().into()
             })
         })?

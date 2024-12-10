@@ -4181,6 +4181,7 @@ impl Project {
                     worktree_id,
                     path: PathBuf::from(envelope.payload.path).into(),
                 },
+                model,
                 cx,
             )
         })?;

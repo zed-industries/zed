@@ -280,21 +280,25 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
         |buffer, model, cx| {
             let buffer_1_events = buffer_1_events.clone();
             model
-                .subscribe(&buffer1, cx, move |_, _, event, _| match event.clone() {
-                    BufferEvent::Operation {
-                        operation,
-                        is_local: true,
-                    } => buffer1_ops.lock().push(operation),
-                    event => buffer_1_events.lock().push(event),
+                .subscribe(&buffer1, cx, move |_, _, event, model, _| {
+                    match event.clone() {
+                        BufferEvent::Operation {
+                            operation,
+                            is_local: true,
+                        } => buffer1_ops.lock().push(operation),
+                        event => buffer_1_events.lock().push(event),
+                    }
                 })
                 .detach();
             let buffer_2_events = buffer_2_events.clone();
             model
-                .subscribe(&buffer2, cx, move |_, _, event, _| match event.clone() {
-                    BufferEvent::Operation {
-                        is_local: false, ..
-                    } => {}
-                    event => buffer_2_events.lock().push(event),
+                .subscribe(&buffer2, cx, move |_, _, event, model, _| {
+                    match event.clone() {
+                        BufferEvent::Operation {
+                            is_local: false, ..
+                        } => {}
+                        event => buffer_2_events.lock().push(event),
+                    }
                 })
                 .detach();
 
@@ -3050,7 +3054,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                         ops.len(),
                         ops
                     );
-                    buffer.update(cx, |buffer, model, cx| buffer.apply_ops(ops, cx));
+                    buffer.update(cx, |buffer, model, cx| buffer.apply_ops(ops, model, cx));
                 }
             }
             _ => {}

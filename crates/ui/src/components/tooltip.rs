@@ -159,11 +159,11 @@ impl LinkPreview {
 impl Render for LinkPreview {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
         model: &Model<Self>,
+        window: &mut gpui::Window,
         cx: &mut AppContext,
     ) -> impl IntoElement {
-        tooltip_container(window, cx, |el, _| {
+        tooltip_container(model, window, cx, |el, _model, _window, _cx| {
             el.child(
                 Label::new(self.link.clone())
                     .size(LabelSize::XSmall)
