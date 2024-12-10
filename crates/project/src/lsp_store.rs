@@ -5092,7 +5092,7 @@ impl LspStore {
         buffer_handle: &Model<Buffer>,
         position: Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<LspDiagnostics>>> {
+    ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 
@@ -5528,7 +5528,7 @@ impl LspStore {
         }
     }
 
-    fn pull_diagnostic(
+fn pull_diagnostic(
         &mut self,
         language_server_id: LanguageServerId,
         buffer_handle: Model<Buffer>,
@@ -5578,8 +5578,8 @@ impl LspStore {
 
         None
     }
-
-    pub fn diagnostic_summary(&self, include_ignored: bool, cx: &App) -> DiagnosticSummary {
+    
+    pub fn diagnostic_summary(&self, include_ignored: bool, cx: &AppContext) -> DiagnosticSummary {
         let mut summary = DiagnosticSummary::default();
         for (_, _, path_summary) in self.diagnostic_summaries(include_ignored, cx) {
             summary.error_count += path_summary.error_count;
@@ -6555,6 +6555,47 @@ impl LspStore {
                                     cx,
                                 ),
                             )),
+                        })
+                        .collect(),
+                })
+            },
+            Some(proto::multi_lsp_query::Request::GetDocumentDiagnostics(
+                get_document_diagnostics,
+            )) => {
+                let get_document_diagnostics = GetDocumentDiagnostics::from_proto(
+                    get_document_diagnostics,
+                    this.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let all_diagnostics = this
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_document_diagnostics.position),
+                            get_document_diagnostics,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                this.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: all_diagnostics
+                        .map(|lsp_diagnostic| proto::LspResponse {
+                            response: Some(
+                                proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
+                                    GetDocumentDiagnostics::response_to_proto(
+                                        lsp_diagnostic,
+                                        project,
+                                        sender_id,
+                                        &buffer_version,
+                                        cx,
+                                    ),
+                                ),
+                            ),
                         })
                         .collect(),
                 })
@@ -8040,63 +8081,6 @@ impl LspStore {
             })
             .detach();
         }
-    }
-
-    fn pull_diagnostic(
-        &mut self,
-        language_server_id: LanguageServerId,
-        buffer_handle: Model<Buffer>,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
-        let buffer = buffer_handle.read(cx);
-        let file = File::from_dyn(buffer.file())?;
-        let abs_path = file.as_local()?.abs_path(cx);
-        let uri = lsp::Url::from_file_path(abs_path).log_err()?;
-
-        const PULL_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_millis(125);
-
-        let previous_result_id = match self.as_local()?.language_servers.get(&language_server_id) {
-            Some(LanguageServerState::Running {
-                previous_document_diagnostic_result_id,
-                ..
-            }) => previous_document_diagnostic_result_id.clone(),
-            _ => None,
-        };
-
-        let lsp_request_task = self.request_lsp(
-            buffer_handle,
-            LanguageServerToQuery::Other(language_server_id),
-            GetDocumentDiagnostics {
-                language_server_id,
-                previous_result_id,
-            },
-            cx,
-        );
-
-        cx.spawn(move |this, mut cx| async move {
-            cx.background_executor()
-                .timer(PULL_DIAGNOSTICS_DEBOUNCE)
-                .await;
-
-            let diagnostics = lsp_request_task.await;
-            this.update(&mut cx, |this, cx| {
-                this.update_diagnostics(
-                    language_server_id,
-                    lsp::PublishDiagnosticsParams {
-                        uri: uri.clone(),
-                        diagnostics: diagnostics.unwrap(),
-                        version: None,
-                    },
-                    &[],
-                    cx,
-                )
-                .log_err()
-            })
-            .ok();
-        })
-        .detach();
-
-        None
     }
 
     pub fn update_diagnostics(
