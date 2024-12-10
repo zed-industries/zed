@@ -1013,7 +1013,7 @@ impl LspStore {
     ) {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
-                self.register_buffer(buffer, cx).log_err();
+                self.on_buffer_added(buffer, cx).log_err();
             }
             BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
                 if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
@@ -1120,7 +1120,7 @@ impl LspStore {
         }
     }
 
-    fn register_buffer(
+    fn on_buffer_added(
         &mut self,
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
@@ -2911,6 +2911,15 @@ impl LspStore {
                 Ok(symbols)
             })
         }
+    }
+
+    pub fn diagnostic_summary(&self, include_ignored: bool, cx: &AppContext) -> DiagnosticSummary {
+        let mut summary = DiagnosticSummary::default();
+        for (_, _, path_summary) in self.diagnostic_summaries(include_ignored, cx) {
+            summary.error_count += path_summary.error_count;
+            summary.warning_count += path_summary.warning_count;
+        }
+        summary
     }
 
     pub fn diagnostic_summaries<'a>(
