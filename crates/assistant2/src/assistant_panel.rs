@@ -9,10 +9,8 @@ use gpui::{
     WindowContext,
 };
 use language::LanguageRegistry;
-use language_model::LanguageModelRegistry;
-use language_model_selector::LanguageModelSelector;
 use time::UtcOffset;
-use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, KeyBinding, Tab, Tooltip};
+use ui::{prelude::*, Divider, IconButtonShape, KeyBinding, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
@@ -21,7 +19,7 @@ use crate::message_editor::MessageEditor;
 use crate::thread::{ThreadError, ThreadId};
 use crate::thread_history::{PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{NewThread, OpenHistory, ToggleFocus, ToggleModelSelector};
+use crate::{NewThread, OpenHistory, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -225,7 +223,6 @@ impl AssistantPanel {
             .child(
                 h_flex()
                     .gap(DynamicSpacing::Base08.rems(cx))
-                    .child(self.render_language_model_selector(cx))
                     .child(Divider::vertical())
                     .child(
                         IconButton::new("new-thread", IconName::Plus)
@@ -280,57 +277,6 @@ impl AssistantPanel {
             )
     }
 
-    fn render_language_model_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
-        let active_model = LanguageModelRegistry::read_global(cx).active_model();
-
-        LanguageModelSelector::new(
-            |model, _cx| {
-                println!("Selected {:?}", model.name());
-            },
-            ButtonLike::new("active-model")
-                .style(ButtonStyle::Subtle)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_0p5()
-                        .child(
-                            div()
-                                .overflow_x_hidden()
-                                .flex_grow()
-                                .whitespace_nowrap()
-                                .child(match (active_provider, active_model) {
-                                    (Some(provider), Some(model)) => h_flex()
-                                        .gap_1()
-                                        .child(
-                                            Icon::new(
-                                                model.icon().unwrap_or_else(|| provider.icon()),
-                                            )
-                                            .color(Color::Muted)
-                                            .size(IconSize::XSmall),
-                                        )
-                                        .child(
-                                            Label::new(model.name().0)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .into_any_element(),
-                                    _ => Label::new("No model selected")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .into_any_element(),
-                                }),
-                        )
-                        .child(
-                            Icon::new(IconName::ChevronDown)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
-                        ),
-                )
-                .tooltip(move |cx| Tooltip::for_action("Change Model", &ToggleModelSelector, cx)),
-        )
-    }
-
     fn render_active_thread_or_empty_state(&self, cx: &mut ViewContext<Self>) -> AnyElement {
         if self.thread.read(cx).is_empty() {
             return self.render_thread_empty_state(cx).into_any_element();
@@ -357,46 +303,6 @@ impl AssistantPanel {
                         .mx_auto()
                         .mb_4(),
                 ),
-            )
-            .child(v_flex())
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_center()
-                    .child(Label::new("Context Examples:").size(LabelSize::Small)),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .justify_center()
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .p_0p5()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(
-                                Icon::new(IconName::Terminal)
-                                    .size(IconSize::Small)
-                                    .color(Color::Disabled),
-                            )
-                            .child(Label::new("Terminal").size(LabelSize::Small)),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .p_0p5()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(
-                                Icon::new(IconName::Folder)
-                                    .size(IconSize::Small)
-                                    .color(Color::Disabled),
-                            )
-                            .child(Label::new("/src/components").size(LabelSize::Small)),
-                    ),
             )
             .when(!recent_threads.is_empty(), |parent| {
                 parent
