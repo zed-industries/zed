@@ -2,14 +2,11 @@ use crate::{
     assistant_settings::AssistantSettings,
     prompts::PromptBuilder,
     streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff},
-    thread::{RequestKind, Thread},
-    Chat, CycleNextInlineAssist, CyclePreviousInlineAssist, ToggleInlineAssist,
-    ToggleModelSelector,
+    CycleNextInlineAssist, CyclePreviousInlineAssist, ToggleInlineAssist,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
-use context_server::types::Prompt;
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
@@ -22,11 +19,7 @@ use editor::{
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
-use futures::{
-    channel::mpsc,
-    future::{BoxFuture, LocalBoxFuture},
-    join, SinkExt, Stream, StreamExt,
-};
+use futures::{channel::mpsc, future::LocalBoxFuture, join, SinkExt, Stream, StreamExt};
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
@@ -35,7 +28,7 @@ use gpui::{
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
     LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelTextStream, Role,
+    LanguageModelTextStream, Role,
 };
 use language_model_selector::LanguageModelSelector;
 use language_models::report_assistant_event;
@@ -47,22 +40,19 @@ use settings::{update_settings_file, Settings, SettingsStore};
 use smol::future::FutureExt;
 use std::{
     cmp,
-    future::{self, Future},
+    future::Future,
     iter, mem,
     ops::{Range, RangeInclusive},
     pin::Pin,
     sync::Arc,
     task::{self, Poll},
-    time::{Duration, Instant},
+    time::Instant,
 };
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
-use ui::{
-    prelude::*, text_for_action, ButtonLike, CheckboxWithLabel, IconButtonShape, KeyBinding,
-    Popover, Tooltip,
-};
+use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
 use workspace::{dock::Panel, ShowConfiguration};
 use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
@@ -88,7 +78,7 @@ pub fn init(
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
 
 enum InlineAssistTarget {
-    Editor(View<Editor>, bool),
+    Editor(View<Editor>),
     Terminal(View<TerminalView>),
 }
 
@@ -207,13 +197,7 @@ impl InlineAssistant {
             return;
         }
 
-        // let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
-        //     return;
-        // };
-
-        let Some(inline_assist_target) =
-            Self::resolve_inline_assist_target(workspace, /*&assistant_panel,*/ cx)
-        else {
+        let Some(inline_assist_target) = Self::resolve_inline_assist_target(workspace, cx) else {
             return;
         };
 
@@ -223,24 +207,14 @@ impl InlineAssistant {
                 .map_or(false, |provider| provider.is_authenticated(cx))
         };
 
-        if is_authenticated() {
+        let handle_assist = |cx: &mut ViewContext<Workspace>| {
             match inline_assist_target {
-                InlineAssistTarget::Editor(active_editor, include_context) => {
+                InlineAssistTarget::Editor(active_editor) => {
                     InlineAssistant::update_global(cx, |assistant, cx| {
-                        assistant.assist(
-                            &active_editor,
-                            Some(cx.view().downgrade()),
-                            Some({
-                                let todo = (); // TODO initial prompt as string
-
-                                String::new()
-                            }),
-                            cx,
-                        )
+                        assistant.assist(&active_editor, Some(cx.view().downgrade()), cx)
                     })
                 }
                 InlineAssistTarget::Terminal(active_terminal) => {
-                    todo!();
                     // TerminalInlineAssistant::update_global(cx, |assistant, cx| {
                     //     assistant.assist(
                     //         &active_terminal,
@@ -252,8 +226,12 @@ impl InlineAssistant {
                     // })
                 }
             }
+        };
+
+        if is_authenticated() {
+            handle_assist(cx);
         } else {
-            cx.spawn(|workspace, mut cx| async move {
+            cx.spawn(|_workspace, mut cx| async move {
                 let Some(task) = cx.update(|cx| {
                     LanguageModelRegistry::read_global(cx)
                         .active_provider()
@@ -284,34 +262,7 @@ impl InlineAssistant {
             .detach_and_log_err(cx);
 
             if is_authenticated() {
-                match inline_assist_target {
-                    InlineAssistTarget::Editor(active_editor, include_context) => {
-                        InlineAssistant::update_global(cx, |assistant, cx| {
-                            assistant.assist(
-                                &active_editor,
-                                Some(cx.view().downgrade()),
-                                Some({
-                                    let todo = (); // TODO initial prompt as string
-
-                                    String::new()
-                                }),
-                                cx,
-                            )
-                        })
-                    }
-                    InlineAssistTarget::Terminal(active_terminal) => {
-                        todo!();
-                        // TerminalInlineAssistant::update_global(cx, |assistant, cx| {
-                        //     assistant.assist(
-                        //         &active_terminal,
-                        //         Some(cx.view().downgrade()),
-                        //         Some(&assistant_panel),
-                        //         initial_prompt,
-                        //         cx,
-                        //     )
-                        // })
-                    }
-                }
+                handle_assist(cx);
             }
         }
     }
@@ -320,7 +271,6 @@ impl InlineAssistant {
         &mut self,
         editor: &View<Editor>,
         workspace: Option<WeakView<Workspace>>,
-        initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
@@ -418,8 +368,6 @@ impl InlineAssistant {
                     self.prompt_history.clone(),
                     prompt_buffer.clone(),
                     codegen.clone(),
-                    editor,
-                    workspace.clone(),
                     self.fs.clone(),
                     cx,
                 )
@@ -522,8 +470,6 @@ impl InlineAssistant {
                 self.prompt_history.clone(),
                 prompt_buffer.clone(),
                 codegen.clone(),
-                editor,
-                workspace.clone(),
                 self.fs.clone(),
                 cx,
             )
@@ -1344,7 +1290,6 @@ impl InlineAssistant {
 
     fn resolve_inline_assist_target(
         workspace: &mut Workspace,
-        // assistant_panel: &View<AssistantPanel>,
         cx: &mut WindowContext,
     ) -> Option<InlineAssistTarget> {
         if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) {
@@ -1363,28 +1308,11 @@ impl InlineAssistant {
             }
         }
 
-        // let context_editor =
-        //     assistant_panel
-        //         .read(cx)
-        //         .active_context_editor(cx)
-        //         .and_then(|editor| {
-        //             let editor = &editor.read(cx).editor;
-        //             if editor.read(cx).is_focused(cx) {
-        //                 Some(editor.clone())
-        //             } else {
-        //                 None
-        //             }
-        //         });
-
-        // if let Some(context_editor) = context_editor {
-        //     Some(InlineAssistTarget::Editor(context_editor, false))
-        // } else
-
         if let Some(workspace_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
         {
-            Some(InlineAssistTarget::Editor(workspace_editor, true))
+            Some(InlineAssistTarget::Editor(workspace_editor))
         } else if let Some(terminal_view) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<TerminalView>(cx))
@@ -1543,7 +1471,6 @@ struct PromptEditor {
     codegen: Model<Codegen>,
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
-    workspace: Option<WeakView<Workspace>>,
     show_rate_limit_notice: bool,
 }
 
@@ -1769,8 +1696,6 @@ impl PromptEditor {
         prompt_history: VecDeque<String>,
         prompt_buffer: Model<MultiBuffer>,
         codegen: Model<Codegen>,
-        parent_editor: &View<Editor>,
-        workspace: Option<WeakView<Workspace>>,
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -1789,7 +1714,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), cx), cx);
+            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx)), cx);
             editor
         });
 
@@ -1805,7 +1730,6 @@ impl PromptEditor {
             editor_subscriptions: Vec::new(),
             codegen,
             fs,
-            workspace,
             show_rate_limit_notice: false,
         };
         this.subscribe_to_editor(cx);
@@ -1834,7 +1758,7 @@ impl PromptEditor {
         self.editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx), cx), cx);
+            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx)), cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, cx);
             if focus {
@@ -1845,7 +1769,7 @@ impl PromptEditor {
         self.subscribe_to_editor(cx);
     }
 
-    fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
+    fn placeholder_text(codegen: &Codegen) -> String {
         let action = if codegen.is_insertion {
             "Generate"
         } else {
@@ -2189,11 +2113,9 @@ impl PromptEditor {
     fn render_editor(&mut self, cx: &mut ViewContext<Self>) -> AnyElement {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
-        let focus_handle = self.editor.focus_handle(cx);
 
         v_flex()
             .key_context("MessageEditor")
-            .on_action(cx.listener(Self::chat))
             .size_full()
             .gap_2()
             .p_2()
@@ -2221,57 +2143,6 @@ impl PromptEditor {
                 )
             })
             .into_any_element()
-    }
-
-    fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
-        self.send_to_model(RequestKind::Chat, cx);
-    }
-
-    fn send_to_model(
-        &mut self,
-        request_kind: RequestKind,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<()> {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        if provider
-            .as_ref()
-            .map_or(false, |provider| provider.must_accept_terms(cx))
-        {
-            cx.notify();
-            return None;
-        }
-
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let model = model_registry.active_model()?;
-
-        let user_message = self.editor.update(cx, |editor, cx| {
-            let text = editor.text(cx);
-            editor.clear(cx);
-            text
-        });
-
-        let todo = (); // TODO stream completion into inline diffs rather than thread
-                       // self.thread.update(cx, |thread, cx| {
-                       //     thread.insert_user_message(user_message, cx);
-                       //     let mut request = thread.to_completion_request(request_kind, cx);
-
-        //     // if self.use_tools {
-        //     //     request.tools = thread
-        //     //         .tools()
-        //     //         .tools(cx)
-        //     //         .into_iter()
-        //     //         .map(|tool| LanguageModelRequestTool {
-        //     //             name: tool.name(),
-        //     //             description: tool.description(),
-        //     //             input_schema: tool.input_schema(),
-        //     //         })
-        //     //         .collect();
-        //     // }
-
-        //     thread.stream_completion(request, model, cx)
-        // });
-
-        None
     }
 }
 

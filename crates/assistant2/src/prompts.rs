@@ -309,18 +309,4 @@ impl PromptBuilder {
             .lock()
             .render("terminal_assistant_prompt", &context)
     }
-
-    pub fn generate_suggest_edits_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("suggest_edits", &())
-    }
-
-    pub fn generate_project_slash_command_prompt(
-        &self,
-        context_buffer: String,
-    ) -> Result<String, RenderError> {
-        self.handlebars.lock().render(
-            "project_slash_command",
-            &ProjectSlashCommandPromptContext { context_buffer },
-        )
-    }
 }
