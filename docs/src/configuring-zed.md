@@ -994,7 +994,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
   "**/.git",
   "**/.svn",
   "**/.hg",
-  "**/.jj"
+  "**/.jj",
   "**/CVS",
   "**/.DS_Store",
   "**/Thumbs.db",
@@ -1516,16 +1516,6 @@ Or to set a `socks5` proxy:
 **Options**
 
 `boolean` values
-
-## Completion Documentation Debounce Delay
-
-- Description: The debounce delay before re-querying the language server for completion documentation when not included in original completion list.
-- Setting: `completion_documentation_secondary_query_debounce`
-- Default: `300` ms
-
-**Options**
-
-`integer` values
 
 ## Show Inline Completions
 

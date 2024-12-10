@@ -444,7 +444,7 @@ pub struct CloudLanguageModel {
 }
 
 #[derive(Clone, Default)]
-struct LlmApiToken(Arc<RwLock<Option<String>>>);
+pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
 
 #[derive(Error, Debug)]
 pub struct PaymentRequiredError;
@@ -814,7 +814,7 @@ fn response_lines<T: DeserializeOwned>(
 }
 
 impl LlmApiToken {
-    async fn acquire(&self, client: &Arc<Client>) -> Result<String> {
+    pub async fn acquire(&self, client: &Arc<Client>) -> Result<String> {
         let lock = self.0.upgradable_read().await;
         if let Some(token) = lock.as_ref() {
             Ok(token.to_string())
@@ -823,7 +823,7 @@ impl LlmApiToken {
         }
     }
 
-    async fn refresh(&self, client: &Arc<Client>) -> Result<String> {
+    pub async fn refresh(&self, client: &Arc<Client>) -> Result<String> {
         Self::fetch(self.0.write().await, client).await
     }
 

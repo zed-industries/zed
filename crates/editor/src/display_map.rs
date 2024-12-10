@@ -1125,6 +1125,12 @@ impl DisplaySnapshot {
         DisplayRow(self.block_snapshot.longest_row())
     }
 
+    pub fn longest_row_in_range(&self, range: Range<DisplayRow>) -> DisplayRow {
+        let block_range = BlockRow(range.start.0)..BlockRow(range.end.0);
+        let longest_row = self.block_snapshot.longest_row_in_range(block_range);
+        DisplayRow(longest_row.0)
+    }
+
     pub fn starts_indent(&self, buffer_row: MultiBufferRow) -> bool {
         let max_row = self.buffer_snapshot.max_row();
         if buffer_row >= max_row {

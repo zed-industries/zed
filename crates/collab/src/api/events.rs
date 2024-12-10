@@ -483,7 +483,7 @@ pub async fn post_events(
                         checksum_matched,
                     ))
             }
-            Event::Cpu(_) | Event::Memory(_) => continue,
+            Event::Cpu(_) | Event::Memory(_) | Event::InlineCompletionRating(_) => continue,
             Event::App(event) => to_upload.app_events.push(AppEventRow::from_event(
                 event.clone(),
                 wrapper,
@@ -1406,6 +1406,10 @@ fn for_snowflake(
                 ),
                 serde_json::to_value(e).unwrap(),
             ),
+            Event::InlineCompletionRating(e) => (
+                "Inline Completion Feedback".to_string(),
+                serde_json::to_value(e).unwrap(),
+            ),
             Event::Call(e) => {
                 let event_type = match e.operation.trim() {
                     "unshare project" => "Project Unshared".to_string(),
@@ -1589,7 +1593,7 @@ pub struct SnowflakeRow {
 impl SnowflakeRow {
     pub fn new(
         event_type: impl Into<String>,
-        metrics_id: Option<Uuid>,
+        metrics_id: Uuid,
         is_staff: bool,
         system_id: Option<String>,
         event_properties: serde_json::Value,
@@ -1598,7 +1602,7 @@ impl SnowflakeRow {
             time: chrono::Utc::now(),
             event_type: event_type.into(),
             device_id: system_id,
-            user_id: metrics_id.map(|id| id.to_string()),
+            user_id: Some(metrics_id.to_string()),
             insert_id: Some(uuid::Uuid::new_v4().to_string()),
             event_properties,
             user_properties: Some(json!({"is_staff": is_staff})),

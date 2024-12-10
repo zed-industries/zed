@@ -399,7 +399,7 @@ fn main() {
             cx,
         );
         snippet_provider::init(cx);
-        inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
+        inline_completion_registry::init(app_state.client.clone(), cx);
         let prompt_builder = assistant::init(
             app_state.fs.clone(),
             app_state.client.clone(),

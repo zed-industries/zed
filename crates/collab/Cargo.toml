@@ -77,12 +77,6 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "re
 util.workspace = true
 uuid.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-livekit_client_macos = { workspace = true, features = ["test-support"] }
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-livekit_client = { workspace = true, features = ["test-support"] }
-
 [dev-dependencies]
 assistant = { workspace = true, features = ["test-support"] }
 assistant_tool.workspace = true
