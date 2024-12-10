@@ -641,8 +641,54 @@ impl FoldSnapshot {
         summary
     }
 
+    pub fn text_summary_for_offset_range(&self, range: Range<FoldOffset>) -> TextSummary {
+        let mut summary = TextSummary::default();
+
+        let mut cursor = self.transforms.cursor::<(FoldOffset, InlayOffset)>(&());
+        cursor.seek(&range.start, Bias::Right, &());
+        if let Some(transform) = cursor.item() {
+            let start_in_transform = range.start.0 - cursor.start().0 .0;
+            let end_in_transform = cmp::min(range.end, cursor.end(&()).0).0 - cursor.start().0 .0;
+            if let Some(placeholder) = transform.placeholder.as_ref() {
+                summary =
+                    TextSummary::from(&placeholder.text[start_in_transform..end_in_transform]);
+            } else {
+                let inlay_start = InlayOffset(cursor.start().1 .0 + start_in_transform);
+                let inlay_end = InlayOffset(cursor.start().1 .0 + end_in_transform);
+                summary = self
+                    .inlay_snapshot
+                    .text_summary_for_range(inlay_start..inlay_end);
+            }
+        }
+
+        if range.end > cursor.end(&()).0 {
+            cursor.next(&());
+            summary += &cursor
+                .summary::<_, TransformSummary>(&range.end, Bias::Right, &())
+                .output;
+            if let Some(transform) = cursor.item() {
+                let end_in_transform = range.end.0 - cursor.start().0 .0;
+                if let Some(placeholder) = transform.placeholder.as_ref() {
+                    summary += TextSummary::from(&placeholder.text[..end_in_transform]);
+                } else {
+                    let inlay_start = cursor.start().1;
+                    let inlay_end = InlayOffset(cursor.start().1 .0 + end_in_transform);
+                    summary += self
+                        .inlay_snapshot
+                        .text_summary_for_range(inlay_start..inlay_end);
+                }
+            }
+        }
+
+        summary
+    }
+
     pub fn make_fold_point(&self, point: Point, bias: Bias) -> FoldPoint {
         self.to_fold_point(self.inlay_snapshot.to_inlay_point(point), bias)
+    }
+
+    pub fn make_fold_offset(&self, buffer_offset: usize, bias: Bias) -> FoldOffset {
+        self.to_fold_offset(self.inlay_snapshot.to_inlay_offset(buffer_offset), bias)
     }
 
     pub fn to_fold_point(&self, point: InlayPoint, bias: Bias) -> FoldPoint {
@@ -657,6 +703,24 @@ impl FoldSnapshot {
         } else {
             let overshoot = point.0 - cursor.start().0 .0;
             FoldPoint(cmp::min(
+                cursor.start().1 .0 + overshoot,
+                cursor.end(&()).1 .0,
+            ))
+        }
+    }
+
+    pub fn to_fold_offset(&self, inlay_offset: InlayOffset, bias: Bias) -> FoldOffset {
+        let mut cursor = self.transforms.cursor::<(InlayOffset, FoldOffset)>(&());
+        cursor.seek(&inlay_offset, Bias::Right, &());
+        if cursor.item().map_or(false, |t| t.is_fold()) {
+            if bias == Bias::Left || inlay_offset == cursor.start().0 {
+                cursor.start().1
+            } else {
+                cursor.end(&()).1
+            }
+        } else {
+            let overshoot = inlay_offset.0 - cursor.start().0 .0;
+            FoldOffset(cmp::min(
                 cursor.start().1 .0 + overshoot,
                 cursor.end(&()).1 .0,
             ))
@@ -1844,21 +1908,12 @@ mod tests {
 
             let text = snapshot.text();
             for _ in 0..5 {
-                let start_row = rng.gen_range(0..=snapshot.max_point().row());
-                let start_column = rng.gen_range(0..=snapshot.line_len(start_row));
-                let end_row = rng.gen_range(0..=snapshot.max_point().row());
-                let end_column = rng.gen_range(0..=snapshot.line_len(end_row));
-                let mut start =
-                    snapshot.clip_point(FoldPoint::new(start_row, start_column), Bias::Left);
-                let mut end = snapshot.clip_point(FoldPoint::new(end_row, end_column), Bias::Right);
-                if start > end {
-                    mem::swap(&mut start, &mut end);
-                }
-
-                let lines = start..end;
-                let bytes = start.to_offset(&snapshot)..end.to_offset(&snapshot);
+                let end =
+                    snapshot.clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Right);
+                let start = snapshot.clip_offset(FoldOffset(rng.gen_range(0..=end.0)), Left);
+                let bytes = start..end;
                 assert_eq!(
-                    snapshot.text_summary_for_range(lines),
+                    snapshot.text_summary_for_offset_range(bytes.clone()),
                     TextSummary::from(&text[bytes.start.0..bytes.end.0])
                 )
             }
