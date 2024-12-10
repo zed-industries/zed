@@ -1134,11 +1134,19 @@
   },
   // Vim settings
   "vim": {
+    // Whether to show relative line numbers in vim mode
     "toggle_relative_line_numbers": false,
+    // When to use system clipboard integration
     "use_system_clipboard": "always",
+    // Whether to allow find commands to search across multiple lines
     "use_multiline_find": false,
+    // Whether to use smart case matching for find commands
     "use_smartcase_find": false,
+    // Whether to highlight the characters you can jump to with one key
+    "use_highlight_find": false,
+    // Duration in milliseconds to highlight yanked text
     "highlight_on_yank_duration": 200,
+    // Custom digraph mappings
     "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable
