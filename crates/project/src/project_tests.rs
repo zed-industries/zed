@@ -2222,7 +2222,7 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
 
     let edits = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.edits_from_lsp(
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
                 &buffer,
                 vec![
                     // replace body of first function
@@ -2317,7 +2317,7 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
     // Rust-analyzer does this when performing a merge-imports code action.
     let edits = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.edits_from_lsp(
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
                 &buffer,
                 [
                     // Replace the first use statement without editing the semicolon.
@@ -2426,7 +2426,7 @@ async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
     // with ranges sometimes being inverted or pointing to invalid locations.
     let edits = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.edits_from_lsp(
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
                 &buffer,
                 [
                     lsp::TextEdit {
