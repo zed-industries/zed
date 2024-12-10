@@ -44,7 +44,9 @@ class Prettier {
     process.exit(1);
   }
   process.stderr.write(
-    `Prettier at path '${prettierPath}' loaded successfully, config: ${JSON.stringify(config)}\n`,
+    `Prettier at path '${prettierPath}' loaded successfully, config: ${JSON.stringify(
+      config,
+    )}\n`,
   );
   process.stdin.resume();
   handleBuffer(new Prettier(prettierPath, prettier, config));
@@ -68,7 +70,9 @@ async function handleBuffer(prettier) {
       sendResponse({
         id: message.id,
         ...makeError(
-          `error during message '${JSON.stringify(errorMessage)}' handling: ${e}`,
+          `error during message '${JSON.stringify(
+            errorMessage,
+          )}' handling: ${e}`,
         ),
       });
     });
@@ -189,6 +193,22 @@ async function handleMessage(message, prettier) {
     if (params.options.filepath) {
       resolvedConfig =
         (await prettier.prettier.resolveConfig(params.options.filepath)) || {};
+
+      if (params.options.ignorePath) {
+        const fileInfo = await prettier.prettier.getFileInfo(
+          params.options.filepath,
+          {
+            ignorePath: params.options.ignorePath,
+          },
+        );
+        if (fileInfo.ignored) {
+          process.stderr.write(
+            `Ignoring file '${params.options.filepath}' based on rules in '${params.options.ignorePath}'\n`,
+          );
+          sendResponse({ id, result: { text: params.text } });
+          return;
+        }
+      }
     }
 
     // Marking the params.options.filepath as undefined makes
