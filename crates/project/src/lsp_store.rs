@@ -3539,7 +3539,13 @@ impl LspStore {
             let buffer_language = buffer.language();
             let settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
             if let Some(language) = buffer_language {
-                if settings.enable_language_server {
+                if settings.enable_language_server
+                    && self
+                        .as_local()
+                        .unwrap()
+                        .registered_buffers
+                        .contains_key(&buffer.remote_id())
+                {
                     if let Some(file) = buffer_file {
                         language_servers_to_start.push((file.worktree.clone(), language.name()));
                     }
@@ -7113,6 +7119,7 @@ impl LspStore {
             this.update(&mut cx, |this, cx| {
                 let local = this.as_local_mut().unwrap();
                 // Restart the language server for the given worktree.
+                //
                 local.start_language_servers(&worktree, language.clone(), cx);
 
                 // Lookup new server ids and set them for each of the orphaned worktrees

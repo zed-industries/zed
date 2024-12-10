@@ -11964,6 +11964,9 @@ impl Editor {
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
+                let buffer = self.buffer.read(cx);
+                self.registered_buffers
+                    .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
             multi_buffer::Event::ExcerptsEdited { ids } => {

@@ -56,7 +56,6 @@ use lsp::{
     LanguageServerId, LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
-use lsp_store::OpenLspBufferHandle;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 pub use prettier_store::PrettierStore;
@@ -1853,7 +1852,7 @@ impl Project {
         &mut self,
         abs_path: impl AsRef<Path>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(Model<Buffer>, OpenLspBufferHandle)>> {
+    ) -> Task<Result<(Model<Buffer>, lsp_store::OpenLspBufferHandle)>> {
         if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
             let buffer_task = self.open_buffer((worktree.read(cx).id(), relative_path), cx);
             let lsp_store = self.lsp_store().clone();
