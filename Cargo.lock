@@ -16012,7 +16012,6 @@ dependencies = [
  "outline_panel",
  "parking_lot",
  "paths",
- "picker",
  "profiling",
  "project",
  "project_panel",

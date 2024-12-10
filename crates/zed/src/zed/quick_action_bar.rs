@@ -13,6 +13,7 @@ use gpui::{
     Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
+use repl::worktree_id_for_editor;
 use repl_menu::ReplMenu;
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
@@ -428,8 +429,15 @@ impl ToolbarItemView for QuickActionBar {
         if let Some(active_item) = active_pane_item {
             self._inlay_hints_enabled_subscription.take();
 
-            if let Some(editor) = active_item.downcast::<Editor>() {
-                self.repl_menu = Some(cx.new_view(|cx| ReplMenu::new(editor.downgrade(), cx)));
+            let editor = active_item.downcast::<Editor>();
+
+            let work_tree_id = active_item
+                .downcast::<Editor>()
+                .and_then(|editor| worktree_id_for_editor(editor.downgrade(), cx));
+
+            if let (Some(editor), Some(work_tree_id)) = (editor, work_tree_id) {
+                self.repl_menu =
+                    Some(cx.new_view(|cx| ReplMenu::new(work_tree_id, editor.downgrade(), cx)));
                 let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
                 let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
                 self._inlay_hints_enabled_subscription =

@@ -3,16 +3,14 @@ use std::time::Duration;
 use editor::Editor;
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
 use gpui::{ElementId, WeakView};
-use picker::Picker;
-use repl::components::OnSelect;
+use project::WorktreeId;
 use repl::{
-    components::{KernelPickerDelegate, KernelSelector},
-    worktree_id_for_editor, ExecutionState, JupyterSettings, Kernel, KernelSpecification,
+    components::KernelSelector, ExecutionState, JupyterSettings, Kernel, KernelSpecification,
     KernelStatus, Session, SessionSupport,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
-    PopoverMenuHandle, Tooltip,
+    Tooltip,
 };
 use util::ResultExt;
 
@@ -37,9 +35,13 @@ pub struct ReplMenu {
 }
 
 impl ReplMenu {
-    pub fn new(editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        work_tree_id: WorktreeId,
+        editor: WeakView<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         Self {
-            kernel_menu: cx.new_view(|cx| KernelSelector::new(editor.clone(), cx)),
+            kernel_menu: cx.new_view(|cx| KernelSelector::new(work_tree_id, editor.clone(), cx)),
             active_editor: editor.clone(),
         }
     }
@@ -279,7 +281,7 @@ impl ReplMenu {
     pub fn render_repl_launch_menu(
         &self,
         kernel_specification: KernelSpecification,
-        cx: &mut ViewContext<Self>,
+        _cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let tooltip: SharedString =
             SharedString::from(format!("Start REPL for {}", kernel_specification.name()));
@@ -294,7 +296,7 @@ impl ReplMenu {
         )
     }
 
-    pub fn render_repl_setup(&self, language: &str, cx: &mut ViewContext<Self>) -> AnyElement {
+    pub fn render_repl_setup(&self, language: &str, _cx: &mut ViewContext<Self>) -> AnyElement {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
         h_flex()
             .child(self.kernel_menu.clone())

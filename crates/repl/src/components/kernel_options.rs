@@ -1,6 +1,5 @@
 use crate::kernels::KernelSpecification;
 use crate::repl_store::ReplStore;
-use crate::worktree_id_for_editor;
 use crate::KERNEL_DOCS_URL;
 
 use editor::Editor;
@@ -19,7 +18,7 @@ use ui::ListItemSpacing;
 
 use gpui::SharedString;
 use gpui::Task;
-use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle};
 
 pub type OnSelect = Box<dyn Fn(KernelSpecification, &mut WindowContext)>;
 
@@ -49,10 +48,11 @@ fn truncate_path(path: &SharedString, max_length: usize) -> SharedString {
 }
 
 impl KernelSelector {
-    pub fn new(editor: WeakView<Editor>, cx: &mut ViewContext<Self>) -> Self {
-        // todo!()
-        let worktree_id = worktree_id_for_editor(editor.clone(), cx).unwrap();
-
+    pub fn new(
+        worktree_id: WorktreeId,
+        editor: WeakView<Editor>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Self {
         KernelSelector {
             editor,
             handle: None,
@@ -324,7 +324,6 @@ impl KernelPickerDelegate {
     }
 
     fn set_group(&mut self, group: Group, cx: &mut ViewContext<Picker<Self>>) {
-        dbg!(&group);
         self.group = group;
         cx.notify();
     }
