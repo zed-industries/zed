@@ -4135,13 +4135,6 @@ impl Project {
         Ok(())
     }
 
-    pub fn language_servers<'a>(
-        &'a self,
-        cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = (LanguageServerId, LanguageServerName, WorktreeId)> {
-        self.lsp_store.read(cx).language_servers()
-    }
-
     pub fn supplementary_language_servers<'a>(
         &'a self,
         cx: &'a AppContext,
@@ -4157,14 +4150,14 @@ impl Project {
         self.lsp_store.read(cx).language_server_for_id(id)
     }
 
-    pub fn language_servers_for_buffer<'a>(
+    pub fn language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &'a Buffer,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)> {
         self.lsp_store
             .read(cx)
-            .language_servers_for_buffer(buffer, cx)
+            .language_servers_for_local_buffer(buffer, cx)
     }
 
     pub fn buffer_store(&self) -> &Model<BufferStore> {
