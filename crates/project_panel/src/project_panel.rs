@@ -32,8 +32,8 @@ use gpui::{
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{
-    relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
-    WorktreeId,
+    relativize_path, Entry, EntryKind, FileNumber, Fs, Project, ProjectEntryId, ProjectPath,
+    Worktree, WorktreeId,
 };
 use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowFileNumbers,
@@ -297,8 +297,8 @@ impl ProjectPanel {
                     this.reveal_entry(project, *entry_id, false, cx);
                     cx.emit(PanelEvent::Activate);
                 }
-                project::Event::OpenNumberedFile { file_number } => {
-                    this.go_to_numbered_file(*file_number, cx);
+                project::Event::OpenNumberedFile(file_number) => {
+                    this.go_to_numbered_file(file_number.clone(), cx);
                 }
                 project::Event::ActivateProjectPanel => {
                     cx.emit(PanelEvent::Activate);
@@ -3354,12 +3354,11 @@ impl ProjectPanel {
             .border_color(border_color)
             .child(
                 h_flex()
-                    .child(
-                        div().px(px(8.)).w(px(40.)).child(
-                            Label::new(format!("{}", file_number.unwrap_or(0)))
-                                .color(filename_text_color),
-                        ),
-                    )
+                    .when_some(file_number, |this, file_number| {
+                        this.child(div().px(px(8.)).w(px(40.)).child(
+                            Label::new(format!("{}", file_number)).color(filename_text_color),
+                        ))
+                    })
                     .child(
                         ListItem::new(entry_id.to_proto() as usize)
                             .indent_level(depth)
@@ -3854,7 +3853,7 @@ impl ProjectPanel {
         }
     }
 
-    fn go_to_numbered_file(&mut self, file_number: usize, cx: &mut ViewContext<Self>) {
+    fn go_to_numbered_file(&mut self, file_number: FileNumber, cx: &mut ViewContext<Self>) {
         let variant = ProjectPanelSettings::get_global(cx).show_file_numbers;
 
         let total_entries: usize = self
@@ -3863,22 +3862,33 @@ impl ProjectPanel {
             .map(|(_, entries, _)| entries.len())
             .sum();
 
-        if file_number > total_entries {
-            return;
-        }
-
         let file_index = match variant {
-            ShowFileNumbers::Absolute => file_number,
-            ShowFileNumbers::Relative => {
-                let selection_line_number = if let Some(selection) = self.selection {
-                    self.index_for_selection(selection).unwrap_or_default().2
-                } else {
-                    0
-                };
-                selection_line_number.max(file_number) - selection_line_number.min(file_number)
-            }
+            ShowFileNumbers::Absolute => match file_number {
+                FileNumber::Absolute(number) => number,
+                FileNumber::Relative(_, _) => return,
+            },
+            ShowFileNumbers::Relative => match file_number {
+                FileNumber::Relative(number, down) => {
+                    let selection_line_number = if let Some(selection) = self.selection {
+                        self.index_for_selection(selection).unwrap_or_default().2
+                    } else {
+                        0
+                    };
+                    if down {
+                        selection_line_number + number
+                    } else {
+                        dbg!(selection_line_number, number);
+                        selection_line_number - number
+                    }
+                }
+                FileNumber::Absolute(_) => return,
+            },
             ShowFileNumbers::Off => return,
         };
+
+        if file_index > total_entries {
+            return;
+        }
 
         // Get the entry at the specified index (subtract 1 because UI numbers start at 1)
         if let Some((_, entry)) = self.entry_at_index(file_index) {
@@ -4120,8 +4130,16 @@ impl Render for ProjectPanel {
                             .with_render_fn(
                                 cx.view().clone(),
                                 move |this, params, cx| {
-                                    const LINE_NUMBER_WIDTH: f32 = 34.;
-                                    const LEFT_OFFSET: f32 = 14. + LINE_NUMBER_WIDTH;
+                                    let line_number_width = match ProjectPanelSettings::get_global(
+                                        cx,
+                                    )
+                                    .show_file_numbers
+                                    {
+                                        ShowFileNumbers::Off => 0.,
+                                        _ => 34.,
+                                    };
+
+                                    let left_offset: f32 = 14. + line_number_width;
                                     const PADDING_Y: f32 = 4.;
                                     const HITBOX_OVERDRAW: f32 = 3.;
 
@@ -4144,7 +4162,7 @@ impl Render for ProjectPanel {
                                             let bounds = Bounds::new(
                                                 point(
                                                     px(layout.offset.x as f32) * indent_size
-                                                        + px(LEFT_OFFSET),
+                                                        + px(left_offset),
                                                     px(layout.offset.y as f32) * item_height
                                                         + offset,
                                                 ),

@@ -3,7 +3,7 @@ use gpui::{
     actions, div, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Model, Render, Subscription, View, ViewContext,
 };
-use project::Project;
+use project::{FileNumber, Project};
 use ui::{h_flex, rems, v_flex, ActiveTheme, Color, Label, LabelCommon, SharedString, StyledExt};
 use workspace::{ModalView, Workspace};
 
@@ -69,13 +69,41 @@ impl GoToFile {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        let input = self.number_editor.read(cx).text(cx);
-        if let Ok(file_number) = input.trim().parse::<usize>() {
+        if let Some(file_number) = self.file_number_from_input(cx) {
             self.project.update(cx, |_, cx| {
-                cx.emit(project::Event::OpenNumberedFile { file_number })
+                cx.emit(project::Event::OpenNumberedFile(file_number))
             });
-        }
+        };
         cx.emit(DismissEvent);
+    }
+
+    fn file_number_from_input(&self, cx: &mut ViewContext<Self>) -> Option<FileNumber> {
+        let input = self.number_editor.read(cx).text(cx);
+        let mut trimmed = input.trim().to_string();
+
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let last_char = trimmed.pop()?;
+        Some(match last_char {
+            'j' => {
+                let num = trimmed.parse().unwrap_or(1);
+                FileNumber::Relative(num, true)
+            }
+            'k' => {
+                let num = trimmed.parse().unwrap_or(1);
+                FileNumber::Relative(num, false)
+            }
+            _ => input
+                .trim()
+                .parse::<isize>()
+                .ok()?
+                .abs()
+                .try_into()
+                .ok()
+                .map(FileNumber::Absolute)?,
+        })
     }
 }
 
