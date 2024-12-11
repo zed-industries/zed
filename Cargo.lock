@@ -2882,6 +2882,7 @@ dependencies = [
  "lazy_static",
  "linkme",
  "once_cell",
+ "parking_lot",
 ]
 
 [[package]]

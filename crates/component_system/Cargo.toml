@@ -16,7 +16,8 @@ gpui.workspace = true
 lazy_static.workspace = true
 linkme.workspace = true
 once_cell.workspace = true
-collections = { workspace = true }
+collections.workspace = true
+parking_lot.workspace = true
 
 [features]
 default = []

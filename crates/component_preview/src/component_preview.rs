@@ -2,7 +2,7 @@
 //!
 //! A view for exploring Zed components.
 
-use component_system::ComponentPreview as _;
+use component_system::{components, AllComponents, ComponentPreview as _};
 use gpui::{prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView};
 use strum::{EnumIter, IntoEnumIterator};
 use ui::{prelude::*, Avatar, TintColor};
@@ -56,7 +56,13 @@ impl ComponentPreview {
     }
 
     fn render_sidebar(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        div()
+        h_flex().children(components().all().iter().map(|component| {
+            Button::new(component.name().clone(), component.name()).on_click(cx.listener(
+                move |_this, _, _cx| {
+                    // Handle button click
+                },
+            ))
+        }))
     }
 
     fn render_preview(&self, cx: &ViewContext<Self>) -> impl IntoElement {
@@ -72,6 +78,7 @@ impl ComponentPreview {
             .size_full()
             .gap_2()
             .child(v_flex().child(Headline::new("Component Preview").size(HeadlineSize::Large)))
+            .child(self.render_sidebar(cx))
         // .children(all_previews.into_iter().map(|(name, preview)| {
         //     let id = ElementId::Name(format!("{}-preview", name).into());
         //     v_flex()
