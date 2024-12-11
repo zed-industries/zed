@@ -573,7 +573,7 @@ impl<T: 'static> Model<T> {
     }
 
     /// Emit an event of the specified type, which can be handled by other entities that have subscribed via `subscribe` methods on their respective contexts.
-    pub fn emit<E>(&self, cx: &mut AppContext, event: E)
+    pub fn emit<E>(&self, event: E, cx: &mut AppContext)
     where
         T: EventEmitter<E>,
         E: 'static,

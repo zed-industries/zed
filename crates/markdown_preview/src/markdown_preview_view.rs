@@ -91,7 +91,7 @@ impl MarkdownPreviewView {
                         pane.add_item(Box::new(view.clone()), false, false, None, model, cx)
                     }
                 });
-                editor.focus_handle(cx).focus(cx);
+                editor.focus_handle(cx).focus(window);
                 model.notify(cx);
             }
         });
@@ -147,7 +147,7 @@ impl MarkdownPreviewView {
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
-            let view = cx.view().downgrade();
+            let view = model.downgrade();
 
             let list_state =
                 ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
@@ -408,7 +408,7 @@ impl MarkdownPreviewView {
                     cx,
                     |selections| selections.select_ranges(vec![selection]),
                 );
-                editor.focus(cx);
+                editor.focus(window);
             });
         }
     }

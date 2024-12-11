@@ -76,13 +76,13 @@ impl ImageItem {
         if old_state != new_state {
             file_changed = true;
             if matches!(new_state, DiskState::Present { .. }) {
-                model.emit(cx, ImageItemEvent::ReloadNeeded)
+                model.emit(ImageItemEvent::ReloadNeeded, cx)
             }
         }
 
         self.file = new_file;
         if file_changed {
-            model.emit(cx, ImageItemEvent::FileHandleChanged);
+            model.emit(ImageItemEvent::FileHandleChanged, cx);
             model.notify(cx);
         }
     }
@@ -105,7 +105,7 @@ impl ImageItem {
             {
                 this.update(&mut cx, |this, model, cx| {
                     this.image = image;
-                    model.emit(cx, ImageItemEvent::Reloaded);
+                    model.emit(ImageItemEvent::Reloaded, cx);
                 })
                 .log_err();
             }
@@ -137,7 +137,7 @@ impl ProjectItem for ImageItem {
         if Img::extensions().contains(&ext) && !ext.contains("svg") {
             Some(cx.spawn(|mut cx| async move {
                 project
-                    .update(&mut cx, |project, cx| project.open_image(path, cx))?
+                    .update(&mut cx, |project, cx| project.open_image(path, model, cx))?
                     .await
             }))
         } else {
@@ -290,9 +290,9 @@ impl ImageStore {
                 entry.insert(rx.clone());
 
                 let project_path = project_path.clone();
-                let load_image = self
-                    .state
-                    .open_image(project_path.path.clone(), worktree, cx);
+                let load_image =
+                    self.state
+                        .open_image(project_path.path.clone(), worktree, model, cx);
 
                 model
                     .spawn(cx, move |this, mut cx| async move {
@@ -343,7 +343,7 @@ impl ImageStore {
             return Task::ready(Ok(()));
         }
 
-        self.state.reload_images(images, cx)
+        self.state.reload_images(images, model, cx)
     }
 
     fn add_image(
@@ -356,8 +356,10 @@ impl ImageStore {
 
         self.opened_images.insert(image_id, image.downgrade());
 
-        cx.subscribe(&image, Self::on_image_event).detach();
-        model.emit(cx, ImageStoreEvent::ImageAdded(image));
+        model
+            .subscribe(&image, model, cx, Self::on_image_event)
+            .detach();
+        model.emit(ImageStoreEvent::ImageAdded(image), cx);
         Ok(())
     }
 
@@ -392,9 +394,9 @@ impl ImageStoreImpl for Model<LocalImageStore> {
         let this = self.clone();
 
         let load_file = worktree.update(cx, |worktree, model, cx| {
-            worktree.load_binary_file(path.as_ref(), cx)
+            worktree.load_binary_file(path.as_ref(), model, cx)
         });
-        cx.spawn(move |image_store, mut cx| async move {
+        model.spawn(cx, move |image_store, mut cx| async move {
             let LoadedBinaryFile { file, content } = load_file.await?;
             let image = create_gpui_image(content)?;
 
@@ -436,9 +438,11 @@ impl ImageStoreImpl for Model<LocalImageStore> {
         model: &Model<ImageStore>,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
-        cx.spawn(move |_, mut cx| async move {
+        model.spawn(cx, move |mut cx| async move {
             for image in images {
-                if let Some(rec) = image.update(&mut cx, |image, cx| image.reload(cx))? {
+                if let Some(rec) =
+                    image.update(&mut cx, |image, model, cx| image.reload(model, cx))?
+                {
                     rec.await?
                 }
             }
@@ -458,17 +462,18 @@ impl LocalImageStore {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        cx.subscribe(worktree, |this, worktree, event, cx| {
-            if worktree.read(cx).is_local() {
-                match event {
-                    worktree::Event::UpdatedEntries(changes) => {
-                        this.local_worktree_entries_changed(&worktree, changes, cx);
+        model
+            .subscribe(worktree, cx, |this, worktree, event, model, cx| {
+                if worktree.read(cx).is_local() {
+                    match event {
+                        worktree::Event::UpdatedEntries(changes) => {
+                            this.local_worktree_entries_changed(&worktree, changes, cx);
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-        })
-        .detach();
+            })
+            .detach();
     }
 
     fn local_worktree_entries_changed(

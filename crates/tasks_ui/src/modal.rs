@@ -111,7 +111,7 @@ impl TasksModal {
             )
         });
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         });
         Self {
             picker,
@@ -278,11 +278,11 @@ impl PickerDelegate for TasksModalDelegate {
                 );
             })
             .ok();
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
     }
 
     fn dismissed(&mut self, model: &Model<picker>, cx: &mut AppContext) {
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
     }
 
     fn render_match(
@@ -430,7 +430,7 @@ impl PickerDelegate for TasksModalDelegate {
                 );
             })
             .ok();
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {
@@ -772,7 +772,7 @@ mod tests {
             "Should list no file or worktree context-dependent when no file is open"
         );
         tasks_picker.update(cx, |_, model, cx| {
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         });
         drop(tasks_picker);
         cx.executor().run_until_parked();
@@ -799,7 +799,7 @@ mod tests {
             "Second opened buffer should fill the context, labels should be trimmed if long enough"
         );
         tasks_picker.update(cx, |_, model, cx| {
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         });
         drop(tasks_picker);
         cx.executor().run_until_parked();
@@ -833,7 +833,7 @@ mod tests {
             "Opened buffer should fill the context, labels should be trimmed if long enough"
         );
         tasks_picker.update(cx, |_, model, cx| {
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         });
         drop(tasks_picker);
         cx.executor().run_until_parked();
@@ -943,7 +943,7 @@ mod tests {
             Tasks with the same labels and context are deduplicated."
         );
         tasks_picker.update(cx, |_, model, cx| {
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         });
         drop(tasks_picker);
         cx.executor().run_until_parked();
@@ -966,7 +966,7 @@ mod tests {
             "Even when both TS files are open, should only show the history (on the top), and tasks, resolved for the current file"
         );
         tasks_picker.update(cx, |_, model, cx| {
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         });
         drop(tasks_picker);
         cx.executor().run_until_parked();
@@ -1031,7 +1031,7 @@ mod tests {
             }
         });
         tasks_picker.update(cx, |_, model, cx| {
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         });
         drop(tasks_picker);
         cx.executor().run_until_parked()

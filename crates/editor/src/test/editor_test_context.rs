@@ -61,7 +61,7 @@ impl EditorTestContext {
         let editor = cx.add_window(|cx| {
             let editor =
                 build_editor_with_project(project, MultiBuffer::build_from_buffer(buffer, cx), cx);
-            editor.focus(cx);
+            editor.focus(window);
             editor
         });
         let editor_view = editor.root_view(cx).unwrap();
@@ -119,7 +119,7 @@ impl EditorTestContext {
 
         let editor = cx.add_window(|cx| {
             let editor = build_editor(buffer, cx);
-            editor.focus(cx);
+            editor.focus(window);
             editor
         });
 

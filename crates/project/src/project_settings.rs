@@ -250,7 +250,8 @@ impl SettingsObserver {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
-        cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+        model
+            .subscribe(&worktree_store, model, cx, Self::on_worktree_store_event)
             .detach();
 
         Self {
@@ -350,6 +351,7 @@ impl SettingsObserver {
                     local_settings_kind_from_proto(kind),
                     envelope.payload.content,
                 )],
+                model,
                 cx,
             );
         })?;
@@ -364,12 +366,13 @@ impl SettingsObserver {
         cx: &mut AppContext,
     ) {
         if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
-            cx.subscribe(worktree, |this, worktree, event, cx| {
-                if let worktree::Event::UpdatedEntries(changes) = event {
-                    this.update_local_worktree_settings(&worktree, changes, cx)
-                }
-            })
-            .detach()
+            model
+                .subscribe(worktree, cx, |this, worktree, event, model, cx| {
+                    if let worktree::Event::UpdatedEntries(changes) = event {
+                        this.update_local_worktree_settings(&worktree, changes, cx)
+                    }
+                })
+                .detach()
         }
     }
 
@@ -478,22 +481,23 @@ impl SettingsObserver {
         }
 
         let worktree = worktree.clone();
-        cx.spawn(move |this, model, cx| async move {
-            let settings_contents: Vec<(Arc<Path>, _, _)> =
-                futures::future::join_all(settings_contents).await;
-            cx.update(|cx| {
-                this.update(cx, |this, model, cx| {
-                    this.update_settings(
-                        worktree,
-                        settings_contents.into_iter().map(|(path, kind, content)| {
-                            (path, kind, content.and_then(|c| c.log_err()))
-                        }),
-                        cx,
-                    )
+        model
+            .spawn(cx, move |this, model, cx| async move {
+                let settings_contents: Vec<(Arc<Path>, _, _)> =
+                    futures::future::join_all(settings_contents).await;
+                cx.update(|cx| {
+                    this.update(cx, |this, model, cx| {
+                        this.update_settings(
+                            worktree,
+                            settings_contents.into_iter().map(|(path, kind, content)| {
+                                (path, kind, content.and_then(|c| c.log_err()))
+                            }),
+                            cx,
+                        )
+                    })
                 })
             })
-        })
-        .detach();
+            .detach();
     }
 
     fn update_settings(
@@ -526,15 +530,18 @@ impl SettingsObserver {
                                     path,
                                     message
                                 );
-                                model.emit(cx, SettingsObserverEvent::LocalSettingsUpdated(Err(
-                                    InvalidSettingsError::LocalSettings { path, message },
-                                )));
+                                model.emit(
+                                    cx,
+                                    SettingsObserverEvent::LocalSettingsUpdated(Err(
+                                        InvalidSettingsError::LocalSettings { path, message },
+                                    )),
+                                );
                             }
                             Err(e) => {
                                 log::error!("Failed to set local settings: {e}");
                             }
                             Ok(_) => {
-                                model.emit(cx, SettingsObserverEvent::LocalSettingsUpdated(Ok(())));
+                                model.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(())), cx);
                             }
                         }
                     }),
@@ -546,6 +553,7 @@ impl SettingsObserver {
                                 path: directory.as_ref(),
                             }),
                             file_content.as_deref(),
+                            model,
                             cx,
                         )
                         .log_err();

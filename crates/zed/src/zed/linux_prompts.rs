@@ -69,12 +69,12 @@ pub struct FallbackPromptRenderer {
 
 impl FallbackPromptRenderer {
     fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, PromptResponse(self.active_action_id));
+        model.emit(PromptResponse(self.active_action_id), cx);
     }
 
     fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(ix) = self.actions.iter().position(|a| a == "Cancel") {
-            model.emit(cx, PromptResponse(ix));
+            model.emit(PromptResponse(ix), cx);
         }
     }
 
@@ -150,7 +150,7 @@ impl Render for FallbackPromptRenderer {
                         })
                         .layer(ElevationIndex::ModalSurface)
                         .on_click(model.listener(move |_, _, model, window, cx| {
-                            model.emit(cx, PromptResponse(ix));
+                            model.emit(PromptResponse(ix), cx);
                         }))
                 }),
             ));

@@ -141,10 +141,10 @@ impl FileFinder {
             workspace
                 .update(&mut cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    let weak_workspace = cx.view().downgrade();
+                    let weak_workspace = model.downgrade();
                     workspace.toggle_modal(cx, |model, cx| {
                         let delegate = FileFinderDelegate::new(
-                            cx.view().downgrade(),
+                            model.downgrade(),
                             weak_workspace,
                             project,
                             currently_opened_path,
@@ -920,7 +920,7 @@ impl FileFinderDelegate {
     fn lookup_absolute_path(
         &self,
         query: FileSearchQuery,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<()> {
         cx.spawn(|picker, mut cx| async move {
@@ -1223,7 +1223,7 @@ impl PickerDelegate for FileFinderDelegate {
                         }
                     }
                     finder
-                        .update(&mut cx, |_, cx| model.emit(cx, DismissEvent))
+                        .update(&mut cx, |_, cx| model.emit(DismissEvent, cx))
                         .ok()?;
 
                     Some(())
@@ -1235,7 +1235,7 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.file_finder
-            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
+            .update(cx, |_, model, cx| model.emit(DismissEvent, cx))
             .log_err();
     }
 

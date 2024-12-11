@@ -41,9 +41,10 @@ impl ToolchainStore {
             project_environment,
             active_toolchains: Default::default(),
         });
-        let subscription = cx.subscribe(&model, |_, _, e: &ToolchainStoreEvent, cx| {
-            model.emit(cx, e.clone())
-        });
+        let subscription =
+            model.subscribe(&model, cx, |_, _, e: &ToolchainStoreEvent, model, cx| {
+                model.emit(e.clone(), cx)
+            });
         Self(ToolchainStoreInner::Local(model, subscription))
     }
     pub(super) fn remote(project_id: u64, client: AnyProtoClient, cx: &mut AppContext) -> Self {
@@ -282,7 +283,7 @@ impl LocalToolchainStore {
                     (worktree_id, toolchain.language_name.clone()),
                     toolchain.clone(),
                 );
-                model.emit(cx, ToolchainStoreEvent::ToolchainActivated);
+                model.emit(ToolchainStoreEvent::ToolchainActivated, cx);
             })
             .ok();
             Some(())

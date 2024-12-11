@@ -2,9 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
-    rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, View, AppContext, VisualContext, WeakView,
+    rems, AnyElement, AppContext, AppContext, AsyncAppContext, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, View, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
@@ -44,9 +44,14 @@ impl BranchList {
         .detach_and_prompt_err("Failed to read branches", cx, |_, _| None)
     }
 
-    fn new(delegate: BranchListDelegate, rem_width: f32, model: &Model<Self>, cx: &mut AppContext) -> Self {
+    fn new(
+        delegate: BranchListDelegate,
+        rem_width: f32,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) -> Self {
         let picker = cx.new_model(|model, cx| Picker::uniform_list(delegate, cx));
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| model.emit(cx, DismissEvent));
+        let _subscription = cx.subscribe(&picker, |_, _, _, cx| model.emit(DismissEvent, cx));
         Self {
             picker,
             rem_width,
@@ -64,7 +69,12 @@ impl FocusableView for BranchList {
 }
 
 impl Render for BranchList {
-    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
             .child(self.picker.clone())
@@ -149,7 +159,12 @@ impl PickerDelegate for BranchListDelegate {
         self.selected_index = ix;
     }
 
-    fn update_matches(&mut self, query: String, model: &Model<Picker>, cx: &mut AppContext) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
+    ) -> Task<()> {
         cx.spawn(move |picker, mut cx| async move {
             let candidates = picker.update(&mut cx, |view, _| {
                 const RECENT_BRANCHES_COUNT: usize = 10;
@@ -257,7 +272,7 @@ impl PickerDelegate for BranchListDelegate {
                 branch_change_task.await?;
 
                 picker.update(&mut cx, |_, cx| {
-                    model.emit(cx, DismissEvent);
+                    model.emit(DismissEvent, cx);
 
                     Ok::<(), anyhow::Error>(())
                 })
@@ -267,14 +282,15 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
     }
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
-        model: &Model<>Picker, _cx: &mut AppContext,
+        model: &Model<Picker>,
+        _cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
         let shortened_branch_name =

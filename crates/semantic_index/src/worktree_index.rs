@@ -111,6 +111,7 @@ impl WorktreeIndex {
                     embedding_index,
                     summary_index,
                     entries_being_indexed,
+                    model,
                     cx,
                 )
             })
@@ -141,7 +142,9 @@ impl WorktreeIndex {
             summary_index,
             worktree,
             entry_ids_being_indexed,
-            _index_entries: cx.spawn(|this, cx| Self::index_entries(this, updated_entries_rx, cx)),
+            _index_entries: model.spawn(cx, |this, cx| {
+                Self::index_entries(this, updated_entries_rx, cx)
+            }),
             _subscription,
         }
     }

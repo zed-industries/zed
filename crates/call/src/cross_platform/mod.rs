@@ -198,7 +198,7 @@ impl ActiveCall {
         };
 
         let invite = if let Some(room) = room {
-            cx.spawn(move |_, mut cx| async move {
+            cx.spawn(move |mut cx| async move {
                 let room = room.await.map_err(|err| anyhow!("{:?}", err))?;
 
                 let initial_project_id = if let Some(initial_project) = initial_project {
@@ -396,7 +396,7 @@ impl ActiveCall {
 
         let channel_id = self.channel_id(cx);
         if let Some((room, _)) = self.room.take() {
-            model.emit(cx, Event::RoomLeft { channel_id });
+            model.emit(Event::RoomLeft { channel_id }, cx);
             room.update(cx, |room, model, cx| room.leave(cx))
         } else {
             Task::ready(Ok(()))
@@ -473,7 +473,7 @@ impl ActiveCall {
 
                             model.notify(cx);
                         }),
-                        cx.subscribe(&room, |_, _, event, cx| model.emit(cx, event.clone())),
+                        cx.subscribe(&room, |_, _, event, cx| model.emit(event.clone(), cx)),
                     ];
                     self.room = Some((room.clone(), subscriptions));
                     let location = self
@@ -481,7 +481,7 @@ impl ActiveCall {
                         .as_ref()
                         .and_then(|location| location.upgrade());
                     let channel_id = room.read(cx).channel_id();
-                    model.emit(cx, Event::RoomJoined { channel_id });
+                    model.emit(Event::RoomJoined { channel_id }, cx);
                     room.update(cx, |room, model, cx| {
                         room.set_location(location.as_ref(), cx)
                     })

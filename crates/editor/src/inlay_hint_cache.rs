@@ -735,7 +735,7 @@ fn determine_query_ranges(
     excerpt_id: ExcerptId,
     excerpt_buffer: &Model<Buffer>,
     excerpt_visible_range: Range<usize>,
-    model: &Model<_>,
+    model: &Model<Self>,
     cx: &mut AppContext,
 ) -> Option<QueryRanges> {
     let full_excerpt_range = multi_buffer
@@ -822,6 +822,7 @@ fn new_update_task(
                                 query,
                                 visible_range.clone(),
                                 query.invalidate.should_invalidate(),
+                                model,
                                 cx,
                             )
                         })
@@ -856,7 +857,7 @@ fn new_update_task(
 
         for (range, result) in visible_range_update_results {
             if let Err(e) = result {
-                query_range_failed(&range, e, &mut cx);
+                query_range_failed(&range, e, model, &mut cx);
             }
         }
 
@@ -874,6 +875,7 @@ fn new_update_task(
                                 query,
                                 invisible_range.clone(),
                                 false, // visible screen request already invalidated the entries
+                                model,
                                 cx,
                             )
                         })
@@ -884,7 +886,7 @@ fn new_update_task(
         .await;
         for (range, result) in invisible_range_update_results {
             if let Err(e) = result {
-                query_range_failed(&range, e, &mut cx);
+                query_range_failed(&range, e, model, &mut cx);
             }
         }
     })

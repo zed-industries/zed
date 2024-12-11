@@ -396,7 +396,7 @@ impl Pane {
             cx.subscribe(&project, Self::project_events),
         ];
 
-        let handle = cx.view().downgrade();
+        let handle = model.downgrade();
         Self {
             alternate_file_items: (None, None),
             focus_handle,
@@ -427,7 +427,7 @@ impl Pane {
             can_split_predicate: None,
             should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
-                if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
+                if !pane.has_focus(window) && !pane.context_menu_focused(cx) {
                     return (None, None);
                 }
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
@@ -570,7 +570,7 @@ impl Pane {
     fn focus_in(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if !self.was_focused {
             self.was_focused = true;
-            model.emit(cx, Event::Focus);
+            model.emit(Event::Focus, cx);
             model.notify(cx);
         }
 
@@ -586,7 +586,7 @@ impl Pane {
                     self.last_focus_handle_by_item.get(&active_item.item_id())
                 {
                     if let Some(focus_handle) = weak_last_focus_handle.upgrade() {
-                        focus_handle.focus(cx);
+                        focus_handle.focus(window);
                         return;
                     }
                 }
@@ -758,7 +758,7 @@ impl Pane {
 
     fn navigate_backward(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(workspace) = self.workspace.upgrade() {
-            let pane = cx.view().downgrade();
+            let pane = model.downgrade();
             cx.window_context().defer(move |cx| {
                 workspace.update(cx, |workspace, model, cx| {
                     workspace.go_back(pane, cx).detach_and_log_err(cx)
@@ -769,7 +769,7 @@ impl Pane {
 
     fn navigate_forward(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(workspace) = self.workspace.upgrade() {
-            let pane = cx.view().downgrade();
+            let pane = model.downgrade();
             cx.window_context().defer(move |cx| {
                 workspace.update(cx, |workspace, model, cx| {
                     workspace.go_forward(pane, cx).detach_and_log_err(cx)
@@ -779,11 +779,11 @@ impl Pane {
     }
 
     fn join_into_next(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, Event::JoinIntoNext);
+        model.emit(Event::JoinIntoNext, cx);
     }
 
     fn join_all(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, Event::JoinAll);
+        model.emit(Event::JoinAll, cx);
     }
 
     fn history_updated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
@@ -1021,7 +1021,7 @@ impl Pane {
             model.notify(cx);
         }
 
-        model.emit(cx, Event::AddItem { item });
+        model.emit(Event::AddItem { item }, cx);
     }
 
     pub fn items_len(&self) -> usize {
@@ -1091,12 +1091,12 @@ impl Pane {
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, model: &Model<Self>, cx: &mut AppContext) {
         if self.zoomed {
-            model.emit(cx, Event::ZoomOut);
+            model.emit(Event::ZoomOut, cx);
         } else if !self.items.is_empty() {
             if !self.focus_handle.contains_focused(cx) {
                 cx.focus_self();
             }
-            model.emit(cx, Event::ZoomIn);
+            model.emit(Event::ZoomIn, cx);
         }
     }
 
@@ -1613,7 +1613,7 @@ impl Pane {
             }
         }
 
-        model.emit(cx, Event::RemoveItem { idx: item_index });
+        model.emit(Event::RemoveItem { idx: item_index }, cx);
 
         let item = self.items.remove(item_index);
 
@@ -1672,7 +1672,7 @@ impl Pane {
         }
 
         if self.zoom_out_on_close && self.items.is_empty() && close_pane_if_empty && self.zoomed {
-            model.emit(cx, Event::ZoomOut);
+            model.emit(Event::ZoomOut, cx);
         }
 
         model.notify(cx);
@@ -1901,7 +1901,7 @@ impl Pane {
     }
 
     pub fn split(&mut self, direction: SplitDirection, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, Event::Split(direction));
+        model.emit(Event::Split(direction), cx);
     }
 
     pub fn toolbar(&self) -> &Model<Toolbar> {
@@ -1984,7 +1984,7 @@ impl Pane {
         }
     }
 
-    fn toggle_pin_tab(&mut self, _: &TogglePinTab, model: &Model<_>, cx: &mut AppContext) {
+    fn toggle_pin_tab(&mut self, _: &TogglePinTab, model: &Model<Self>, cx: &mut AppContext) {
         if self.items.is_empty() {
             return;
         }
@@ -1996,7 +1996,7 @@ impl Pane {
         }
     }
 
-    fn pin_tab_at(&mut self, ix: usize, model: &Model<_>, cx: &mut AppContext) {
+    fn pin_tab_at(&mut self, ix: usize, model: &Model<Self>, cx: &mut AppContext) {
         maybe!({
             let pane = cx.view().clone();
             let destination_index = self.pinned_tab_count.min(ix);
@@ -2013,7 +2013,7 @@ impl Pane {
         });
     }
 
-    fn unpin_tab_at(&mut self, ix: usize, model: &Model<_>, cx: &mut AppContext) {
+    fn unpin_tab_at(&mut self, ix: usize, model: &Model<Self>, cx: &mut AppContext) {
         maybe!({
             let pane = cx.view().clone();
             self.pinned_tab_count = self.pinned_tab_count.checked_sub(1)?;
@@ -2045,7 +2045,7 @@ impl Pane {
         item: &dyn ItemHandle,
         detail: usize,
         focus_handle: &FocusHandle,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
@@ -2267,7 +2267,7 @@ impl Pane {
         };
 
         let is_pinned = self.is_tab_pinned(ix);
-        let pane = cx.view().downgrade();
+        let pane = model.downgrade();
         let menu_context = item.focus_handle(model, cx);
         right_click_menu(ix).trigger(tab).menu(move |cx| {
             let pane = pane.clone();
@@ -2458,7 +2458,7 @@ impl Pane {
         })
     }
 
-    fn render_tab_bar(&mut self, model: &Model<_>, cx: &mut AppContext) -> impl IntoElement {
+    fn render_tab_bar(&mut self, model: &Model<Self>, cx: &mut AppContext) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
@@ -2657,7 +2657,7 @@ impl Pane {
         &mut self,
         dragged_tab: &DraggedTab,
         ix: usize,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
@@ -2725,7 +2725,7 @@ impl Pane {
         &mut self,
         dragged_selection: &DraggedSelection,
         dragged_onto: Option<usize>,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
@@ -2745,7 +2745,7 @@ impl Pane {
         &mut self,
         project_entry_id: &ProjectEntryId,
         target: Option<usize>,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
@@ -2815,7 +2815,7 @@ impl Pane {
     fn handle_external_paths_drop(
         &mut self,
         paths: &ExternalPaths,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
@@ -3053,7 +3053,7 @@ impl Render for Pane {
                         .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
                     if let Some(entry_id) = entry_id {
                         pane.project.update(cx, |_, model, cx| {
-                            model.emit(cx, project::Event::RevealInProjectPanel(entry_id))
+                            model.emit(project::Event::RevealInProjectPanel(entry_id), cx)
                         });
                     }
                 }),
@@ -3143,7 +3143,7 @@ impl Render for Pane {
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|pane, _, cx| {
                     if let Some(workspace) = pane.workspace.upgrade() {
-                        let pane = cx.view().downgrade();
+                        let pane = model.downgrade();
                         cx.window_context().defer(move |cx| {
                             workspace.update(cx, |workspace, model, cx| {
                                 workspace.go_back(pane, cx).detach_and_log_err(cx)
@@ -3156,7 +3156,7 @@ impl Render for Pane {
                 MouseButton::Navigate(NavigationDirection::Forward),
                 cx.listener(|pane, _, cx| {
                     if let Some(workspace) = pane.workspace.upgrade() {
-                        let pane = cx.view().downgrade();
+                        let pane = model.downgrade();
                         cx.window_context().defer(move |cx| {
                             workspace.update(cx, |workspace, model, cx| {
                                 workspace.go_forward(pane, cx).detach_and_log_err(cx)

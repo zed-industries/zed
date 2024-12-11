@@ -6,7 +6,7 @@ use ui::{prelude::*, utils::WithRemSize};
 pub struct WithRemSizeStory;
 
 impl Render for WithRemSizeStory {
-    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, _cx: &mut AppContext) -> impl IntoElement {
         Story::container().child(
             Example::new(16., gpui::red())
                 .child(

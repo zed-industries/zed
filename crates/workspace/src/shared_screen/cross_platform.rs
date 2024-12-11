@@ -33,7 +33,7 @@ impl SharedScreen {
     ) -> Self {
         let view = cx.new_model(|model, cx| RemoteVideoTrackView::new(track.clone(), cx));
         cx.subscribe(&view, |_, _, ev, cx| match ev {
-            call::RemoteVideoTrackViewEvent::Close => model.emit(cx, Event::Close),
+            call::RemoteVideoTrackViewEvent::Close => model.emit(Event::Close, cx),
         })
         .detach();
         Self {

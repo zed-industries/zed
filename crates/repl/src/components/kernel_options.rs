@@ -121,7 +121,7 @@ impl PickerDelegate for KernelPickerDelegate {
     fn confirm(&mut self, _secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some(kernelspec) = &self.selected_kernelspec {
             (self.on_select)(kernelspec.clone(), cx.window_context());
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         }
     }
 

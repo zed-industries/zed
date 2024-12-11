@@ -155,7 +155,7 @@ impl ProjectDiagnosticsEditor {
                         this.paths_to_update
                             .insert((path.clone(), Some(*language_server_id)));
                         this.summary = project.read(cx).diagnostic_summary(false, cx);
-                        model.emit(cx, EditorEvent::TitleChanged);
+                        model.emit(EditorEvent::TitleChanged, cx);
 
                         if this.editor.focus_handle(cx).contains_focused(cx) || this.focus_handle.contains_focused(cx) {
                             log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
@@ -190,7 +190,7 @@ impl ProjectDiagnosticsEditor {
             editor
         });
         cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
-            model.emit(cx, event.clone());
+            model.emit(event.clone(), cx);
             match event {
                 EditorEvent::Focused => {
                     if this.path_states.is_empty() {
@@ -288,7 +288,7 @@ impl ProjectDiagnosticsEditor {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             workspace.activate_item(&existing, true, true, model, cx);
         } else {
-            let workspace_handle = cx.view().downgrade();
+            let workspace_handle = model.downgrade();
 
             let include_warnings = match cx.try_global::<IncludeWarnings>() {
                 Some(include_warnings) => include_warnings.0,
@@ -317,7 +317,7 @@ impl ProjectDiagnosticsEditor {
 
     fn focus_in(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if self.focus_handle.is_focused(window) && !self.path_states.is_empty() {
-            self.editor.focus_handle(cx).focus(cx)
+            self.editor.focus_handle(cx).focus(window)
         }
     }
 

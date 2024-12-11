@@ -361,16 +361,16 @@ impl WorktreeStore {
             self.worktrees.insert(i, handle);
         }
 
-        model.emit(cx, WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
+        model.emit(WorktreeStoreEvent::WorktreeAdded(worktree.clone()), cx);
         self.send_project_updates(model, cx);
 
         let handle_id = worktree.entity_id();
         cx.observe_release(worktree, move |this, worktree, cx| {
-            model.emit(cx, WorktreeStoreEvent::WorktreeReleased(
+            model.emit(WorktreeStoreEvent::WorktreeReleased(
                 handle_id,
                 worktree.id(),
-            ));
-            model.emit(cx, WorktreeStoreEvent::WorktreeRemoved(
+            ), cx);
+            model.emit(, cxWorktreeStoreEvent::WorktreeRemoved(
                 handle_id,
                 worktree.id(),
             ));
@@ -388,7 +388,7 @@ impl WorktreeStore {
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
                 if worktree.read(cx).id() == id_to_remove {
-                    model.emit(cx, WorktreeStoreEvent::WorktreeRemoved(
+                    model.emit(, cxWorktreeStoreEvent::WorktreeRemoved(
                         worktree.entity_id(),
                         id_to_remove,
                     ));
@@ -506,7 +506,7 @@ impl WorktreeStore {
         let worktree_to_move = self.worktrees.remove(source_index);
         self.worktrees.insert(destination_index, worktree_to_move);
         self.worktrees_reordered = true;
-        model.emit(cx, WorktreeStoreEvent::WorktreeOrderChanged);
+        model.emit(WorktreeStoreEvent::WorktreeOrderChanged, cx);
         model.notify(cx);
         Ok(())
     }
@@ -568,7 +568,7 @@ impl WorktreeStore {
                         });
                     });
 
-                    model.emit(cx, WorktreeStoreEvent::WorktreeUpdateSent(worktree.clone()))
+                    model.emit(WorktreeStoreEvent::WorktreeUpdateSent(worktree.clone()), cx)
                 }
 
                 anyhow::Ok(())

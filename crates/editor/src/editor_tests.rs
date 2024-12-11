@@ -10434,7 +10434,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     });
 
     editor_handle.update(cx, |editor, model, cx| {
-        editor.focus(cx);
+        editor.focus(window);
         editor.change_selections(None, cx, |s| {
             s.select_ranges([Point::new(0, 21)..Point::new(0, 20)])
         });

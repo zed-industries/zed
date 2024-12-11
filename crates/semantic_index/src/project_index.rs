@@ -224,7 +224,7 @@ impl ProjectIndex {
 
         if status != self.last_status {
             self.last_status = status;
-            model.emit(cx, status);
+            model.emit(status, cx);
         }
     }
 

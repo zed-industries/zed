@@ -44,7 +44,7 @@ impl<M: FocusableView + EventEmitter<DismissEvent>> PopoverMenuHandle<M> {
     pub fn hide(&self, window: &mut Window, cx: &mut AppContext) {
         if let Some(state) = self.0.borrow().as_ref() {
             if let Some(menu) = state.menu.borrow().as_ref() {
-                menu.update(cx, |_, model, cx| model.emit(cx, DismissEvent));
+                menu.update(cx, |_, model, cx| model.emit(DismissEvent, cx));
             }
         }
     }
@@ -378,7 +378,7 @@ impl<M: FocusableView + EventEmitter<DismissEvent> + Render> Element for Popover
                     if phase == DispatchPhase::Bubble && child_hitbox.is_hovered(window) {
                         if let Some(menu) = menu_handle.borrow().as_ref() {
                             menu.update(cx, |_, model, cx| {
-                                model.emit(cx, DismissEvent);
+                                model.emit(DismissEvent, cx);
                             });
                         }
                         cx.stop_propagation();

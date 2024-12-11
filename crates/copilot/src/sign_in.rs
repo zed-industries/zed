@@ -109,7 +109,7 @@ impl CopilotCodeVerification {
                     Status::Authorized | Status::Unauthorized | Status::SigningIn { .. } => {
                         this.set_status(status, cx)
                     }
-                    _ => model.emit(cx, DismissEvent),
+                    _ => model.emit(DismissEvent, cx),
                 }
             }),
         }
@@ -192,7 +192,7 @@ impl CopilotCodeVerification {
             .child(
                 Button::new("copilot-enable-cancel-button", "Cancel")
                     .full_width()
-                    .on_click(cx.listener(|_, _, cx| model.emit(cx, DismissEvent))),
+                    .on_click(cx.listener(|_, _, cx| model.emit(DismissEvent, cx))),
             )
     }
     fn render_enabled_modal(model: &Model<Self>, cx: &mut AppContext) -> impl Element {
@@ -205,7 +205,7 @@ impl CopilotCodeVerification {
             .child(
                 Button::new("copilot-enabled-done-button", "Done")
                     .full_width()
-                    .on_click(cx.listener(|_, _, cx| model.emit(cx, DismissEvent))),
+                    .on_click(cx.listener(|_, _, cx| model.emit(DismissEvent, cx))),
             )
     }
 
@@ -224,7 +224,7 @@ impl CopilotCodeVerification {
             .child(
                 Button::new("copilot-subscribe-cancel-button", "Cancel")
                     .full_width()
-                    .on_click(cx.listener(|_, _, cx| model.emit(cx, DismissEvent))),
+                    .on_click(cx.listener(|_, _, cx| model.emit(DismissEvent, cx))),
             )
     }
 
@@ -271,7 +271,7 @@ impl Render for CopilotCodeVerification {
             .p_4()
             .gap_2()
             .on_action(cx.listener(|_, _: &menu::Cancel, cx| {
-                model.emit(cx, DismissEvent);
+                model.emit(DismissEvent, cx);
             }))
             .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, cx| {
                 cx.focus(&this.focus_handle);

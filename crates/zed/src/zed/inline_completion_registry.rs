@@ -21,7 +21,7 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
 
             register_backward_compatible_actions(editor, model, cx);
 
-            let editor_handle = cx.view().downgrade();
+            let editor_handle = model.downgrade();
             model
                 .on_release(cx, {
                     let editor_handle = editor_handle.clone();

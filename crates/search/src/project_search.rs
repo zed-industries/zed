@@ -281,6 +281,7 @@ impl ProjectSearch {
                             excerpts.push_multiple_excerpts_with_context_lines(
                                 buffers_with_ranges,
                                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                model,
                                 cx,
                             )
                         })
@@ -717,7 +718,7 @@ impl ProjectSearchView {
                         }
                     }
                 }
-                model.emit(cx, ViewEvent::EditorEvent(event.clone()))
+                model.emit(ViewEvent::EditorEvent(event.clone()), cx)
             }),
         );
         let replacement_editor = cx.new_model(|model, cx| {
@@ -735,7 +736,7 @@ impl ProjectSearchView {
             editor
         });
         subscriptions.push(cx.observe(&results_editor, |_, _, cx| {
-            model.emit(cx, ViewEvent::UpdateTab)
+            model.emit(ViewEvent::UpdateTab, cx)
         }));
 
         subscriptions.push(
@@ -744,7 +745,7 @@ impl ProjectSearchView {
                     this.update_match_index(cx);
                 }
                 // Reraise editor events for workspace item activation purposes
-                model.emit(cx, ViewEvent::EditorEvent(event.clone()));
+                model.emit(ViewEvent::EditorEvent(event.clone()), cx);
             }),
         );
 
@@ -757,7 +758,7 @@ impl ProjectSearchView {
         // Subscribe to include_files_editor in order to reraise editor events for workspace item activation purposes
         subscriptions.push(
             cx.subscribe(&included_files_editor, |_, _, event: &EditorEvent, cx| {
-                model.emit(cx, ViewEvent::EditorEvent(event.clone()))
+                model.emit(ViewEvent::EditorEvent(event.clone()), cx)
             }),
         );
 
@@ -770,7 +771,7 @@ impl ProjectSearchView {
         // Subscribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
         subscriptions.push(
             cx.subscribe(&excluded_files_editor, |_, _, event: &EditorEvent, cx| {
-                model.emit(cx, ViewEvent::EditorEvent(event.clone()))
+                model.emit(ViewEvent::EditorEvent(event.clone()), cx)
             }),
         );
 
@@ -778,9 +779,9 @@ impl ProjectSearchView {
         subscriptions.push(cx.on_focus_in(&focus_handle, |this, cx| {
             if this.focus_handle.is_focused(window) {
                 if this.has_matches() {
-                    this.results_editor.focus_handle(cx).focus(cx);
+                    this.results_editor.focus_handle(cx).focus(window);
                 } else {
-                    this.query_editor.focus_handle(cx).focus(cx);
+                    this.query_editor.focus_handle(cx).focus(window);
                 }
             }
         }));
@@ -818,7 +819,7 @@ impl ProjectSearchView {
             return;
         };
 
-        let weak_workspace = cx.view().downgrade();
+        let weak_workspace = model.downgrade();
 
         let model =
             cx.new_model(|model, cx| ProjectSearch::new(workspace.project().clone(), model, cx));
@@ -881,7 +882,7 @@ impl ProjectSearchView {
                     model.search(new_query, model, cx);
                     model
                 });
-                let weak_workspace = cx.view().downgrade();
+                let weak_workspace = model.downgrade();
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new_model(|model, cx| {
                         ProjectSearchView::new(weak_workspace, model, cx, None)
@@ -939,7 +940,7 @@ impl ProjectSearchView {
 
             let settings = settings.cloned();
 
-            let weak_workspace = cx.view().downgrade();
+            let weak_workspace = model.downgrade();
 
             let model = cx
                 .new_model(|model, cx| ProjectSearch::new(workspace.project().clone(), model, cx));
@@ -1210,7 +1211,7 @@ impl ProjectSearchView {
             }
         }
 
-        model.emit(cx, ViewEvent::UpdateTab);
+        model.emit(ViewEvent::UpdateTab, cx);
         model.notify(cx);
     }
 
@@ -1333,7 +1334,7 @@ impl ProjectSearchView {
 fn buffer_search_query(
     workspace: &mut Workspace,
     item: &dyn ItemHandle,
-    model: &Model<_>,
+    model: &Model<Self>,
     cx: &mut AppContext,
 ) -> Option<String> {
     let buffer_search_bar = workspace
@@ -1399,7 +1400,7 @@ impl ProjectSearchBar {
     fn focus_search(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, model, cx| {
-                search_view.query_editor.focus_handle(cx).focus(cx);
+                search_view.query_editor.focus_handle(cx).focus(window);
             });
         }
     }
@@ -3831,7 +3832,7 @@ pub mod tests {
         let buffer_search_query = "search bar query";
         buffer_search_bar
             .update(&mut cx, |buffer_search_bar, cx| {
-                buffer_search_bar.focus_handle(cx).focus(cx);
+                buffer_search_bar.focus_handle(cx).focus(window);
                 buffer_search_bar.search(buffer_search_query, None, cx)
             })
             .await

@@ -16,7 +16,7 @@ pub struct ContactFinder {
 impl ContactFinder {
     pub fn new(user_store: Model<UserStore>, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let delegate = ContactFinderDelegate {
-            parent: cx.view().downgrade(),
+            parent: model.downgrade(),
             user_store,
             potential_contacts: Arc::from([]),
             selected_index: 0,
@@ -35,7 +35,12 @@ impl ContactFinder {
 }
 
 impl Render for ContactFinder {
-    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         v_flex()
             .elevation_3(cx)
             .child(
@@ -137,7 +142,7 @@ impl PickerDelegate for ContactFinderDelegate {
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.parent
-            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
+            .update(cx, |_, model, cx| model.emit(DismissEvent, cx))
             .log_err();
     }
 

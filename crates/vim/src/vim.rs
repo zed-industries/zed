@@ -768,7 +768,7 @@ impl Vim {
             }
         }
 
-        model.emit(cx, VimEvent::Focused);
+        model.emit(VimEvent::Focused, cx);
         self.sync_vim_settings(model, cx);
 
         if VimSettings::get_global(cx).toggle_relative_line_numbers {
@@ -792,7 +792,7 @@ impl Vim {
                 });
             }
         }
-        Vim::globals(cx).focused_vim = Some(cx.view().downgrade());
+        Vim::globals(cx).focused_vim = Some(model.downgrade());
     }
 
     fn blurred(&mut self, model: &Model<Self>, cx: &mut AppContext) {
@@ -1188,6 +1188,7 @@ impl Vim {
                                 &register.text.to_string(),
                                 register.clipboard_selections.clone(),
                                 false,
+                                model,
                                 cx,
                             )
                         }

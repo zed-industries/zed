@@ -1268,7 +1268,7 @@ impl SearchableItem for Editor {
             .clear_background_highlights::<BufferSearchHighlights>(model, cx)
             .is_some()
         {
-            model.emit(cx, SearchEvent::MatchesInvalidated);
+            model.emit(SearchEvent::MatchesInvalidated, cx);
         }
     }
 
@@ -1290,7 +1290,7 @@ impl SearchableItem for Editor {
             cx,
         );
         if updated {
-            model.emit(cx, SearchEvent::MatchesInvalidated);
+            model.emit(SearchEvent::MatchesInvalidated, cx);
         }
     }
 

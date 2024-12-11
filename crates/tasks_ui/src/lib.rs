@@ -76,6 +76,7 @@ pub fn init(cx: &mut AppContext) {
                                 task_source_kind,
                                 last_scheduled_task,
                                 false,
+                                model,
                                 cx,
                             );
                         }
@@ -100,7 +101,11 @@ fn spawn_task_or_modal(
     }
 }
 
-fn toggle_modal(workspace: &mut Workspace, model: &Model<_>, cx: &mut AppContext) -> AsyncTask<()> {
+fn toggle_modal(
+    workspace: &mut Workspace,
+    model: &Model<Self>,
+    cx: &mut AppContext,
+) -> AsyncTask<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
     let can_open_modal = workspace.project().update(cx, |project, model, cx| {

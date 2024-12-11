@@ -91,7 +91,7 @@ impl ToolchainSelector {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
-        let view = cx.view().downgrade();
+        let view = model.downgrade();
         let picker = cx.new_model(|model, cx| {
             let delegate = ToolchainSelectorDelegate::new(
                 active_toolchain,
@@ -264,7 +264,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.toolchain_selector
-            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
+            .update(cx, |_, model, cx| model.emit(DismissEvent, cx))
             .log_err();
     }
 

@@ -187,7 +187,7 @@ impl ChannelView {
         cx: &mut AppContext,
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
-        let this = cx.view().downgrade();
+        let this = model.downgrade();
         let editor = cx.new_model(|model, cx| {
             let mut editor = Editor::for_buffer(buffer, None, model, cx);
             editor.set_collaboration_hub(Box::new(ChannelBufferCollaborationHub(
@@ -211,7 +211,7 @@ impl ChannelView {
             editor
         });
         let _editor_event_subscription = cx.subscribe(&editor, |_, _, e: &EditorEvent, cx| {
-            model.emit(cx, e.clone())
+            model.emit(e.clone(), cx)
         });
 
         cx.subscribe(&channel_buffer, Self::handle_channel_buffer_event)
@@ -343,7 +343,7 @@ impl ChannelView {
             }),
             ChannelBufferEvent::ChannelChanged => {
                 self.editor.update(cx, |_, model, cx| {
-                    model.emit(cx, editor::EditorEvent::TitleChanged);
+                    model.emit(editor::EditorEvent::TitleChanged, cx);
                     model.notify(cx)
                 });
             }

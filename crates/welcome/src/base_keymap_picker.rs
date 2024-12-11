@@ -32,7 +32,7 @@ pub fn toggle(
     let telemetry = workspace.client().telemetry().clone();
     workspace.toggle_modal(cx, |cx| {
         BaseKeymapSelector::new(
-            BaseKeymapSelectorDelegate::new(cx.view().downgrade(), fs, telemetry, cx),
+            BaseKeymapSelectorDelegate::new(model.downgrade(), fs, telemetry, cx),
             model,
             cx,
         )
@@ -184,7 +184,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
 
         self.view
             .update(cx, |_, model, cx| {
-                model.emit(cx, DismissEvent);
+                model.emit(DismissEvent, cx);
             })
             .ok();
     }
@@ -192,7 +192,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.view
             .update(cx, |_, model, cx| {
-                model.emit(cx, DismissEvent);
+                model.emit(DismissEvent, cx);
             })
             .log_err();
     }

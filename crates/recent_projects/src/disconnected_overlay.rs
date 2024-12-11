@@ -53,7 +53,7 @@ impl DisconnectedOverlay {
             ) {
                 return;
             }
-            let handle = cx.view().downgrade();
+            let handle = model.downgrade();
 
             let ssh_connection_options = project.read(cx).ssh_connection_options(cx);
             let host = if let Some(ssh_connection_options) = ssh_connection_options {
@@ -74,7 +74,7 @@ impl DisconnectedOverlay {
 
     fn handle_reconnect(&mut self, _: &ClickEvent, model: &Model<Self>, cx: &mut AppContext) {
         self.finished = true;
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
 
         match &self.host {
             Host::SshRemoteProject(ssh_connection_options) => {
@@ -106,7 +106,7 @@ impl DisconnectedOverlay {
 
         let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
-        cx.spawn(move |_, mut cx| async move {
+        cx.spawn(move |mut cx| async move {
             open_ssh_project(
                 connection_options,
                 paths,
@@ -125,7 +125,7 @@ impl DisconnectedOverlay {
 
     fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         self.finished = true;
-        model.emit(cx, DismissEvent)
+        model.emit(DismissEvent, cx)
     }
 }
 

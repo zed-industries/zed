@@ -232,7 +232,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
 
     fn confirm(&mut self, _secondary: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if let Some(metadata) = self.matches.get(self.selected_index) {
-            model.emit(cx, SavedContextPickerEvent::Confirmed(metadata.clone()));
+            model.emit(SavedContextPickerEvent::Confirmed(metadata.clone()), cx);
         }
     }
 
@@ -596,15 +596,15 @@ impl AssistantPanel {
     ) {
         let update_model_summary = match event {
             pane::Event::Remove { .. } => {
-                model.emit(cx, PanelEvent::Close);
+                model.emit(PanelEvent::Close, cx);
                 false
             }
             pane::Event::ZoomIn => {
-                model.emit(cx, PanelEvent::ZoomIn);
+                model.emit(PanelEvent::ZoomIn, cx);
                 false
             }
             pane::Event::ZoomOut => {
-                model.emit(cx, PanelEvent::ZoomOut);
+                model.emit(PanelEvent::ZoomOut, cx);
                 false
             }
 
@@ -625,7 +625,7 @@ impl AssistantPanel {
                         })
                         .ok();
                 }
-                model.emit(cx, AssistantPanelEvent::ContextEdited);
+                model.emit(AssistantPanelEvent::ContextEdited, cx);
                 true
             }
             pane::Event::RemovedItem { .. } => {
@@ -640,7 +640,7 @@ impl AssistantPanel {
                     self.configuration_subscription = None;
                 }
 
-                model.emit(cx, AssistantPanelEvent::ContextEdited);
+                model.emit(AssistantPanelEvent::ContextEdited, cx);
                 true
             }
 
@@ -731,7 +731,7 @@ impl AssistantPanel {
             .log_err()
             .flatten();
 
-        let assistant_panel = cx.view().downgrade();
+        let assistant_panel = model.downgrade();
         let editor = cx.new_model(|model, cx| {
             let mut editor = ContextEditor::for_context(
                 context,
@@ -838,7 +838,7 @@ impl AssistantPanel {
                     InlineAssistant::update_global(cx, |assistant, cx| {
                         assistant.assist(
                             &active_editor,
-                            Some(cx.view().downgrade()),
+                            Some(model.downgrade()),
                             include_context.then_some(&assistant_panel),
                             initial_prompt,
                             model,
@@ -850,7 +850,7 @@ impl AssistantPanel {
                     TerminalInlineAssistant::update_global(cx, |assistant, cx| {
                         assistant.assist(
                             &active_terminal,
-                            Some(cx.view().downgrade()),
+                            Some(model.downgrade()),
                             Some(&assistant_panel),
                             initial_prompt,
                             model,
@@ -1021,7 +1021,7 @@ impl AssistantPanel {
 
                         let fs = this.fs.clone();
                         let project = this.project.clone();
-                        let weak_assistant_panel = cx.view().downgrade();
+                        let weak_assistant_panel = model.downgrade();
 
                         let editor = cx.new_model(|model, cx| {
                             ContextEditor::for_context(
@@ -1054,7 +1054,7 @@ impl AssistantPanel {
                 .log_err()
                 .flatten();
 
-            let assistant_panel = cx.view().downgrade();
+            let assistant_panel = model.downgrade();
             let editor = cx.new_model(|model, cx| {
                 let mut editor = ContextEditor::for_context(
                     context,
@@ -1072,7 +1072,7 @@ impl AssistantPanel {
 
             self.show_context(editor.clone(), model, cx);
             let workspace = self.workspace.clone();
-            cx.spawn(move |_, mut cx| async move {
+            cx.spawn(move |mut cx| async move {
                 workspace
                     .update(&mut cx, |workspace, cx| {
                         workspace.focus_panel::<AssistantPanel>(cx);
@@ -1110,7 +1110,7 @@ impl AssistantPanel {
 
         self.show_updated_summary(&context_editor, model, cx);
 
-        model.emit(cx, AssistantPanelEvent::ContextEdited);
+        model.emit(AssistantPanelEvent::ContextEdited, cx);
         model.notify(cx);
     }
 
@@ -1156,7 +1156,7 @@ impl AssistantPanel {
                             .log_edit_event("assistant panel", is_via_ssh);
                     })
                     .log_err();
-                model.emit(cx, AssistantPanelEvent::ContextEdited)
+                model.emit(AssistantPanelEvent::ContextEdited, cx)
             }
             _ => {}
         }
@@ -1233,7 +1233,7 @@ impl AssistantPanel {
                 pane.activate_item(history_item_ix, true, true, model, cx);
             });
         } else {
-            let assistant_panel = cx.view().downgrade();
+            let assistant_panel = model.downgrade();
             let history = cx.new_model(|model, cx| {
                 ContextHistory::new(
                     self.project.clone(),
@@ -1638,7 +1638,7 @@ impl ContextEditor {
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
             context.read(cx).slash_commands.clone(),
-            Some(cx.view().downgrade()),
+            Some(model.downgrade()),
             Some(workspace.clone()),
         );
 
@@ -1959,7 +1959,7 @@ impl ContextEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        let context_editor = cx.view().downgrade();
+        let context_editor = model.downgrade();
 
         match event {
             ContextEvent::MessagesEdited => {
@@ -1970,7 +1970,7 @@ impl ContextEditor {
                 });
             }
             ContextEvent::SummaryChanged => {
-                model.emit(cx, EditorEvent::TitleChanged);
+                model.emit(EditorEvent::TitleChanged, cx);
                 self.context.update(cx, |context, model, cx| {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), model, cx);
                 });
@@ -2013,7 +2013,7 @@ impl ContextEditor {
                         .map(|tool_use| {
                             let placeholder = FoldPlaceholder {
                                 render: render_fold_icon_button(
-                                    cx.view().downgrade(),
+                                    model.downgrade(),
                                     IconName::PocketKnife,
                                     tool_use.name.clone().into(),
                                 ),
@@ -2208,7 +2208,7 @@ impl ContextEditor {
 
                     let placeholder = FoldPlaceholder {
                         render: render_fold_icon_button(
-                            cx.view().downgrade(),
+                            model.downgrade(),
                             IconName::PocketKnife,
                             format!("Tool Result: {tool_use_id}").into(),
                         ),
@@ -2362,7 +2362,7 @@ impl ContextEditor {
         model: &Model<ContextEditor>,
         cx: &mut AppContext,
     ) {
-        let this = cx.view().downgrade();
+        let this = model.downgrade();
         let mut editors_to_close = Vec::new();
 
         self.editor.update(cx, |editor, model, cx| {
@@ -2504,7 +2504,7 @@ impl ContextEditor {
                         start..end,
                         FoldPlaceholder {
                             render: render_fold_icon_button(
-                                cx.view().downgrade(),
+                                model.downgrade(),
                                 section.icon,
                                 section.label.clone(),
                             ),
@@ -2554,7 +2554,7 @@ impl ContextEditor {
             }
             _ => {}
         }
-        model.emit(cx, event.clone());
+        model.emit(event.clone(), cx);
     }
 
     fn active_patch(&self) -> Option<(Range<text::Anchor>, &PatchViewState)> {
@@ -2739,7 +2739,7 @@ impl ContextEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        model.emit(cx, event.clone());
+        model.emit(event.clone(), cx);
     }
 
     fn cursor_scroll_position(
@@ -3175,7 +3175,7 @@ impl ContextEditor {
                     .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
                     .collect::<Vec<_>>();
 
-                cx.spawn(move |_, cx| async move {
+                cx.spawn(move |cx| async move {
                     let mut paths = vec![];
                     let mut worktrees = vec![];
 
@@ -3277,7 +3277,7 @@ impl ContextEditor {
 
                                 let fold_placeholder = quote_selection_fold_placeholder(
                                     crease_title,
-                                    cx.view().downgrade(),
+                                    model.downgrade(),
                                 );
                                 let crease = Crease::inline(
                                     anchor_before..anchor_after,
@@ -3461,7 +3461,7 @@ impl ContextEditor {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
 
                     let mut buffer_rows_to_fold = BTreeSet::new();
-                    let weak_editor = cx.view().downgrade();
+                    let weak_editor = model.downgrade();
                     editor.insert_creases(
                         metadata.creases.into_iter().map(|metadata| {
                             let start = buffer.anchor_after(
@@ -3939,7 +3939,7 @@ impl ContextEditor {
     ) -> impl IntoElement {
         slash_command_picker::SlashCommandSelector::new(
             self.slash_commands.clone(),
-            cx.view().downgrade(),
+            model.downgrade(),
             Button::new("trigger", "Add Context")
                 .icon(IconName::Plus)
                 .icon_size(IconSize::Small)
@@ -4789,7 +4789,7 @@ impl Render for ContextEditorToolbarItem {
                         .shape(ui::IconButtonShape::Square)
                         .tooltip(|window, cx| Tooltip::text("Regenerate Title", cx))
                         .on_click(model.listener(move |_, _, model, window, cx| {
-                            model.emit(cx, ContextEditorToolbarItemEvent::RegenerateSummary)
+                            model.emit(ContextEditorToolbarItemEvent::RegenerateSummary, cx)
                         })),
                 ),
             );

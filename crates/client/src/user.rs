@@ -272,7 +272,7 @@ impl UserStore {
         _: TypedEnvelope<proto::ShowContacts>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |_, model, cx| model.emit(cx, Event::ShowContacts))?;
+        this.update(&mut cx, |_, model, cx| model.emit(Event::ShowContacts, cx))?;
         Ok(())
     }
 
@@ -792,7 +792,7 @@ impl UserStore {
     ) {
         if participant_indices != self.participant_indices {
             self.participant_indices = participant_indices;
-            model.emit(cx, Event::ParticipantIndicesChanged);
+            model.emit(Event::ParticipantIndicesChanged, cx);
         }
     }
 

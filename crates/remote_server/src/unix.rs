@@ -838,7 +838,7 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-fn read_proxy_settings(model: &Model<_>, cx: &mut AppContext) -> Option<Uri> {
+fn read_proxy_settings(model: &Model<Self>, cx: &mut AppContext) -> Option<Uri> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()

@@ -233,7 +233,7 @@ impl Dock {
         let dock = cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
             let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
                 if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
-                    active_entry.panel.focus_handle(cx).focus(cx)
+                    active_entry.panel.focus_handle(cx).focus(window)
                 }
             });
             let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
@@ -270,7 +270,7 @@ impl Dock {
                     workspace.zoomed = None;
                     workspace.zoomed_position = None;
                 }
-                model.emit(cx, Event::ZoomChanged);
+                model.emit(Event::ZoomChanged, cx);
                 workspace.dismiss_zoomed_items_to_reveal(Some(position), cx);
                 workspace.update_active_view_for_followers(cx)
             }
@@ -283,7 +283,7 @@ impl Dock {
                     if panel.is_zoomed(cx) {
                         workspace.zoomed = Some(panel.to_any().downgrade());
                         workspace.zoomed_position = Some(position);
-                        model.emit(cx, Event::ZoomChanged);
+                        model.emit(Event::ZoomChanged, cx);
                         return;
                     }
                 }
@@ -291,7 +291,7 @@ impl Dock {
             if workspace.zoomed_position == Some(position) {
                 workspace.zoomed = None;
                 workspace.zoomed_position = None;
-                model.emit(cx, Event::ZoomChanged);
+                model.emit(Event::ZoomChanged, cx);
             }
         })
         .detach();
@@ -438,7 +438,7 @@ impl Dock {
                         .update(cx, |workspace, model, cx| {
                             workspace.zoomed = Some(panel.downgrade().into());
                             workspace.zoomed_position = Some(panel.read(cx).position(cx));
-                            model.emit(cx, Event::ZoomChanged);
+                            model.emit(Event::ZoomChanged, cx);
                         })
                         .ok();
                 }
@@ -449,7 +449,7 @@ impl Dock {
                             if workspace.zoomed_position == Some(this.position) {
                                 workspace.zoomed = None;
                                 workspace.zoomed_position = None;
-                                model.emit(cx, Event::ZoomChanged);
+                                model.emit(Event::ZoomChanged, cx);
                             }
                             model.notify(cx);
                         })

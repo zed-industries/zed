@@ -944,7 +944,7 @@ impl Editor {
     pub(super) fn sync_expanded_diff_hunks(
         diff_map: &mut DiffMap,
         buffer_id: BufferId,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) {
         let diff_base_state = diff_map.diff_bases.get_mut(&buffer_id);
@@ -1204,7 +1204,7 @@ fn editor_with_deleted_text(
     model: &Model<Editor>,
     cx: &mut AppContext,
 ) -> (u32, Model<Editor>) {
-    let parent_editor = cx.view().downgrade();
+    let parent_editor = model.downgrade();
     let editor = cx.new_model(|model, cx| {
         let multi_buffer =
             cx.new_model(|_, _| MultiBuffer::without_headers(language::Capability::ReadOnly));
@@ -1488,6 +1488,7 @@ mod tests {
                         BufferChangeSet::new_with_base_text(
                             diff_base.to_string(),
                             buffer.read(cx).text_snapshot(),
+                            model,
                             model,
                             cx,
                         )

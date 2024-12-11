@@ -242,7 +242,7 @@ impl ContextMenu {
             (handler)(context, window, cx)
         }
 
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
     }
 
     pub fn cancel(
@@ -252,8 +252,8 @@ impl ContextMenu {
         _window: &mut Window,
         cx: &mut AppContext,
     ) {
-        model.emit(cx, DismissEvent);
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
+        model.emit(DismissEvent, cx);
     }
 
     fn select_first(
@@ -471,7 +471,7 @@ impl Render for ContextMenu {
                                     disabled,
                                 } => {
                                     let handler = handler.clone();
-                                    let menu = cx.view().downgrade();
+                                    let menu = model.downgrade();
                                     let color = if *disabled {
                                         Color::Muted
                                     } else {
@@ -551,7 +551,7 @@ impl Render for ContextMenu {
                                     selectable,
                                 } => {
                                     let handler = handler.clone();
-                                    let menu = cx.view().downgrade();
+                                    let menu = model.downgrade();
                                     let selectable = *selectable;
                                     ListItem::new(ix)
                                         .inset(true)
@@ -564,17 +564,17 @@ impl Render for ContextMenu {
                                         .when(selectable, |item| {
                                             item.on_click({
                                                 let context = self.action_context.clone();
-                                                move |_, cx| {
-                                                    handler(context.as_ref(), cx);
-                                                    menu.update(cx, |menu, cx| {
+                                                move |_, window, cx| {
+                                                    handler(context.as_ref(), window, cx);
+                                                    menu.update(cx, |menu, model, cx| {
                                                         menu.clicked = true;
-                                                        cx.emit(DismissEvent);
+                                                        model.emit(DismissEvent, cx);
                                                     })
                                                     .ok();
                                                 }
                                             })
                                         })
-                                        .child(entry_render(cx))
+                                        .child(entry_render(window, cx))
                                         .into_any_element()
                                 }`
                             }

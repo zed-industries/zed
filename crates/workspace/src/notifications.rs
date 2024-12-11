@@ -263,7 +263,7 @@ impl LanguageServerPrompt {
                 .await
                 .ok_or_else(|| anyhow::anyhow!("Stream already closed"))?;
 
-            this.update(&mut cx, |_, cx| model.emit(cx, DismissEvent))?;
+            this.update(&mut cx, |_, cx| model.emit(DismissEvent, cx))?;
 
             anyhow::Ok(())
         })
@@ -340,7 +340,7 @@ impl Render for LanguageServerPrompt {
                                     ),
                             )
                             .child(ui::IconButton::new("close", ui::IconName::Close).on_click(
-                                cx.listener(|_, _, cx| model.emit(cx, gpui::DismissEvent)),
+                                cx.listener(|_, _, cx| model.emit(gpui::DismissEvent, cx)),
                             )),
                     )
                     .child(
@@ -440,7 +440,7 @@ impl Render for ErrorMessagePrompt {
                                     }),
                             )
                             .child(ui::IconButton::new("close", ui::IconName::Close).on_click(
-                                cx.listener(|_, _, cx| model.emit(cx, gpui::DismissEvent)),
+                                cx.listener(|_, _, cx| model.emit(gpui::DismissEvent, cx)),
                             )),
                     )
                     .child(
@@ -528,7 +528,7 @@ pub mod simple_message_notification {
         }
 
         pub fn dismiss(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         }
     }
 

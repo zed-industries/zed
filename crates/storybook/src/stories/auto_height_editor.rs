@@ -1,7 +1,6 @@
 use editor::Editor;
 use gpui::{
-    div, white, IntoElement, KeyBinding, ParentElement, Render, Styled, Model,
-    VisualContext,
+    div, white, IntoElement, KeyBinding, Model, ParentElement, Render, Styled, VisualContext,
 };
 
 pub struct AutoHeightEditorStory {
@@ -26,7 +25,7 @@ impl AutoHeightEditorStory {
 }
 
 impl Render for AutoHeightEditorStory {
-    fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(&mut self, model: &Model<Self>, _cx: &mut AppContext) -> impl IntoElement {
         div()
             .size_full()
             .bg(white())

@@ -675,11 +675,11 @@ impl Terminal {
         match event {
             AlacTermEvent::Title(title) => {
                 self.breadcrumb_text = title.to_string();
-                model.emit(cx, Event::BreadcrumbsChanged);
+                model.emit(Event::BreadcrumbsChanged, cx);
             }
             AlacTermEvent::ResetTitle => {
                 self.breadcrumb_text = String::new();
-                model.emit(cx, Event::BreadcrumbsChanged);
+                model.emit(Event::BreadcrumbsChanged, cx);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
@@ -700,20 +700,20 @@ impl Terminal {
             AlacTermEvent::CursorBlinkingChange => {
                 let terminal = self.term.lock();
                 let blinking = terminal.cursor_style().blinking;
-                model.emit(cx, Event::BlinkChanged(blinking));
+                model.emit(Event::BlinkChanged(blinking), cx);
             }
             AlacTermEvent::Bell => {
-                model.emit(cx, Event::Bell);
+                model.emit(Event::Bell, cx);
             }
             AlacTermEvent::Exit => self.register_task_finished(None, model, cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
             AlacTermEvent::Wakeup => {
-                model.emit(cx, Event::Wakeup);
+                model.emit(Event::Wakeup, cx);
 
                 if self.pty_info.has_changed() {
-                    model.emit(cx, Event::TitleChanged);
+                    model.emit(Event::TitleChanged, cx);
                 }
             }
             AlacTermEvent::ColorRequest(index, format) => {
@@ -789,7 +789,7 @@ impl Terminal {
                     term.grid_mut().reset_region((new_cursor.line + 1)..);
                 }
 
-                model.emit(cx, Event::Wakeup);
+                model.emit(Event::Wakeup, cx);
             }
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
@@ -828,7 +828,7 @@ impl Terminal {
                         }
 
                         self.selection_head = Some(point);
-                        model.emit(cx, Event::SelectionsChanged)
+                        model.emit(Event::SelectionsChanged, cx)
                     }
                 }
             }
@@ -843,7 +843,7 @@ impl Terminal {
                 if let Some((_, head)) = selection {
                     self.selection_head = Some(*head);
                 }
-                model.emit(cx, Event::SelectionsChanged)
+                model.emit(Event::SelectionsChanged, cx)
             }
             InternalEvent::UpdateSelection(position) => {
                 if let Some(mut selection) = term.selection.take() {
@@ -862,7 +862,7 @@ impl Terminal {
                     }
 
                     self.selection_head = Some(point);
-                    model.emit(cx, Event::SelectionsChanged)
+                    model.emit(Event::SelectionsChanged, cx)
                 }
             }
 
@@ -961,7 +961,7 @@ impl Terminal {
                                     terminal_dir: self.working_directory(),
                                 })
                             };
-                            model.emit(cx, Event::Open(target));
+                            model.emit(Event::Open(target), cx);
                         } else {
                             self.update_selected_word(
                                 prev_hovered_word,
@@ -976,7 +976,7 @@ impl Terminal {
                     }
                     None => {
                         if self.hovered_word {
-                            model.emit(cx, Event::NewNavigationTarget(None));
+                            model.emit(Event::NewNavigationTarget(None), cx);
                         }
                         self.hovered_word = false;
                     }
@@ -1018,7 +1018,7 @@ impl Terminal {
                 terminal_dir: self.working_directory(),
             })
         };
-        model.emit(cx, Event::NewNavigationTarget(Some(navigation_target)));
+        model.emit(Event::NewNavigationTarget(Some(navigation_target)), cx);
     }
 
     fn next_link_id(&mut self) -> usize {
@@ -1757,7 +1757,7 @@ impl Terminal {
             Some(task) => task,
             None => {
                 if error_code.is_none() {
-                    model.emit(cx, Event::CloseTerminal);
+                    model.emit(Event::CloseTerminal, cx);
                 }
                 return;
             }
@@ -1794,11 +1794,11 @@ impl Terminal {
         match task.hide {
             HideStrategy::Never => {}
             HideStrategy::Always => {
-                model.emit(cx, Event::CloseTerminal);
+                model.emit(Event::CloseTerminal, cx);
             }
             HideStrategy::OnSuccess => {
                 if finished_successfully {
-                    model.emit(cx, Event::CloseTerminal);
+                    model.emit(Event::CloseTerminal, cx);
                 }
             }
         }

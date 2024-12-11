@@ -265,7 +265,7 @@ impl<D: PickerDelegate> Picker<D> {
                 ElementContainer::UniformList(UniformListScrollHandle::new())
             }
             ContainerKind::List => {
-                let view = cx.view().downgrade();
+                let view = model.downgrade();
                 ElementContainer::List(ListState::new(
                     0,
                     gpui::ListAlignment::Top,
@@ -300,7 +300,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn focus(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
-        self.focus_handle(cx).focus(cx);
+        self.focus_handle(cx).focus(window);
     }
 
     /// Handles the selecting an index, and passing the change to the delegate.
@@ -375,7 +375,7 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         if self.delegate.should_dismiss() {
             self.delegate.dismissed(cx);
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         }
     }
 

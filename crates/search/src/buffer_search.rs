@@ -502,7 +502,7 @@ impl ToolbarItemView for BufferSearchBar {
         if let Some(searchable_item_handle) =
             item.and_then(|item| item.to_searchable_item_handle(cx))
         {
-            let this = cx.view().downgrade();
+            let this = model.downgrade();
 
             self.active_searchable_item_subscription =
                 Some(searchable_item_handle.subscribe_to_search_events(
@@ -529,7 +529,7 @@ impl ToolbarItemView for BufferSearchBar {
 impl BufferSearchBar {
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(ForDeployed(|this, _: &FocusSearch, cx| {
-            this.query_editor.focus_handle(cx).focus(cx);
+            this.query_editor.focus_handle(cx).focus(window);
             this.select_query(cx);
         }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleCaseSensitive, cx| {
@@ -638,7 +638,7 @@ impl BufferSearchBar {
             let handle = active_editor.focus_handle(model, cx);
             self.focus(&handle, cx);
         }
-        model.emit(cx, Event::UpdateLocation);
+        model.emit(Event::UpdateLocation, cx);
         model.emit(
             cx,
             ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Hidden),
@@ -699,7 +699,7 @@ impl BufferSearchBar {
         self.dismissed = false;
         handle.search_bar_visibility_changed(true, model, cx);
         model.notify(cx);
-        model.emit(cx, Event::UpdateLocation);
+        model.emit(Event::UpdateLocation, cx);
         model.emit(
             cx,
             ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Secondary),

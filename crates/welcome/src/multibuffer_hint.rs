@@ -113,7 +113,7 @@ impl ToolbarItemView for MultibufferHint {
             return ToolbarItemLocation::Hidden;
         };
 
-        let this = cx.view().downgrade();
+        let this = model.downgrade();
         self.subscription = Some(active_pane_item.subscribe_to_item_events(
             cx,
             Box::new(move |event, cx| {
@@ -121,7 +121,7 @@ impl ToolbarItemView for MultibufferHint {
                     this.update(cx, |this, model, cx| {
                         model.notify(cx);
                         let location = this.determine_toolbar_location(cx);
-                        model.emit(cx, ToolbarItemEvent::ChangeLocation(location))
+                        model.emit(ToolbarItemEvent::ChangeLocation(location), cx)
                     })
                     .ok();
                 }

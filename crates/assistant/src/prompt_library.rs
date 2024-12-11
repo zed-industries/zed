@@ -263,7 +263,7 @@ impl PickerDelegate for PromptPickerDelegate {
                     .shape(IconButtonShape::Square)
                     .tooltip(move |window, cx| Tooltip::text("Remove from Default Prompt", cx))
                     .on_click(model.listener(move |_, _, model, window, cx| {
-                        model.emit(cx, PromptPickerEvent::ToggledDefault { prompt_id })
+                        model.emit(PromptPickerEvent::ToggledDefault { prompt_id }, cx)
                     }))
             }))
             .end_hover_slot(
@@ -278,7 +278,7 @@ impl PickerDelegate for PromptPickerDelegate {
                                     "Built-in prompt",
                                     None,
                                     BUILT_IN_TOOLTIP_TEXT,
-                                    model,
+                                    window,
                                     cx,
                                 )
                             })
@@ -289,7 +289,7 @@ impl PickerDelegate for PromptPickerDelegate {
                             .shape(IconButtonShape::Square)
                             .tooltip(move |window, cx| Tooltip::text("Delete Prompt", cx))
                             .on_click(model.listener(move |_, _, model, window, cx| {
-                                model.emit(cx, PromptPickerEvent::Deleted { prompt_id })
+                                model.emit(PromptPickerEvent::Deleted { prompt_id }, cx)
                             }))
                             .into_any_element()
                     })
@@ -310,7 +310,7 @@ impl PickerDelegate for PromptPickerDelegate {
                                 )
                             })
                             .on_click(model.listener(move |_, _, model, window, cx| {
-                                model.emit(cx, PromptPickerEvent::ToggledDefault { prompt_id })
+                                model.emit(PromptPickerEvent::ToggledDefault { prompt_id }, cx)
                             })),
                     ),
             );
@@ -352,7 +352,7 @@ impl PromptLibrary {
             let picker = Picker::uniform_list(delegate, model, cx)
                 .modal(false)
                 .max_height(None);
-            picker.focus(cx);
+            picker.focus(window, cx);
             picker
         });
         Self {
@@ -527,7 +527,7 @@ impl PromptLibrary {
             if focus {
                 prompt_editor
                     .body_editor
-                    .update(cx, |editor, model, cx| editor.focus(cx));
+                    .update(cx, |editor, model, cx| editor.focus(window));
             }
             self.set_active_prompt(Some(prompt_id), model, cx);
         } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
@@ -541,12 +541,7 @@ impl PromptLibrary {
                         let title_editor = cx.new_model(|model, cx| {
                             let mut editor = Editor::auto_width(cx);
                             editor.set_placeholder_text("Untitled", model, cx);
-                            editor.set_text(
-                                prompt_metadata.title.unwrap_or_default(),
-                                model,
-                                model,
-                                cx,
-                            );
+                            editor.set_text(prompt_metadata.title.unwrap_or_default(), model, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
                                 editor.set_show_inline_completions(Some(false), model, cx);
@@ -580,7 +575,7 @@ impl PromptLibrary {
                                 ),
                             )));
                             if focus {
-                                editor.focus(cx);
+                                editor.focus(window);
                             }
                             editor
                         });
@@ -644,7 +639,7 @@ impl PromptLibrary {
                     }
                 }
             } else {
-                picker.focus(cx);
+                picker.focus(window);
             }
         });
         model.notify(cx);
@@ -734,13 +729,14 @@ impl PromptLibrary {
         if let Some(active_prompt) = self.active_prompt_id {
             self.prompt_editors[&active_prompt]
                 .body_editor
-                .update(cx, |editor, model, cx| editor.focus(cx));
+                .update(cx, |editor, model, cx| editor.focus(window));
             cx.stop_propagation();
         }
     }
 
     fn focus_picker(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
-        self.picker.update(cx, |picker, model, cx| picker.focus(cx));
+        self.picker
+            .update(cx, |picker, model, cx| picker.focus(window));
     }
 
     pub fn inline_assist(

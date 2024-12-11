@@ -111,7 +111,7 @@ impl NotificationPanel {
                 })
                 .detach();
 
-            let view = cx.view().downgrade();
+            let view = model.downgrade();
             let notification_list =
                 ListState::new(0, ListAlignment::Top, px(1000.), move |ix, cx| {
                     view.upgrade()
@@ -162,7 +162,7 @@ impl NotificationPanel {
                     let new_dock_position = this.position(model, cx);
                     if new_dock_position != old_dock_position {
                         old_dock_position = new_dock_position;
-                        model.emit(cx, Event::DockPositionChanged);
+                        model.emit(Event::DockPositionChanged, cx);
                     }
                     model.notify(cx);
                 }),
@@ -567,7 +567,7 @@ impl NotificationPanel {
 
                 workspace.dismiss_notification(&id, cx);
                 workspace.show_notification(id, cx, |cx| {
-                    let workspace = cx.view().downgrade();
+                    let workspace = model.downgrade();
                     cx.new_model(|_, _| NotificationToast {
                         notification_id,
                         actor,
@@ -729,7 +729,7 @@ impl Panel for NotificationPanel {
         }
 
         if self.notification_store.read(cx).notification_count() == 0 {
-            model.emit(cx, Event::Dismissed);
+            model.emit(Event::Dismissed, cx);
         }
     }
 
@@ -810,11 +810,11 @@ impl Render for NotificationToast {
             .child(Label::new(self.text.clone()))
             .child(
                 IconButton::new("close", IconName::Close)
-                    .on_click(cx.listener(|_, _, cx| model.emit(cx, DismissEvent))),
+                    .on_click(cx.listener(|_, _, cx| model.emit(DismissEvent, cx))),
             )
             .on_click(model.listener(|this, model, _, cx| {
                 this.focus_notification_panel(cx);
-                model.emit(cx, DismissEvent);
+                model.emit(DismissEvent, cx);
             }))
     }
 }

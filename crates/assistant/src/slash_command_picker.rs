@@ -164,7 +164,7 @@ impl PickerDelegate for SlashCommandDelegate {
                     on_confirm(window, cx);
                 }
             }
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         }
     }
 

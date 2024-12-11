@@ -412,13 +412,13 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut gpui::AppContext,
         handler: Box<dyn Fn(ItemEvent, &mut gpui::Window, &mut gpui::AppContext)>,
     ) -> gpui::Subscription;
-    fn focus_handle(&self, window: &Window, cx: &AppContext) -> FocusHandle;
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &AppContext)
         -> AnyElement;
-    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon>;
-    fn telemetry_event_text(&self, window: &Window, cx: &AppContext) -> Option<&'static str>;
+    fn tab_icon(&self, cx: &AppContext) -> Option<Icon>;
+    fn telemetry_event_text(&self, cx: &AppContext) -> Option<&'static str>;
     fn dragged_tab_content(
         &self,
         params: TabContentParams,
@@ -775,7 +775,7 @@ impl<T: Item> ItemHandle for Model<T> {
 
                         ItemEvent::UpdateTab => {
                             pane.update(cx, |_, model, cx| {
-                                model.emit(cx, pane::Event::ChangeItemTitle);
+                                model.emit(pane::Event::ChangeItemTitle, cx);
                                 model.notify(cx);
                             });
                         }

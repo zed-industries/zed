@@ -71,6 +71,6 @@ impl UpdateNotification {
     }
 
     pub fn dismiss(&mut self, _: &Cancel, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
     }
 }

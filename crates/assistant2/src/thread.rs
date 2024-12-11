@@ -115,7 +115,7 @@ impl Thread {
         cx: &mut AppContext,
     ) {
         self.summary = Some(summary.into());
-        model.emit(cx, ThreadEvent::SummaryChanged);
+        model.emit(ThreadEvent::SummaryChanged, cx);
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
@@ -157,7 +157,7 @@ impl Thread {
             text: text.into(),
         });
         self.touch_updated_at();
-        model.emit(cx, ThreadEvent::MessageAdded(id));
+        model.emit(ThreadEvent::MessageAdded(id), cx);
     }
 
     pub fn to_completion_request(
@@ -274,7 +274,7 @@ impl Thread {
                         }
 
                         thread.touch_updated_at();
-                        model.emit(cx, ThreadEvent::StreamedCompletion);
+                        model.emit(ThreadEvent::StreamedCompletion, cx);
                         model.notify(cx);
                     })?;
 
@@ -300,14 +300,14 @@ impl Thread {
                 .update(&mut cx, |_thread, cx| match result.as_ref() {
                     Ok(stop_reason) => match stop_reason {
                         StopReason::ToolUse => {
-                            model.emit(cx, ThreadEvent::UsePendingTools);
+                            model.emit(ThreadEvent::UsePendingTools, cx);
                         }
                         StopReason::EndTurn => {}
                         StopReason::MaxTokens => {}
                     },
                     Err(error) => {
                         if error.is::<PaymentRequiredError>() {
-                            model.emit(cx, ThreadEvent::ShowError(ThreadError::PaymentRequired));
+                            model.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired), cx);
                         } else if error.is::<MaxMonthlySpendReachedError>() {
                             model.emit(
                                 cx,
@@ -381,7 +381,7 @@ impl Thread {
                         this.summary = Some(new_summary.into());
                     }
 
-                    model.emit(cx, ThreadEvent::SummaryChanged);
+                    model.emit(ThreadEvent::SummaryChanged, cx);
                 })?;
 
                 anyhow::Ok(())
@@ -422,7 +422,7 @@ impl Thread {
                                     is_error: false,
                                 });
 
-                                model.emit(cx, ThreadEvent::ToolFinished { tool_use_id });
+                                model.emit(ThreadEvent::ToolFinished { tool_use_id }, cx);
                             }
                             Err(err) => {
                                 tool_results.push(LanguageModelToolResult {

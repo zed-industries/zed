@@ -159,7 +159,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     && model.model.provider_id() == selected_provider_id;
             }
 
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         }
     }
 

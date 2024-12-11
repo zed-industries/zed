@@ -231,7 +231,7 @@ impl CollabPanel {
             })
             .detach();
 
-            let view = cx.view().downgrade();
+            let view = model.downgrade();
             let list_state =
                 ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
                     if let Some(view) = view.upgrade() {

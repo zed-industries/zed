@@ -39,7 +39,7 @@ enum GoToLineRowHighlights {}
 
 impl GoToLine {
     fn register(editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContext) {
-        let handle = cx.view().downgrade();
+        let handle = model.downgrade();
         editor
             .register_action(move |_: &editor::actions::ToggleGoToLine, cx| {
                 let Some(editor) = handle.upgrade() else {
@@ -113,7 +113,7 @@ impl GoToLine {
         cx: &mut AppContext,
     ) {
         match event {
-            editor::EditorEvent::Blurred => model.emit(cx, DismissEvent),
+            editor::EditorEvent::Blurred => model.emit(DismissEvent, cx),
             editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(cx),
             _ => {}
         }
@@ -160,7 +160,7 @@ impl GoToLine {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
@@ -171,13 +171,13 @@ impl GoToLine {
                 editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                     s.select_ranges([point..point])
                 });
-                editor.focus(cx);
+                editor.focus(window);
                 model.notify(cx);
             });
             self.prev_scroll_position.take();
         }
 
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
     }
 }
 

@@ -149,7 +149,7 @@ impl TerminalInlineAssistant {
         if let Some(prompt_editor) = assist.prompt_editor.as_ref() {
             prompt_editor.update(cx, |this, model, cx| {
                 this.editor.update(cx, |editor, model, cx| {
-                    editor.focus(cx);
+                    editor.focus(window);
                     editor.select_all(&SelectAll, model, cx);
                 });
             });
@@ -333,7 +333,7 @@ impl TerminalInlineAssistant {
                 .terminal
                 .update(cx, |this, model, cx| {
                     this.clear_block_below_cursor(cx);
-                    this.focus_handle(cx).focus(cx);
+                    this.focus_handle(cx).focus(window);
                 })
                 .log_err();
 
@@ -390,7 +390,7 @@ impl TerminalInlineAssistant {
             .terminal
             .update(cx, |this, model, cx| {
                 this.clear_block_below_cursor(cx);
-                this.focus_handle(cx).focus(cx);
+                this.focus_handle(cx).focus(window);
             })
             .is_ok()
     }
@@ -543,7 +543,7 @@ impl Render for PromptEditor {
                                 Tooltip::for_action("Cancel Assist", &menu::Cancel, model, cx)
                             })
                             .on_click(cx.listener(|_, _, cx| {
-                                model.emit(cx, PromptEditorEvent::CancelRequested)
+                                model.emit(PromptEditorEvent::CancelRequested, cx)
                             })),
                         IconButton::new("start", IconName::SparkleAlt)
                             .icon_color(Color::Muted)
@@ -552,7 +552,7 @@ impl Render for PromptEditor {
                                 Tooltip::for_action("Generate", &menu::Confirm, model, cx)
                             })
                             .on_click(cx.listener(|_, _, cx| {
-                                model.emit(cx, PromptEditorEvent::StartRequested)
+                                model.emit(PromptEditorEvent::StartRequested, cx)
                             })),
                     ]
                 }
@@ -563,7 +563,7 @@ impl Render for PromptEditor {
                             .shape(IconButtonShape::Square)
                             .tooltip(|window, cx| Tooltip::text("Cancel Assist", cx))
                             .on_click(cx.listener(|_, _, cx| {
-                                model.emit(cx, PromptEditorEvent::CancelRequested)
+                                model.emit(PromptEditorEvent::CancelRequested, cx)
                             })),
                         IconButton::new("stop", IconName::Stop)
                             .icon_color(Color::Error)
@@ -577,7 +577,7 @@ impl Render for PromptEditor {
                                 )
                             })
                             .on_click(cx.listener(|_, _, cx| {
-                                model.emit(cx, PromptEditorEvent::StopRequested)
+                                model.emit(PromptEditorEvent::StopRequested, cx)
                             })),
                     ]
                 }
@@ -589,7 +589,7 @@ impl Render for PromptEditor {
                             Tooltip::for_action("Cancel Assist", &menu::Cancel, model, cx)
                         })
                         .on_click(cx.listener(|_, _, cx| {
-                            model.emit(cx, PromptEditorEvent::CancelRequested)
+                            model.emit(PromptEditorEvent::CancelRequested, cx)
                         }));
 
                     let has_error = matches!(status, CodegenStatus::Error(_));
@@ -609,7 +609,7 @@ impl Render for PromptEditor {
                                     )
                                 })
                                 .on_click(cx.listener(|_, _, cx| {
-                                    model.emit(cx, PromptEditorEvent::StartRequested);
+                                    model.emit(PromptEditorEvent::StartRequested, cx);
                                 })),
                         ]
                     } else {
@@ -837,7 +837,7 @@ impl PromptEditor {
 
         if height_in_lines != self.height_in_lines {
             self.height_in_lines = height_in_lines;
-            model.emit(cx, PromptEditorEvent::Resized { height_in_lines });
+            model.emit(PromptEditorEvent::Resized { height_in_lines }, cx);
         }
     }
 
@@ -935,10 +935,10 @@ impl PromptEditor {
     fn cancel(&mut self, _: &editor::actions::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
-                model.emit(cx, PromptEditorEvent::CancelRequested);
+                model.emit(PromptEditorEvent::CancelRequested, cx);
             }
             CodegenStatus::Pending => {
-                model.emit(cx, PromptEditorEvent::StopRequested);
+                model.emit(PromptEditorEvent::StopRequested, cx);
             }
         }
     }
@@ -947,21 +947,21 @@ impl PromptEditor {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
                 if !self.editor.read(cx).text(cx).trim().is_empty() {
-                    model.emit(cx, PromptEditorEvent::StartRequested);
+                    model.emit(PromptEditorEvent::StartRequested, cx);
                 }
             }
             CodegenStatus::Pending => {
-                model.emit(cx, PromptEditorEvent::DismissRequested);
+                model.emit(PromptEditorEvent::DismissRequested, cx);
             }
             CodegenStatus::Done => {
                 if self.edited_since_done {
-                    model.emit(cx, PromptEditorEvent::StartRequested);
+                    model.emit(PromptEditorEvent::StartRequested, cx);
                 } else {
-                    model.emit(cx, PromptEditorEvent::ConfirmRequested { execute: false });
+                    model.emit(PromptEditorEvent::ConfirmRequested { execute: false }, cx);
                 }
             }
             CodegenStatus::Error(_) => {
-                model.emit(cx, PromptEditorEvent::StartRequested);
+                model.emit(PromptEditorEvent::StartRequested, cx);
             }
         }
     }
@@ -973,7 +973,7 @@ impl PromptEditor {
         cx: &mut AppContext,
     ) {
         if matches!(self.codegen.read(cx).status, CodegenStatus::Done) {
-            model.emit(cx, PromptEditorEvent::ConfirmRequested { execute: true });
+            model.emit(PromptEditorEvent::ConfirmRequested { execute: true }, cx);
         }
     }
 
@@ -1267,7 +1267,7 @@ impl Codegen {
                 } else {
                     this.status = CodegenStatus::Done;
                 }
-                model.emit(cx, CodegenEvent::Finished);
+                model.emit(CodegenEvent::Finished, cx);
                 model.notify(cx);
             })
             .ok();
@@ -1278,7 +1278,7 @@ impl Codegen {
     pub fn stop(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.status = CodegenStatus::Done;
         self.generation = Task::ready(());
-        model.emit(cx, CodegenEvent::Finished);
+        model.emit(CodegenEvent::Finished, cx);
         model.notify(cx);
     }
 

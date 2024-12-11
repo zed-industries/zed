@@ -50,9 +50,9 @@ impl ActiveThread {
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
-                let this = cx.view().downgrade();
+                let this = model.downgrade();
                 move |ix, window: &mut gpui::Window, cx: &mut gpui::AppContext| {
-                    this.update(cx, |this, model, cx| this.render_message(ix, cx))
+                    this.update(cx, |this, model, cx| this.render_message(ix, model, cx))
                         .unwrap()
                 }
             }),
@@ -155,7 +155,7 @@ impl ActiveThread {
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, model, cx| {
-                        markdown.append(text, cx);
+                        markdown.append(text, model, cx);
                     });
                 }
             }
@@ -190,6 +190,7 @@ impl ActiveThread {
                                 tool_use.assistant_message_id,
                                 tool_use.id.clone(),
                                 task,
+                                model,
                                 cx,
                             );
                         });

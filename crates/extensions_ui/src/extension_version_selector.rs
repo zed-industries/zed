@@ -203,7 +203,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.view
-            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
+            .update(cx, |_, model, cx| model.emit(DismissEvent, cx))
             .log_err();
     }
 

@@ -80,7 +80,7 @@ impl ProjectDiffEditor {
         if let Some(existing) = workspace.item_of_type::<Self>(cx) {
             workspace.activate_item(&existing, true, true, model, cx);
         } else {
-            let workspace_handle = cx.view().downgrade();
+            let workspace_handle = model.downgrade();
             let project_diff = cx.new_model(|model, cx| {
                 Self::new(workspace.project().clone(), workspace_handle, cx)
             });
@@ -872,6 +872,7 @@ impl ProjectDiffEditor {
                                     primary: None,
                                 }
                             }),
+                            model,
                             cx,
                         );
                         after_excerpt_id = new_excerpts.last().copied().unwrap_or(after_excerpt_id);

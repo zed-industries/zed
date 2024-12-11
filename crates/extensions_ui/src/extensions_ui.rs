@@ -72,7 +72,7 @@ pub fn init(cx: &mut AppContext) {
                     cx,
                 );
 
-                let workspace_handle = cx.view().downgrade();
+                let workspace_handle = model.downgrade();
                 cx.deref_mut()
                     .spawn(|mut cx| async move {
                         let extension_path =
@@ -725,7 +725,7 @@ impl ExtensionsPage {
                     workspace.toggle_modal(cx, |cx| {
                         let delegate = ExtensionVersionSelectorDelegate::new(
                             fs,
-                            cx.view().downgrade(),
+                            model.downgrade(),
                             extension_versions,
                         );
 
@@ -917,7 +917,7 @@ impl ExtensionsPage {
         }
     }
 
-    fn fetch_extensions_debounced(&mut self, model: &Model<_>, cx: &mut AppContext) {
+    fn fetch_extensions_debounced(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.extension_fetch_task = Some(model.spawn(cx, |this, mut cx| async move {
             let search = this
                 .update(&mut cx, |this, model, cx| this.search_query(cx))

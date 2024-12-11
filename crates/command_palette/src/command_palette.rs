@@ -100,7 +100,7 @@ impl CommandPalette {
             .collect();
 
         let delegate = CommandPaletteDelegate::new(
-            cx.view().downgrade(),
+            model.downgrade(),
             commands,
             telemetry,
             previous_focus_handle,
@@ -369,7 +369,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.command_palette
-            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
+            .update(cx, |_, model, cx| model.emit(DismissEvent, cx))
             .log_err();
     }
 
@@ -421,6 +421,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .children(KeyBinding::for_action_in(
                             &*command.action,
                             &self.previous_focus_handle,
+                            model,
                             model,
                             cx,
                         )),
@@ -505,7 +506,7 @@ mod tests {
 
         workspace.update(cx, |workspace, model, cx| {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
-            editor.update(cx, |editor, model, cx| editor.focus(cx))
+            editor.update(cx, |editor, model, cx| editor.focus(window))
         });
 
         cx.simulate_keystrokes("cmd-shift-p");

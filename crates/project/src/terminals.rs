@@ -283,6 +283,7 @@ impl Project {
                         this.activate_python_virtual_environment(
                             activate_command,
                             &terminal_handle,
+                            model,
                             cx,
                         );
                     }

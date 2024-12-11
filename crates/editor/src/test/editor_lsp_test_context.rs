@@ -148,7 +148,7 @@ impl EditorLspTestContext {
             item.act_as::<Editor>(cx)
                 .expect("Opened test file wasn't an editor")
         });
-        editor.update(&mut cx, |editor, cx| editor.focus(cx));
+        editor.update(&mut cx, |editor, cx| editor.focus(window));
 
         let lsp = fake_servers.next().await.unwrap();
         Self {

@@ -159,7 +159,7 @@ impl TaskStore {
         worktree_store: Model<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         environment: Model<ProjectEnvironment>,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
         Self::Functional(StoreState {
@@ -182,7 +182,7 @@ impl TaskStore {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         upstream_client: AnyProtoClient,
         project_id: u64,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
         Self::Functional(StoreState {
@@ -271,7 +271,7 @@ impl TaskStore {
         &self,
         location: Option<SettingsLocation<'_>>,
         raw_tasks_json: Option<&str>,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) -> anyhow::Result<()> {
         let task_inventory = match self {
@@ -289,13 +289,13 @@ impl TaskStore {
 
     fn subscribe_to_global_task_file_changes(
         fs: Arc<dyn Fs>,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
-        cx.spawn(move |task_store, mut cx| async move {
+        model.spawn(cx, move |task_store, mut cx| async move {
             if let Some(user_tasks_content) = user_tasks_content {
                 let Ok(_) = task_store.update(&mut cx, |task_store, cx| {
                     task_store

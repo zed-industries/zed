@@ -51,7 +51,7 @@ impl ImageView {
     ) {
         match event {
             ImageItemEvent::FileHandleChanged | ImageItemEvent::Reloaded => {
-                model.emit(cx, ImageViewEvent::TitleChanged);
+                model.emit(ImageViewEvent::TitleChanged, cx);
                 model.notify(cx);
             }
             ImageItemEvent::ReloadNeeded => {}

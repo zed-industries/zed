@@ -1190,7 +1190,7 @@ impl Room {
     ) -> Task<Result<Model<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        model.emit(cx, Event::RemoteProjectJoined { project_id: id });
+        model.emit(Event::RemoteProjectJoined { project_id: id }, cx);
         cx.spawn(move |this, mut cx| async move {
             let project =
                 Project::in_room(id, client, user_store, language_registry, fs, cx.clone()).await?;
@@ -1690,7 +1690,7 @@ impl Room {
 #[cfg(target_os = "windows")]
 fn spawn_room_connection(
     livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
-    model: &Model<_>,
+    model: &Model<Self>,
     cx: &mut AppContext,
 ) {
 }
@@ -1698,7 +1698,7 @@ fn spawn_room_connection(
 #[cfg(not(target_os = "windows"))]
 fn spawn_room_connection(
     livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
-    model: &Model<_>,
+    model: &Model<Self>,
     cx: &mut AppContext,
 ) {
     if let Some(connection_info) = livekit_connection_info {

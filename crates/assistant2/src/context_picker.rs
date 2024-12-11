@@ -98,7 +98,7 @@ impl PickerDelegate for ContextPickerDelegate {
                     println!("Insert context from {}", entry.name);
                 })
                 .ok();
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         }
     }
 

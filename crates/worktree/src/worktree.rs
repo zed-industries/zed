@@ -544,7 +544,7 @@ impl Worktree {
                                     }
                                 }
                             };
-                            model.emit(cx, Event::UpdatedEntries(Arc::default()));
+                            model.emit(Event::UpdatedEntries(Arc::default()), cx);
                             model.notify(cx);
                             while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
                                 if this.observed_snapshot(*scan_id) {
@@ -840,7 +840,7 @@ impl Worktree {
         self.get_children_ids_recursive(path, &mut ids);
 
         for id in ids {
-            model.emit(cx, Event::DeletedEntry(id));
+            model.emit(Event::DeletedEntry(id), cx);
         }
         Some(task)
     }
@@ -1226,10 +1226,10 @@ impl LocalWorktree {
         }
 
         if !entry_changes.is_empty() {
-            model.emit(cx, Event::UpdatedEntries(entry_changes));
+            model.emit(Event::UpdatedEntries(entry_changes), cx);
         }
         if !repo_changes.is_empty() {
-            model.emit(cx, Event::UpdatedGitRepositories(repo_changes));
+            model.emit(Event::UpdatedGitRepositories(repo_changes), cx);
         }
     }
 

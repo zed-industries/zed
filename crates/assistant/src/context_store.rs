@@ -225,7 +225,7 @@ impl ContextStore {
 
             let context = this.create(model, cx);
             let context_id = context.read(cx).id().clone();
-            model.emit(cx, ContextStoreEvent::ContextCreated(context_id.clone()));
+            model.emit(ContextStoreEvent::ContextCreated(context_id.clone()), cx);
 
             anyhow::Ok((
                 context_id,
@@ -251,7 +251,9 @@ impl ContextStore {
             if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
                 let operation_proto = envelope.payload.operation.context("invalid operation")?;
                 let operation = ContextOperation::from_proto(operation_proto)?;
-                context.update(cx, |context, model, cx| context.apply_ops([operation], model, cx));
+                context.update(cx, |context, model, cx| {
+                    context.apply_ops([operation], model, cx)
+                });
             }
             Ok(())
         })?
@@ -696,36 +698,37 @@ impl ContextStore {
             project_id,
             contexts,
         });
-        cx.spawn(|this, cx| async move {
-            let response = request.await?;
+        model
+            .spawn(cx, |this, cx| async move {
+                let response = request.await?;
 
-            let mut context_ids = Vec::new();
-            let mut operations = Vec::new();
-            this.read_with(&cx, |this, cx| {
-                for context_version_proto in response.contexts {
-                    let context_version = ContextVersion::from_proto(&context_version_proto);
-                    let context_id = ContextId::from_proto(context_version_proto.context_id);
-                    if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
-                        context_ids.push(context_id);
-                        operations.push(context.read(cx).serialize_ops(&context_version, cx));
+                let mut context_ids = Vec::new();
+                let mut operations = Vec::new();
+                this.read_with(&cx, |this, cx| {
+                    for context_version_proto in response.contexts {
+                        let context_version = ContextVersion::from_proto(&context_version_proto);
+                        let context_id = ContextId::from_proto(context_version_proto.context_id);
+                        if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
+                            context_ids.push(context_id);
+                            operations.push(context.read(cx).serialize_ops(&context_version, cx));
+                        }
+                    }
+                })?;
+
+                let operations = futures::future::join_all(operations).await;
+                for (context_id, operations) in context_ids.into_iter().zip(operations) {
+                    for operation in operations {
+                        client.send(proto::UpdateContext {
+                            project_id,
+                            context_id: context_id.to_proto(),
+                            operation: Some(operation),
+                        })?;
                     }
                 }
-            })?;
 
-            let operations = futures::future::join_all(operations).await;
-            for (context_id, operations) in context_ids.into_iter().zip(operations) {
-                for operation in operations {
-                    client.send(proto::UpdateContext {
-                        project_id,
-                        context_id: context_id.to_proto(),
-                        operation: Some(operation),
-                    })?;
-                }
-            }
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
     }
 
     pub fn search(&self, query: String, cx: &AppContext) -> Task<Vec<SavedContextMetadata>> {

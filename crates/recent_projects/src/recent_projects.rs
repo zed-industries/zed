@@ -61,7 +61,7 @@ impl RecentProjects {
                 Picker::uniform_list(delegate, cx)
             }
         });
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| model.emit(cx, DismissEvent));
+        let _subscription = cx.subscribe(&picker, |_, _, _, cx| model.emit(DismissEvent, cx));
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
         model
@@ -108,7 +108,7 @@ impl RecentProjects {
         model: &Model<Workspace>,
         cx: &mut AppContext,
     ) {
-        let weak = cx.view().downgrade();
+        let weak = model.downgrade();
         workspace.toggle_modal(cx, |cx| {
             let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
 
@@ -352,7 +352,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     }
                 })
                 .detach_and_log_err(cx);
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         }
     }
 

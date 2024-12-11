@@ -35,7 +35,7 @@ pub fn toggle(
     let telemetry = workspace.client().telemetry().clone();
     workspace.toggle_modal(cx, |cx| {
         let delegate = ThemeSelectorDelegate::new(
-            cx.view().downgrade(),
+            model.downgrade(),
             fs,
             telemetry,
             toggle.themes_filter.as_ref(),
@@ -198,7 +198,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
         self.view
             .update(cx, |_, model, cx| {
-                model.emit(cx, DismissEvent);
+                model.emit(DismissEvent, cx);
             })
             .ok();
     }
@@ -210,7 +210,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         }
 
         self.view
-            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
+            .update(cx, |_, model, cx| model.emit(DismissEvent, cx))
             .log_err();
     }
 

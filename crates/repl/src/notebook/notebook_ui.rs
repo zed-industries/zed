@@ -112,7 +112,7 @@ impl NotebookEditor {
             );
         }
 
-        let view = cx.view().downgrade();
+        let view = model.downgrade();
         let cell_count = cell_order.len();
 
         let this = cx.view();

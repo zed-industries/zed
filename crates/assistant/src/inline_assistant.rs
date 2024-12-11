@@ -182,7 +182,7 @@ impl InlineAssistant {
             editor.update(cx, |editor, model, cx| {
                 editor.push_code_action_provider(
                     Arc::new(AssistantCodeActionProvider {
-                        editor: cx.view().downgrade(),
+                        editor: model.downgrade(),
                         workspace: workspace.downgrade(),
                     }),
                     model,
@@ -724,7 +724,7 @@ impl InlineAssistant {
         };
 
         editor.update(cx, |editor, model, cx| {
-            let scroll_position = editor.scroll_position(cx);
+            let scroll_position = editor.scroll_position(model, cx);
             let target_scroll_top = editor
                 .row_for_block(decorations.prompt_block_id, model, cx)
                 .unwrap()
@@ -973,7 +973,7 @@ impl InlineAssistant {
 
         assist
             .editor
-            .update(cx, |editor, model, cx| editor.focus(cx))
+            .update(cx, |editor, model, cx| editor.focus(window))
             .ok();
     }
 
@@ -992,7 +992,7 @@ impl InlineAssistant {
                 .prompt_editor
                 .update(cx, |prompt_editor, model, cx| {
                     prompt_editor.editor.update(cx, |editor, model, cx| {
-                        editor.focus(cx);
+                        editor.focus(window);
                         editor.select_all(&SelectAll, model, cx);
                     })
                 });
@@ -1074,7 +1074,9 @@ impl InlineAssistant {
             if let Some(editor_decorations) = assist.decorations.as_ref() {
                 editor_decorations
                     .prompt_editor
-                    .update(cx, |prompt_editor, model, cx| prompt_editor.unlink(cx));
+                    .update(cx, |prompt_editor, model, cx| {
+                        prompt_editor.unlink(model, cx)
+                    });
             }
         }
         assist_group.assist_ids.clone()
@@ -1134,7 +1136,7 @@ impl InlineAssistant {
 
         assist
             .codegen
-            .update(cx, |codegen, model, cx| codegen.stop(cx));
+            .update(cx, |codegen, model, cx| codegen.stop(model, cx));
     }
 
     fn update_editor_highlights(
@@ -1188,7 +1190,7 @@ impl InlineAssistant {
         editor.update(cx, |editor, model, cx| {
             enum GutterPendingRange {}
             if gutter_pending_ranges.is_empty() {
-                editor.clear_gutter_highlights::<GutterPendingRange>(cx);
+                editor.clear_gutter_highlights::<GutterPendingRange>(model, cx);
             } else {
                 editor.highlight_gutter::<GutterPendingRange>(
                     &gutter_pending_ranges,
@@ -1200,7 +1202,7 @@ impl InlineAssistant {
 
             enum GutterTransformedRange {}
             if gutter_transformed_ranges.is_empty() {
-                editor.clear_gutter_highlights::<GutterTransformedRange>(cx);
+                editor.clear_gutter_highlights::<GutterTransformedRange>(model, cx);
             } else {
                 editor.highlight_gutter::<GutterTransformedRange>(
                     &gutter_transformed_ranges,
@@ -1211,7 +1213,7 @@ impl InlineAssistant {
             }
 
             if foreground_ranges.is_empty() {
-                editor.clear_highlights::<InlineAssist>(cx);
+                editor.clear_highlights::<InlineAssist>(model, cx);
             } else {
                 editor.highlight_text::<InlineAssist>(
                     foreground_ranges,
@@ -1283,6 +1285,7 @@ impl InlineAssistant {
                                 context: buffer_start..buffer_end,
                                 primary: None,
                             }),
+                            model,
                             cx,
                         );
                     });
@@ -1390,7 +1393,7 @@ impl EditorInlineAssists {
                     })
                 }),
                 editor.update(cx, |editor, model, cx| {
-                    let editor_handle = cx.view().downgrade();
+                    let editor_handle = model.downgrade();
                     editor.register_action(
                         move |_: &editor::actions::Newline,
                               window: &mut gpui::Window,
@@ -1404,7 +1407,7 @@ impl EditorInlineAssists {
                     )
                 }),
                 editor.update(cx, |editor, model, cx| {
-                    let editor_handle = cx.view().downgrade();
+                    let editor_handle = model.downgrade();
                     editor.register_action(
                         move |_: &editor::actions::Cancel,
                               window: &mut gpui::Window,
@@ -1515,7 +1518,7 @@ impl Render for PromptEditor {
 
         let mut buttons = Vec::new();
         if codegen.alternative_count(cx) > 1 {
-            buttons.push(self.render_cycle_controls(cx));
+            buttons.push(self.render_cycle_controls(model, cx));
         }
 
         let status = codegen.status(cx);
@@ -1529,7 +1532,7 @@ impl Render for PromptEditor {
                             Tooltip::for_action("Cancel Assist", &menu::Cancel, model, cx)
                         })
                         .on_click(cx.listener(|_, _, cx| {
-                            model.emit(cx, PromptEditorEvent::CancelRequested)
+                            model.emit(PromptEditorEvent::CancelRequested, cx)
                         }))
                         .into_any_element(),
                     IconButton::new("start", IconName::SparkleAlt)
@@ -1540,7 +1543,7 @@ impl Render for PromptEditor {
                         })
                         .on_click(
                             cx.listener(|_, _, cx| {
-                                model.emit(cx, PromptEditorEvent::StartRequested)
+                                model.emit(PromptEditorEvent::StartRequested, cx)
                             }),
                         )
                         .into_any_element(),
@@ -1553,7 +1556,7 @@ impl Render for PromptEditor {
                         .shape(IconButtonShape::Square)
                         .tooltip(|window, cx| Tooltip::text("Cancel Assist", cx))
                         .on_click(cx.listener(|_, _, cx| {
-                            model.emit(cx, PromptEditorEvent::CancelRequested)
+                            model.emit(PromptEditorEvent::CancelRequested, cx)
                         }))
                         .into_any_element(),
                     IconButton::new("stop", IconName::Stop)
@@ -1564,12 +1567,13 @@ impl Render for PromptEditor {
                                 "Interrupt Transformation",
                                 Some(&menu::Cancel),
                                 "Changes won't be discarded",
+                                model,
                                 cx,
                             )
                         })
                         .on_click(
                             cx.listener(|_, _, cx| {
-                                model.emit(cx, PromptEditorEvent::StopRequested)
+                                model.emit(PromptEditorEvent::StopRequested, cx)
                             }),
                         )
                         .into_any_element(),
@@ -1584,7 +1588,7 @@ impl Render for PromptEditor {
                             Tooltip::for_action("Cancel Assist", &menu::Cancel, model, cx)
                         })
                         .on_click(cx.listener(|_, _, cx| {
-                            model.emit(cx, PromptEditorEvent::CancelRequested)
+                            model.emit(PromptEditorEvent::CancelRequested, cx)
                         }))
                         .into_any_element(),
                     if self.edited_since_done || matches!(status, CodegenStatus::Error(_)) {
@@ -1601,7 +1605,7 @@ impl Render for PromptEditor {
                                 )
                             })
                             .on_click(cx.listener(|_, _, cx| {
-                                model.emit(cx, PromptEditorEvent::StartRequested);
+                                model.emit(PromptEditorEvent::StartRequested, cx);
                             }))
                             .into_any_element()
                     } else {
@@ -1612,7 +1616,7 @@ impl Render for PromptEditor {
                                 Tooltip::for_action("Confirm Assist", &menu::Confirm, model, cx)
                             })
                             .on_click(cx.listener(|_, _, cx| {
-                                model.emit(cx, PromptEditorEvent::ConfirmRequested);
+                                model.emit(PromptEditorEvent::ConfirmRequested, cx);
                             }))
                             .into_any_element()
                     },
@@ -1778,8 +1782,6 @@ impl PromptEditor {
             editor.set_show_cursor_when_unfocused(true, model, cx);
             editor.set_placeholder_text(
                 Self::placeholder_text(codegen.read(cx), model, cx),
-                model,
-                model,
                 model,
                 cx,
             );
@@ -2021,10 +2023,10 @@ impl PromptEditor {
     fn cancel(&mut self, _: &editor::actions::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         match self.codegen.read(cx).status(cx) {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
-                model.emit(cx, PromptEditorEvent::CancelRequested);
+                model.emit(PromptEditorEvent::CancelRequested, cx);
             }
             CodegenStatus::Pending => {
-                model.emit(cx, PromptEditorEvent::StopRequested);
+                model.emit(PromptEditorEvent::StopRequested, cx);
             }
         }
     }
@@ -2032,20 +2034,20 @@ impl PromptEditor {
     fn confirm(&mut self, _: &menu::Confirm, model: &Model<Self>, cx: &mut AppContext) {
         match self.codegen.read(cx).status(cx) {
             CodegenStatus::Idle => {
-                model.emit(cx, PromptEditorEvent::StartRequested);
+                model.emit(PromptEditorEvent::StartRequested, cx);
             }
             CodegenStatus::Pending => {
-                model.emit(cx, PromptEditorEvent::DismissRequested);
+                model.emit(PromptEditorEvent::DismissRequested, cx);
             }
             CodegenStatus::Done => {
                 if self.edited_since_done {
-                    model.emit(cx, PromptEditorEvent::StartRequested);
+                    model.emit(PromptEditorEvent::StartRequested, cx);
                 } else {
-                    model.emit(cx, PromptEditorEvent::ConfirmRequested);
+                    model.emit(PromptEditorEvent::ConfirmRequested, cx);
                 }
             }
             CodegenStatus::Error(_) => {
-                model.emit(cx, PromptEditorEvent::StartRequested);
+                model.emit(PromptEditorEvent::StartRequested, cx);
             }
         }
     }
@@ -2613,7 +2615,7 @@ impl Codegen {
         self.subscriptions
             .push(cx.observe(&codegen, |_, _, cx| model.notify(cx)));
         self.subscriptions
-            .push(cx.subscribe(&codegen, |_, _, event, cx| model.emit(cx, *event)));
+            .push(cx.subscribe(&codegen, |_, _, event, cx| model.emit(*event, cx)));
     }
 
     fn active_alternative(&self) -> &Model<CodegenAlternative> {
@@ -2898,7 +2900,7 @@ impl CodegenAlternative {
             if self.transformation_transaction_id == Some(*transaction_id) {
                 self.transformation_transaction_id = None;
                 self.generation = Task::ready(());
-                model.emit(cx, CodegenEvent::Undone);
+                model.emit(CodegenEvent::Undone, cx);
             }
         }
     }
@@ -3289,7 +3291,7 @@ impl CodegenAlternative {
                         }
                         this.elapsed_time = Some(elapsed_time);
                         this.completion = Some(completion.lock().clone());
-                        model.emit(cx, CodegenEvent::Finished);
+                        model.emit(CodegenEvent::Finished, cx);
                         model.notify(cx);
                     })
                     .ok();
@@ -3306,7 +3308,7 @@ impl CodegenAlternative {
             self.status = CodegenStatus::Done;
         }
         self.generation = Task::ready(());
-        model.emit(cx, CodegenEvent::Finished);
+        model.emit(CodegenEvent::Finished, cx);
         model.notify(cx);
     }
 
@@ -3341,8 +3343,9 @@ impl CodegenAlternative {
                 });
             } else {
                 self.transformation_transaction_id = Some(transaction);
-                self.buffer
-                    .update(cx, |buffer, model, cx| buffer.finalize_last_transaction(cx));
+                self.buffer.update(cx, |buffer, model, cx| {
+                    buffer.finalize_last_transaction(model, cx)
+                });
             }
         }
     }

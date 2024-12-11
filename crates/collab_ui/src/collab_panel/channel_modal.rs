@@ -42,7 +42,7 @@ impl ChannelModal {
     ) -> Self {
         cx.observe(&channel_store, |_, _, cx| model.notify(cx))
             .detach();
-        let channel_modal = cx.view().downgrade();
+        let channel_modal = model.downgrade();
         let picker = cx.new_model(|model, cx| {
             Picker::uniform_list(
                 ChannelModalDelegate {
@@ -115,7 +115,7 @@ impl ChannelModal {
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
     }
 }
 
@@ -384,7 +384,7 @@ impl PickerDelegate for ChannelModalDelegate {
         if self.context_menu.is_none() {
             self.channel_modal
                 .update(cx, |_, model, cx| {
-                    model.emit(cx, DismissEvent);
+                    model.emit(DismissEvent, cx);
                 })
                 .ok();
         }
@@ -544,7 +544,7 @@ impl ChannelModalDelegate {
                     .selected_index
                     .min(this.matching_member_indices.len().saturating_sub(1));
 
-                picker.focus(cx);
+                picker.focus(window);
                 model.notify(cx);
             })
         })
@@ -640,7 +640,7 @@ impl ChannelModalDelegate {
         cx.focus_view(&context_menu);
         let subscription = cx.subscribe(&context_menu, |picker, _, _: &DismissEvent, cx| {
             picker.delegate.context_menu = None;
-            picker.focus(cx);
+            picker.focus(window);
             model.notify(cx);
         });
         self.context_menu = Some((context_menu, subscription));

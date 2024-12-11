@@ -20,7 +20,7 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext| {
             workspace.register_action(|workspace, _: &workspace::ToggleProjectSymbols, cx| {
                 let project = workspace.project().clone();
-                let handle = cx.view().downgrade();
+                let handle = model.downgrade();
                 workspace.toggle_modal(cx, move |cx| {
                     let delegate = ProjectSymbolsDelegate::new(handle, project);
                     Picker::uniform_list(delegate, cx).width(rems(34.))
@@ -143,7 +143,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                 Ok::<_, anyhow::Error>(())
             })
             .detach_and_log_err(cx);
-            model.emit(cx, DismissEvent);
+            model.emit(DismissEvent, cx);
         }
     }
 

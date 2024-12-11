@@ -436,7 +436,7 @@ impl Session {
         };
 
         let parent_message_id = message.header.msg_id.clone();
-        let session_view = cx.view().downgrade();
+        let session_view = model.downgrade();
         let weak_editor = self.editor.clone();
 
         let on_close: CloseBlockFn = Arc::new(
@@ -569,7 +569,7 @@ impl Session {
 
     pub fn kernel(&mut self, kernel: Kernel, model: &Model<Self>, cx: &mut AppContext) {
         if let Kernel::Shutdown = kernel {
-            model.emit(cx, SessionEvent::Shutdown(self.editor.clone()));
+            model.emit(SessionEvent::Shutdown(self.editor.clone()), cx);
         }
 
         let kernel_status = KernelStatus::from(&kernel).to_string();

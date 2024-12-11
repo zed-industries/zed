@@ -223,7 +223,7 @@ pub fn initialize_workspace(
 
         auto_update_ui::notify_of_any_new_update(cx);
 
-        let handle = cx.view().downgrade();
+        let handle = model.downgrade();
         cx.on_window_should_close(move |cx| {
 
             handle
@@ -611,7 +611,7 @@ pub fn initialize_workspace(
             });
         }
 
-        workspace.focus_handle(cx).focus(cx);
+        workspace.focus_handle(cx).focus(window);
     })
     .detach();
 

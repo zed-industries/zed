@@ -43,23 +43,24 @@ impl Manager {
         let manager = model.downgrade();
         project.update(cx, |_, model, cx| {
             let manager = manager.clone();
-            model.on_release(cx, move |project, cx| {
-                manager
-                    .update(cx, |manager, model, cx| {
-                        manager.projects.retain(|p| {
-                            if let Some(p) = p.upgrade() {
-                                p.read(cx).remote_id() != project.remote_id()
-                            } else {
-                                false
+            model
+                .on_release(cx, move |project, cx| {
+                    manager
+                        .update(cx, |manager, model, cx| {
+                            manager.projects.retain(|p| {
+                                if let Some(p) = p.upgrade() {
+                                    p.read(cx).remote_id() != project.remote_id()
+                                } else {
+                                    false
+                                }
+                            });
+                            if manager.projects.is_empty() {
+                                manager.maintain_connection.take();
                             }
-                        });
-                        if manager.projects.is_empty() {
-                            manager.maintain_connection.take();
-                        }
-                    })
-                    .ok();
-            })
-            .detach();
+                        })
+                        .ok();
+                })
+                .detach();
         });
 
         self.projects.insert(project.downgrade());
@@ -111,7 +112,9 @@ impl Manager {
                 for rejoined_project in response.payload.rejoined_projects {
                     if let Some(project) = projects.get(&rejoined_project.id) {
                         project.update(cx, |project, model, cx| {
-                            project.rejoined(rejoined_project, message_id, cx).log_err();
+                            project
+                                .rejoined(rejoined_project, message_id, model, cx)
+                                .log_err();
                         });
                     }
                 }
@@ -123,8 +126,8 @@ impl Manager {
         for project in self.projects.drain() {
             if let Some(project) = project.upgrade() {
                 project.update(cx, |project, model, cx| {
-                    project.disconnected_from_hostmodel, (cx);model,
-                project.closemodel, (cx);model,
+                    project.disconnected_from_host(model, cx);
+                    project.close(model, cx);
                 });
             }
         }
@@ -156,7 +159,9 @@ impl Manager {
                                 log::info!("client reconnected, attempting to rejoin projects");
 
                                 let Some(this) = this.upgrade() else { break };
-                                match this.update(&mut cx, |this, model, cx| this.reconnected(cx)) {
+                                match this
+                                    .update(&mut cx, |this, model, cx| this.reconnected(model, cx))
+                                {
                                     Ok(task) => {
                                         if task.await.log_err().is_some() {
                                             return true;
@@ -205,7 +210,7 @@ impl Manager {
         // we leave the room and return an error.
         if let Some(this) = this.upgrade() {
             log::info!("reconnection failed, disconnecting projects");
-            this.update(&mut cx, |this, model, cx| this.connection_lost(cx))?;
+            this.update(&mut cx, |this, model, cx| this.connection_lost(model, cx))?;
         }
 
         Ok(())

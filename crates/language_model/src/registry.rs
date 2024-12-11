@@ -69,14 +69,14 @@ impl LanguageModelRegistry {
         let id = provider.id();
 
         let subscription = provider.subscribe(cx, |_, cx| {
-            model.emit(cx, Event::ProviderStateChanged);
+            model.emit(Event::ProviderStateChanged, cx);
         });
         if let Some(subscription) = subscription {
             subscription.detach();
         }
 
         self.providers.insert(id.clone(), Arc::new(provider));
-        model.emit(cx, Event::AddedProvider(id));
+        model.emit(Event::AddedProvider(id), cx);
     }
 
     pub fn unregister_provider(
@@ -86,7 +86,7 @@ impl LanguageModelRegistry {
         cx: &mut AppContext,
     ) {
         if self.providers.remove(&id).is_some() {
-            model.emit(cx, Event::RemovedProvider(id));
+            model.emit(Event::RemovedProvider(id), cx);
         }
     }
 
@@ -146,7 +146,7 @@ impl LanguageModelRegistry {
             provider,
             model: None,
         });
-        model.emit(cx, Event::ActiveModelChanged);
+        model.emit(Event::ActiveModelChanged, cx);
     }
 
     pub fn set_active_model(
@@ -162,13 +162,13 @@ impl LanguageModelRegistry {
                     provider,
                     model: Some(model),
                 });
-                model.emit(cx, Event::ActiveModelChanged);
+                model.emit(Event::ActiveModelChanged, cx);
             } else {
                 log::warn!("Active model's provider not found in registry");
             }
         } else {
             self.active_model = None;
-            model.emit(cx, Event::ActiveModelChanged);
+            model.emit(Event::ActiveModelChanged, cx);
         }
     }
 

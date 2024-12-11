@@ -294,6 +294,7 @@ impl PrettierStore {
                                 node,
                                 default_prettier_dir().clone(),
                                 worktree_id,
+                                model,
                                 cx,
                             );
                             prettier_store.default_prettier.prettier =
@@ -642,6 +643,7 @@ impl PrettierStore {
             self.install_default_prettier(
                 worktree,
                 prettier_plugins.into_iter().map(Arc::from),
+                model,
                 cx,
             );
         }

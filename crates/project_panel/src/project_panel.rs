@@ -294,10 +294,10 @@ impl ProjectPanel {
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
                     this.reveal_entry(project, *entry_id, false, model, cx);
-                    model.emit(cx, PanelEvent::Activate);
+                    model.emit(PanelEvent::Activate, cx);
                 }
                 project::Event::ActivateProjectPanel => {
-                    model.emit(cx, PanelEvent::Activate);
+                    model.emit(PanelEvent::Activate, cx);
                 }
                 project::Event::DiskBasedDiagnosticsFinished { .. }
                 | project::Event::DiagnosticsUpdated { .. } => {
@@ -595,7 +595,7 @@ impl ProjectPanel {
 
     fn focus_in(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if !self.focus_handle.contains_focused(cx) {
-            model.emit(cx, Event::Focus);
+            model.emit(Event::Focus, cx);
         }
     }
 
@@ -1017,7 +1017,7 @@ impl ProjectPanel {
 
                             if is_dir {
                                 project_panel.project.update(cx, |_, model, cx| {
-                                    model.emit(cx, project::Event::Toast {
+                                    model.emit(, cxproject::Event::Toast {
                                         notification_id: "excluded-directory".into(),
                                         message: format!("Created an excluded directory at {abs_path:?}.\nAlter `file_scan_exclusions` in the settings to show it in the panel")
                                     })
@@ -1066,7 +1066,7 @@ impl ProjectPanel {
         allow_preview: bool,
         model: &Model<Self>, cx: &mut AppContext,
     ) {
-        model.emit(cx, Event::OpenedEntry {
+        model.emit(, cxEvent::OpenedEntry {
             entry_id,
             focus_opened_item,
             allow_preview,
@@ -1074,7 +1074,7 @@ impl ProjectPanel {
     }
 
     fn split_entry(&mut self, entry_id: ProjectEntryId, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, Event::SplitEntry { entry_id });
+        model.emit(Event::SplitEntry { entry_id }, cx);
     }
 
     fn new_file(&mut self, _: &NewFile, model: &Model<Self>, cx: &mut AppContext) {
@@ -1136,7 +1136,7 @@ impl ProjectPanel {
             });
             self.filename_editor.update(cx, |editor, model, cx| {
                 editor.clear(cx);
-                editor.focus(cx);
+                editor.focus(window);
             });
             self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), model, cx);
             self.autoscroll(model, cx);
@@ -1188,7 +1188,7 @@ impl ProjectPanel {
                         editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                             s.select_ranges([0..selection_end])
                         });
-                        editor.focus(cx);
+                        editor.focus(window);
                     });
                     self.update_visible_entries(None, model, cx);
                     self.autoscroll(model, cx);
@@ -1206,7 +1206,7 @@ impl ProjectPanel {
         self.remove(false, action.skip_prompt, model, cx);
     }
 
-    fn remove(&mut self, trash: bool, skip_prompt: bool, model: &Model<_>, cx: &mut AppContext) {
+    fn remove(&mut self, trash: bool, skip_prompt: bool, model: &Model<Self>, cx: &mut AppContext) {
         maybe!({
             let items_to_delete = self.disjoint_entries(cx);
             if items_to_delete.is_empty() {
@@ -3696,7 +3696,7 @@ impl ProjectPanel {
         project: Model<Project>,
         entry_id: ProjectEntryId,
         skip_ignored: bool,
-        model: &Model<_>, cx: &mut AppContext,
+        model: &Model<Self>, cx: &mut AppContext,
     ) {
         if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
             let worktree = worktree.read(cx);
@@ -6577,7 +6577,7 @@ mod tests {
         for file_entry in [dir_1_file, dir_2_file, gitignored_dir_file] {
             panel.update(cx, |panel, model, cx| {
                 panel.project.update(cx, |_, model, cx| {
-                    model.emit(cx, project::Event::ActiveEntryChanged(Some(file_entry)))
+                    model.emit(project::Event::ActiveEntryChanged(Some(file_entry)), cx)
                 })
             });
             cx.run_until_parked();
@@ -6604,7 +6604,7 @@ mod tests {
 
         panel.update(cx, |panel, model, cx| {
             panel.project.update(cx, |_, model, cx| {
-                model.emit(cx, project::Event::ActiveEntryChanged(Some(dir_1_file)))
+                model.emit(project::Event::ActiveEntryChanged(Some(dir_1_file)), cx)
             })
         });
         cx.run_until_parked();
@@ -6626,7 +6626,7 @@ mod tests {
 
         panel.update(cx, |panel, model, cx| {
             panel.project.update(cx, |_, model, cx| {
-                model.emit(cx, project::Event::ActiveEntryChanged(Some(dir_2_file)))
+                model.emit(project::Event::ActiveEntryChanged(Some(dir_2_file)), cx)
             })
         });
         cx.run_until_parked();
@@ -6651,9 +6651,9 @@ mod tests {
 
         panel.update(cx, |panel, model, cx| {
             panel.project.update(cx, |_, model, cx| {
-                model.emit(cx, project::Event::ActiveEntryChanged(Some(
+                model.emit(project::Event::ActiveEntryChanged(Some(
                     gitignored_dir_file,
-                )))
+                )), cx)
             })
         });
         cx.run_until_parked();
@@ -6678,7 +6678,7 @@ mod tests {
 
         panel.update(cx, |panel, model, cx| {
             panel.project.update(cx, |_, model, cx| {
-                model.emit(cx, project::Event::RevealInProjectPanel(gitignored_dir_file))
+                model.emit(project::Event::RevealInProjectPanel(gitignored_dir_file), cx)
             })
         });
         cx.run_until_parked();
@@ -6813,7 +6813,7 @@ mod tests {
         for file_entry in [dir_1_file, dir_2_file, gitignored_dir_file] {
             panel.update(cx, |panel, model, cx| {
                 panel.project.update(cx, |_, model, cx| {
-                    model.emit(cx, project::Event::ActiveEntryChanged(Some(file_entry)))
+                    model.emit(project::Event::ActiveEntryChanged(Some(file_entry)), cx)
                 })
             });
             cx.run_until_parked();
@@ -6832,7 +6832,7 @@ mod tests {
 
         panel.update(cx, |panel, model, cx| {
             panel.project.update(cx, |_, model, cx| {
-                model.emit(cx, project::Event::RevealInProjectPanel(dir_1_file))
+                model.emit(project::Event::RevealInProjectPanel(dir_1_file), cx)
             })
         });
         cx.run_until_parked();
@@ -6854,7 +6854,7 @@ mod tests {
 
         panel.update(cx, |panel, model, cx| {
             panel.project.update(cx, |_, model, cx| {
-                model.emit(cx, project::Event::RevealInProjectPanel(dir_2_file))
+                model.emit(project::Event::RevealInProjectPanel(dir_2_file), cx)
             })
         });
         cx.run_until_parked();
@@ -6879,7 +6879,7 @@ mod tests {
 
         panel.update(cx, |panel, model, cx| {
             panel.project.update(cx, |_, model, cx| {
-                model.emit(cx, project::Event::RevealInProjectPanel(gitignored_dir_file))
+                model.emit(project::Event::RevealInProjectPanel(gitignored_dir_file), cx)
             })
         });
         cx.run_until_parked();

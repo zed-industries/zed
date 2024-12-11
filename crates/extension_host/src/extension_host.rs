@@ -303,9 +303,11 @@ impl ExtensionStore {
                 if let Some(future) = reload_future {
                     future.await;
                 }
-                this.update(&mut cx, |this, model, cx| this.auto_install_extensions(cx))
-                    .ok();
-                this.update(&mut cx, |this, model, cx| this.check_for_updates(cx))
+                this.update(&mut cx, |this, model, cx| {
+                    this.auto_install_extensions(model, cx)
+                })
+                .ok();
+                this.update(&mut cx, |this, model, cx| this.check_for_updates(model, cx))
                     .ok();
             })
             .detach();
@@ -327,7 +329,7 @@ impl ExtensionStore {
                         _ = debounce_timer => {
                             if index_changed {
                                 let index = this
-                                    .update(&mut cx, |this, model, cx| this.rebuild_extension_index(cx))?
+                                    .update(&mut cx, |this, model, cx| this.rebuild_extension_index(model, cx))?
                                     .await;
                                 this.update(&mut cx, |this, model, cx| this.extensions_updated(index, cx))?
                                     .await;
@@ -402,7 +404,7 @@ impl ExtensionStore {
         self.reload_tx
             .unbounded_send(modified_extension)
             .expect("reload task exited");
-        model.emit(cx, Event::StartedReloading);
+        model.emit(Event::StartedReloading, cx);
 
         async move {
             rx.await.ok();
@@ -586,12 +588,12 @@ impl ExtensionStore {
         &self,
         path: &str,
         query: &[(&str, &str)],
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let url = self.http_client.build_zed_api_url(path, query);
         let http_client = self.http_client.clone();
-        cx.spawn(move |_, _| async move {
+        cx.spawn(move |_| async move {
             let mut response = http_client
                 .get(url?.as_ref(), AsyncBody::empty(), true)
                 .await?;
@@ -704,7 +706,7 @@ impl ExtensionStore {
 
             if let ExtensionOperation::Install = operation {
                 this.update(&mut cx, |_, cx| {
-                    model.emit(cx, Event::ExtensionInstalled(extension_id));
+                    model.emit(Event::ExtensionInstalled(extension_id), cx);
                 })
                 .ok();
             }
@@ -1174,7 +1176,7 @@ impl ExtensionStore {
 
         self.extension_index = new_index;
         model.notify(cx);
-        model.emit(cx, Event::ExtensionsUpdated);
+        model.emit(Event::ExtensionsUpdated, cx);
 
         model.spawn(cx, |this, mut cx| async move {
             cx.background_executor()

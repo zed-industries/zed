@@ -906,7 +906,7 @@ impl Workspace {
         })
         .detach();
 
-        let weak_handle = cx.view().downgrade();
+        let weak_handle = model.downgrade();
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
         let center_pane = cx.new_model(|model, cx| {
@@ -925,7 +925,7 @@ impl Workspace {
         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
 
         cx.focus_view(&center_pane);
-        model.emit(cx, Event::PaneAdded(center_pane.clone()));
+        model.emit(Event::PaneAdded(center_pane.clone()), cx);
 
         let window_handle = cx.window_handle().downcast::<Workspace>().unwrap();
         app_state.workspace_store.update(cx, |store, model, _| {
@@ -960,7 +960,7 @@ impl Workspace {
             Ok(())
         });
 
-        model.emit(cx, Event::WorkspaceCreated(weak_handle.clone()));
+        model.emit(Event::WorkspaceCreated(weak_handle.clone()), cx);
 
         let left_dock = Dock::new(DockPosition::Left, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, cx);
@@ -1396,7 +1396,7 @@ impl Workspace {
     ) -> Task<Result<()>> {
         let to_load = if let Some(pane) = pane.upgrade() {
             pane.update(cx, |pane, model, cx| {
-                pane.focus(cx);
+                pane.focus(window);
                 loop {
                     // Retrieve the weak item handle from the history.
                     let entry = pane.nav_history_mut().pop(mode, cx)?;
@@ -2479,7 +2479,7 @@ impl Workspace {
                     if let Some(panel) = panel.as_ref() {
                         if should_focus(&**panel, cx) {
                             dock.set_open(true, model, cx);
-                            panel.focus_handle(cx).focus(cx);
+                            panel.focus_handle(cx).focus(window);
                         } else {
                             focus_center = true;
                         }
@@ -2560,7 +2560,7 @@ impl Workspace {
         if self.zoomed_position != dock_to_reveal {
             self.zoomed = None;
             self.zoomed_position = None;
-            model.emit(cx, Event::ZoomChanged);
+            model.emit(Event::ZoomChanged, cx);
         }
 
         model.notify(cx);
@@ -2583,7 +2583,7 @@ impl Workspace {
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         self.panes.push(pane.clone());
         cx.focus_view(&pane);
-        model.emit(cx, Event::PaneAdded(pane.clone()));
+        model.emit(Event::PaneAdded(pane.clone()), cx);
         pane
     }
 
@@ -3076,7 +3076,7 @@ impl Workspace {
             Some(ActivateInDirectionTarget::Pane(pane)) => cx.focus_view(&pane),
             Some(ActivateInDirectionTarget::Dock(dock)) => {
                 if let Some(panel) = dock.read(cx).active_panel() {
-                    panel.focus_handle(cx).focus(cx);
+                    panel.focus_handle(cx).focus(window);
                 } else {
                     log::error!("Could not find a focus target when in switching focus in {direction} direction for a {:?} dock", dock.read(cx).position());
                 }
@@ -3150,7 +3150,7 @@ impl Workspace {
             self.zoomed = None;
         }
         self.zoomed_position = None;
-        model.emit(cx, Event::ZoomChanged);
+        model.emit(Event::ZoomChanged, cx);
         self.update_active_view_for_followers(model, cx);
         pane.model.update(cx, |pane, model, _| {
             pane.track_alternate_file_items();
@@ -3226,7 +3226,7 @@ impl Workspace {
             }
             pane::Event::RemoveItem { .. } => {}
             pane::Event::RemovedItem { item_id } => {
-                model.emit(cx, Event::ActiveItemChanged);
+                model.emit(Event::ActiveItemChanged, cx);
                 self.update_window_edited(model, cx);
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
                     if entry.get().entity_id() == pane.entity_id() {
@@ -3246,7 +3246,7 @@ impl Workspace {
                     if pane.read(cx).has_focus(window, cx) {
                         self.zoomed = Some(pane.downgrade().into());
                         self.zoomed_position = None;
-                        model.emit(cx, Event::ZoomChanged);
+                        model.emit(Event::ZoomChanged, cx);
                     }
                     model.notify(cx);
                 }
@@ -3255,7 +3255,7 @@ impl Workspace {
                 pane.update(cx, |pane, model, cx| pane.set_zoomed(false, model, cx));
                 if self.zoomed_position.is_none() {
                     self.zoomed = None;
-                    model.emit(cx, Event::ZoomChanged);
+                    model.emit(Event::ZoomChanged, cx);
                 }
                 model.notify(cx);
             }
@@ -3406,7 +3406,7 @@ impl Workspace {
         } else {
             self.active_item_path_changed(model, cx);
         }
-        model.emit(cx, Event::PaneRemoved);
+        model.emit(Event::PaneRemoved, cx);
     }
 
     pub fn panes(&self) -> &[Model<Pane>] {
@@ -3625,7 +3625,7 @@ impl Workspace {
     }
 
     fn active_item_path_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, Event::ActiveItemChanged);
+        model.emit(Event::ActiveItemChanged, cx);
         let active_entry = self.active_project_path(model, cx);
         self.project.update(cx, |project, model, cx| {
             project.set_active_path(active_entry, cx)
@@ -4124,7 +4124,7 @@ impl Workspace {
         }
 
         pane.update(cx, |pane, model, cx| {
-            let focus_active_item = pane.has_focus(cx) || transfer_focus;
+            let focus_active_item = pane.has_focus(window) || transfer_focus;
             if let Some(index) = pane.index_for_item(item.as_ref()) {
                 pane.activate_item(index, false, false, cx);
             } else {
@@ -5247,7 +5247,7 @@ impl Render for Workspace {
 fn resize_bottom_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
-    model: &Model<_>,
+    model: &Model<Self>,
     cx: &mut AppContext,
 ) {
     let size = new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE);
@@ -5259,7 +5259,7 @@ fn resize_bottom_dock(
 fn resize_right_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
-    model: &Model<_>,
+    model: &Model<Self>,
     cx: &mut AppContext,
 ) {
     let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
@@ -5271,7 +5271,7 @@ fn resize_right_dock(
 fn resize_left_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
-    model: &Model<_>,
+    model: &Model<Self>,
     cx: &mut AppContext,
 ) {
     let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
@@ -7018,7 +7018,7 @@ mod tests {
                 })
             });
             item.is_dirty = true;
-            model.emit(cx, ItemEvent::Edit);
+            model.emit(ItemEvent::Edit, cx);
         });
 
         // Delay hasn't fully expired, so the file is still dirty and unsaved.
@@ -7636,7 +7636,7 @@ mod tests {
         });
 
         // Emit activated event on panel 1
-        panel_1.update(cx, |_, model, cx| model.emit(cx, PanelEvent::Activate));
+        panel_1.update(cx, |_, model, cx| model.emit(PanelEvent::Activate, cx));
 
         // Now the left dock is open and panel_1 is active and focused.
         workspace.update(cx, |workspace, model, cx| {
@@ -7650,7 +7650,7 @@ mod tests {
         });
 
         // Emit closed event on panel 2, which is not active
-        panel_2.update(cx, |_, model, cx| model.emit(cx, PanelEvent::Close));
+        panel_2.update(cx, |_, model, cx| model.emit(PanelEvent::Close, cx));
 
         // Wo don't close the left dock, because panel_2 wasn't the active panel
         workspace.update(cx, |workspace, model, cx| {
@@ -7663,7 +7663,7 @@ mod tests {
         });
 
         // Emitting a ZoomIn event shows the panel as zoomed.
-        panel_1.update(cx, |_, model, cx| model.emit(cx, PanelEvent::ZoomIn));
+        panel_1.update(cx, |_, model, cx| model.emit(PanelEvent::ZoomIn, cx));
         workspace.update(cx, |workspace, model, _| {
             assert_eq!(workspace.zoomed, Some(panel_1.to_any().downgrade()));
             assert_eq!(workspace.zoomed_position, Some(DockPosition::Left));
@@ -7728,14 +7728,14 @@ mod tests {
         });
 
         // Emitting a ZoomOut event unzooms the panel.
-        panel_1.update(cx, |_, model, cx| model.emit(cx, PanelEvent::ZoomOut));
+        panel_1.update(cx, |_, model, cx| model.emit(PanelEvent::ZoomOut, cx));
         workspace.update(cx, |workspace, model, _| {
             assert_eq!(workspace.zoomed, None);
             assert_eq!(workspace.zoomed_position, None);
         });
 
         // Emit closed event on panel 1, which is active
-        panel_1.update(cx, |_, model, cx| model.emit(cx, PanelEvent::Close));
+        panel_1.update(cx, |_, model, cx| model.emit(PanelEvent::Close, cx));
 
         // Now the left dock is closed, because panel_1 was the active panel
         workspace.update(cx, |workspace, model, cx| {

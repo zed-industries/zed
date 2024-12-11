@@ -227,7 +227,7 @@ impl TerminalView {
 
     pub fn clear_bell(&mut self, model: &Model<TerminalView>, cx: &mut AppContext) {
         self.has_bell = false;
-        model.emit(cx, Event::Wakeup);
+        model.emit(Event::Wakeup, cx);
     }
 
     pub fn deploy_context_menu(
@@ -503,12 +503,15 @@ impl TerminalView {
             model.notify(cx);
 
             let epoch = self.next_blink_epoch();
-            model.spawn(cx, |this, mut cx| async move {
-                Timer::after(CURSOR_BLINK_INTERVAL).await;
-                this.update(&mut cx, |this, model, cx| this.blink_cursors(epoch, cx))
+            model
+                .spawn(cx, |this, mut cx| async move {
+                    Timer::after(CURSOR_BLINK_INTERVAL).await;
+                    this.update(&mut cx, |this, model, cx| {
+                        this.blink_cursors(epoch, model, cx)
+                    })
                     .ok();
-            })
-            .detach();
+                })
+                .detach();
         }
     }
 
@@ -517,14 +520,15 @@ impl TerminalView {
         model.notify(cx);
 
         let epoch = self.next_blink_epoch();
-        model.spawn(cx, |this, mut cx| async move {
-            Timer::after(CURSOR_BLINK_INTERVAL).await;
-            this.update(&mut cx, |this, model, cx| {
-                this.resume_cursor_blinking(epoch, cx)
+        model
+            .spawn(cx, |this, mut cx| async move {
+                Timer::after(CURSOR_BLINK_INTERVAL).await;
+                this.update(&mut cx, |this, model, cx| {
+                    this.resume_cursor_blinking(epoch, model, cx)
+                })
+                .ok();
             })
-            .ok();
-        })
-        .detach();
+            .detach();
     }
 
     pub fn terminal(&self) -> &Model<Terminal> {
@@ -665,7 +669,12 @@ impl TerminalView {
         dispatch_context
     }
 
-    fn set_terminal(&mut self, terminal: Model<Terminal>, model: &Model<_>, cx: &mut AppContext) {
+    fn set_terminal(
+        &mut self,
+        terminal: Model<Terminal>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self._terminal_subscriptions =
             subscribe_for_terminal_events(&terminal, self.workspace.clone(), model, cx);
         self.terminal = terminal;
@@ -675,7 +684,7 @@ impl TerminalView {
 fn subscribe_for_terminal_events(
     terminal: &Model<Terminal>,
     workspace: WeakModel<Workspace>,
-    model: &Model<_>,
+    model: &Model<Self>,
     cx: &mut AppContext,
 ) -> Vec<Subscription> {
     let terminal_subscription = cx.observe(terminal, |_, _, cx| model.notify(cx));
@@ -683,14 +692,14 @@ fn subscribe_for_terminal_events(
         cx.subscribe(terminal, move |this, _, event, cx| match event {
             Event::Wakeup => {
                 model.notify(cx);
-                model.emit(cx, Event::Wakeup);
-                model.emit(cx, ItemEvent::UpdateTab);
-                model.emit(cx, SearchEvent::MatchesInvalidated);
+                model.emit(Event::Wakeup, cx);
+                model.emit(ItemEvent::UpdateTab, cx);
+                model.emit(SearchEvent::MatchesInvalidated, cx);
             }
 
             Event::Bell => {
                 this.has_bell = true;
-                model.emit(cx, Event::Wakeup);
+                model.emit(Event::Wakeup, cx);
             }
 
             Event::BlinkChanged(blinking) => {
@@ -703,7 +712,7 @@ fn subscribe_for_terminal_events(
             }
 
             Event::TitleChanged => {
-                model.emit(cx, ItemEvent::UpdateTab);
+                model.emit(ItemEvent::UpdateTab, cx);
             }
 
             Event::NewNavigationTarget(maybe_navigation_target) => {
@@ -731,7 +740,7 @@ fn subscribe_for_terminal_events(
             }
 
             Event::Open(maybe_navigation_target) => match maybe_navigation_target {
-                MaybeNavigationTarget::Url(url) => cx.open_url(url),
+                MaybeNavigationTarget::Url(url) => cx.open_url(&url),
 
                 MaybeNavigationTarget::PathLike(path_like_target) => {
                     if !this.can_navigate_to_selected_word {
@@ -814,7 +823,7 @@ fn subscribe_for_terminal_events(
                         if has_dirs {
                             task_workspace.update(&mut cx, |workspace, cx| {
                                 workspace.project().update(cx, |_, model, cx| {
-                                    model.emit(cx, project::Event::ActivateProjectPanel);
+                                    model.emit(project::Event::ActivateProjectPanel, cx);
                                 })
                             })?;
                         }
@@ -824,11 +833,11 @@ fn subscribe_for_terminal_events(
                     .detach_and_log_err(cx)
                 }
             },
-            Event::BreadcrumbsChanged => model.emit(cx, ItemEvent::UpdateBreadcrumbs),
-            Event::CloseTerminal => model.emit(cx, ItemEvent::CloseItem),
+            Event::BreadcrumbsChanged => model.emit(ItemEvent::UpdateBreadcrumbs, cx),
+            Event::CloseTerminal => model.emit(ItemEvent::CloseItem, cx),
             Event::SelectionsChanged => {
                 cx.invalidate_character_coordinates();
-                model.emit(cx, SearchEvent::ActiveMatchChanged)
+                model.emit(SearchEvent::ActiveMatchChanged, cx)
             }
         });
     vec![terminal_subscription, terminal_events_subscription]

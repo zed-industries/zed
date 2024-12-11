@@ -267,7 +267,7 @@ impl ScrollManager {
             return;
         }
         self.anchor = anchor;
-        model.emit(cx, EditorEvent::ScrollPositionChanged { local, autoscroll });
+        model.emit(EditorEvent::ScrollPositionChanged { local, autoscroll }, cx);
         self.show_scrollbar(cx);
         self.autoscroll_request.take();
         if let Some(workspace_id) = workspace_id {

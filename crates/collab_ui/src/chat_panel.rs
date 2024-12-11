@@ -97,7 +97,7 @@ impl ChatPanel {
         });
 
         cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
-            let view = cx.view().downgrade();
+            let view = model.downgrade();
             let message_list =
                 ListState::new(0, gpui::ListAlignment::Bottom, px(1000.), move |ix, cx| {
                     if let Some(view) = view.upgrade() {
@@ -160,13 +160,13 @@ impl ChatPanel {
                                 .room()
                                 .is_some_and(|room| room.read(cx).contains_guests())
                             {
-                                model.emit(cx, PanelEvent::Activate)
+                                model.emit(PanelEvent::Activate, cx)
                             }
                         }
                     }
                     room::Event::RoomLeft { channel_id } => {
                         if channel_id == &this.channel_id(cx) {
-                            model.emit(cx, PanelEvent::Close)
+                            model.emit(PanelEvent::Close, cx)
                         }
                     }
                     _ => {}
@@ -643,7 +643,7 @@ impl ChatPanel {
 
                                         this.message_editor.update(cx, |editor, model, cx| {
                                             editor.set_reply_to_message_id(message_id);
-                                            editor.focus_handle(cx).focus(cx);
+                                            editor.focus_handle(cx).focus(window);
                                         })
                                     })),
                             )
@@ -688,7 +688,7 @@ impl ChatPanel {
                                                     });
 
                                                     editor.set_edit_message_id(message_id);
-                                                    editor.focus_handle(cx).focus(cx);
+                                                    editor.focus_handle(cx).focus(window);
                                                 }
                                             })
                                         })),

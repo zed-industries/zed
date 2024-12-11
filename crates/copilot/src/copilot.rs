@@ -497,7 +497,7 @@ impl Copilot {
                         sign_in_status: SignInStatus::SignedOut,
                         registered_buffers: Default::default(),
                     });
-                    model.emit(cx, Event::CopilotLanguageServerStarted);
+                    model.emit(Event::CopilotLanguageServerStarted, cx);
                     this.update_sign_in_status(status, model, cx);
                 }
                 Err(error) => {
@@ -958,7 +958,7 @@ impl Copilot {
                 | request::SignInStatus::MaybeOk { .. }
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
-                    model.emit(cx, Event::CopilotAuthSignedIn);
+                    model.emit(Event::CopilotAuthSignedIn, cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         if let Some(buffer) = buffer.upgrade() {
                             self.register_buffer(&buffer, model, cx);
@@ -973,7 +973,7 @@ impl Copilot {
                 }
                 request::SignInStatus::Ok { user: None } | request::SignInStatus::NotSignedIn => {
                     server.sign_in_status = SignInStatus::SignedOut;
-                    model.emit(cx, Event::CopilotAuthSignedOut);
+                    model.emit(Event::CopilotAuthSignedOut, cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }

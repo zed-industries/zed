@@ -57,8 +57,7 @@ impl ScopeSelector {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
-        let delegate =
-            ScopeSelectorDelegate::new(workspace, cx.view().downgrade(), language_registry);
+        let delegate = ScopeSelectorDelegate::new(workspace, model.downgrade(), language_registry);
 
         let picker = cx.new_model(|model, cx| Picker::uniform_list(delegate, model, cx));
 
@@ -158,7 +157,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.scope_selector
-            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
+            .update(cx, |_, model, cx| model.emit(DismissEvent, cx))
             .log_err();
     }
 

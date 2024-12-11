@@ -573,7 +573,7 @@ fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                                 .with_click_message("Open keymap file")
                                 .on_click(|cx| {
                                     cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
-                                    model.emit(cx, DismissEvent);
+                                    model.emit(DismissEvent, cx);
                                 })
                         })
                     });
@@ -606,7 +606,7 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                                     .with_click_message("Open settings file")
                                     .on_click(|cx| {
                                         cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
-                                        model.emit(cx, DismissEvent);
+                                        model.emit(DismissEvent, cx);
                                     })
                                 })
                             });

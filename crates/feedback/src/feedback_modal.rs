@@ -104,7 +104,7 @@ impl ModalView for FeedbackModal {
             if answer.await.ok() == Some(0) {
                 this.update(&mut cx, |this, model, cx| {
                     this.dismiss_modal = true;
-                    model.emit(cx, DismissEvent)
+                    model.emit(DismissEvent, cx)
                 })
                 .log_err();
             }
@@ -117,7 +117,7 @@ impl ModalView for FeedbackModal {
 
 impl FeedbackModal {
     pub fn register(workspace: &mut Workspace, model: &Model<Workspace>, cx: &mut AppContext) {
-        let _handle = cx.view().downgrade();
+        let _handle = model.downgrade();
         workspace.register_action(move |workspace, _: &GiveFeedback, cx| {
             workspace
                 .with_local_workspace(cx, |workspace, cx| {
@@ -240,7 +240,7 @@ impl FeedbackModal {
                             this.update(&mut cx, |this, model, cx| {
                                 this.dismiss_modal = true;
                                 model.notify(cx);
-                                model.emit(cx, DismissEvent)
+                                model.emit(DismissEvent, cx)
                             })
                             .ok();
                         }
@@ -399,7 +399,7 @@ impl FeedbackModal {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, DismissEvent)
+        model.emit(DismissEvent, cx)
     }
 }
 
@@ -503,7 +503,7 @@ impl Render for FeedbackModal {
                                         model
                                             .spawn(cx, |this, mut cx| async move {
                                                 this.update(&mut cx, |_, cx| {
-                                                    model.emit(cx, DismissEvent)
+                                                    model.emit(DismissEvent, cx)
                                                 })
                                                 .ok();
                                             })

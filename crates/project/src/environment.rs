@@ -26,12 +26,13 @@ impl ProjectEnvironment {
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|model, cx| {
-            cx.subscribe(worktree_store, |this: &mut Self, _, event, _| {
-                if let WorktreeStoreEvent::WorktreeRemoved(_, id) = event {
-                    this.remove_worktree_environment(*id);
-                }
-            })
-            .detach();
+            model
+                .subscribe(worktree_store, cx, |this: &mut Self, _, event, model, _| {
+                    if let WorktreeStoreEvent::WorktreeRemoved(_, id) = event {
+                        this.remove_worktree_environment(*id);
+                    }
+                })
+                .detach();
 
             Self {
                 cli_environment,
@@ -96,7 +97,7 @@ impl ProjectEnvironment {
             task.clone()
         } else {
             let task = self
-                .build_environment_task(worktree_id, worktree_abs_path, cx)
+                .build_environment_task(worktree_id, worktree_abs_path, model, cx)
                 .shared();
 
             self.get_environment_task = Some(task.clone());
@@ -127,7 +128,7 @@ impl ProjectEnvironment {
                 Some(environment)
             })
         } else if let Some((worktree_id, worktree_abs_path)) = worktree {
-            self.get_worktree_env(worktree_id, worktree_abs_path, cx)
+            self.get_worktree_env(worktree_id, worktree_abs_path, model, cx)
         } else {
             Task::ready(None)
         }

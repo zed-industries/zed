@@ -113,7 +113,7 @@ impl Render for MessageEditor {
             .bg(cx.theme().colors().editor_background)
             .child(
                 h_flex().gap_2().child(ContextPicker::new(
-                    cx.view().downgrade(),
+                    model.downgrade(),
                     IconButton::new("add-context", IconName::Plus)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small),

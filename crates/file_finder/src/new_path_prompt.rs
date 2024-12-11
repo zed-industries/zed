@@ -10,8 +10,8 @@ use std::{
         Arc,
     },
 };
+use ui::ListItem;
 use ui::{highlight_ranges, prelude::*, LabelLike, ListItemSpacing};
-use ui::{ListItem};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -207,7 +207,11 @@ pub struct NewPathDelegate {
 }
 
 impl NewPathPrompt {
-    pub(crate) fn register(workspace: &mut Workspace, model: &Model<>Workspace, _cx: &mut AppContext) {
+    pub(crate) fn register(
+        workspace: &mut Workspace,
+        model: &Model<Workspace>,
+        _cx: &mut AppContext,
+    ) {
         workspace.set_prompt_for_new_path(Box::new(|workspace, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
             Self::prompt_for_new_path(workspace, tx, cx);
@@ -218,7 +222,8 @@ impl NewPathPrompt {
     fn prompt_for_new_path(
         workspace: &mut Workspace,
         tx: oneshot::Sender<Option<ProjectPath>>,
-        model: &Model<Workspace>, cx: &mut AppContext,
+        model: &Model<Workspace>,
+        cx: &mut AppContext,
     ) {
         let project = workspace.project().clone();
         workspace.toggle_modal(cx, |cx| {
@@ -256,7 +261,8 @@ impl PickerDelegate for NewPathDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        model: &Model<picker>, cx: &mut AppContext,
+        model: &Model<picker>,
+        cx: &mut AppContext,
     ) -> gpui::Task<()> {
         let query = query
             .trim()
@@ -329,12 +335,17 @@ impl PickerDelegate for NewPathDelegate {
     fn confirm_completion(
         &mut self,
         _: String,
-        model: &Model<Picker>, cx: &mut AppContext,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) -> Option<String> {
         self.confirm_update_query(cx)
     }
 
-    fn confirm_update_query(&mut self, model: &Model<Picker>, cx: &mut AppContext) -> Option<String> {
+    fn confirm_update_query(
+        &mut self,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
+    ) -> Option<String> {
         let m = self.matches.get(self.selected_index)?;
         if m.is_dir(self.project.read(cx), cx) {
             let path = m.relative_path();
@@ -375,7 +386,7 @@ impl PickerDelegate for NewPathDelegate {
                                 tx.send(Some(path)).ok();
                             }
                         }
-                        model.emit(cx, gpui::DismissEvent);
+                        model.emit(gpui::DismissEvent, cx);
                     })
                     .ok();
             })
@@ -388,7 +399,7 @@ impl PickerDelegate for NewPathDelegate {
                 tx.send(Some(path)).ok();
             }
         }
-        model.emit(cx, gpui::DismissEvent);
+        model.emit(gpui::DismissEvent, cx);
     }
 
     fn should_dismiss(&self) -> bool {
@@ -399,14 +410,15 @@ impl PickerDelegate for NewPathDelegate {
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }
-        model.emit(cx, gpui::DismissEvent)
+        model.emit(gpui::DismissEvent, cx)
     }
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
-        model: &Model<picker>, cx: &mut AppContext,
+        model: &Model<picker>,
+        cx: &mut AppContext,
     ) -> Option<Self::ListItem> {
         let m = self.matches.get(ix)?;
 
@@ -439,7 +451,8 @@ impl NewPathDelegate {
         prefix: String,
         suffix: Option<String>,
         matches: Vec<PathMatch>,
-        model: &Model<Picker>, cx: &mut AppContext,
+        model: &Model<Picker>,
+        cx: &mut AppContext,
     ) {
         model.notify(cx);
         if query.is_empty() {

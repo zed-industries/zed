@@ -299,7 +299,7 @@ impl SshConnectionModal {
 
     pub fn finished(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.finished = true;
-        model.emit(cx, DismissEvent);
+        model.emit(DismissEvent, cx);
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {

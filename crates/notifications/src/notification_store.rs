@@ -324,11 +324,13 @@ impl NotificationStore {
         })?;
 
         user_store
-            .update(&mut cx, |store, model, cx| store.get_users(user_ids, cx))?
+            .update(&mut cx, |store, model, cx| {
+                store.get_users(user_ids, model, cx)
+            })?
             .await?;
         let messages = channel_store
             .update(&mut cx, |store, model, cx| {
-                store.fetch_channel_messages(message_ids, cx)
+                store.fetch_channel_messages(message_ids, model, cx)
             })?
             .await?;
         this.update(&mut cx, |this, model, cx| {
@@ -363,6 +365,7 @@ impl NotificationStore {
                     .into_iter()
                     .map(|notification| (notification.id, Some(notification))),
                 options.is_new,
+                model,
                 cx,
             );
         })
@@ -375,7 +378,7 @@ impl NotificationStore {
         &mut self,
         notifications: impl IntoIterator<Item = (u64, Option<NotificationEntry>)>,
         is_new: bool,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) {
         let mut cursor = self.notifications.cursor::<(NotificationId, Count)>(&());

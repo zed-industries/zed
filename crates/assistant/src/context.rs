@@ -941,7 +941,7 @@ impl Context {
                     {
                         self.slash_command_output_sections
                             .insert(ix, section.clone());
-                        model.emit(cx, ContextEvent::SlashCommandOutputSectionAdded { section });
+                        model.emit(ContextEvent::SlashCommandOutputSectionAdded { section }, cx);
                     }
                 }
                 ContextOperation::SlashCommandFinished {
@@ -979,12 +979,12 @@ impl Context {
 
         if !changed_messages.is_empty() {
             self.message_roles_updated(changed_messages, model, cx);
-            model.emit(cx, ContextEvent::MessagesEdited);
+            model.emit(ContextEvent::MessagesEdited, cx);
             model.notify(cx);
         }
 
         if summary_changed {
-            model.emit(cx, ContextEvent::SummaryChanged);
+            model.emit(ContextEvent::SummaryChanged, cx);
             model.notify(cx);
         }
     }
@@ -1034,7 +1034,7 @@ impl Context {
 
     fn push_op(&mut self, op: ContextOperation, model: &Model<Self>, cx: &mut AppContext) {
         self.operations.push(op.clone());
-        model.emit(cx, ContextEvent::Operation(op));
+        model.emit(ContextEvent::Operation(op), cx);
     }
 
     pub fn buffer(&self) -> &Model<Buffer> {
@@ -1176,7 +1176,7 @@ impl Context {
             language::BufferEvent::Edited => {
                 self.count_remaining_tokens(model, cx);
                 self.reparse(model, cx);
-                model.emit(cx, ContextEvent::MessagesEdited);
+                model.emit(ContextEvent::MessagesEdited, cx);
             }
             _ => {}
         }
@@ -1540,7 +1540,7 @@ impl Context {
                 && (!command.range.start.is_valid(buffer) || !command.range.end.is_valid(buffer))
             {
                 command.status = InvokedSlashCommandStatus::Finished;
-                model.emit(cx, ContextEvent::InvokedSlashCommandChanged { command_id });
+                model.emit(ContextEvent::InvokedSlashCommandChanged { command_id }, cx);
                 invalidated_command_ids.push(command_id);
             }
         }
@@ -2130,7 +2130,7 @@ impl Context {
                     }
                 }
 
-                model.emit(cx, ContextEvent::InvokedSlashCommandChanged { command_id });
+                model.emit(ContextEvent::InvokedSlashCommandChanged { command_id }, cx);
                 this.push_op(
                     ContextOperation::SlashCommandFinished {
                         id: command_id,
@@ -2138,6 +2138,7 @@ impl Context {
                         error_message,
                         version,
                     },
+                    model,
                     cx,
                 );
             })
@@ -2155,7 +2156,7 @@ impl Context {
                 timestamp: command_id.0,
             },
         );
-        model.emit(cx, ContextEvent::InvokedSlashCommandChanged { command_id });
+        model.emit(ContextEvent::InvokedSlashCommandChanged { command_id }, cx);
         self.push_op(
             ContextOperation::SlashCommandStarted {
                 id: command_id,
@@ -2422,7 +2423,7 @@ impl Context {
                                 }
                             });
 
-                            model.emit(cx, ContextEvent::StreamedCompletion);
+                            model.emit(ContextEvent::StreamedCompletion, cx);
 
                             Some(())
                         })?;
@@ -2443,13 +2444,13 @@ impl Context {
                 this.update(&mut cx, |this, model, cx| {
                     let error_message = if let Some(error) = result.as_ref().err() {
                         if error.is::<PaymentRequiredError>() {
-                            model.emit(cx, ContextEvent::ShowPaymentRequiredError);
+                            model.emit(ContextEvent::ShowPaymentRequiredError, cx);
                             this.update_metadata(assistant_message_id, cx, |metadata| {
                                 metadata.status = MessageStatus::Canceled;
                             });
                             Some(error.to_string())
                         } else if error.is::<MaxMonthlySpendReachedError>() {
-                            model.emit(cx, ContextEvent::ShowMaxMonthlySpendReachedError);
+                            model.emit(ContextEvent::ShowMaxMonthlySpendReachedError, cx);
                             this.update_metadata(assistant_message_id, cx, |metadata| {
                                 metadata.status = MessageStatus::Canceled;
                             });
@@ -2505,7 +2506,7 @@ impl Context {
                     if let Ok(stop_reason) = result {
                         match stop_reason {
                             StopReason::ToolUse => {
-                                model.emit(cx, ContextEvent::UsePendingTools);
+                                model.emit(ContextEvent::UsePendingTools, cx);
                             }
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
@@ -2695,7 +2696,7 @@ impl Context {
         }
 
         if !updated.is_empty() || !removed.is_empty() {
-            model.emit(cx, ContextEvent::PatchesUpdated { removed, updated })
+            model.emit(ContextEvent::PatchesUpdated { removed, updated }, cx)
         }
     }
 
@@ -2717,7 +2718,7 @@ impl Context {
                 version,
             };
             self.push_op(operation, model, cx);
-            model.emit(cx, ContextEvent::MessagesEdited);
+            model.emit(ContextEvent::MessagesEdited, cx);
             model.notify(cx);
         }
     }
@@ -2807,7 +2808,7 @@ impl Context {
             Err(ix) => ix,
         };
         self.contents.insert(insertion_ix, content);
-        model.emit(cx, ContextEvent::MessagesEdited);
+        model.emit(ContextEvent::MessagesEdited, cx);
     }
 
     pub fn contents<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Content> {
@@ -2941,7 +2942,7 @@ impl Context {
                 };
 
             if !edited_buffer {
-                model.emit(cx, ContextEvent::MessagesEdited);
+                model.emit(ContextEvent::MessagesEdited, cx);
             }
             new_messages
         } else {
@@ -2956,7 +2957,7 @@ impl Context {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        model.emit(cx, ContextEvent::MessagesEdited);
+        model.emit(ContextEvent::MessagesEdited, cx);
 
         self.messages_metadata.insert(new_anchor.id, new_metadata);
 
@@ -3024,7 +3025,7 @@ impl Context {
                                 version,
                             };
                             this.push_op(operation, cx);
-                            model.emit(cx, ContextEvent::SummaryChanged);
+                            model.emit(ContextEvent::SummaryChanged, cx);
                         })?;
 
                         // Stop if the LLM generated multiple lines.
@@ -3044,7 +3045,7 @@ impl Context {
                                 version,
                             };
                             this.push_op(operation, cx);
-                            model.emit(cx, ContextEvent::SummaryChanged);
+                            model.emit(ContextEvent::SummaryChanged, cx);
                         }
                     })?;
 
@@ -3228,7 +3229,7 @@ impl Context {
         summary.timestamp = timestamp;
         summary.done = true;
         summary.text = custom_summary;
-        model.emit(cx, ContextEvent::SummaryChanged);
+        model.emit(ContextEvent::SummaryChanged, cx);
     }
 }
 

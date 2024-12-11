@@ -59,7 +59,7 @@ pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
     JournalSettings::register(cx);
 
     cx.observe_new_views(
-        |workspace: &mut Workspace, model: &Model<>Workspace, _cx: &mut AppContext| {
+        |workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext| {
             workspace.register_action(|workspace, _: &NewJournalEntry, cx| {
                 new_journal_entry(workspace, cx);
             });

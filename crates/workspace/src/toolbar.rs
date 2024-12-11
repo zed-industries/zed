@@ -1,7 +1,5 @@
 use crate::ItemHandle;
-use gpui::{
-    AnyView, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, Model,
-};
+use gpui::{AnyView, Entity, EntityId, EventEmitter, Model, ParentElement as _, Render, Styled};
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
 
@@ -13,10 +11,17 @@ pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
-        model: &Model<Self>, cx: &mut AppContext,
+        model: &Model<Self>,
+        cx: &mut AppContext,
     ) -> ToolbarItemLocation;
 
-    fn pane_focus_update(&mut self, _pane_focused: bool, model: &Model<>Self, _cx: &mut AppContext) {}
+    fn pane_focus_update(
+        &mut self,
+        _pane_focused: bool,
+        model: &Model<Self>,
+        _cx: &mut AppContext,
+    ) {
+    }
 }
 
 trait ToolbarItemViewHandle: Send {
@@ -90,7 +95,12 @@ impl Toolbar {
 }
 
 impl Render for Toolbar {
-    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         if !self.has_any_visible_items() {
             return div();
         }
@@ -162,7 +172,12 @@ impl Toolbar {
         }
     }
 
-    pub fn set_can_navigate(&mut self, can_navigate: bool, model: &Model<Self>, cx: &mut AppContext) {
+    pub fn set_can_navigate(
+        &mut self,
+        can_navigate: bool,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.can_navigate = can_navigate;
         model.notify(cx);
     }
@@ -193,7 +208,12 @@ impl Toolbar {
         model.notify(cx);
     }
 
-    pub fn set_active_item(&mut self, item: Option<&dyn ItemHandle>, model: &Model<Self>, cx: &mut AppContext) {
+    pub fn set_active_item(
+        &mut self,
+        item: Option<&dyn ItemHandle>,
+        model: &Model<Self>,
+        cx: &mut AppContext,
+    ) {
         self.active_item = item.map(|item| item.boxed_clone());
         self.hidden = self
             .active_item

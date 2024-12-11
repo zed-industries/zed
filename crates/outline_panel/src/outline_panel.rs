@@ -147,7 +147,7 @@ impl SearchState {
         previous_matches: HashMap<Range<editor::Anchor>, Arc<OnceLock<SearchData>>>,
         new_matches: Vec<Range<editor::Anchor>>,
         theme: Arc<SyntaxTheme>,
-        model: &Model<_>, cx: &mut AppContext,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Self {
         let (highlight_search_match_tx, highlight_search_match_rx) = channel::unbounded();
         let (notify_tx, notify_rx) = channel::unbounded::<()>();
@@ -618,7 +618,7 @@ impl OutlinePanel {
 
     fn new(workspace: &mut Workspace, model: &Model<Workspace>, cx: &mut AppContext) -> Model<Self> {
         let project = workspace.project().clone();
-        let workspace_handle = cx.view().downgrade();
+        let workspace_handle = model.downgrade();
         let outline_panel = cx.new_model(|model, cx| {
             let filter_editor = cx.new_model(|model, cx| {
                 let mut editor = Editor::single_line(model, cx);
@@ -818,9 +818,9 @@ impl OutlinePanel {
 
     fn cancel(&mut self, _: &Cancel, model: &Model<Self>, cx: &mut AppContext) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
-            self.focus_handle.focus(cx);
+            self.focus_handle.focus(window);
         } else {
-            self.filter_editor.focus_handle(cx).focus(cx);
+            self.filter_editor.focus_handle(cx).focus(window);
         }
 
         if self.context_menu.is_some() {
@@ -956,9 +956,9 @@ impl OutlinePanel {
                 }
 
                 if change_focus {
-                    active_editor.focus_handle(cx).focus(cx);
+                    active_editor.focus_handle(cx).focus(window);
                 } else {
-                    self.focus_handle.focus(cx);
+                    self.focus_handle.focus(window);
                 }
             }
         }
@@ -1121,7 +1121,7 @@ impl OutlinePanel {
 
     fn focus_in(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if !self.focus_handle.contains_focused(cx) {
-            model.emit(cx, Event::Focus);
+            model.emit(Event::Focus, cx);
         }
     }
 
@@ -1483,7 +1483,7 @@ impl OutlinePanel {
         }
     }
 
-    fn reveal_entry_for_selection(&mut self, editor: Model<Editor>, model: &Model<_>, cx: &mut AppContext) {
+    fn reveal_entry_for_selection(&mut self, editor: Model<Editor>, model: &Model<Self>, cx: &mut AppContext) {
         if !self.active || !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
             return;
         }
@@ -2468,7 +2468,7 @@ impl OutlinePanel {
         self.clear_previous(model, cx);
         let buffer_search_subscription = cx.subscribe(
             &new_active_editor,
-            |outline_panel: &mut Self, _, e: &SearchEvent, model: &Model<_>, cx: &mut AppContext| {
+            |outline_panel: &mut Self, _, e: &SearchEvent, model: &Model<Self>, cx: &mut AppContext| {
                 if matches!(e, SearchEvent::MatchesInvalidated) {
                     outline_panel.update_search_matches(model, cx);
                 };
@@ -2922,7 +2922,7 @@ impl OutlinePanel {
         &self,
         is_singleton: bool,
         query: Option<String>,
-        model: &Model<_>, cx: &mut AppContext,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Task<(Vec<CachedEntry>, Option<usize>)> {
         let project = self.project.clone();
         cx.spawn(|outline_panel, mut cx| async move {
@@ -3645,7 +3645,7 @@ impl OutlinePanel {
 
     fn select_entry(&mut self, entry: PanelEntry, focus: bool, model: &Model<Self>, cx: &mut AppContext) {
         if focus {
-            self.focus_handle.focus(cx);
+            self.focus_handle.focus(window);
         }
         let ix = self
             .cached_entries
@@ -3866,7 +3866,7 @@ impl OutlinePanel {
         query: Option<String>,
         show_indent_guides: bool,
         indent_size: f32,
-        model: &Model<_>, cx: &mut AppContext,
+        model: &Model<Self>, cx: &mut AppContext,
     ) -> Div {
         let contents = if self.cached_entries.is_empty() {
             let header = if self.updating_fs_entries {
@@ -4054,7 +4054,7 @@ impl OutlinePanel {
         v_flex().w_full().flex_1().overflow_hidden().child(contents)
     }
 
-    fn render_filter_footer(&mut self, pinned: bool, model: &Model<_>, cx: &mut AppContext) -> Div {
+    fn render_filter_footer(&mut self, pinned: bool, model: &Model<Self>, cx: &mut AppContext) -> Div {
         v_flex().flex_none().child(horizontal_separator(cx)).child(
             h_flex()
                 .p_2()

@@ -86,14 +86,8 @@ impl TabSwitcher {
 
         let project = workspace.project().clone();
         workspace.toggle_modal(cx, |cx| {
-            let delegate = TabSwitcherDelegate::new(
-                project,
-                action,
-                cx.view().downgrade(),
-                weak_pane,
-                model,
-                cx,
-            );
+            let delegate =
+                TabSwitcherDelegate::new(project, action, model.downgrade(), weak_pane, model, cx);
             TabSwitcher::new(delegate, model, cx)
         });
     }
@@ -118,7 +112,7 @@ impl TabSwitcher {
         if !event.modified() || !init_modifiers.is_subset_of(event) {
             self.init_modifiers = None;
             if self.picker.read(cx).delegate.matches.is_empty() {
-                model.emit(cx, DismissEvent)
+                model.emit(DismissEvent, cx)
             } else {
                 model.dispatch_action(cx, menu::Confirm.boxed_clone());
             }
@@ -280,7 +274,7 @@ impl TabSwitcherDelegate {
             .map(|tab_match| tab_match.item.item_id())
     }
 
-    fn select_item(&mut self, item_id: EntityId, model: &Model<_>, cx: &mut AppContext) {
+    fn select_item(&mut self, item_id: EntityId, model: &Model<Self>, cx: &mut AppContext) {
         let selected_idx = self
             .matches
             .iter()
@@ -289,7 +283,7 @@ impl TabSwitcherDelegate {
         self.set_selected_index(selected_idx, model, cx);
     }
 
-    fn close_item_at(&mut self, ix: usize, model: &Model<_>, cx: &mut AppContext) {
+    fn close_item_at(&mut self, ix: usize, model: &Model<Self>, cx: &mut AppContext) {
         let Some(tab_match) = self.matches.get(ix) else {
             return;
         };
@@ -359,7 +353,7 @@ impl PickerDelegate for TabSwitcherDelegate {
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.tab_switcher
-            .update(cx, |_, model, cx| model.emit(cx, DismissEvent))
+            .update(cx, |_, model, cx| model.emit(DismissEvent, cx))
             .log_err();
     }
 
@@ -382,7 +376,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         };
         let label = tab_match.item.tab_content(params, model, cx);
 
-        let icon = tab_match.item.tab_icon(model, cx).map(|icon| {
+        let icon = tab_match.item.tab_icon(cx).map(|icon| {
             let git_status_color = ItemSettings::get_global(cx)
                 .git_status
                 .then(|| {

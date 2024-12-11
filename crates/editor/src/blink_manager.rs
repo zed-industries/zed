@@ -42,13 +42,14 @@ impl BlinkManager {
 
         let epoch = self.next_blink_epoch();
         let interval = self.blink_interval;
-        model.spawn(cx, |this, mut cx| async move {
-            Timer::after(interval).await;
-            this.update(&mut cx, |this, model, cx| {
-                this.resume_cursor_blinking(epoch, cx)
+        model
+            .spawn(cx, |this, mut cx| async move {
+                Timer::after(interval).await;
+                this.update(&mut cx, |this, model, cx| {
+                    this.resume_cursor_blinking(epoch, cx)
+                })
             })
-        })
-        .detach();
+            .detach();
     }
 
     fn resume_cursor_blinking(&mut self, epoch: usize, model: &Model<Self>, cx: &mut AppContext) {
@@ -66,21 +67,22 @@ impl BlinkManager {
 
                 let epoch = self.next_blink_epoch();
                 let interval = self.blink_interval;
-                model.spawn(cx, |this, mut cx| async move {
-                    Timer::after(interval).await;
-                    if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, model, cx| this.blink_cursors(epoch, cx))
-                            .ok();
-                    }
-                })
-                .detach();
+                model
+                    .spawn(cx, |this, mut cx| async move {
+                        Timer::after(interval).await;
+                        if let Some(this) = this.upgrade() {
+                            this.update(&mut cx, |this, model, cx| this.blink_cursors(epoch, cx))
+                                .ok();
+                        }
+                    })
+                    .detach();
             }
         } else {
             self.show_cursor(cx);
         }
     }
 
-    pub fn show_cursor(&mut self, model: &Model<_>, cx: &mut AppContext) {
+    pub fn show_cursor(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if !self.visible {
             self.visible = true;
             model.notify(cx);

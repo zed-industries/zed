@@ -81,7 +81,7 @@ impl AssistantPanel {
         let thread = thread_store.update(cx, |this, model, cx| this.create_thread(model, cx));
         let language_registry = workspace.project().read(cx).languages().clone();
         let workspace = workspace.weak_handle();
-        let weak_self = cx.view().downgrade();
+        let weak_self = model.downgrade();
 
         Self {
             active_view: ActiveView::Thread,
@@ -130,7 +130,7 @@ impl AssistantPanel {
             )
         });
         self.message_editor = cx.new_model(|model, cx| MessageEditor::new(thread, model, cx));
-        self.message_editor.focus_handle(cx).focus(cx);
+        self.message_editor.focus_handle(cx).focus(window);
     }
 
     pub(crate) fn open_thread(
@@ -158,7 +158,7 @@ impl AssistantPanel {
             )
         });
         self.message_editor = cx.new_model(|model, cx| MessageEditor::new(thread, model, cx));
-        self.message_editor.focus_handle(cx).focus(cx);
+        self.message_editor.focus_handle(cx).focus(window);
     }
 
     pub(crate) fn delete_thread(
@@ -443,7 +443,7 @@ impl AssistantPanel {
                         v_flex().gap_2().children(
                             recent_threads
                                 .into_iter()
-                                .map(|thread| PastThread::new(thread, cx.view().downgrade())),
+                                .map(|thread| PastThread::new(thread, model.downgrade())),
                         ),
                     )
                     .child(
@@ -652,7 +652,7 @@ impl Render for AssistantPanel {
             }))
             .on_action(cx.listener(|this, _: &OpenHistory, cx| {
                 this.active_view = ActiveView::History;
-                this.history.focus_handle(cx).focus(cx);
+                this.history.focus_handle(cx).focus(window);
                 model.notify(cx);
             }))
             .child(self.render_toolbar(model, cx))

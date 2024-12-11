@@ -258,7 +258,7 @@ impl PickerDelegate for OpenPathDelegate {
         if let Some(tx) = self.tx.take() {
             tx.send(Some(vec![result])).ok();
         }
-        model.emit(cx, gpui::DismissEvent);
+        model.emit(gpui::DismissEvent, cx);
     }
 
     fn should_dismiss(&self) -> bool {
@@ -269,7 +269,7 @@ impl PickerDelegate for OpenPathDelegate {
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }
-        model.emit(cx, gpui::DismissEvent)
+        model.emit(gpui::DismissEvent, cx)
     }
 
     fn render_match(

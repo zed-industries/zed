@@ -52,7 +52,7 @@ impl RemoteVideoTrackView {
                             cx.window_context().drop_image(frame).log_err();
                         }
                     }
-                    model.emit(cx, RemoteVideoTrackViewEvent::Close)
+                    model.emit(RemoteVideoTrackViewEvent::Close, cx)
                 })?;
                 Ok(())
             }),

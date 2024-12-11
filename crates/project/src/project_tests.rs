@@ -1028,6 +1028,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                     }],
                 },
                 &[],
+                model,
                 cx,
             )
             .unwrap();
@@ -1045,6 +1046,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                     }],
                 },
                 &[],
+                model,
                 cx,
             )
             .unwrap();
@@ -1134,6 +1136,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                     }],
                 },
                 &[],
+                model,
                 cx,
             )
             .unwrap();
@@ -1151,6 +1154,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                     }],
                 },
                 &[],
+                model,
                 cx,
             )
             .unwrap();
@@ -2145,6 +2149,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                         ..Default::default()
                     },
                 }],
+                model,
                 cx,
             )
             .unwrap();
@@ -2162,6 +2167,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                         ..Default::default()
                     },
                 }],
+                model,
                 cx,
             )
             .unwrap();
@@ -2945,7 +2951,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     assert!(transaction.0.contains_key(&buffer));
     buffer.update(cx, |buffer, model, cx| {
         assert_eq!(buffer.text(), "Xa");
-        buffer.undomodel, (cx);model,
+        buffer.undo(model, cx);
         assert_eq!(buffer.text(), "a");
     });
 }
@@ -3089,7 +3095,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     // Perform a noop edit, causing the buffer's version to increase.
     buffer.update(cx, |buffer, model, cx| {
         buffer.edit([(0..0, " ")], None, model, cx);
-        buffer.undomodel, (cx);model,
+        buffer.undo(model, cx);
     });
 
     cx.executor().run_until_parked();
@@ -3495,14 +3501,15 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
 
     // initially, the buffer isn't dirty.
     buffer1.update(cx, |buffer, model, cx| {
-        cx.subscribe(&buffer1, {
-            let events = events.clone();
-            move |_, _, event, _| match event {
-                BufferEvent::Operation { .. } => {}
-                _ => events.lock().push(event.clone()),
-            }
-        })
-        .detach();
+        model
+            .subscribe(&buffer1, model, cx, {
+                let events = events.clone();
+                move |_, _, event, _| match event {
+                    BufferEvent::Operation { .. } => {}
+                    _ => events.lock().push(event.clone()),
+                }
+            })
+            .detach();
 
         assert!(!buffer.is_dirty());
         assert!(events.lock().is_empty());
@@ -3575,11 +3582,12 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     buffer2.update(cx, |_, model, cx| {
-        cx.subscribe(&buffer2, {
-            let events = events.clone();
-            move |_, _, event, _| events.lock().push(event.clone())
-        })
-        .detach();
+        model
+            .subscribe(&buffer2, model, cx, {
+                let events = events.clone();
+                move |_, _, event, _| events.lock().push(event.clone())
+            })
+            .detach();
     });
 
     fs.remove_file("/dir/file2".as_ref(), Default::default())
@@ -3602,11 +3610,12 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     buffer3.update(cx, |_, model, cx| {
-        cx.subscribe(&buffer3, {
-            let events = events.clone();
-            move |_, _, event, _| events.lock().push(event.clone())
-        })
-        .detach();
+        model
+            .subscribe(&buffer3, model, cx, {
+                let events = events.clone();
+                move |_, _, event, _| events.lock().push(event.clone())
+            })
+            .detach();
     });
 
     buffer3.update(cx, |buffer, model, cx| {

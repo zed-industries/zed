@@ -887,10 +887,9 @@ impl Buffer {
             }
         }
 
-        let operation = base_buffer.update(cx, |base_buffer, model, cx| {
-            // model.emit(cx, BufferEvent::DiffBaseChanged);
+        let operation = base_buffer.update(cx, |base_buffer, model, cx| {            // model.emit( BufferEvent::DiffBaseChanged);
             base_buffer.edit(edits, None, model, cx)
-        });
+            , cx});
 
         if let Some(operation) = operation {
             if let Some(BufferBranchState {
@@ -972,7 +971,7 @@ impl Buffer {
         self.syntax_map.lock().clear(&self.text);
         self.language = language;
         self.reparse(model, cx);
-        model.emit(cx, BufferEvent::LanguageChanged);
+        model.emit(BufferEvent::LanguageChanged, cx);
     }
 
     /// Assign a language registry to the buffer. This allows the buffer to retrieve
@@ -995,7 +994,7 @@ impl Buffer {
         cx: &mut AppContext,
     ) {
         self.capability = capability;
-        model.emit(cx, BufferEvent::CapabilityChanged)
+        model.emit(BufferEvent::CapabilityChanged, cx)
     }
 
     /// This method is called to signal that the buffer has been saved.
@@ -1011,13 +1010,13 @@ impl Buffer {
             .set((self.saved_version().clone(), false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
-        model.emit(cx, BufferEvent::Saved);
+        model.emit(BufferEvent::Saved, cx);
         model.notify(cx);
     }
 
     /// This method is called to signal that the buffer has been discarded.
     pub fn discarded(&self, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, BufferEvent::Discarded);
+        model.emit(BufferEvent::Discarded, cx);
         model.notify(cx);
     }
 
@@ -1088,7 +1087,7 @@ impl Buffer {
             .set((self.saved_version.clone(), false));
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
-        model.emit(cx, BufferEvent::Reloaded);
+        model.emit(BufferEvent::Reloaded, cx);
         model.notify(cx);
     }
 
@@ -1113,7 +1112,7 @@ impl Buffer {
             if old_state != new_state {
                 file_changed = true;
                 if !was_dirty && matches!(new_state, DiskState::Present { .. }) {
-                    model.emit(cx, BufferEvent::ReloadNeeded)
+                    model.emit(BufferEvent::ReloadNeeded, cx)
                 }
             }
         } else {
@@ -1124,9 +1123,9 @@ impl Buffer {
         if file_changed {
             self.non_text_state_update_count += 1;
             if was_dirty != self.is_dirty() {
-                model.emit(cx, BufferEvent::DirtyChanged);
+                model.emit(BufferEvent::DirtyChanged, cx);
             }
-            model.emit(cx, BufferEvent::FileHandleChanged);
+            model.emit(BufferEvent::FileHandleChanged, cx);
             model.notify(cx);
         }
     }
@@ -1274,7 +1273,7 @@ impl Buffer {
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(model, cx);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
-        model.emit(cx, BufferEvent::Reparsed);
+        model.emit(BufferEvent::Reparsed, cx);
         model.notify(cx);
     }
 
@@ -2075,9 +2074,9 @@ impl Buffer {
 
         self.reparse(model, cx);
 
-        model.emit(cx, BufferEvent::Edited);
+        model.emit(BufferEvent::Edited, cx);
         if was_dirty != self.is_dirty() {
-            model.emit(cx, BufferEvent::DirtyChanged);
+            model.emit(BufferEvent::DirtyChanged, cx);
         }
         model.notify(cx);
     }
@@ -2328,7 +2327,7 @@ impl Buffer {
             self.non_text_state_update_count += 1;
             self.text.lamport_clock.observe(lamport_timestamp);
             model.notify(cx);
-            model.emit(cx, BufferEvent::DiagnosticsUpdated);
+            model.emit(BufferEvent::DiagnosticsUpdated, cx);
         }
     }
 

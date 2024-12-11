@@ -64,7 +64,7 @@ impl CreateRemoteServer {
     fn new(window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Self {
         let address_editor = cx.new_model(Editor::single_line);
         address_editor.update(cx, |this, model, cx| {
-            this.focus_handle(cx).focus(cx);
+            this.focus_handle(cx).focus(window);
         });
         Self {
             address_editor,
@@ -104,7 +104,7 @@ impl EditNicknameState {
                 this.set_text(starting_text, cx);
             }
         });
-        this.editor.focus_handle(cx).focus(cx);
+        this.editor.focus_handle(cx).focus(window);
         this
     }
 }
@@ -145,7 +145,7 @@ impl ProjectPicker {
                     let Ok(Some(paths)) = rx.await else {
                         workspace
                             .update(&mut cx, |workspace, cx| {
-                                let weak = cx.view().downgrade();
+                                let weak = model.downgrade();
                                 workspace
                                     .toggle_modal(cx, |cx| RemoteServerProjects::new(cx, weak));
                             })
@@ -214,7 +214,7 @@ impl ProjectPicker {
                     })
                     .log_err();
                     this.update(&mut cx, |_, cx| {
-                        model.emit(cx, DismissEvent);
+                        model.emit(DismissEvent, cx);
                     })
                     .ok();
                     Some(())
@@ -322,14 +322,14 @@ impl Mode {
 impl RemoteServerProjects {
     pub fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
         workspace.register_action(|workspace, _: &OpenRemote, cx| {
-            let handle = cx.view().downgrade();
+            let handle = model.downgrade();
             workspace.toggle_modal(cx, |cx| Self::new(cx, handle))
         });
     }
 
     pub fn open(workspace: Model<Workspace>, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         workspace.update(cx, |workspace, model, cx| {
-            let handle = cx.view().downgrade();
+            let handle = model.downgrade();
             workspace.toggle_modal(cx, |cx| Self::new(cx, handle))
         })
     }
@@ -515,7 +515,7 @@ impl RemoteServerProjects {
                     let Some(Some(session)) = session else {
                         workspace
                             .update(&mut cx, |workspace, cx| {
-                                let weak = cx.view().downgrade();
+                                let weak = model.downgrade();
                                 workspace
                                     .toggle_modal(cx, |cx| RemoteServerProjects::new(cx, weak));
                             })
@@ -526,7 +526,7 @@ impl RemoteServerProjects {
                     workspace
                         .update(&mut cx, |workspace, cx| {
                             let app_state = workspace.app_state().clone();
-                            let weak = cx.view().downgrade();
+                            let weak = model.downgrade();
                             let project = project::Project::ssh(
                                 session,
                                 app_state.client.clone(),
@@ -585,7 +585,7 @@ impl RemoteServerProjects {
 
     fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         match &self.mode {
-            Mode::Default(_) => model.emit(cx, DismissEvent),
+            Mode::Default(_) => model.emit(DismissEvent, cx),
             Mode::CreateRemoteServer(state) if state.ssh_prompt.is_some() => {
                 let new_state = CreateRemoteServer::new(model, cx);
                 let old_prompt = state.address_editor.read(cx).text(model, cx);
@@ -754,7 +754,7 @@ impl RemoteServerProjects {
                 };
                 let project = project.clone();
                 let server = server.connection.clone();
-                model.emit(cx, DismissEvent);
+                model.emit(DismissEvent, cx);
                 cx.spawn(|_, mut cx| async move {
                     let result = open_ssh_project(
                         server.into(),
@@ -1419,11 +1419,11 @@ impl Render for RemoteServerProjects {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .capture_any_mouse_down(model.listener(|this, model, _, cx| {
-                this.focus_handle(cx).focus(cx);
+                this.focus_handle(cx).focus(window);
             }))
             .on_mouse_down_out(model.listener(|this, model, _, cx| {
                 if matches!(this.mode, Mode::Default(_)) {
-                    model.emit(cx, DismissEvent)
+                    model.emit(DismissEvent, cx)
                 }
             }))
             .child(match &self.mode {

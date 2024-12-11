@@ -32,7 +32,7 @@ fn main() {
         counter.update(cx, |counter, model, cx| {
             counter.count += 2;
             model.notify(cx);
-            model.emit(cx, Change { increment: 2 });
+            model.emit(Change { increment: 2 }, cx);
         });
 
         assert_eq!(subscriber.read(cx).count, 4);

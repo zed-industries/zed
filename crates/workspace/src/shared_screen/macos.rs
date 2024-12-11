@@ -50,7 +50,7 @@ impl SharedScreen {
                         model.notify(cx);
                     })?;
                 }
-                this.update(&mut cx, |_, cx| model.emit(cx, Event::Close))?;
+                this.update(&mut cx, |_, cx| model.emit(Event::Close, cx))?;
                 Ok(())
             }),
             focus: window.focus_handle(),

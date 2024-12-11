@@ -140,7 +140,7 @@ impl TerminalPanel {
                     .active_item()
                     .and_then(|item| item.downcast::<TerminalView>())
                     .map(|terminal_view| terminal_view.read(cx).focus_handle.clone());
-                if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
+                if !pane.has_focus(window) && !pane.context_menu_focused(cx) {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
@@ -315,12 +315,12 @@ impl TerminalPanel {
                     self.center.first_pane().update(cx, |pane, model, cx| {
                         pane.set_zoomed(false, model, cx);
                     });
-                    model.emit(cx, PanelEvent::Close);
+                    model.emit(PanelEvent::Close, cx);
                 } else {
                     if let Some(focus_on_pane) =
                         focus_on_pane.as_ref().or_else(|| self.center.panes().pop())
                     {
-                        focus_on_pane.focus_handle(cx).focus(cx);
+                        focus_on_pane.focus_handle(cx).focus(window);
                     }
                 }
             }
@@ -330,7 +330,7 @@ impl TerminalPanel {
                         pane.set_zoomed(true, model, cx);
                     })
                 }
-                model.emit(cx, PanelEvent::ZoomIn);
+                model.emit(PanelEvent::ZoomIn, cx);
                 model.notify(cx);
             }
             pane::Event::ZoomOut => {
@@ -339,7 +339,7 @@ impl TerminalPanel {
                         pane.set_zoomed(false, model, cx);
                     })
                 }
-                model.emit(cx, PanelEvent::ZoomOut);
+                model.emit(PanelEvent::ZoomOut, cx);
                 model.notify(cx);
             }
             pane::Event::AddItem { item } => {
@@ -732,7 +732,7 @@ impl TerminalPanel {
                     )
                 }));
                 pane.update(cx, |pane, model, cx| {
-                    let focus = pane.has_focus(cx);
+                    let focus = pane.has_focus(window);
                     pane.add_item(terminal_view, true, focus, None, cx);
                 });
 
@@ -802,7 +802,7 @@ impl TerminalPanel {
         task_pane: Model<Pane>,
         terminal_item_index: usize,
         terminal_to_replace: Model<TerminalView>,
-        model: &Model<_>,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<Option<()>> {
         let reveal = spawn_task.reveal;
@@ -1046,7 +1046,7 @@ async fn wait_for_terminals_tasks(
 fn add_paths_to_terminal(
     pane: &mut Pane,
     paths: &[PathBuf],
-    model: &Model<_>,
+    model: &Model<Self>,
     cx: &mut AppContext,
 ) {
     if let Some(terminal_view) = pane
@@ -1227,7 +1227,7 @@ impl Panel for TerminalPanel {
 
     fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         let settings = TerminalSettings::get_global(cx);
-        match self.position(cx) {
+        match self.position(model, cx) {
             DockPosition::Left | DockPosition::Right => {
                 self.width.unwrap_or(settings.default_width)
             }
@@ -1236,7 +1236,7 @@ impl Panel for TerminalPanel {
     }
 
     fn set_size(&mut self, size: Option<Pixels>, model: &Model<Self>, cx: &mut AppContext) {
-        match self.position(cx) {
+        match self.position(model, cx) {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
@@ -1258,7 +1258,7 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, model: &Model<Self>, cx: &mut AppContext) {
-        if !active || !self.has_no_terminals(cx) {
+        if !active || !self.has_no_terminals(model, cx) {
             return;
         }
         cx.defer(|this, cx| {
@@ -1292,7 +1292,9 @@ impl Panel for TerminalPanel {
     }
 
     fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
-        if (self.enabled || !self.has_no_terminals(cx)) && TerminalSettings::get_global(cx).button {
+        if (self.enabled || !self.has_no_terminals(model, cx))
+            && TerminalSettings::get_global(cx).button
+        {
             Some(IconName::Terminal)
         } else {
             None

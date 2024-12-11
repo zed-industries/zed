@@ -621,7 +621,7 @@ impl ChannelStore {
                 // before this frame is rendered. But we can't guarantee that the collab panel's future
                 // will resolve before this flush_effects finishes. Synchronously emitting this event
                 // ensures that the collab panel will observe this creation before the frame completes
-                model.emit(cx, ChannelEvent::ChannelCreated(channel_id));
+                model.emit(ChannelEvent::ChannelCreated(channel_id), cx);
             })?;
 
             Ok(channel_id)
@@ -798,7 +798,7 @@ impl ChannelStore {
                 // before this frame is rendered. But we can't guarantee that the collab panel's future
                 // will resolve before this flush_effects finishes. Synchronously emitting this event
                 // ensures that the collab panel will observe this creation before the frame complete
-                model.emit(cx, ChannelEvent::ChannelRenamed(channel_id))
+                model.emit(ChannelEvent::ChannelRenamed(channel_id), cx)
             })?;
             Ok(())
         })

@@ -1214,7 +1214,7 @@ impl Room {
     ) -> Task<Result<Model<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        model.emit(cx, Event::RemoteProjectJoined { project_id: id });
+        model.emit(Event::RemoteProjectJoined { project_id: id }, cx);
         cx.spawn(move |this, mut cx| async move {
             let project =
                 Project::in_room(id, client, user_store, language_registry, fs, cx.clone()).await?;

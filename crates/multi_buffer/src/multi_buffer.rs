@@ -1194,7 +1194,7 @@ impl MultiBuffer {
         }
 
         if let Some(transaction_id) = transaction_id {
-            model.emit(cx, Event::TransactionUndone { transaction_id });
+            model.emit(Event::TransactionUndone { transaction_id }, cx);
         }
 
         transaction_id
@@ -1586,7 +1586,7 @@ impl MultiBuffer {
                 singleton_buffer_edited: false,
             },
         );
-        model.emit(cx, Event::ExcerptsRemoved { ids });
+        model.emit(Event::ExcerptsRemoved { ids }, cx);
         model.notify(cx);
     }
 
@@ -1831,7 +1831,7 @@ impl MultiBuffer {
                 singleton_buffer_edited: false,
             },
         );
-        model.emit(cx, Event::ExcerptsRemoved { ids });
+        model.emit(Event::ExcerptsRemoved { ids }, cx);
         model.notify(cx);
     }
 
@@ -2066,7 +2066,7 @@ impl MultiBuffer {
                 singleton_buffer_edited: false,
             },
         );
-        model.emit(cx, Event::ExcerptsExpanded { ids: vec![id] });
+        model.emit(Event::ExcerptsExpanded { ids: vec![id] }, cx);
         model.notify(cx);
     }
 
@@ -2167,7 +2167,7 @@ impl MultiBuffer {
                 singleton_buffer_edited: false,
             },
         );
-        model.emit(cx, Event::ExcerptsExpanded { ids });
+        model.emit(Event::ExcerptsExpanded { ids }, cx);
         model.notify(cx);
     }
 

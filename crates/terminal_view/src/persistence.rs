@@ -27,7 +27,7 @@ pub(crate) fn serialize_pane_group(
     window: &Window,
     cx: &AppContext,
 ) -> SerializedPaneGroup {
-    build_serialized_pane_group(&pane_group.root, active_pane, cx)
+    build_serialized_pane_group(&pane_group.root, active_pane, model, cx)
 }
 
 fn build_serialized_pane_group(
@@ -46,13 +46,16 @@ fn build_serialized_pane_group(
             axis: SerializedAxis(*axis),
             children: members
                 .iter()
-                .map(|member| build_serialized_pane_group(member, active_pane, cx))
+                .map(|member| build_serialized_pane_group(member, active_pane, model, cx))
                 .collect::<Vec<_>>(),
             flexes: Some(flexes.lock().clone()),
         },
-        Member::Pane(pane_handle) => {
-            SerializedPaneGroup::Pane(serialize_pane(pane_handle, pane_handle == active_pane, cx))
-        }
+        Member::Pane(pane_handle) => SerializedPaneGroup::Pane(serialize_pane(
+            pane_handle,
+            pane_handle == active_pane,
+            model,
+            cx,
+        )),
     }
 }
 
@@ -100,7 +103,7 @@ pub(crate) fn deserialize_terminal_panel(
     cx.spawn(move |mut cx| async move {
         let terminal_panel = workspace.update(&mut cx, |workspace, cx| {
             cx.new_model(|model, cx| {
-                let mut panel = TerminalPanel::new(workspace, cx);
+                let mut panel = TerminalPanel::new(workspace, model, cx);
                 panel.height = serialized_panel.height.map(|h| h.round());
                 panel.width = serialized_panel.width.map(|w| w.round());
                 panel
@@ -153,7 +156,7 @@ fn populate_pane_items(
     pane: &mut Pane,
     items: Vec<Model<TerminalView>>,
     active_item: Option<u64>,
-    model: &Model<_>,
+    model: &Model<Self>,
     cx: &mut AppContext,
 ) {
     let mut item_index = pane.items_len();
@@ -253,7 +256,7 @@ async fn deserialize_pane_group(
                         );
                         let window = cx.window_handle();
                         let terminal = project.update(cx, |project, model, cx| {
-                            project.create_terminal(kind, window, cx)
+                            project.create_terminal(kind, window, model, cx)
                         });
                         Some(Some(terminal))
                     } else {

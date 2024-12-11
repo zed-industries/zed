@@ -136,7 +136,7 @@ impl ChannelBuffer {
             }
         }
         self.collaborators = new_collaborators;
-        model.emit(cx, ChannelBufferEvent::CollaboratorsChanged);
+        model.emit(ChannelBufferEvent::CollaboratorsChanged, cx);
         model.notify(cx);
     }
 
@@ -168,7 +168,7 @@ impl ChannelBuffer {
     ) -> Result<()> {
         this.update(&mut cx, |this, model, cx| {
             this.replace_collaborators(message.payload.collaborators, model, cx);
-            model.emit(cx, ChannelBufferEvent::CollaboratorsChanged);
+            model.emit(ChannelBufferEvent::CollaboratorsChanged, cx);
             model.notify(cx);
         })
     }
@@ -201,7 +201,7 @@ impl ChannelBuffer {
                     .log_err();
             }
             language::BufferEvent::Edited => {
-                model.emit(cx, ChannelBufferEvent::BufferEdited);
+                model.emit(ChannelBufferEvent::BufferEdited, cx);
             }
             _ => {}
         }
@@ -253,13 +253,13 @@ impl ChannelBuffer {
         if self.connected {
             self.connected = false;
             self.subscription.take();
-            model.emit(cx, ChannelBufferEvent::Disconnected);
+            model.emit(ChannelBufferEvent::Disconnected, cx);
             model.notify(cx)
         }
     }
 
     pub(crate) fn channel_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        model.emit(cx, ChannelBufferEvent::ChannelChanged);
+        model.emit(ChannelBufferEvent::ChannelChanged, cx);
         model.notify(cx)
     }
 

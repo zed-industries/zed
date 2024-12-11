@@ -115,7 +115,7 @@ impl ProjectIndexDebugView {
                     .collect::<Vec<_>>();
 
                 this.update(&mut cx, |this, model, cx| {
-                    let view = cx.view().downgrade();
+                    let view = model.downgrade();
                     this.selected_path = Some(PathState {
                         path: file_path,
                         list_state: ListState::new(

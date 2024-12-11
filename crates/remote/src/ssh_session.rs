@@ -975,7 +975,7 @@ impl SshRemoteClient {
         self.state.lock().replace(state);
 
         if is_reconnect_exhausted || is_server_not_running {
-            model.emit(cx, SshRemoteEvent::Disconnected);
+            model.emit(SshRemoteEvent::Disconnected, cx);
         }
         model.notify(cx);
     }

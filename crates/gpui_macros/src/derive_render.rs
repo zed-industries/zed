@@ -11,7 +11,7 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
         impl #impl_generics gpui::Render for #type_name #type_generics
         #where_clause
         {
-            fn render(&mut self, model: &Model<>Self, _cx: &mut AppContext) -> impl gpui::Element {
+            fn render(&mut self, model: &Model<Self>, _cx: &mut AppContext) -> impl gpui::Element {
                 gpui::Empty
             }
         }

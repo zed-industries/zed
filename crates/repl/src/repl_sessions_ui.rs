@@ -29,7 +29,7 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
-        |workspace: &mut Workspace, model: &Model<>Workspace, _cx: &mut AppContext| {
+        |workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext| {
             workspace.register_action(|workspace, _: &Sessions, cx| {
                 let existing = workspace
                     .active_pane()
@@ -41,7 +41,13 @@ pub fn init(cx: &mut AppContext) {
                     workspace.activate_item(&existing, true, true, model, cx);
                 } else {
                     let repl_sessions_page = ReplSessionsPage::new(cx);
-                    workspace.add_item_to_active_pane(Box::new(repl_sessions_page), None, true, model, cx)
+                    workspace.add_item_to_active_pane(
+                        Box::new(repl_sessions_page),
+                        None,
+                        true,
+                        model,
+                        cx,
+                    )
                 }
             });
 
@@ -55,68 +61,75 @@ pub fn init(cx: &mut AppContext) {
     )
     .detach();
 
-    cx.observe_new_views(move |editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContext| {
-        if !editor.use_modal_editing() || !editor.buffer().read(cx).is_singleton() {
-            return;
-        }
-
-        cx.defer(|editor, cx| {
-            let workspace = Workspace::for_window(cx);
-            let project = workspace.map(|workspace| workspace.read(cx).project().clone());
-
-            let is_local_project = project
-                .as_ref()
-                .map(|project| project.read(cx).is_local())
-                .unwrap_or(false);
-
-            if !is_local_project {
+    cx.observe_new_views(
+        move |editor: &mut Editor, model: &Model<Editor>, cx: &mut AppContext| {
+            if !editor.use_modal_editing() || !editor.buffer().read(cx).is_singleton() {
                 return;
             }
 
-            let project_path = editor
-                .buffer()
-                .read(cx)
-                .as_singleton()
-                .and_then(|buffer| buffer.read(cx).project_path(cx));
+            cx.defer(|editor, cx| {
+                let workspace = Workspace::for_window(cx);
+                let project = workspace.map(|workspace| workspace.read(cx).project().clone());
 
-            let editor_handle = cx.view().downgrade();
+                let is_local_project = project
+                    .as_ref()
+                    .map(|project| project.read(cx).is_local())
+                    .unwrap_or(false);
 
-            if let (Some(project_path), Some(project)) = (project_path, project) {
-                let store = ReplStore::global(cx);
-                store.update(cx, |store, model, cx| {
-                    store
-                        .refresh_python_kernelspecs(project_path.worktree_id, &project, model, cx)
-                        .detach_and_log_err(cx);
-                });
-            }
+                if !is_local_project {
+                    return;
+                }
 
-            editor
-                .register_action({
-                    let editor_handle = editor_handle.clone();
-                    move |_: &Run, cx| {
-                        if !JupyterSettings::enabled(cx) {
-                            return;
+                let project_path = editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .and_then(|buffer| buffer.read(cx).project_path(cx));
+
+                let editor_handle = model.downgrade();
+
+                if let (Some(project_path), Some(project)) = (project_path, project) {
+                    let store = ReplStore::global(cx);
+                    store.update(cx, |store, model, cx| {
+                        store
+                            .refresh_python_kernelspecs(
+                                project_path.worktree_id,
+                                &project,
+                                model,
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                    });
+                }
+
+                editor
+                    .register_action({
+                        let editor_handle = editor_handle.clone();
+                        move |_: &Run, cx| {
+                            if !JupyterSettings::enabled(cx) {
+                                return;
+                            }
+
+                            crate::run(editor_handle.clone(), true, model, cx).log_err();
                         }
+                    })
+                    .detach();
 
-                        crate::run(editor_handle.clone(), true, model, cx).log_err();
-                    }
-                })
-                .detach();
+                editor
+                    .register_action({
+                        let editor_handle = editor_handle.clone();
+                        move |_: &RunInPlace, cx| {
+                            if !JupyterSettings::enabled(cx) {
+                                return;
+                            }
 
-            editor
-                .register_action({
-                    let editor_handle = editor_handle.clone();
-                    move |_: &RunInPlace, cx| {
-                        if !JupyterSettings::enabled(cx) {
-                            return;
+                            crate::run(editor_handle.clone(), false, model, cx).log_err();
                         }
-
-                        crate::run(editor_handle.clone(), false, model, cx).log_err();
-                    }
-                })
-                .detach();
-        });
-    })
+                    })
+                    .detach();
+            });
+        },
+    )
     .detach();
 }
 
@@ -169,7 +182,8 @@ impl Item for ReplSessionsPage {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _: &Model<Self>, _: &mut AppContext,
+        _: &Model<Self>,
+        _: &mut AppContext,
     ) -> Option<Model<Self>> {
         None
     }
@@ -180,7 +194,12 @@ impl Item for ReplSessionsPage {
 }
 
 impl Render for ReplSessionsPage {
-    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let store = ReplStore::global(cx);
 
         let (kernel_specifications, sessions) = store.update(cx, |store, model, _cx| {

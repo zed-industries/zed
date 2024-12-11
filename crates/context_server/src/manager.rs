@@ -279,14 +279,14 @@ impl ContextServerManager {
         for (id, server) in servers_to_stop {
             server.stop().log_err();
             this.update(&mut cx, |_, cx| {
-                model.emit(cx, Event::ServerStopped { server_id: id })
+                model.emit(Event::ServerStopped { server_id: id }, cx)
             })?;
         }
 
         for (id, server) in servers_to_start {
             if server.start(&cx).await.log_err().is_some() {
                 this.update(&mut cx, |_, cx| {
-                    model.emit(cx, Event::ServerStarted { server_id: id })
+                    model.emit(Event::ServerStarted { server_id: id }, cx)
                 })?;
             }
         }

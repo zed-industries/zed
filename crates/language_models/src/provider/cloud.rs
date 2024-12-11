@@ -131,7 +131,7 @@ impl RefreshLlmTokenListener {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |_this, model, cx| {
-            model.emit(cx, RefreshLlmTokenEvent)
+            model.emit(RefreshLlmTokenEvent, cx)
         })
     }
 }

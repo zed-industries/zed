@@ -794,7 +794,7 @@ mod tests {
         let editor =
             cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, model, cx));
         editor
-            .update(cx, |editor, model, cx| editor.focus(cx))
+            .update(cx, |editor, model, cx| editor.focus(window))
             .unwrap();
         let copilot_provider = cx.new_model(|_, _| CopilotCompletionProvider::new(copilot));
         editor

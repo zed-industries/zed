@@ -483,7 +483,7 @@ impl LogStore {
         log_lines.push_back(message);
 
         if visible {
-            model.emit(cx, Event::NewServerLogEntry { id, entry, kind });
+            model.emit(Event::NewServerLogEntry { id, entry, kind }, cx);
             model.notify(cx);
         }
     }
@@ -734,14 +734,14 @@ impl LspLogView {
         });
         let editor_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &EditorEvent, model: &Model<_>, cx: &mut AppContext| {
-                model.emit(cx, event.clone())
+            |_, _, event: &EditorEvent, model: &Model<Self>, cx: &mut AppContext| {
+                model.emit(event.clone(), cx)
             },
         );
         let search_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &SearchEvent, model: &Model<_>, cx: &mut AppContext| {
-                model.emit(cx, event.clone())
+            |_, _, event: &SearchEvent, model: &Model<Self>, cx: &mut AppContext| {
+                model.emit(event.clone(), cx)
             },
         );
         (editor, vec![editor_subscription, search_subscription])
@@ -766,14 +766,14 @@ impl LspLogView {
         });
         let editor_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &EditorEvent, model: &Model<_>, cx: &mut AppContext| {
-                model.emit(cx, event.clone())
+            |_, _, event: &EditorEvent, model: &Model<Self>, cx: &mut AppContext| {
+                model.emit(event.clone(), cx)
             },
         );
         let search_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &SearchEvent, model: &Model<_>, cx: &mut AppContext| {
-                model.emit(cx, event.clone())
+            |_, _, event: &SearchEvent, model: &Model<Self>, cx: &mut AppContext| {
+                model.emit(event.clone(), cx)
             },
         );
         (editor, vec![editor_subscription, search_subscription])
