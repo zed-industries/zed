@@ -66,6 +66,7 @@ pub use text::{
     Transaction, TransactionId, Unclipped,
 };
 use theme::SyntaxTheme;
+use tree_sitter::Query;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{debug_panic, RangeExt};
@@ -479,11 +480,92 @@ struct IndentSuggestion {
     within_error: bool,
 }
 
-struct BufferChunkHighlights<'a> {
+pub struct BufferChunkHighlights<'a> {
     captures: SyntaxMapCaptures<'a>,
     next_capture: Option<SyntaxMapCapture<'a>>,
-    stack: Vec<(usize, HighlightId)>,
+    /// A stack of captures, holds `(end_offset, highlight_id, capture_index)`.
+    ///
+    /// - `end_offset`: where the capture ends
+    /// - `highlight_id`: corresponding highlight id for the captured syntax node
+    /// - `capture_index`: capture id for node in highlights query
+    stack: Vec<(usize, HighlightId, u32)>,
     highlight_maps: Vec<HighlightMap>,
+    bracket_tracker: Option<BracketTracker>,
+    language: &'a Language,
+}
+
+impl BufferChunkHighlights<'_> {
+    fn is_capture_a_bracket(&self, capture_index: u32) -> bool {
+        self.bracket_tracker.as_ref().is_some_and(|tracker| {
+            [tracker.open_bracket_ix, tracker.close_bracket_ix].contains(&capture_index)
+        })
+    }
+
+    fn update_bracket_depth(&mut self, capture_index: u32) {
+        if let Some(tracker) = self.bracket_tracker.as_mut() {
+            if capture_index == tracker.open_bracket_ix {
+                tracker.depth += 1;
+            }
+            if capture_index == tracker.close_bracket_ix {
+                tracker.depth -= 1;
+            }
+        }
+    }
+
+    fn bracket_depth(&self) -> i32 {
+        self.bracket_tracker
+            .as_ref()
+            .map_or(0, |tracker| tracker.depth)
+    }
+}
+
+impl<'a> BufferChunkHighlights<'a> {
+    pub fn new(
+        captures: SyntaxMapCaptures<'a>,
+        highlight_maps: Vec<HighlightMap>,
+        language: &'a Language,
+    ) -> Self {
+        // NOTE: only tracks brackets on the top-level grammar, ignores nested grammars
+        let bracket_tracker = language
+            .grammar
+            .as_ref()
+            .and_then(|grammar| grammar.highlights_query.as_ref())
+            .and_then(BracketTracker::try_new);
+
+        Self {
+            captures,
+            next_capture: None,
+            stack: Default::default(),
+            highlight_maps,
+            bracket_tracker,
+            language,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct BracketTracker {
+    // Current depth.
+    // TODO: this shouldn't be negative, but as Zed parses buffers from the
+    // middle, this bracket tracking approach can't keep track of the depth
+    depth: i32,
+    /// The tree-sitter capture index for an opening bracket.
+    open_bracket_ix: u32,
+    /// The tree-sitter capture index for a closing bracket.
+    close_bracket_ix: u32,
+}
+
+impl BracketTracker {
+    /// Create a BracketTracker if the required captures are provided.
+    pub fn try_new(query: &Query) -> Option<Self> {
+        Some(Self {
+            depth: 0,
+            // TODO: cache this linear search when creating the highlights_query,
+            // BufferChunks is created a ton of times, and so is BracketTracker
+            open_bracket_ix: query.capture_index_for_name("punctuation.bracket.open")?,
+            close_bracket_ix: query.capture_index_for_name("punctuation.bracket.close")?,
+        })
+    }
 }
 
 /// An iterator that yields chunks of a buffer's text, along with their
@@ -516,10 +598,28 @@ pub struct Chunk<'a> {
     pub diagnostic_severity: Option<DiagnosticSeverity>,
     /// Whether this chunk of text is marked as unnecessary.
     pub is_unnecessary: bool,
-    /// Whether this chunk of text was originally a tab character.
-    pub is_tab: bool,
+    /// If this chunk is a particular kind, store additional info about it.
+    pub kind: ChunkKind,
     /// An optional recipe for how the chunk should be presented.
     pub renderer: Option<ChunkRenderer>,
+}
+
+/// Store some info about this chunk for special treatment down the road.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum ChunkKind {
+    /// Not a special chunk type.
+    #[default]
+    Other,
+    /// Whether the chunk of text was originally a tab character.
+    Tab,
+    /// Brackets can be colored by depth.
+    Bracket { depth: i32 },
+}
+
+impl ChunkKind {
+    pub fn is_tab(&self) -> bool {
+        matches!(self, Self::Tab)
+    }
 }
 
 /// A recipe for how the chunk should be presented.
@@ -2774,13 +2874,28 @@ impl BufferSnapshot {
     pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        let mut syntax = None;
+        let mut chunk_highlights = None;
         if language_aware {
-            syntax = Some(self.get_highlights(range.clone()));
+            if let Some(language) = self.language.as_ref() {
+                let (captures, highlight_maps) = self.get_highlights(range.clone());
+
+                chunk_highlights = Some(BufferChunkHighlights::new(
+                    captures,
+                    highlight_maps,
+                    &language,
+                ));
+            }
         }
+
         // We want to look at diagnostic spans only when iterating over language-annotated chunks.
         let diagnostics = language_aware;
-        BufferChunks::new(self.text.as_rope(), range, syntax, diagnostics, Some(self))
+        BufferChunks::new(
+            self.text.as_rope(),
+            range,
+            chunk_highlights,
+            diagnostics,
+            Some(self),
+        )
     }
 
     /// Invokes the given callback for each line of text in the given range of the buffer.
@@ -4058,20 +4173,10 @@ impl<'a> BufferChunks<'a> {
     pub(crate) fn new(
         text: &'a Rope,
         range: Range<usize>,
-        syntax: Option<(SyntaxMapCaptures<'a>, Vec<HighlightMap>)>,
+        highlights: Option<BufferChunkHighlights<'a>>,
         diagnostics: bool,
         buffer_snapshot: Option<&'a BufferSnapshot>,
     ) -> Self {
-        let mut highlights = None;
-        if let Some((captures, highlight_maps)) = syntax {
-            highlights = Some(BufferChunkHighlights {
-                captures,
-                next_capture: None,
-                stack: Default::default(),
-                highlight_maps,
-            })
-        }
-
         let diagnostic_endpoints = diagnostics.then(|| Vec::new().into_iter().peekable());
         let chunks = text.chunks_in_range(range.clone());
 
@@ -4097,10 +4202,15 @@ impl<'a> BufferChunks<'a> {
         self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
             if old_range.start <= self.range.start && old_range.end >= self.range.end {
-                // Reuse existing highlights stack, as the new range is a subrange of the old one.
-                highlights
-                    .stack
-                    .retain(|(end_offset, _)| *end_offset > range.start);
+                // Reuse existing highlights stack, as the new range is a subrange of the old one.
+                while let Some(&(end_offset, _, capture_index)) = highlights.stack.last() {
+                    if end_offset > range.start {
+                        break;
+                    } else {
+                        highlights.stack.pop();
+                        highlights.update_bracket_depth(capture_index);
+                    }
+                }
                 if let Some(capture) = &highlights.next_capture {
                     if range.start >= capture.node.start_byte() {
                         let next_capture_end = capture.node.end_byte();
@@ -4108,19 +4218,19 @@ impl<'a> BufferChunks<'a> {
                             highlights.stack.push((
                                 next_capture_end,
                                 highlights.highlight_maps[capture.grammar_index].get(capture.index),
+                                capture.index,
                             ));
+                            highlights.update_bracket_depth(capture.index);
                         }
                         highlights.next_capture.take();
                     }
                 }
             } else if let Some(snapshot) = self.buffer_snapshot {
+                // Can't reuse existing highlights stack, reset it
                 let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
-                *highlights = BufferChunkHighlights {
-                    captures,
-                    next_capture: None,
-                    stack: Default::default(),
-                    highlight_maps,
-                };
+
+                *highlights =
+                    BufferChunkHighlights::new(captures, highlight_maps, &highlights.language);
             } else {
                 // We cannot obtain new highlights for a language-aware buffer iterator, as we don't have a buffer snapshot.
                 // Seeking such BufferChunks is not supported.
@@ -4216,9 +4326,10 @@ impl<'a> Iterator for BufferChunks<'a> {
         let mut next_diagnostic_endpoint = usize::MAX;
 
         if let Some(highlights) = self.highlights.as_mut() {
-            while let Some((parent_capture_end, _)) = highlights.stack.last() {
-                if *parent_capture_end <= self.range.start {
+            while let Some(&(parent_capture_end, _, capture_index)) = highlights.stack.last() {
+                if parent_capture_end <= self.range.start {
                     highlights.stack.pop();
+                    highlights.update_bracket_depth(capture_index);
                 } else {
                     break;
                 }
@@ -4237,7 +4348,8 @@ impl<'a> Iterator for BufferChunks<'a> {
                         highlights.highlight_maps[capture.grammar_index].get(capture.index);
                     highlights
                         .stack
-                        .push((capture.node.end_byte(), highlight_id));
+                        .push((capture.node.end_byte(), highlight_id, capture.index));
+                    highlights.update_bracket_depth(capture.index);
                     highlights.next_capture = highlights.captures.next();
                 }
             }
@@ -4258,28 +4370,38 @@ impl<'a> Iterator for BufferChunks<'a> {
         self.diagnostic_endpoints = diagnostic_endpoints;
 
         let chunk = self.chunks.peek()?;
-
         let chunk_start = self.range.start;
+
         let mut chunk_end = (self.chunks.offset() + chunk.len())
             .min(next_capture_start)
             .min(next_diagnostic_endpoint);
         let mut highlight_id = None;
+        let mut chunk_kind = ChunkKind::Other;
+
         if let Some(highlights) = self.highlights.as_ref() {
-            if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
-                chunk_end = chunk_end.min(*parent_capture_end);
-                highlight_id = Some(*parent_highlight_id);
+            if let Some(&(parent_capture_end, parent_highlight_id, parent_index)) =
+                highlights.stack.last()
+            {
+                chunk_end = chunk_end.min(parent_capture_end);
+                highlight_id = Some(parent_highlight_id);
+                if highlights.is_capture_a_bracket(parent_index) {
+                    chunk_kind = ChunkKind::Bracket {
+                        depth: highlights.bracket_depth(),
+                    };
+                }
             }
         }
 
-        let slice = &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
+        let text = &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
         self.range.start = chunk_end;
         if self.range.start == self.chunks.offset() + chunk.len() {
             self.chunks.next().unwrap();
         }
 
         Some(Chunk {
-            text: slice,
+            text,
             syntax_highlight_id: highlight_id,
+            kind: chunk_kind,
             diagnostic_severity: self.current_diagnostic_severity(),
             is_unnecessary: self.current_code_is_unnecessary(),
             ..Default::default()

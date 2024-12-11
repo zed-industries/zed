@@ -45,7 +45,7 @@ use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
 use invisibles::{is_invisible, replacement};
 use language::{
-    language_settings::language_settings, ChunkRenderer, OffsetUtf16, Point,
+    language_settings::language_settings, ChunkKind, ChunkRenderer, OffsetUtf16, Point,
     Subscription as BufferSubscription,
 };
 use lsp::DiagnosticSeverity;
@@ -547,10 +547,11 @@ pub enum ChunkReplacement {
     Str(SharedString),
 }
 
+#[derive(Default)]
 pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
-    pub is_tab: bool,
+    pub kind: ChunkKind,
     pub replacement: Option<ChunkReplacement>,
 }
 
@@ -562,8 +563,9 @@ impl<'a> HighlightedChunk<'a> {
         let mut chars = self.text.chars().peekable();
         let mut text = self.text;
         let style = self.style;
-        let is_tab = self.is_tab;
         let renderer = self.replacement;
+        let kind = self.kind;
+
         iter::from_fn(move || {
             let mut prefix_len = 0;
             while let Some(&ch) = chars.peek() {
@@ -578,7 +580,7 @@ impl<'a> HighlightedChunk<'a> {
                     return Some(HighlightedChunk {
                         text: prefix,
                         style,
-                        is_tab,
+                        kind,
                         replacement: renderer.clone(),
                     });
                 }
@@ -604,7 +606,7 @@ impl<'a> HighlightedChunk<'a> {
                     return Some(HighlightedChunk {
                         text: prefix,
                         style: Some(invisible_style),
-                        is_tab: false,
+                        kind: ChunkKind::Other,
                         replacement: Some(ChunkReplacement::Str(replacement.into())),
                     });
                 } else {
@@ -627,7 +629,7 @@ impl<'a> HighlightedChunk<'a> {
                     return Some(HighlightedChunk {
                         text: prefix,
                         style: Some(invisible_style),
-                        is_tab: false,
+                        kind: ChunkKind::Other,
                         replacement: renderer.clone(),
                     });
                 }
@@ -639,7 +641,7 @@ impl<'a> HighlightedChunk<'a> {
                 Some(HighlightedChunk {
                     text: remainder,
                     style,
-                    is_tab,
+                    kind,
                     replacement: renderer.clone(),
                 })
             } else {
@@ -902,7 +904,7 @@ impl DisplaySnapshot {
             HighlightedChunk {
                 text: chunk.text,
                 style: highlight_style,
-                is_tab: chunk.is_tab,
+                kind: chunk.kind,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)
