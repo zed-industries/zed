@@ -14,8 +14,12 @@ path = "src/ui.rs"
 
 [dependencies]
 chrono.workspace = true
+collections.workspace = true
 gpui.workspace = true
 itertools = { workspace = true, optional = true }
+lazy_static.workspace = true
+linkme.workspace = true
+once_cell.workspace = true
 menu.workspace = true
 serde.workspace = true
 settings.workspace = true
@@ -24,6 +28,7 @@ story = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 ui_macros.workspace = true
+component_system.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
