@@ -2202,6 +2202,10 @@ impl Snapshot {
         Some(removed_entry.path)
     }
 
+    pub fn git_status(&self, path: impl Into<PathBuf>) -> impl Iterator<Item = Entry> {
+        todo!()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn status_for_file(&self, path: impl Into<PathBuf>) -> Option<GitFileStatus> {
         let path = path.into();
@@ -3474,6 +3478,12 @@ pub struct Entry {
     pub size: u64,
     pub char_bag: CharBag,
     pub is_fifo: bool,
+}
+
+pub struct GitEntry {
+    pub path: Arc<Path>,
+    entry_id: Option<ProjectEntryId>,
+    git_status: GitFileStatus,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

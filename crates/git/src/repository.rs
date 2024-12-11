@@ -394,6 +394,7 @@ pub enum GitFileStatus {
     Added,
     Modified,
     Conflict,
+    Deleted,
 }
 
 impl GitFileStatus {

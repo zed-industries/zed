@@ -2524,6 +2524,69 @@ async fn test_git_status(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_git_status_git_panel(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = temp_tree(json!({
+        "project": {
+            "a.txt": "a",    // Modified
+            "b.txt": "bb",   // Added
+            "c.txt": "ccc",  // Unchanged
+            "d.txt": "dddd", // Deleted
+        },
+
+    }));
+
+    let project_path = Path::new("project");
+
+    // Set up git repository before creating the worktree.
+    let work_dir = root.path().join("project");
+    let mut repo = git_init(work_dir.as_path());
+    git_add("a.txt", &repo);
+    git_add("c.txt", &repo);
+    git_add("d.txt", &repo);
+    git_commit("Initial commit", &repo);
+    std::fs::remove_file(work_dir.join("d.txt")).unwrap();
+    std::fs::write(work_dir.join("a.txt"), "aa").unwrap();
+
+    let tree = Worktree::local(
+        root.path(),
+        true,
+        Arc::new(RealFs::default()),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    // Check that the right git state is observed on startup
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        let (dir, _) = snapshot.repositories().next().unwrap();
+
+        // Takes a work directory, and returns all file entries with a git status.
+        let entries = snapshot.git_status(dir).collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
+        assert_eq!(entries[0].git_status, GitFileStatus::Modified);
+        assert!(entries[0].entry_id.is_some());
+        assert_eq!(entries[1].path.as_ref(), Path::new("b.txt"));
+        assert_eq!(entries[1].git_status, GitFileStatus::Added);
+        assert!(entries[1].entry_id.is_some());
+        assert_eq!(entries[2].path.as_ref(), Path::new("d.txt"));
+        assert_eq!(entries[2].git_status, GitFileStatus::Deleted);
+        assert!(entries[2].entry_id.is());
+    });
+}
+
+#[gpui::test]
 async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
