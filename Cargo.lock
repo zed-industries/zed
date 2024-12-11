@@ -13298,6 +13298,7 @@ dependencies = [
  "http_client",
  "install_cli",
  "notifications",
+ "outline_panel",
  "pretty_assertions",
  "project",
  "project_panel",
