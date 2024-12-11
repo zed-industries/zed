@@ -46,8 +46,6 @@ util.workspace = true
 telemetry.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
 install_cli.workspace = true
 editor.workspace = true
 project_panel.workspace = true
