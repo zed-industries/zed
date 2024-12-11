@@ -4257,36 +4257,33 @@ impl<'a> Iterator for BufferChunks<'a> {
         }
         self.diagnostic_endpoints = diagnostic_endpoints;
 
-        if let Some(chunk) = self.chunks.peek() {
-            let chunk_start = self.range.start;
-            let mut chunk_end = (self.chunks.offset() + chunk.len())
-                .min(next_capture_start)
-                .min(next_diagnostic_endpoint);
-            let mut highlight_id = None;
-            if let Some(highlights) = self.highlights.as_ref() {
-                if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
-                    chunk_end = chunk_end.min(*parent_capture_end);
-                    highlight_id = Some(*parent_highlight_id);
-                }
-            }
+        let chunk = self.chunks.peek()?;
 
-            let slice =
-                &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
-            self.range.start = chunk_end;
-            if self.range.start == self.chunks.offset() + chunk.len() {
-                self.chunks.next().unwrap();
+        let chunk_start = self.range.start;
+        let mut chunk_end = (self.chunks.offset() + chunk.len())
+            .min(next_capture_start)
+            .min(next_diagnostic_endpoint);
+        let mut highlight_id = None;
+        if let Some(highlights) = self.highlights.as_ref() {
+            if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
+                chunk_end = chunk_end.min(*parent_capture_end);
+                highlight_id = Some(*parent_highlight_id);
             }
-
-            Some(Chunk {
-                text: slice,
-                syntax_highlight_id: highlight_id,
-                diagnostic_severity: self.current_diagnostic_severity(),
-                is_unnecessary: self.current_code_is_unnecessary(),
-                ..Default::default()
-            })
-        } else {
-            None
         }
+
+        let slice = &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
+        self.range.start = chunk_end;
+        if self.range.start == self.chunks.offset() + chunk.len() {
+            self.chunks.next().unwrap();
+        }
+
+        Some(Chunk {
+            text: slice,
+            syntax_highlight_id: highlight_id,
+            diagnostic_severity: self.current_diagnostic_severity(),
+            is_unnecessary: self.current_code_is_unnecessary(),
+            ..Default::default()
+        })
     }
 }
 
