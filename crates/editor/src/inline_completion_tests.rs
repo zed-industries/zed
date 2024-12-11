@@ -1,10 +1,9 @@
-use gpui::Model;
+use gpui::{prelude::*, Model};
 use indoc::indoc;
 use inline_completion::InlineCompletionProvider;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::ops::Range;
 use text::{Point, ToOffset};
-use ui::Context;
 
 use crate::{
     editor_tests::init_test, test::editor_test_context::EditorTestContext, InlineCompletion,
