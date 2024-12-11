@@ -427,11 +427,6 @@ pub trait LocalFile: File {
 
     /// Loads the file's contents from disk.
     fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>>;
-
-    /// Returns true if the file should not be shared with collaborators.
-    fn is_private(&self, _: &AppContext) -> bool {
-        false
-    }
 }
 
 /// The auto-indent behavior associated with an editing operation.
