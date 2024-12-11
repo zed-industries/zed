@@ -13310,6 +13310,7 @@ dependencies = [
  "smallvec",
  "story",
  "telemetry",
+ "terminal_view",
  "theme",
  "tree-sitter-md",
  "ui",
