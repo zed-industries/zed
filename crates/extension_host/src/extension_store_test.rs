@@ -623,9 +623,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         None,
     );
 
-    let buffer = project
+    let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer(project_dir.join("test.gleam"), cx)
+            project.open_local_buffer_with_lsp(project_dir.join("test.gleam"), cx)
         })
         .await
         .unwrap();

@@ -4351,7 +4351,6 @@ async fn test_formatting_buffer(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    executor.allow_parking();
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -4379,10 +4378,16 @@ async fn test_formatting_buffer(
         .await
         .unwrap();
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let lsp_store_b = project_b.update(cx_b, |p, _| p.lsp_store());
 
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
-    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+        .await
+        .unwrap();
 
+    let _handle = lsp_store_b.update(cx_b, |lsp_store, cx| {
+        lsp_store.register_buffer_with_language_servers(&buffer_b, cx)
+    });
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
         Ok(Some(vec![
@@ -4431,6 +4436,8 @@ async fn test_formatting_buffer(
             });
         });
     });
+
+    executor.allow_parking();
     project_b
         .update(cx_b, |project, cx| {
             project.format(

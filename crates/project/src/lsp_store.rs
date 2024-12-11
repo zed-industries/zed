@@ -3194,14 +3194,14 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
 
         let handle = cx.new_model(|_| buffer.clone());
-        let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
-            return handle;
-        };
-        if !file.is_local() {
-            return handle;
-        }
 
         if let Some(local) = self.as_local_mut() {
+            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+                return handle;
+            };
+            if !file.is_local() {
+                return handle;
+            }
             let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
             *refcount += 1;
             if *refcount == 1 {
@@ -3223,6 +3223,20 @@ impl LspStore {
                 }
             })
             .detach();
+        } else if let Some((upstream_client, upstream_project_id)) = self.upstream_client() {
+            let buffer_id = buffer.read(cx).remote_id().to_proto();
+            cx.background_executor()
+                .spawn(async move {
+                    upstream_client
+                        .request(proto::RegisterBufferWithLanguageServers {
+                            project_id: upstream_project_id,
+                            buffer_id,
+                        })
+                        .await
+                })
+                .detach();
+        } else {
+            panic!("oops!");
         }
         handle
     }
