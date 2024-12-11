@@ -406,7 +406,12 @@ fn main() {
             stdout_is_a_pty(),
             cx,
         );
-        assistant2::init(cx);
+        assistant2::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            stdout_is_a_pty(),
+            cx,
+        );
         assistant_tools::init(cx);
         repl::init(
             app_state.fs.clone(),
