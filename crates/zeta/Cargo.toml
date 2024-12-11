@@ -14,8 +14,6 @@ path = "src/zeta.rs"
 doctest = false
 
 [features]
-# TODO: remove
-default = ["test-support"]
 test-support = []
 
 [dependencies]

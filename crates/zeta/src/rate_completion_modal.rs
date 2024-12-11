@@ -92,8 +92,7 @@ impl RateCompletionModal {
             .skip(self.selected_index)
             .enumerate()
             .skip(1) // Skip straight to the next item
-            .skip_while(|(_, completion)| completion.edits.is_empty())
-            .next()
+            .find(|(_, completion)| !completion.edits.is_empty())
             .map(|(ix, _)| ix + self.selected_index);
 
         if let Some(next_index) = next_index {
@@ -114,8 +113,7 @@ impl RateCompletionModal {
             .skip((completions_len - 1) - self.selected_index)
             .enumerate()
             .skip(1) // Skip straight to the previous item
-            .skip_while(|(_, completion)| completion.edits.is_empty())
-            .next()
+            .find(|(_, completion)| !completion.edits.is_empty())
             .map(|(ix, _)| self.selected_index - ix);
 
         if let Some(prev_index) = prev_index {
