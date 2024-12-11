@@ -3687,16 +3687,13 @@ impl Editor {
                         menu.resolve_visible_completions(editor.completion_provider.as_deref(), cx);
                         *context_menu = Some(CodeContextMenu::Completions(menu));
                         drop(context_menu);
-                        editor.discard_inline_completion(false, cx);
                         cx.notify();
                     } else if editor.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
                         // empty, we should hide it. If it was already hidden, we should
                         // also show the copilot completion when available.
                         drop(context_menu);
-                        if editor.hide_context_menu(cx).is_none() {
-                            editor.update_visible_inline_completion(cx);
-                        }
+                        editor.hide_context_menu(cx);
                     }
                 })?;
 
@@ -3732,6 +3729,7 @@ impl Editor {
     ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
         use language::ToOffset as _;
 
+        self.discard_inline_completion(true, cx);
         let completions_menu =
             if let CodeContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
                 menu
@@ -4475,6 +4473,8 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
+        self.hide_context_menu(cx);
+
         let Some(active_inline_completion) = self.active_inline_completion.as_ref() else {
             return;
         };
@@ -4629,9 +4629,7 @@ impl Editor {
         let offset_selection = selection.map(|endpoint| endpoint.to_offset(&multibuffer));
         let excerpt_id = cursor.excerpt_id;
 
-        if self.context_menu.read().is_some()
-            || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion())
-            || !offset_selection.is_empty()
+        if !offset_selection.is_empty()
             || self
                 .active_inline_completion
                 .as_ref()
@@ -4978,11 +4976,7 @@ impl Editor {
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<CodeContextMenu> {
         cx.notify();
         self.completion_tasks.clear();
-        let context_menu = self.context_menu.write().take();
-        if context_menu.is_some() {
-            self.update_visible_inline_completion(cx);
-        }
-        context_menu
+        self.context_menu.write().take()
     }
 
     fn show_snippet_choices(
