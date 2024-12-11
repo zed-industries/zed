@@ -21,6 +21,7 @@ git.workspace = true
 git2.workspace = true
 gpui.workspace = true
 libc.workspace = true
+log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 rope.workspace = true

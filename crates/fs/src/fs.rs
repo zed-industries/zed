@@ -695,10 +695,13 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
         let watcher = Arc::new(linux_watcher::LinuxWatcher::new(tx, pending_paths.clone()));
 
-        watcher.add(&path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
-        if let Some(parent) = path.parent() {
-            // watch the parent dir so we can tell when settings.json is created
-            watcher.add(parent).log_err();
+        if watcher.add(path).is_err() {
+            // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
+            if let Some(parent) = path.parent() {
+                if let Err(e) = watcher.add(parent) {
+                    log::warn!("Failed to watch: {e}");
+                }
+            }
         }
 
         // Check if path is a symlink and follow the target parent

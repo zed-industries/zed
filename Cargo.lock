@@ -4751,6 +4751,7 @@ dependencies = [
  "git2",
  "gpui",
  "libc",
+ "log",
  "notify",
  "objc",
  "parking_lot",
