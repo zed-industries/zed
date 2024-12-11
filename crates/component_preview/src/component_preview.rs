@@ -4,7 +4,7 @@
 
 use component_system::{get_all_component_previews, ComponentPreview as _};
 use gpui::{prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView};
-use strum::IntoEnumIterator;
+use strum::{EnumIter, IntoEnumIterator};
 use ui::{prelude::*, Avatar, TintColor};
 
 use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
@@ -19,7 +19,7 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, strum::EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, EnumIter)]
 enum ComponentPreviewPage {
     Overview,
 }
@@ -56,46 +56,15 @@ impl ComponentPreview {
     }
 }
 
-impl EventEmitter<ItemEvent> for ComponentPreview {}
-
-impl FocusableView for ComponentPreview {
-    fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl Item for ComponentPreview {
-    type Event = ItemEvent;
-
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        Some("Component Preview".into())
-    }
-
-    fn telemetry_event_text(&self) -> Option<&'static str> {
-        None
-    }
-
-    fn show_toolbar(&self) -> bool {
-        false
-    }
-
-    fn clone_on_split(
-        &self,
-        _workspace_id: Option<WorkspaceId>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<gpui::View<Self>>
-    where
-        Self: Sized,
-    {
-        Some(cx.new_view(Self::new))
-    }
-
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
-        f(*event)
-    }
-}
-
 impl ComponentPreview {
+    fn render_sidebar(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        div()
+    }
+
+    fn render_preview(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        div()
+    }
+
     fn render_overview_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let all_previews = get_all_component_previews();
 
@@ -143,7 +112,7 @@ impl ComponentPreview {
 }
 
 impl Render for ComponentPreview {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .id("component-preview")
             .key_context("ComponentPreview")
@@ -156,5 +125,44 @@ impl Render for ComponentPreview {
             .bg(cx.theme().colors().editor_background)
             .child(self.render_page_nav(cx))
             .child(self.view(self.current_page, cx))
+    }
+}
+
+impl EventEmitter<ItemEvent> for ComponentPreview {}
+
+impl FocusableView for ComponentPreview {
+    fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Item for ComponentPreview {
+    type Event = ItemEvent;
+
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Component Preview".into())
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
+    }
+
+    fn show_toolbar(&self) -> bool {
+        false
+    }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<WorkspaceId>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<gpui::View<Self>>
+    where
+        Self: Sized,
+    {
+        Some(cx.new_view(Self::new))
+    }
+
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+        f(*event)
     }
 }
