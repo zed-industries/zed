@@ -649,6 +649,7 @@ impl BlockMap {
             blocks_in_edit.extend(
                 self.custom_blocks[start_block_ix..end_block_ix]
                     .iter()
+                    .filter(|block| !is_custom_within_folded_buffer(&self.folded_buffers, block))
                     .filter_map(|block| {
                         Some((
                             block.placement.to_wrap_row(wrap_snapshot)?,
@@ -1408,20 +1409,11 @@ impl BlockSnapshot {
                 }
                 if let Some(block) = &transform.block {
                     cursor.next(&());
-                    // TODO kb extra offsets appear still, need to update .chunks()? or buffer_rows()?
-                    if let Block::Custom(custom_block) = block {
-                        if let Some(buffer_id) = custom_block.placement.start().buffer_id {
-                            if self.folded_buffers.contains(&buffer_id) {
-                                continue;
-                            }
-                        }
-                        if let Some(buffer_id) = custom_block.placement.end().buffer_id {
-                            if self.folded_buffers.contains(&buffer_id) {
-                                continue;
-                            }
-                        }
+                    if is_within_folded_buffer(&self.folded_buffers, block) {
+                        continue;
+                    } else {
+                        return Some((start_row, block));
                     }
-                    return Some((start_row, block));
                 } else {
                     cursor.next(&());
                 }
@@ -1937,6 +1929,31 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
         offset += line.len();
     }
     (row, offset)
+}
+
+fn is_within_folded_buffer(folded_buffers: &HashSet<BufferId>, block: &Block) -> bool {
+    if let Block::Custom(custom_block) = block {
+        is_custom_within_folded_buffer(folded_buffers, custom_block)
+    } else {
+        false
+    }
+}
+
+fn is_custom_within_folded_buffer(
+    folded_buffers: &HashSet<BufferId>,
+    custom_block: &CustomBlock,
+) -> bool {
+    if let Some(buffer_id) = custom_block.placement.start().buffer_id {
+        if folded_buffers.contains(&buffer_id) {
+            return true;
+        }
+    }
+    if let Some(buffer_id) = custom_block.placement.end().buffer_id {
+        if folded_buffers.contains(&buffer_id) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -2483,9 +2500,8 @@ mod tests {
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\n\n\nline5");
     }
 
-    // TODO kb finish
     #[gpui::test]
-    fn test_folding_unfolding_last_block(cx: &mut gpui::TestAppContext) {
+    fn test_custom_blocks_inside_buffer_folds(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
         let text = "111\n222\n333\n444\n555\n666";
@@ -2520,9 +2536,8 @@ mod tests {
             .dedup()
             .collect::<Vec<_>>();
         assert_eq!(buffer_ids.len(), 3);
-        let first_buffer_id = buffer_ids[0];
-        let second_buffer_id = buffer_ids[1];
-        let third_buffer_id = buffer_ids[2];
+        let buffer_id_1 = buffer_ids[0];
+        let buffer_id_2 = buffer_ids[1];
 
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
@@ -2538,7 +2553,7 @@ mod tests {
         );
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
-        let second_excerpt_blocks = writer.insert(vec![
+        let excerpt_blocks_2 = writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
@@ -2561,7 +2576,7 @@ mod tests {
                 priority: 0,
             },
         ]);
-        let third_excerpt_blocks = writer.insert(vec![
+        let excerpt_blocks_3 = writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(4, 0))),
@@ -2586,16 +2601,15 @@ mod tests {
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
-            writer.fold_buffer(first_buffer_id, buffer, cx);
+            writer.fold_buffer(buffer_id_1, buffer, cx);
         });
-        let first_excerpt_blocks = writer.insert(vec![BlockProperties {
+        let excerpt_blocks_1 = writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 0))),
             height: 1,
             render: Arc::new(|_| div().into_any()),
             priority: 0,
         }]);
-
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
         let blocks = blocks_snapshot
             .blocks_in_range(0..u32::MAX)
@@ -2603,8 +2617,13 @@ mod tests {
         for (_, block) in &blocks {
             if let BlockId::Custom(custom_block_id) = block.id() {
                 assert!(
-                    !first_excerpt_blocks.contains(&custom_block_id),
+                    !excerpt_blocks_1.contains(&custom_block_id),
                     "Should have no blocks from the folded buffer"
+                );
+                assert!(
+                    excerpt_blocks_2.contains(&custom_block_id)
+                        || excerpt_blocks_3.contains(&custom_block_id),
+                    "Should have only blocks from unfolded buffers"
                 );
             }
         }
@@ -2621,14 +2640,95 @@ mod tests {
                     }
                 })
                 .count(),
-            "Should have one folded block, a header of the second buffer"
+            "Should have one folded block, prodicing a header of the second buffer"
         );
-
         assert_eq!(
             blocks_snapshot.text(),
-            "\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n555\n\n\n666\n\n"
+            "\n\n\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n\n\n555\n\n\n666\n\n"
         );
-        // TODO kb unfold first to get the block back + fold another excerpt and check its blocks are gone
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        buffer.read_with(cx, |buffer, cx| {
+            writer.fold_buffer(buffer_id_2, buffer, cx);
+        });
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks = blocks_snapshot
+            .blocks_in_range(0..u32::MAX)
+            .collect::<Vec<_>>();
+        for (_, block) in &blocks {
+            if let BlockId::Custom(custom_block_id) = block.id() {
+                assert!(
+                    !excerpt_blocks_1.contains(&custom_block_id),
+                    "Should have no blocks from the folded buffer_1"
+                );
+                assert!(
+                    !excerpt_blocks_2.contains(&custom_block_id),
+                    "Should have no blocks from the folded buffer_2"
+                );
+                assert!(
+                    excerpt_blocks_3.contains(&custom_block_id),
+                    "Should have only blocks from unfolded buffers"
+                );
+            }
+        }
+        assert_eq!(
+            2,
+            blocks
+                .iter()
+                .filter(|(_, block)| {
+                    match block {
+                        Block::Custom(_) => false,
+                        Block::ExcerptBoundary { kind, .. } => {
+                            matches!(kind, ExcerptBoundaryKind::FoldedBufferBoundary)
+                        }
+                    }
+                })
+                .count(),
+            "Should have two folded blocks, producing headers"
+        );
+        assert_eq!(blocks_snapshot.text(), "\n\n\n\n\n\n\n\n555\n\n\n666\n\n");
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        buffer.read_with(cx, |buffer, cx| {
+            writer.unfold_buffer(buffer_id_1, buffer, cx);
+        });
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks = blocks_snapshot
+            .blocks_in_range(0..u32::MAX)
+            .collect::<Vec<_>>();
+        for (_, block) in &blocks {
+            if let BlockId::Custom(custom_block_id) = block.id() {
+                assert!(
+                    !excerpt_blocks_2.contains(&custom_block_id),
+                    "Should have no blocks from the folded buffer_2"
+                );
+                assert!(
+                    excerpt_blocks_1.contains(&custom_block_id)
+                        || excerpt_blocks_3.contains(&custom_block_id),
+                    "Should have only blocks from unfolded buffers"
+                );
+            }
+        }
+        assert_eq!(
+            1,
+            blocks
+                .iter()
+                .filter(|(_, block)| {
+                    match block {
+                        Block::Custom(_) => false,
+                        Block::ExcerptBoundary { kind, .. } => {
+                            matches!(kind, ExcerptBoundaryKind::FoldedBufferBoundary)
+                        }
+                    }
+                })
+                .count(),
+            "Should be back to a single folded buffer, producing a header for buffer_2"
+        );
+        assert_eq!(
+            blocks_snapshot.text(),
+            "\n\n\n\n111\n\n\n\n\n\n\n\n555\n\n\n666\n\n",
+            "Should have extra newline for 111 buffer, due to a new block added when it was folded"
+        );
     }
 
     // TODO kb add block folding
