@@ -296,7 +296,6 @@ mod tests {
             editor.set_inline_completion_provider(Some(copilot_provider), cx)
         });
 
-        // When inserting, ensure autocompletion is favored over Copilot suggestions.
         cx.set_state(indoc! {"
             oneˇ
             two
@@ -323,8 +322,9 @@ mod tests {
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, cx| {
+            // We want to show both: the inline completion and the completion menu
             assert!(editor.context_menu_visible());
-            assert!(!editor.has_active_inline_completion());
+            assert!(editor.has_active_inline_completion());
 
             // Confirming a completion inserts it and hides the context menu, without showing
             // the copilot suggestion afterwards.
@@ -338,40 +338,7 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
         });
 
-        // Ensure Copilot suggestions are shown right away if no autocompletion is available.
-        cx.set_state(indoc! {"
-            oneˇ
-            two
-            three
-        "});
-        cx.simulate_keystroke(".");
-        drop(handle_completion_request(
-            &mut cx,
-            indoc! {"
-                one.|<>
-                two
-                three
-            "},
-            vec![],
-        ));
-        handle_copilot_completion_request(
-            &copilot_lsp,
-            vec![crate::request::Completion {
-                text: "one.copilot1".into(),
-                range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-                ..Default::default()
-            }],
-            vec![],
-        );
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        cx.update_editor(|editor, cx| {
-            assert!(!editor.context_menu_visible());
-            assert!(editor.has_active_inline_completion());
-            assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
-            assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
-        });
-
-        // Reset editor, and ensure autocompletion is still favored over Copilot suggestions.
+        // Reset editor and test that accepting completions works
         cx.set_state(indoc! {"
             oneˇ
             two
@@ -399,17 +366,12 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.has_active_inline_completion());
-
-            // When hiding the context menu, the Copilot suggestion becomes visible.
-            editor.cancel(&Default::default(), cx);
-            assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
         });
 
-        // Ensure existing completion is interpolated when inserting again.
+        // Ensure existing inline completion is interpolated when inserting again.
         cx.simulate_keystroke("c");
         executor.run_until_parked();
         cx.update_editor(|editor, cx| {
@@ -880,7 +842,7 @@ mod tests {
         cx.update_editor(|editor, cx| editor.next_inline_completion(&Default::default(), cx));
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, cx| {
-            assert!(!editor.context_menu_visible(), "Even there are some completions available, those are not triggered when active copilot suggestion is present");
+            assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\ntw\nthree\n");
@@ -934,15 +896,9 @@ mod tests {
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, cx| {
-            assert!(
-                editor.context_menu_visible(),
-                "On completion trigger input, the completions should be fetched and visible"
-            );
-            assert!(
-                !editor.has_active_inline_completion(),
-                "On completion trigger input, copilot suggestion should be dismissed"
-            );
-            assert_eq!(editor.display_text(cx), "one\ntwo.\nthree\n");
+            assert!(editor.context_menu_visible());
+            assert!(editor.has_active_inline_completion(),);
+            assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
         });
     }
