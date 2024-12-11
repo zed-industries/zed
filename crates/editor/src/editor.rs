@@ -176,7 +176,7 @@ use workspace::{
 };
 use workspace::{Item as WorkspaceItem, OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
-use crate::hover_links::find_url;
+use crate::hover_links::{find_url, find_url_from_range};
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
@@ -9241,23 +9241,45 @@ impl Editor {
     }
 
     pub fn open_url(&mut self, _: &OpenUrl, cx: &mut ViewContext<Self>) {
-        let position = self.selections.newest_anchor().head();
-        let Some((buffer, buffer_position)) =
-            self.buffer.read(cx).text_anchor_for_position(position, cx)
+        let selection = self.selections.newest_anchor();
+        let head = selection.head();
+        let tail = selection.tail();
+
+        let Some((buffer, start_position)) =
+            self.buffer.read(cx).text_anchor_for_position(head, cx)
         else {
             return;
         };
 
-        cx.spawn(|editor, mut cx| async move {
-            if let Some((_, url)) = find_url(&buffer, buffer_position, cx.clone()) {
-                editor.update(&mut cx, |_, cx| {
-                    cx.open_url(&url);
-                })
-            } else {
-                Ok(())
-            }
-        })
-        .detach();
+        let url_finder = if head == tail {
+            cx.spawn(|editor, mut cx| async move {
+                if let Some((_, url)) = find_url(&buffer, start_position, cx.clone()) {
+                    editor.update(&mut cx, |_, cx| {
+                        cx.open_url(&url);
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+        } else {
+            let Some((_, end_position)) = self.buffer.read(cx).text_anchor_for_position(tail, cx)
+            else {
+                return;
+            };
+            cx.spawn(|editor, mut cx| async move {
+                if let Some(url) =
+                    find_url_from_range(&buffer, start_position..end_position, cx.clone())
+                {
+                    editor.update(&mut cx, |_, cx| {
+                        cx.open_url(&url);
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+        };
+
+        url_finder.detach();
     }
 
     pub fn open_file(&mut self, _: &OpenFile, cx: &mut ViewContext<Self>) {
