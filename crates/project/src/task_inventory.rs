@@ -81,7 +81,8 @@ impl Inventory {
     }
 
     /// Pulls its task sources relevant to the worktree and the language given,
-    /// returns all task templates with their source kinds, in no specific order.
+    /// returns all task templates with their source kinds, worktree tasks first, language tasks second
+    /// and global tasks last. No specific order inside source kinds groups.
     pub fn list_tasks(
         &self,
         file: Option<Arc<dyn File>>,
@@ -92,13 +93,15 @@ impl Inventory {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().0,
         });
+        let global_tasks = self.global_templates_from_settings();
         let language_tasks = language
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.clone()?, task)));
+            .flat_map(|task| Some((task_source_kind.clone()?, task)))
+            .chain(global_tasks);
 
-        self.templates_from_settings(worktree)
+        self.worktree_templates_from_settings(worktree)
             .chain(language_tasks)
             .collect()
     }
@@ -165,14 +168,18 @@ impl Inventory {
             .collect::<Vec<_>>();
 
         let not_used_score = post_inc(&mut lru_score);
+        let global_tasks = self.global_templates_from_settings();
         let language_tasks = language
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.clone()?, task)));
-        let new_resolved_tasks = self
-            .templates_from_settings(worktree)
-            .chain(language_tasks)
+            .flat_map(|task| Some((task_source_kind.clone()?, task)))
+            .chain(global_tasks);
+        let worktree_tasks = self
+            .worktree_templates_from_settings(worktree)
+            .chain(language_tasks);
+
+        let new_resolved_tasks = worktree_tasks
             .filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
                 Some((
@@ -235,9 +242,8 @@ impl Inventory {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
 
-    fn templates_from_settings(
+    fn global_templates_from_settings(
         &self,
-        worktree: Option<WorktreeId>,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
         self.templates_from_settings
             .global
@@ -252,28 +258,34 @@ impl Inventory {
                     template,
                 )
             })
-            .chain(worktree.into_iter().flat_map(|worktree| {
-                self.templates_from_settings
-                    .worktree
-                    .get(&worktree)
-                    .into_iter()
-                    .flatten()
-                    .flat_map(|(directory, templates)| {
-                        templates.iter().map(move |template| (directory, template))
-                    })
-                    .map(move |(directory, template)| {
-                        (
-                            TaskSourceKind::Worktree {
-                                id: worktree,
-                                directory_in_worktree: directory.to_path_buf(),
-                                id_base: Cow::Owned(format!(
-                                    "local worktree tasks from directory {directory:?}"
-                                )),
-                            },
-                            template.clone(),
-                        )
-                    })
-            }))
+    }
+
+    fn worktree_templates_from_settings(
+        &self,
+        worktree: Option<WorktreeId>,
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
+        worktree.into_iter().flat_map(|worktree| {
+            self.templates_from_settings
+                .worktree
+                .get(&worktree)
+                .into_iter()
+                .flatten()
+                .flat_map(|(directory, templates)| {
+                    templates.iter().map(move |template| (directory, template))
+                })
+                .map(move |(directory, template)| {
+                    (
+                        TaskSourceKind::Worktree {
+                            id: worktree,
+                            directory_in_worktree: directory.to_path_buf(),
+                            id_base: Cow::Owned(format!(
+                                "local worktree tasks from directory {directory:?}"
+                            )),
+                        },
+                        template.clone(),
+                    )
+                })
+        })
     }
 
     /// Updates in-memory task metadata from the JSON string given.
@@ -404,6 +416,25 @@ mod test_inventory {
     }
 
     pub(super) async fn list_tasks(
+        inventory: &Model<Inventory>,
+        worktree: Option<WorktreeId>,
+        cx: &mut TestAppContext,
+    ) -> Vec<(TaskSourceKind, String)> {
+        inventory.update(cx, |inventory, cx| {
+            let task_context = &TaskContext::default();
+            inventory
+                .list_tasks(None, None, worktree, cx)
+                .into_iter()
+                .filter_map(|(source_kind, task)| {
+                    let id_base = source_kind.to_id_base();
+                    Some((source_kind, task.resolve_task(&id_base, task_context)?))
+                })
+                .map(|(source_kind, resolved_task)| (source_kind, resolved_task.resolved_label))
+                .collect()
+        })
+    }
+
+    pub(super) async fn list_tasks_sorted_by_last_used(
         inventory: &Model<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
@@ -790,6 +821,30 @@ mod tests {
         });
 
         assert_eq!(
+            list_tasks_sorted_by_last_used(&inventory, None, cx).await,
+            worktree_independent_tasks,
+            "Without a worktree, only worktree-independent tasks should be listed"
+        );
+        assert_eq!(
+            list_tasks_sorted_by_last_used(&inventory, Some(worktree_1), cx).await,
+            worktree_1_tasks
+                .iter()
+                .chain(worktree_independent_tasks.iter())
+                .cloned()
+                .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            list_tasks_sorted_by_last_used(&inventory, Some(worktree_2), cx).await,
+            worktree_2_tasks
+                .iter()
+                .chain(worktree_independent_tasks.iter())
+                .cloned()
+                .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
+                .collect::<Vec<_>>(),
+        );
+
+        assert_eq!(
             list_tasks(&inventory, None, cx).await,
             worktree_independent_tasks,
             "Without a worktree, only worktree-independent tasks should be listed"
@@ -800,7 +855,6 @@ mod tests {
                 .iter()
                 .chain(worktree_independent_tasks.iter())
                 .cloned()
-                .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
                 .collect::<Vec<_>>(),
         );
         assert_eq!(
@@ -809,7 +863,6 @@ mod tests {
                 .iter()
                 .chain(worktree_independent_tasks.iter())
                 .cloned()
-                .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
                 .collect::<Vec<_>>(),
         );
     }
