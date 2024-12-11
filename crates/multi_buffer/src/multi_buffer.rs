@@ -168,8 +168,6 @@ pub trait ToPointUtf16: 'static + fmt::Debug {
 struct BufferState {
     buffer: Model<Buffer>,
     last_version: clock::Global,
-    last_is_dirty: bool,
-    last_has_conflict: bool,
     last_non_text_state_update_count: usize,
     excerpts: Vec<Locator>,
     _subscriptions: [gpui::Subscription; 2],
@@ -418,8 +416,6 @@ impl MultiBuffer {
                 BufferState {
                     buffer: buffer_state.buffer.clone(),
                     last_version: buffer_state.last_version.clone(),
-                    last_is_dirty: buffer_state.last_is_dirty,
-                    last_has_conflict: buffer_state.last_has_conflict,
                     last_non_text_state_update_count: buffer_state.last_non_text_state_update_count,
                     excerpts: buffer_state.excerpts.clone(),
                     _subscriptions: [
@@ -1406,26 +1402,15 @@ impl MultiBuffer {
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let mut buffers = self.buffers.borrow_mut();
-        let buffer_state = buffers.entry(buffer_id).or_insert_with(|| {
-            let last_is_dirty;
-            let last_has_conflict;
-            {
-                let buffer = buffer.read(cx);
-                last_is_dirty = buffer.is_dirty();
-                last_has_conflict = buffer.has_conflict();
-            }
-            BufferState {
-                last_version: buffer_snapshot.version().clone(),
-                last_non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
-                last_is_dirty,
-                last_has_conflict,
-                excerpts: Default::default(),
-                _subscriptions: [
-                    cx.observe(&buffer, |_, _, cx| cx.notify()),
-                    cx.subscribe(&buffer, Self::on_buffer_event),
-                ],
-                buffer: buffer.clone(),
-            }
+        let buffer_state = buffers.entry(buffer_id).or_insert_with(|| BufferState {
+            last_version: buffer_snapshot.version().clone(),
+            last_non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
+            excerpts: Default::default(),
+            _subscriptions: [
+                cx.observe(&buffer, |_, _, cx| cx.notify()),
+                cx.subscribe(&buffer, Self::on_buffer_event),
+            ],
+            buffer: buffer.clone(),
         });
 
         let mut snapshot = self.snapshot.borrow_mut();
@@ -2113,13 +2098,7 @@ impl MultiBuffer {
             let buffer_edited = version.changed_since(&buffer_state.last_version);
             let buffer_non_text_state_updated =
                 non_text_state_update_count > buffer_state.last_non_text_state_update_count;
-            let buffer_is_dirty;
-            let buffer_has_conflict;
             if buffer_edited || buffer_non_text_state_updated {
-                buffer_is_dirty = buffer.is_dirty();
-                buffer_has_conflict = buffer.has_conflict();
-                buffer_state.last_has_conflict = buffer_has_conflict;
-                buffer_state.last_is_dirty = buffer_is_dirty;
                 buffer_state.last_version = version;
                 buffer_state.last_non_text_state_update_count = non_text_state_update_count;
                 excerpts_to_edit.extend(
@@ -2128,18 +2107,15 @@ impl MultiBuffer {
                         .iter()
                         .map(|locator| (locator, buffer_state.buffer.clone(), buffer_edited)),
                 );
-            } else {
-                buffer_is_dirty = buffer_state.last_is_dirty;
-                buffer_has_conflict = buffer_state.last_has_conflict;
             }
 
             edited |= buffer_edited;
             non_text_state_updated |= buffer_non_text_state_updated;
-            is_dirty |= buffer_is_dirty;
+            is_dirty |= buffer.is_dirty();
             has_deleted_file |= buffer
                 .file()
                 .map_or(false, |file| file.disk_state() == DiskState::Deleted);
-            has_conflict |= buffer_has_conflict;
+            has_conflict |= buffer.has_conflict();
         }
         if edited {
             snapshot.edit_count += 1;
