@@ -2902,7 +2902,7 @@ mod tests {
         workspace
             .update(cx, |_, model, cx| {
                 editor1.update(cx, |editor, model, cx| {
-                    editor.change_selections(None, cx, |s| {
+                    editor.change_selections(None, model, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(15), 0)
                             ..DisplayPoint::new(DisplayRow(15), 0)])
                     })
@@ -2913,7 +2913,7 @@ mod tests {
             workspace
                 .update(cx, |_, model, cx| {
                     editor1.update(cx, |editor, model, cx| {
-                        editor.change_selections(None, cx, |s| {
+                        editor.change_selections(None, model, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(3), 0)
                                 ..DisplayPoint::new(DisplayRow(3), 0)])
                         });
@@ -2924,7 +2924,7 @@ mod tests {
             workspace
                 .update(cx, |_, model, cx| {
                     editor1.update(cx, |editor, model, cx| {
-                        editor.change_selections(None, cx, |s| {
+                        editor.change_selections(None, model, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(13), 0)
                                 ..DisplayPoint::new(DisplayRow(13), 0)])
                         })
@@ -2936,7 +2936,7 @@ mod tests {
             .update(cx, |_, model, cx| {
                 editor1.update(cx, |editor, model, cx| {
                     editor.transact(cx, |editor, cx| {
-                        editor.change_selections(None, cx, |s| {
+                        editor.change_selections(None, model, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(2), 0)
                                 ..DisplayPoint::new(DisplayRow(14), 0)])
                         });
@@ -2949,7 +2949,7 @@ mod tests {
         workspace
             .update(cx, |_, model, cx| {
                 editor1.update(cx, |editor, model, cx| {
-                    editor.change_selections(None, cx, |s| {
+                    editor.change_selections(None, model, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(1), 0)
                             ..DisplayPoint::new(DisplayRow(1), 0)])
                     })

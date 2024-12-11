@@ -8,6 +8,7 @@ use gpui::{
     InteractiveElement, IntoElement, Model, Render, Subscription, Window,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
+use settings::Settings;
 use std::{rc::Rc, time::Duration};
 use theme::ThemeSettings;
 
@@ -576,7 +577,7 @@ impl Render for ContextMenu {
                                         })
                                         .child(entry_render(window, cx))
                                         .into_any_element()
-                                }`
+                                }
                             }
                         },
                     ))),

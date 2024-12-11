@@ -572,10 +572,10 @@ impl MultiBuffer {
                     buffer.edit(edits, autoindent_mode, model, cx);
                 });
                 model.emit(
-                    cx,
                     Event::ExcerptsEdited {
                         ids: this.excerpt_ids(),
                     },
+                    cx,
                 );
                 return;
             }
@@ -662,10 +662,10 @@ impl MultiBuffer {
             }
 
             model.emit(
-                cx,
                 Event::ExcerptsEdited {
                     ids: edited_excerpt_ids,
                 },
+                cx,
             );
         }
     }
@@ -810,10 +810,10 @@ impl MultiBuffer {
                     buffer.autoindent_ranges(edits.into_iter().map(|e| e.0), model, cx);
                 });
                 model.emit(
-                    cx,
                     Event::ExcerptsEdited {
                         ids: this.excerpt_ids(),
                     },
+                    cx,
                 );
                 return;
             }
@@ -2061,10 +2061,10 @@ impl MultiBuffer {
 
         self.subscriptions.publish_mut(edits);
         model.emit(
-            cx,
             Event::Edited {
                 singleton_buffer_edited: false,
             },
+            cx,
         );
         model.emit(Event::ExcerptsExpanded { ids: vec![id] }, cx);
         model.notify(cx);
@@ -2162,10 +2162,10 @@ impl MultiBuffer {
 
         self.subscriptions.publish_mut(edits);
         model.emit(
-            cx,
             Event::Edited {
                 singleton_buffer_edited: false,
             },
+            cx,
         );
         model.emit(Event::ExcerptsExpanded { ids }, cx);
         model.notify(cx);

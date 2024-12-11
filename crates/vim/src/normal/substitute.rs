@@ -8,17 +8,17 @@ actions!(vim, [Substitute, SubstituteLine]);
 
 pub(crate) fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
     Vim::action(editor, cx, |vim, _: &Substitute, cx| {
-        vim.start_recording(cx);
-        let count = Vim::take_count(cx);
-        vim.substitute(count, vim.mode == Mode::VisualLine, cx);
+        vim.start_recording(model, cx);
+        let count = Vim::take_count(model, cx);
+        vim.substitute(count, vim.mode == Mode::VisualLine, model, cx);
     });
 
     Vim::action(editor, cx, |vim, _: &SubstituteLine, cx| {
-        vim.start_recording(cx);
+        vim.start_recording(model, cx);
         if matches!(vim.mode, Mode::VisualBlock | Mode::Visual) {
             vim.switch_mode(Mode::VisualLine, false, cx)
         }
-        let count = Vim::take_count(cx);
+        let count = Vim::take_count(model, cx);
         vim.substitute(count, true, cx)
     });
 }
@@ -31,12 +31,12 @@ impl Vim {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.store_visual_marks(cx);
+        self.store_visual_marks(model, cx);
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             editor.transact(cx, |editor, cx| {
                 let text_layout_details = editor.text_layout_details(cx);
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, model, cx, |s| {
                     s.move_with(|map, selection| {
                         if selection.start == selection.end {
                             Motion::Right.expand_selection(

@@ -865,8 +865,8 @@ mod tests {
             })
             .collect();
         let snapshot = display_map.update(cx, |map, model, cx| {
-            map.splice_inlays(Vec::new(), inlays, cx);
-            map.snapshot(cx)
+            map.splice_inlays(Vec::new(), inlays, model, cx);
+            map.snapshot(model, cx)
         });
 
         assert_eq!(
@@ -1020,7 +1020,7 @@ mod tests {
 
             let font = font("Helvetica");
 
-            let buffer = cx.new_model(|model, cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
+            let buffer = cx.new_model(|model, cx| Buffer::local("abc\ndefg\nhijkl\nmn", model, cx));
             let multibuffer = cx.new_model(|model, cx| {
                 let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
                 multibuffer.push_excerpts(
@@ -1035,6 +1035,7 @@ mod tests {
                             primary: None,
                         },
                     ],
+                    model,
                     cx,
                 );
                 multibuffer
@@ -1054,7 +1055,7 @@ mod tests {
                     cx,
                 )
             });
-            let snapshot = display_map.update(cx, |map, model, cx| map.snapshot(cx));
+            let snapshot = display_map.update(cx, |map, model, cx| map.snapshot(model, cx));
 
             assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
 

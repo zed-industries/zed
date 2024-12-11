@@ -65,7 +65,7 @@ impl Vim {
 
                 editor.edit_with_block_indent(edits.clone(), Vec::new(), cx);
 
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, model, cx, |s| {
                     s.select_anchor_ranges(edits.iter().map(|(range, _)| range.end..range.end));
                 });
                 editor.set_clip_at_line_ends(true, cx);
@@ -117,7 +117,7 @@ impl Vim {
 
                 editor.edit(edits, model, cx);
 
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, model, cx, |s| {
                     s.select_ranges(new_selections);
                 });
                 editor.set_clip_at_line_ends(true, cx);

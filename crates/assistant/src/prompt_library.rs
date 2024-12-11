@@ -527,7 +527,7 @@ impl PromptLibrary {
             if focus {
                 prompt_editor
                     .body_editor
-                    .update(cx, |editor, model, cx| editor.focus(window));
+                    .update(cx, |editor, model, cx| editor.focus(window, cx));
             }
             self.set_active_prompt(Some(prompt_id), model, cx);
         } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
@@ -539,7 +539,7 @@ impl PromptLibrary {
                 this.update(&mut cx, |this, model, cx| match prompt {
                     Ok(prompt) => {
                         let title_editor = cx.new_model(|model, cx| {
-                            let mut editor = Editor::auto_width(cx);
+                            let mut editor = Editor::auto_width(model, cx);
                             editor.set_placeholder_text("Untitled", model, cx);
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), model, cx);
                             if prompt_id.is_built_in() {
@@ -549,7 +549,8 @@ impl PromptLibrary {
                             editor
                         });
                         let body_editor = cx.new_model(|model, cx| {
-                            let buffer = cx.new_model(|model, cx| {
+                            // todo!: Remove this type annotation on cx
+                            let buffer = cx.new_model(|model, cx: &mut AppContext| {
                                 let mut buffer = Buffer::local(prompt, model, cx);
                                 buffer.set_language(markdown.log_err(), model, cx);
                                 buffer.set_language_registry(language_registry);
@@ -575,7 +576,7 @@ impl PromptLibrary {
                                 ),
                             )));
                             if focus {
-                                editor.focus(window);
+                                editor.focus(window, cx);
                             }
                             editor
                         });
@@ -729,7 +730,7 @@ impl PromptLibrary {
         if let Some(active_prompt) = self.active_prompt_id {
             self.prompt_editors[&active_prompt]
                 .body_editor
-                .update(cx, |editor, model, cx| editor.focus(window));
+                .update(cx, |editor, model, cx| editor.focus(window, cx));
             cx.stop_propagation();
         }
     }
@@ -758,7 +759,7 @@ impl PromptLibrary {
         let initial_prompt = action.prompt.clone();
         if provider.is_authenticated(cx) {
             InlineAssistant::update_global(cx, |assistant, cx| {
-                assistant.assist(&prompt_editor, None, None, initial_prompt, model, cx)
+                assistant.assist(&prompt_editor, None, None, initial_prompt, window, cx)
             })
         } else {
             for window in cx.windows() {
@@ -819,7 +820,7 @@ impl PromptLibrary {
             }
             EditorEvent::Blurred => {
                 title_editor.update(cx, |title_editor, model, cx| {
-                    title_editor.change_selections(None, cx, |selections| {
+                    title_editor.change_selections(None, model, cx, |selections| {
                         let cursor = selections.oldest_anchor().head();
                         selections.select_anchor_ranges([cursor..cursor]);
                     });
@@ -844,7 +845,7 @@ impl PromptLibrary {
             }
             EditorEvent::Blurred => {
                 body_editor.update(cx, |body_editor, model, cx| {
-                    body_editor.change_selections(None, cx, |selections| {
+                    body_editor.change_selections(None, model, cx, |selections| {
                         let cursor = selections.oldest_anchor().head();
                         selections.select_anchor_ranges([cursor..cursor]);
                     });
@@ -917,7 +918,7 @@ impl PromptLibrary {
                             .style(ButtonStyle::Transparent)
                             .shape(IconButtonShape::Square)
                             .tooltip(move |window, cx| {
-                                Tooltip::for_action("New Prompt", &NewPrompt, model, cx)
+                                Tooltip::for_action("New Prompt", &NewPrompt, window, cx)
                             })
                             .on_click(|_, cx| {
                                 cx.dispatch_action(Box::new(NewPrompt));
@@ -1010,7 +1011,7 @@ impl PromptLibrary {
                                                     syntax: cx.theme().syntax().clone(),
                                                     status: cx.theme().status().clone(),
                                                     inlay_hints_style:
-                                                        editor::make_inlay_hints_style(cx),
+                                                        editor::make_inlay_hints_style(model, cx),
                                                     suggestions_style: HighlightStyle {
                                                         color: Some(cx.theme().status().predictive),
                                                         ..HighlightStyle::default()
@@ -1061,6 +1062,7 @@ impl PromptLibrary {
                                                                                 .0)
                                                                             .unwrap_or_default()
                                                                     ),
+                                                                    model,
                                                                     cx,
                                                                 )
                                                             })
@@ -1085,6 +1087,7 @@ impl PromptLibrary {
                                                                 "Built-in prompt",
                                                                 None,
                                                                 BUILT_IN_TOOLTIP_TEXT,
+                                                                model,
                                                                 cx,
                                                             )
                                                         })
@@ -1102,6 +1105,7 @@ impl PromptLibrary {
                                                         Tooltip::for_action(
                                                             "Delete Prompt",
                                                             &DeletePrompt,
+                                                            model,
                                                             cx,
                                                         )
                                                     })
@@ -1123,6 +1127,7 @@ impl PromptLibrary {
                                                         Tooltip::for_action(
                                                             "Duplicate Prompt",
                                                             &DuplicatePrompt,
+                                                            model,
                                                             cx,
                                                         )
                                                     })
@@ -1187,7 +1192,7 @@ impl Render for PromptLibrary {
         window: &mut gpui::Window,
         cx: &mut AppContext,
     ) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(cx);
+        let ui_font = theme::setup_ui_font(window, cx);
         let theme = cx.theme().clone();
 
         h_flex()
@@ -1203,7 +1208,7 @@ impl Render for PromptLibrary {
             .overflow_hidden()
             .font(ui_font)
             .text_color(theme.colors().text)
-            .child(self.render_prompt_list(cx))
+            .child(self.render_prompt_list(model, cx))
             .map(|el| {
                 if self.store.prompt_count() == 0 {
                     el.child(
@@ -1239,7 +1244,7 @@ impl Render for PromptLibrary {
                                                 Button::new("create-prompt", "New Prompt")
                                                     .full_width()
                                                     .key_binding(KeyBinding::for_action(
-                                                        &NewPrompt, cx,
+                                                        &NewPrompt, window, cx,
                                                     ))
                                                     .on_click(|_, cx| {
                                                         cx.dispatch_action(NewPrompt.boxed_clone())
@@ -1250,7 +1255,7 @@ impl Render for PromptLibrary {
                             ),
                     )
                 } else {
-                    el.child(self.render_active_prompt(cx))
+                    el.child(self.render_active_prompt(model, cx))
                 }
             })
     }

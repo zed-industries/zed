@@ -1017,7 +1017,7 @@ impl ProjectPanel {
 
                             if is_dir {
                                 project_panel.project.update(cx, |_, model, cx| {
-                                    model.emit(, cxproject::Event::Toast {
+                                    model.emit(project::Event::Toast {
                                         notification_id: "excluded-directory".into(),
                                         message: format!("Created an excluded directory at {abs_path:?}.\nAlter `file_scan_exclusions` in the settings to show it in the panel")
                                     })
@@ -1066,7 +1066,7 @@ impl ProjectPanel {
         allow_preview: bool,
         model: &Model<Self>, cx: &mut AppContext,
     ) {
-        model.emit(, cxEvent::OpenedEntry {
+        model.emit(Event::OpenedEntry {
             entry_id,
             focus_opened_item,
             allow_preview,
@@ -1136,7 +1136,7 @@ impl ProjectPanel {
             });
             self.filename_editor.update(cx, |editor, model, cx| {
                 editor.clear(cx);
-                editor.focus(window);
+                editor.focus(window, cx);
             });
             self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), model, cx);
             self.autoscroll(model, cx);
@@ -1188,7 +1188,7 @@ impl ProjectPanel {
                         editor.change_selections(Some(Autoscroll::fit()), model, cx, |s| {
                             s.select_ranges([0..selection_end])
                         });
-                        editor.focus(window);
+                        editor.focus(window, cx);
                     });
                     self.update_visible_entries(None, model, cx);
                     self.autoscroll(model, cx);

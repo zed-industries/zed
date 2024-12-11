@@ -126,7 +126,7 @@ impl Editor {
             MultiCursorModifier::CmdOrCtrl => modifiers.alt,
         };
         if !hovered_link_modifier || self.has_pending_selection() {
-            self.hide_hovered_link(cx);
+            self.hide_hovered_link(model, cx);
             return;
         }
 
@@ -138,7 +138,7 @@ impl Editor {
                         .anchor_before(point.to_offset(&snapshot.display_snapshot, Bias::Left)),
                 );
 
-                show_link_definition(modifiers.shift, self, trigger_point, snapshot, cx);
+                show_link_definition(modifiers.shift, self, trigger_point, snapshot, model, cx);
             }
             None => {
                 update_inlay_link_and_hover_points(
@@ -155,7 +155,7 @@ impl Editor {
 
     pub(crate) fn hide_hovered_link(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.hovered_link_state.take();
-        self.clear_highlights::<HoveredLinkState>(cx);
+        self.clear_highlights::<HoveredLinkState>(model, cx);
     }
 
     pub(crate) fn handle_click_hovered_link(
@@ -165,7 +165,7 @@ impl Editor {
         model: &Model<Editor>,
         cx: &mut AppContext,
     ) {
-        let reveal_task = self.cmd_click_reveal_task(point, modifiers, cx);
+        let reveal_task = self.cmd_click_reveal_task(point, modifiers, model, cx);
         cx.spawn(|editor, mut cx| async move {
             let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);
             let find_references = editor
@@ -191,7 +191,7 @@ impl Editor {
         cx: &mut AppContext,
     ) -> bool {
         let selection = self.selections.newest_anchor().head();
-        let snapshot = self.snapshot(cx);
+        let snapshot = self.snapshot(model, cx);
 
         let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
             popover
@@ -200,7 +200,7 @@ impl Editor {
         }) else {
             return false;
         };
-        popover.scroll(amount, cx);
+        popover.scroll(amount, model, cx);
         true
     }
 
@@ -212,7 +212,7 @@ impl Editor {
         cx: &mut AppContext,
     ) -> Task<anyhow::Result<Navigated>> {
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
-            self.hide_hovered_link(cx);
+            self.hide_hovered_link(model, cx);
             if !hovered_link_state.links.is_empty() {
                 if !self.focus_handle.is_focused(window) {
                     cx.focus(&self.focus_handle);
@@ -221,7 +221,7 @@ impl Editor {
                 // exclude links pointing back to the current anchor
                 let current_position = point
                     .next_valid
-                    .to_point(&self.snapshot(cx).display_snapshot);
+                    .to_point(&self.snapshot(model, cx).display_snapshot);
                 let Some((buffer, anchor)) = self
                     .buffer()
                     .read(cx)
@@ -241,7 +241,7 @@ impl Editor {
                     })
                     .collect();
 
-                return self.navigate_to_hover_links(None, links, modifiers.alt, cx);
+                return self.navigate_to_hover_links(None, links, modifiers.alt, model, cx);
             }
         }
 
@@ -253,14 +253,15 @@ impl Editor {
                 add: false,
                 click_count: 1,
             },
+            model,
             cx,
         );
 
         if point.as_valid().is_some() {
             if modifiers.shift {
-                self.go_to_type_definition(&GoToTypeDefinition, cx)
+                self.go_to_type_definition(&GoToTypeDefinition, model, cx)
             } else {
-                self.go_to_definition(&GoToDefinition, cx)
+                self.go_to_definition(&GoToDefinition, model, cx)
             }
         } else {
             Task::ready(Ok(Navigated::No))
@@ -295,7 +296,7 @@ pub fn update_inlay_link_and_hover_points(
             Bias::Right,
         );
         if let Some(hovered_hint) = editor
-            .visible_inlay_hints(cx)
+            .visible_inlay_hints(model, cx)
             .into_iter()
             .skip_while(|hint| {
                 hint.position
@@ -319,6 +320,7 @@ pub fn update_inlay_link_and_hover_points(
                                 buffer_id,
                                 excerpt_id,
                                 hovered_hint.id,
+                                model,
                                 cx,
                             );
                         }
@@ -424,6 +426,7 @@ pub fn update_inlay_link_and_hover_points(
                                                     language_server_id,
                                                 ),
                                                 snapshot,
+                                                model,
                                                 cx,
                                             );
                                         }
@@ -439,7 +442,7 @@ pub fn update_inlay_link_and_hover_points(
     }
 
     if !go_to_definition_updated {
-        editor.hide_hovered_link(cx)
+        editor.hide_hovered_link(model, cx)
     }
     if !hover_updated {
         hover_popover::hover_at(editor, None, model, cx);
@@ -515,7 +518,7 @@ pub fn show_link_definition(
             return;
         }
     } else {
-        editor.hide_hovered_link(cx)
+        editor.hide_hovered_link(model, cx)
     }
     let project = editor.project.clone();
     let provider = editor.semantics_provider.clone();
@@ -525,7 +528,9 @@ pub fn show_link_definition(
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
+                    if let Some((url_range, url)) =
+                        find_url(&buffer, buffer_position, model, cx.clone())
+                    {
                         this.update(&mut cx, |_, _| {
                             let range = maybe!({
                                 let start =
@@ -537,7 +542,7 @@ pub fn show_link_definition(
                         })
                         .ok()
                     } else if let Some((filename_range, filename)) =
-                        find_file(&buffer, project.clone(), buffer_position, &mut cx).await
+                        find_file(&buffer, project.clone(), buffer_position, model, &mut cx).await
                     {
                         let range = maybe!({
                             let start =
@@ -730,14 +735,15 @@ pub(crate) async fn find_file(
     ) -> Option<ResolvedPath> {
         project
             .update(cx, |project, model, cx| {
-                project.resolve_path_in_buffer(&candidate_file_path, buffer, cx)
+                project.resolve_path_in_buffer(&candidate_file_path, buffer, model, cx)
             })
             .ok()?
             .await
             .filter(|s| s.is_file())
     }
 
-    if let Some(existing_path) = check_path(&candidate_file_path, &project, buffer, cx).await {
+    if let Some(existing_path) = check_path(&candidate_file_path, &project, buffer, model, cx).await
+    {
         return Some((range, existing_path));
     }
 
@@ -748,7 +754,8 @@ pub(crate) async fn find_file(
             }
 
             let suffixed_candidate = format!("{candidate_file_path}.{suffix}");
-            if let Some(existing_path) = check_path(&suffixed_candidate, &project, buffer, cx).await
+            if let Some(existing_path) =
+                check_path(&suffixed_candidate, &project, buffer, model, cx).await
             {
                 return Some((range, existing_path));
             }

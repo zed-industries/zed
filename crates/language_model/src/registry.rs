@@ -49,11 +49,11 @@ impl LanguageModelRegistry {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> crate::fake_provider::FakeLanguageModelProvider {
         let fake_provider = crate::fake_provider::FakeLanguageModelProvider;
-        let registry = cx.new_model(|model, cx| {
+        let registry = cx.new_model(|entity, cx| {
             let mut registry = Self::default();
-            registry.register_provider(fake_provider.clone(), cx);
+            registry.register_provider(fake_provider.clone(), entity, cx);
             let model = fake_provider.provided_models(cx)[0].clone();
-            registry.set_active_model(Some(model), cx);
+            registry.set_active_model(Some(model), entity, cx);
             registry
         });
         cx.set_global(GlobalLanguageModelRegistry(registry));
@@ -68,7 +68,7 @@ impl LanguageModelRegistry {
     ) {
         let id = provider.id();
 
-        let subscription = provider.subscribe(cx, |_, cx| {
+        let subscription = provider.subscribe(model, cx, |_, model, cx| {
             model.emit(Event::ProviderStateChanged, cx);
         });
         if let Some(subscription) = subscription {
@@ -123,16 +123,20 @@ impl LanguageModelRegistry {
         &mut self,
         provider: &LanguageModelProviderId,
         model_id: &LanguageModelId,
-        model: &Model<Self>,
-        cx: &mut AppContext,
+        entity: &Model<Self>,
+        app: &mut AppContext,
     ) {
         let Some(provider) = self.provider(provider) else {
             return;
         };
 
-        let models = provider.provided_models(cx);
-        if let Some(model) = models.iter().find(|model| &model.id() == model_id).cloned() {
-            self.set_active_model(Some(model), cx);
+        let language_models = provider.provided_models(app);
+        if let Some(language_model) = language_models
+            .iter()
+            .find(|model| &model.id() == model_id)
+            .cloned()
+        {
+            self.set_active_model(Some(language_model), entity, app);
         }
     }
 
@@ -151,16 +155,16 @@ impl LanguageModelRegistry {
 
     pub fn set_active_model(
         &mut self,
-        model: Option<Arc<dyn LanguageModel>>,
+        language_model: Option<Arc<dyn LanguageModel>>,
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        if let Some(model) = model {
-            let provider_id = model.provider_id();
+        if let Some(language_model) = language_model {
+            let provider_id = language_model.provider_id();
             if let Some(provider) = self.providers.get(&provider_id).cloned() {
                 self.active_model = Some(ActiveModel {
                     provider,
-                    model: Some(model),
+                    model: Some(language_model),
                 });
                 model.emit(Event::ActiveModelChanged, cx);
             } else {
@@ -223,7 +227,7 @@ mod tests {
         let registry = cx.new_model(|_, _| LanguageModelRegistry::default());
 
         registry.update(cx, |registry, model, cx| {
-            registry.register_provider(FakeLanguageModelProvider, cx);
+            registry.register_provider(FakeLanguageModelProvider, model, cx);
         });
 
         let providers = registry.read(cx).providers();
@@ -231,7 +235,7 @@ mod tests {
         assert_eq!(providers[0].id(), crate::fake_provider::provider_id());
 
         registry.update(cx, |registry, model, cx| {
-            registry.unregister_provider(crate::fake_provider::provider_id(), cx);
+            registry.unregister_provider(crate::fake_provider::provider_id(), model, cx);
         });
 
         let providers = registry.read(cx).providers();

@@ -661,11 +661,11 @@ impl ChannelChat {
                 );
             }
             model.emit(
-                cx,
                 ChannelChatEvent::MessagesUpdated {
                     old_range: start_ix..end_ix,
                     new_count,
                 },
+                cx,
             );
 
             model.notify(cx);
@@ -697,11 +697,11 @@ impl ChannelChat {
                 });
 
                 model.emit(
-                    cx,
                     ChannelChatEvent::MessagesUpdated {
                         old_range: deleted_message_ix..deleted_message_ix + 1,
                         new_count: 0,
                     },
+                    cx,
                 );
             }
         }
@@ -733,11 +733,11 @@ impl ChannelChat {
         self.messages = messages;
 
         model.emit(
-            cx,
             ChannelChatEvent::UpdateMessage {
                 message_ix: ix,
                 message_id: id,
             },
+            cx,
         );
 
         model.notify(cx);

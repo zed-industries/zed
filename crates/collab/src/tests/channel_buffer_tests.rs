@@ -177,7 +177,7 @@ async fn test_channel_notes_participant_indices(
     channel_view_a.update(cx_a, |notes, cx| {
         notes.editor.update(cx, |editor, model, cx| {
             editor.insert("a", cx);
-            editor.change_selections(None, cx, |selections| {
+            editor.change_selections(None, model, cx, |selections| {
                 selections.select_ranges(vec![0..1]);
             });
         });
@@ -187,7 +187,7 @@ async fn test_channel_notes_participant_indices(
         notes.editor.update(cx, |editor, model, cx| {
             editor.move_down(&Default::default(), cx);
             editor.insert("b", cx);
-            editor.change_selections(None, cx, |selections| {
+            editor.change_selections(None, model, cx, |selections| {
                 selections.select_ranges(vec![1..2]);
             });
         });
@@ -197,7 +197,7 @@ async fn test_channel_notes_participant_indices(
         notes.editor.update(cx, |editor, model, cx| {
             editor.move_down(&Default::default(), cx);
             editor.insert("c", cx);
-            editor.change_selections(None, cx, |selections| {
+            editor.change_selections(None, model, cx, |selections| {
                 selections.select_ranges(vec![2..3]);
             });
         });
@@ -227,6 +227,7 @@ async fn test_channel_notes_participant_indices(
             assert_remote_selections(
                 editor,
                 &[(Some(ParticipantIndex(1)), 1..2), (None, 2..3)],
+                model,
                 cx,
             );
         });
@@ -236,6 +237,7 @@ async fn test_channel_notes_participant_indices(
             assert_remote_selections(
                 editor,
                 &[(Some(ParticipantIndex(0)), 0..1), (None, 2..3)],
+                model,
                 cx,
             );
         });
@@ -270,12 +272,12 @@ async fn test_channel_notes_participant_indices(
         .unwrap();
 
     editor_a.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |selections| {
+        editor.change_selections(None, model, cx, |selections| {
             selections.select_ranges(vec![0..1]);
         });
     });
     editor_b.update(cx_b, |editor, cx| {
-        editor.change_selections(None, cx, |selections| {
+        editor.change_selections(None, model, cx, |selections| {
             selections.select_ranges(vec![2..3]);
         });
     });
@@ -297,7 +299,7 @@ fn assert_remote_selections(
     model: &Model<Editor>,
     cx: &mut AppContext,
 ) {
-    let snapshot = editor.snapshot(cx);
+    let snapshot = editor.snapshot(model, cx);
     let range = Anchor::min()..Anchor::max();
     let remote_selections = snapshot
         .remote_selections_in_range(&range, editor.collaboration_hub().unwrap(), cx)
@@ -644,7 +646,7 @@ async fn test_channel_buffer_changes(
     // Closing the buffer should re-enable change tracking
     cx_b.update(|cx| {
         workspace_b.update(cx, |workspace, model, cx| {
-            workspace.close_all_items_and_panes(&Default::default(), cx)
+            workspace.close_all_items_and_panes(&Default::default(), model, cx)
         });
     });
     deterministic.run_until_parked();

@@ -41,7 +41,7 @@ pub fn toggle(
 
     if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_modal(cx, |cx| OutlineView::new(outline, editor, model, cx));
+            workspace.toggle_modal(cx, model, |cx| OutlineView::new(outline, editor, model, cx));
         })
     }
 }
@@ -60,7 +60,7 @@ impl EventEmitter<DismissEvent> for OutlineView {}
 impl ModalView for OutlineView {
     fn on_before_dismiss(&mut self, model: &Model<Self>, cx: &mut AppContext) -> DismissDecision {
         self.picker.update(cx, |picker, model, cx| {
-            picker.delegate.restore_active_editor(cx)
+            picker.delegate.restore_active_editor(model, cx)
         });
         DismissDecision::Dismiss(true)
     }
@@ -79,7 +79,7 @@ impl OutlineView {
             editor
                 .register_action(move |action, cx| {
                     if let Some(editor) = handle.upgrade() {
-                        toggle(editor, action, cx);
+                        toggle(editor, action, model, cx);
                     }
                 })
                 .detach();
@@ -94,7 +94,7 @@ impl OutlineView {
     ) -> OutlineView {
         let delegate = OutlineViewDelegate::new(model.downgrade(), outline, editor, model, cx);
         let picker = cx.new_model(|model, cx| {
-            Picker::uniform_list(delegate, cx).max_height(Some(vh(0.75, cx)))
+            Picker::uniform_list(delegate, model, cx).max_height(Some(vh(0.75, model, cx)))
         });
         OutlineView { picker }
     }
@@ -137,7 +137,7 @@ impl OutlineViewDelegate {
         self.active_editor.update(cx, |editor, model, cx| {
             editor.clear_row_highlights::<OutlineRowHighlights>();
             if let Some(scroll_position) = self.prev_scroll_position {
-                editor.set_scroll_position(scroll_position, cx);
+                editor.set_scroll_position(scroll_position, model, cx);
             }
         })
     }
@@ -161,9 +161,10 @@ impl OutlineViewDelegate {
                     outline_item.range.start..outline_item.range.end,
                     cx.theme().colors().editor_highlighted_line_background,
                     true,
+                    model,
                     cx,
                 );
-                active_editor.request_autoscroll(Autoscroll::center(), cx);
+                active_editor.request_autoscroll(Autoscroll::center(), model, cx);
             });
         }
     }
@@ -250,7 +251,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 .unwrap_or(0);
         }
         self.last_query = query;
-        self.set_selected_index(selected_index, !self.last_query.is_empty(), cx);
+        self.set_selected_index(selected_index, !self.last_query.is_empty(), model, cx);
         Task::ready(())
     }
 
@@ -262,22 +263,22 @@ impl PickerDelegate for OutlineViewDelegate {
                 .highlighted_rows::<OutlineRowHighlights>()
                 .next();
             if let Some((rows, _)) = highlight {
-                active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                active_editor.change_selections(Some(Autoscroll::center()), model, cx, |s| {
                     s.select_ranges([rows.start..rows.start])
                 });
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
-                active_editor.focus(window);
+                active_editor.focus(window, cx);
             }
         });
 
-        self.dismissed(cx);
+        self.dismissed(model, cx);
     }
 
     fn dismissed(&mut self, model: &Model<Picker>, cx: &mut AppContext) {
         self.outline_view
             .update(cx, |_, model, cx| model.emit(DismissEvent, cx))
             .log_err();
-        self.restore_active_editor(cx);
+        self.restore_active_editor(model, cx);
     }
 
     fn render_match(
@@ -373,7 +374,8 @@ mod tests {
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, cx) =
+            cx.add_window_view(|cx| Workspace::test_new(project.clone(), model, cx));
         let worktree_id = workspace.update(cx, |workspace, model, cx| {
             workspace.project().update(cx, |project, model, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -381,7 +383,7 @@ mod tests {
         });
         let _buffer = project
             .update(cx, |project, model, cx| {
-                project.open_local_buffer("/dir/a.rs", cx)
+                project.open_local_buffer("/dir/a.rs", model, cx)
             })
             .await
             .unwrap();
@@ -511,7 +513,7 @@ mod tests {
     fn highlighted_display_rows(editor: &Model<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
         editor.update(cx, |editor, model, cx| {
             editor
-                .highlighted_display_rows(cx)
+                .highlighted_display_rows(model, cx)
                 .into_keys()
                 .map(|r| r.0)
                 .collect()

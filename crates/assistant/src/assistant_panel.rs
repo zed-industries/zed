@@ -3671,7 +3671,7 @@ impl ContextEditor {
                 .cursor(CursorStyle::PointingHand)
                 .on_click(model.listener(move |this, _, cx| {
                     this.editor.update(cx, |editor, model, cx| {
-                        editor.change_selections(None, cx, |selections| {
+                        editor.change_selections(None, model, cx, |selections| {
                             selections.select_ranges(vec![anchor..anchor]);
                         });
                     });

@@ -70,7 +70,7 @@ impl CommandPalette {
             return;
         };
         let telemetry = workspace.client().telemetry().clone();
-        workspace.toggle_modal(cx, move |cx| {
+        workspace.toggle_modal(window, cx, move |cx| {
             CommandPalette::new(previous_focus_handle, telemetry, query, model, cx)
         });
     }
@@ -375,7 +375,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn confirm(&mut self, _: bool, model: &Model<Picker>, cx: &mut AppContext) {
         if self.matches.is_empty() {
-            self.dismissed(cx);
+            self.dismissed(model, cx);
             return;
         }
         let action_ix = self.matches[self.selected_ix].candidate_id;
@@ -391,7 +391,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         });
         let action = command.action;
         cx.focus(&self.previous_focus_handle);
-        self.dismissed(cx);
+        self.dismissed(model, cx);
         model.dispatch_action(cx, action);
     }
 
@@ -421,8 +421,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .children(KeyBinding::for_action_in(
                             &*command.action,
                             &self.previous_focus_handle,
-                            model,
-                            model,
+                            window,
                             cx,
                         )),
                 ),
@@ -506,7 +505,7 @@ mod tests {
 
         workspace.update(cx, |workspace, model, cx| {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
-            editor.update(cx, |editor, model, cx| editor.focus(window))
+            editor.update(cx, |editor, model, cx| editor.focus(window, cx))
         });
 
         cx.simulate_keystrokes("cmd-shift-p");
@@ -567,7 +566,8 @@ mod tests {
     async fn test_go_to_line(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, cx) =
+            cx.add_window_view(|cx| Workspace::test_new(project.clone(), model, cx));
 
         cx.simulate_keystrokes("cmd-n");
 

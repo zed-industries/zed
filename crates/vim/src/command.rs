@@ -87,123 +87,159 @@ impl Deref for WrappedAction {
 }
 
 pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
-    Vim::action(editor, cx, |vim, _: &VisualCommand, cx| {
-        let Some(workspace) = vim.workspace(cx) else {
-            return;
-        };
-        workspace.update(cx, |workspace, model, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>", cx);
-        })
-    });
-
-    Vim::action(editor, cx, |vim, _: &CountCommand, cx| {
-        let Some(workspace) = vim.workspace(cx) else {
-            return;
-        };
-        let count = Vim::take_count(cx).unwrap_or(1);
-        workspace.update(cx, |workspace, model, cx| {
-            command_palette::CommandPalette::toggle(
-                workspace,
-                &format!(".,.+{}", count.saturating_sub(1)),
-                cx,
-            );
-        })
-    });
-
-    Vim::action(editor, cx, |vim, action: &GoToLine, cx| {
-        vim.switch_mode(Mode::Normal, false, cx);
-        let result = vim.update_editor(cx, |vim, editor, cx| {
-            action.range.head().buffer_row(vim, editor, cx)
-        });
-        let buffer_row = match result {
-            None => return,
-            Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(cx) else {
-                    return;
-                };
-                workspace.update(cx, |workspace, model, cx| {
-                    e.notify_err(workspace, cx);
-                });
+    Vim::action(
+        editor,
+        model,
+        window,
+        cx,
+        |vim, _: &VisualCommand, model, window, cx| {
+            let Some(workspace) = vim.workspace(model, cx) else {
                 return;
-            }
-            Some(Ok(result)) => result,
-        };
-        vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), cx);
-    });
+            };
+            workspace.update(cx, |workspace, model, cx| {
+                command_palette::CommandPalette::toggle(workspace, "'<,'>", model, cx);
+            })
+        },
+    );
 
-    Vim::action(editor, cx, |vim, action: &YankCommand, cx| {
-        vim.update_editor(cx, |vim, editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            if let Ok(range) = action.range.buffer_range(vim, editor, cx) {
-                let end = if range.end < snapshot.buffer_snapshot.max_row() {
-                    Point::new(range.end.0 + 1, 0)
-                } else {
-                    snapshot.buffer_snapshot.max_point()
-                };
-                vim.copy_ranges(
-                    editor,
-                    true,
-                    true,
-                    vec![Point::new(range.start.0, 0)..end],
+    Vim::action(
+        editor,
+        model,
+        window,
+        cx,
+        |vim, _: &CountCommand, model, window, cx| {
+            let Some(workspace) = vim.workspace(cx) else {
+                return;
+            };
+            let count = Vim::take_count(cx).unwrap_or(1);
+            workspace.update(cx, |workspace, model, cx| {
+                command_palette::CommandPalette::toggle(
+                    workspace,
+                    &format!(".,.+{}", count.saturating_sub(1)),
                     model,
                     cx,
-                )
-            }
-        });
-    });
-
-    Vim::action(editor, cx, |_, action: &WithCount, cx| {
-        for _ in 0..action.count {
-            cx.dispatch_action(action.action.boxed_clone())
-        }
-    });
-
-    Vim::action(editor, cx, |vim, action: &WithRange, cx| {
-        let result = vim.update_editor(cx, |vim, editor, cx| {
-            action.range.buffer_range(vim, editor, cx)
-        });
-
-        let range = match result {
-            None => return,
-            Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(cx) else {
-                    return;
-                };
-                workspace.update(cx, |workspace, model, cx| {
-                    e.notify_err(workspace, cx);
-                });
-                return;
-            }
-            Some(Ok(result)) => result,
-        };
-
-        let previous_selections = vim
-            .update_editor(cx, |_, editor, cx| {
-                let selections = action
-                    .restore_selection
-                    .then(|| editor.selections.disjoint_anchor_ranges());
-                editor.change_selections(None, cx, |s| {
-                    let end = Point::new(range.end.0, s.buffer().line_len(range.end));
-                    s.select_ranges([end..Point::new(range.start.0, 0)]);
-                });
-                selections
+                );
             })
-            .flatten();
-        cx.dispatch_action(action.action.boxed_clone());
-        cx.defer(move |vim, cx| {
-            vim.update_editor(cx, |_, editor, cx| {
-                editor.change_selections(None, cx, |s| {
-                    if let Some(previous_selections) = previous_selections {
-                        s.select_ranges(previous_selections);
-                    } else {
-                        s.select_ranges([
-                            Point::new(range.start.0, 0)..Point::new(range.start.0, 0)
-                        ]);
-                    }
-                })
+        },
+    );
+
+    Vim::action(
+        editor,
+        model,
+        window,
+        cx,
+        |vim, action: &GoToLine, model, window, cx| {
+            vim.switch_mode(Mode::Normal, false, window, cx);
+            let result = vim.update_editor(cx, |vim, editor, cx| {
+                action.range.head().buffer_row(vim, editor, window, cx)
             });
-        });
-    });
+            let buffer_row = match result {
+                None => return,
+                Some(e @ Err(_)) => {
+                    let Some(workspace) = vim.workspace(cx) else {
+                        return;
+                    };
+                    workspace.update(cx, |workspace, model, cx| {
+                        e.notify_err(workspace, cx);
+                    });
+                    return;
+                }
+                Some(Ok(result)) => result,
+            };
+            vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), cx);
+        },
+    );
+
+    Vim::action(
+        editor,
+        window,
+        cx,
+        |vim, action: &YankCommand, window, cx| {
+            vim.update_editor(cx, |vim, editor, cx| {
+                let snapshot = editor.snapshot(model, cx);
+                if let Ok(range) = action.range.buffer_range(vim, editor, cx) {
+                    let end = if range.end < snapshot.buffer_snapshot.max_row() {
+                        Point::new(range.end.0 + 1, 0)
+                    } else {
+                        snapshot.buffer_snapshot.max_point()
+                    };
+                    vim.copy_ranges(
+                        editor,
+                        true,
+                        true,
+                        vec![Point::new(range.start.0, 0)..end],
+                        model,
+                        cx,
+                    )
+                }
+            });
+        },
+    );
+
+    Vim::action(
+        editor,
+        model,
+        window,
+        cx,
+        |_, action: &WithCount, model, window, cx| {
+            for _ in 0..action.count {
+                cx.dispatch_action(action.action.boxed_clone())
+            }
+        },
+    );
+
+    Vim::action(
+        editor,
+        model,
+        window,
+        cx,
+        |vim, action: &WithRange, model, window, cx| {
+            let result = vim.update_editor(cx, |vim, editor, cx| {
+                action.range.buffer_range(vim, editor, cx)
+            });
+
+            let range = match result {
+                None => return,
+                Some(e @ Err(_)) => {
+                    let Some(workspace) = vim.workspace(cx) else {
+                        return;
+                    };
+                    workspace.update(cx, |workspace, model, cx| {
+                        e.notify_err(workspace, cx);
+                    });
+                    return;
+                }
+                Some(Ok(result)) => result,
+            };
+
+            let previous_selections = vim
+                .update_editor(cx, |_, editor, cx| {
+                    let selections = action
+                        .restore_selection
+                        .then(|| editor.selections.disjoint_anchor_ranges());
+                    editor.change_selections(None, model, cx, |s| {
+                        let end = Point::new(range.end.0, s.buffer().line_len(range.end));
+                        s.select_ranges([end..Point::new(range.start.0, 0)]);
+                    });
+                    selections
+                })
+                .flatten();
+            cx.dispatch_action(action.action.boxed_clone());
+            cx.defer(move |vim, cx| {
+                vim.update_editor(cx, |_, editor, cx| {
+                    editor.change_selections(None, model, cx, |s| {
+                        if let Some(previous_selections) = previous_selections {
+                            s.select_ranges(previous_selections);
+                        } else {
+                            s.select_ranges([
+                                Point::new(range.start.0, 0)..Point::new(range.start.0, 0)
+                            ]);
+                        }
+                    })
+                });
+            });
+        },
+    );
 }
 
 #[derive(Default)]
@@ -426,7 +462,7 @@ impl Position {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Result<MultiBufferRow> {
-        let snapshot = editor.snapshot(cx);
+        let snapshot = editor.snapshot(model, cx);
         let target = match self {
             Position::Line { row, offset } => row.saturating_add_signed(offset.saturating_sub(1)),
             Position::Mark { name, offset } => {

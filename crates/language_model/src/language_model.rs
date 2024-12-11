@@ -10,7 +10,7 @@ pub mod fake_provider;
 use anyhow::Result;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
-use gpui::{AnyElement, AnyView, AppContext, AsyncAppContext, SharedString, Task};
+use gpui::{AnyElement, AnyView, AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use model::*;
 use proto::Plan;
 pub use rate_limiter::*;
@@ -267,9 +267,11 @@ pub trait LanguageModelProviderState: 'static {
         callback: impl Fn(&mut T, &Model<T>, &mut AppContext) + 'static,
     ) -> Option<gpui::Subscription> {
         let entity = self.observable_entity()?;
-        Some(cx.observe(&entity, move |this, _, cx| {
-            callback(this, cx);
-        }))
+        Some(
+            model.observe(&entity, cx, move |this, _observed, model, cx| {
+                callback(this, model, cx);
+            }),
+        )
     }
 }
 

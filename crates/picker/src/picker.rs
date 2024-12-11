@@ -196,10 +196,8 @@ impl<D: PickerDelegate> Picker<D> {
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn uniform_list(delegate: D, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let head = Head::editor(
-            delegate.placeholder_text(cx),
+            delegate.placeholder_text(model, cx),
             Self::on_input_editor_event,
-            model,
-            cx,
         );
 
         Self::new(delegate, ContainerKind::UniformList, head, model, cx)
@@ -212,7 +210,7 @@ impl<D: PickerDelegate> Picker<D> {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
-        let head = Head::empty(Self::on_empty_head_blur, model, cx);
+        let head = Head::empty(Self::on_empty_head_blur);
 
         Self::new(delegate, ContainerKind::UniformList, head, model, cx)
     }
@@ -222,10 +220,8 @@ impl<D: PickerDelegate> Picker<D> {
     /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
     pub fn list(delegate: D, model: &Model<Self>, cx: &mut AppContext) -> Self {
         let head = Head::editor(
-            delegate.placeholder_text(cx),
+            delegate.placeholder_text(model, cx),
             Self::on_input_editor_event,
-            model,
-            cx,
         );
 
         Self::new(delegate, ContainerKind::List, head, model, cx)
@@ -274,7 +270,7 @@ impl<D: PickerDelegate> Picker<D> {
                         view.upgrade()
                             .map(|view| {
                                 view.update(cx, |this, model, cx| {
-                                    this.render_element(cx, ix).into_any_element()
+                                    this.render_element(model, cx, ix).into_any_element()
                                 })
                             })
                             .unwrap_or_else(|| div().into_any_element())
@@ -374,7 +370,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn cancel(&mut self, _: &menu::Cancel, model: &Model<Self>, cx: &mut AppContext) {
         if self.delegate.should_dismiss() {
-            self.delegate.dismissed(cx);
+            self.delegate.dismissed(model, cx);
             model.emit(DismissEvent, cx);
         }
     }
@@ -446,7 +442,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn do_confirm(&mut self, secondary: bool, model: &Model<Self>, cx: &mut AppContext) {
-        if let Some(update_query) = self.delegate.confirm_update_query(cx) {
+        if let Some(update_query) = self.delegate.confirm_update_query(model, cx) {
             self.set_query(update_query, model, cx);
             self.delegate.set_selected_index(0, model, cx);
         } else {
@@ -486,7 +482,7 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn refresh_placeholder(&mut self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         match &self.head {
             Head::Editor(view) => {
-                let placeholder = self.delegate.placeholder_text(cx);
+                let placeholder = self.delegate.placeholder_text(model, cx);
                 view.update(cx, |this, model, cx| {
                     this.set_placeholder_text(placeholder, model, cx);
                     model.notify(cx);
@@ -504,7 +500,7 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn update_matches(&mut self, query: String, model: &Model<Self>, cx: &mut AppContext) {
         let delegate_pending_update_matches = self.delegate.update_matches(query, model, cx);
 
-        self.matches_updated(cx);
+        self.matches_updated(model, cx);
         // This struct ensures that we can synchronously drop the task returned by the
         // delegate's `update_matches` method and the task that the picker is spawning.
         // If we simply capture the delegate's task into the picker's task, when the picker's
@@ -524,7 +520,7 @@ impl<D: PickerDelegate> Picker<D> {
                 })?;
                 delegate_pending_update_matches.await;
                 this.update(&mut cx, |this, model, cx| {
-                    this.matches_updated(cx);
+                    this.matches_updated(model, cx);
                 })
             }),
         });
@@ -710,8 +706,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
                         .flex_grow()
                         .when_some(self.max_height, |div, max_h| div.max_h(max_h))
                         .overflow_hidden()
-                        .children(self.delegate.render_header(cx))
-                        .child(self.render_element_container(cx)),
+                        .children(self.delegate.render_header(model, cx))
+                        .child(self.render_element_container(model, cx)),
                 )
             })
             .when(self.delegate.match_count() == 0, |el| {
@@ -722,12 +718,13 @@ impl<D: PickerDelegate> Render for Picker<D> {
                             .spacing(ListItemSpacing::Sparse)
                             .disabled(true)
                             .child(
-                                Label::new(self.delegate.no_matches_text(cx)).color(Color::Muted),
+                                Label::new(self.delegate.no_matches_text(model, cx))
+                                    .color(Color::Muted),
                             ),
                     ),
                 )
             })
-            .children(self.delegate.render_footer(cx))
+            .children(self.delegate.render_footer(model, cx))
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::End {

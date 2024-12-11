@@ -474,10 +474,10 @@ impl EditorElement {
                     return;
                 }
                 editor.update(cx, |editor, model, cx| {
-                    if editor.hover_state.focused(cx) {
+                    if editor.hover_state.focused(window, cx) {
                         return;
                     }
-                    Self::modifiers_changed(editor, event, &position_map, &text_hitbox, cx)
+                    Self::modifiers_changed(editor, event, &position_map, &text_hitbox, model, cx)
                 })
             }
         });
@@ -523,7 +523,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            editor.toggle_hovered_hunk(&hovered_hunk, cx);
+            editor.toggle_hovered_hunk(&hovered_hunk, model, cx);
             model.notify(cx);
             return;
         } else if gutter_hitbox.is_hovered(cx) {
@@ -998,7 +998,6 @@ impl EditorElement {
                 &(Anchor::min()..Anchor::max()),
                 collaboration_hub.deref(),
                 model,
-                model,
                 cx,
             ) {
                 let color = Self::get_participant_color(remote_selection.participant_index, window, cx);
@@ -1047,7 +1046,7 @@ impl EditorElement {
                     let cursor_position = selection.head;
 
                     let in_range = visible_display_row_range.contains(&cursor_position.row());
-                    if (selection.is_local && !editor.show_local_cursors(cx))
+                    if (selection.is_local && !editor.show_local_cursors(model, cx))
                         || !in_range
                         || block_start_rows.contains(&cursor_position.row())
                     {
@@ -1227,7 +1226,7 @@ impl EditorElement {
         // cancel the scrollbar drag.
         if cx.has_active_drag() {
             self.editor.update(cx, |editor, model, cx| {
-                editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+                editor.scroll_manager.set_is_dragging_scrollbar(false, model, cx);
             });
         }
 
@@ -1453,7 +1452,7 @@ impl EditorElement {
     ) -> Option<AnyElement> {
         if !self
             .editor
-            .update(cx, |editor, model, cx| editor.render_git_blame_inline(cx))
+            .update(cx, |editor, model, cx| editor.render_git_blame_inline(model, cx))
         {
             return None;
         }
@@ -1471,7 +1470,7 @@ impl EditorElement {
         let blame = self.editor.read(cx).blame.clone()?;
         let blame_entry = blame
             .update(cx, |blame, model, cx| {
-                blame.blame_for_rows([Some(buffer_row)], cx).next()
+                blame.blame_for_rows([Some(buffer_row)], model, cx).next()
             })
             .flatten()?;
 
@@ -1522,14 +1521,14 @@ impl EditorElement {
     ) -> Option<Vec<AnyElement>> {
         if !self
             .editor
-            .update(cx, |editor, model, cx| editor.render_git_blame_gutter(cx))
+            .update(cx, |editor, model, cx| editor.render_git_blame_gutter(model, cx))
         {
             return None;
         }
 
         let blame = self.editor.read(cx).blame.clone()?;
         let blamed_rows: Vec<_> = blame.update(cx, |blame, model, cx| {
-            blame.blame_for_rows(buffer_rows, cx).collect()
+            blame.blame_for_rows(buffer_rows, model, cx).collect()
         });
 
         let width = if let Some(max_width) = max_width {
@@ -3757,7 +3756,7 @@ impl EditorElement {
                             if position.y < 0.0 {
                                 position.y = 0.0;
                             }
-                            editor.set_scroll_position(position, cx);
+                            editor.set_scroll_position(position, model, cx);
                         }
 
                         cx.stop_propagation();
@@ -3805,7 +3804,7 @@ impl EditorElement {
                                 .saturating_sub((row_range.end - row_range.start) as u32 / 2);
                             let mut position = editor.scroll_position(cx);
                             position.y = top_row as f32;
-                            editor.set_scroll_position(position, cx);
+                            editor.set_scroll_position(position, model, cx);
                         } else {
                             editor.scroll_manager.show_scrollbar(cx);
                         }
@@ -6682,7 +6681,7 @@ mod tests {
         window
             .update(cx, |editor, model, cx| {
                 editor.cursor_shape = CursorShape::Block;
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, model, cx, |s| {
                     s.select_ranges([
                         Point::new(0, 0)..Point::new(1, 0),
                         Point::new(3, 2)..Point::new(3, 3),
@@ -6783,7 +6782,7 @@ mod tests {
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
         let _state = window.update(cx, |editor, model, cx| {
             editor.cursor_shape = CursorShape::Block;
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, model, cx, |s| {
                 s.select_display_ranges([
                     DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(7), 0),
                     DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(13), 0),

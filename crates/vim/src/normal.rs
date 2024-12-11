@@ -146,11 +146,11 @@ pub(crate) fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppCont
         });
     });
 
-    repeat::register(editor, cx);
-    scroll::register(editor, cx);
-    search::register(editor, cx);
-    substitute::register(editor, cx);
-    increment::register(editor, cx);
+    repeat::register(editor, model, cx);
+    scroll::register(editor, model, cx);
+    search::register(editor, model, cx);
+    substitute::register(editor, model, cx);
+    increment::register(editor, model, cx);
 }
 
 impl Vim {
@@ -441,7 +441,7 @@ impl Vim {
         cx: &mut AppContext,
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
-        self.stop_recording(cx);
+        self.stop_recording(model, cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -467,7 +467,7 @@ impl Vim {
 
                 editor.edit(edits, model, cx);
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, model, cx, |s| {
                     s.move_with(|map, selection| {
                         let point = movement::saturating_left(map, selection.head());
                         selection.collapse_to(point, SelectionGoal::None)
@@ -475,7 +475,7 @@ impl Vim {
                 });
             });
         });
-        self.pop_operator(cx);
+        self.pop_operator(model, cx);
     }
 
     pub fn save_selection_starts(

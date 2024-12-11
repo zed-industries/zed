@@ -546,7 +546,7 @@ impl Editor {
 
             for (buffer, ranges) in ranges_by_buffer {
                 buffer.update(cx, |buffer, model, cx| {
-                    buffer.merge_into_base(ranges, cx);
+                    buffer.merge_into_base(ranges, model, cx);
                 });
             }
         });
@@ -1240,7 +1240,7 @@ fn editor_with_deleted_text(
         editor
             ._subscriptions
             .extend([cx.on_blur(&editor.focus_handle, |editor, cx| {
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, model, cx, |s| {
                     s.try_cancel();
                 });
             })]);
@@ -1251,7 +1251,9 @@ fn editor_with_deleted_text(
                 let parent_editor = parent_editor.clone();
                 move |_, cx| {
                     parent_editor
-                        .update(cx, |editor, model, cx| editor.revert_hunk(hunk.clone(), cx))
+                        .update(cx, |editor, model, cx| {
+                            editor.revert_hunk(hunk.clone(), model, cx)
+                        })
                         .ok();
                 }
             })
@@ -1262,7 +1264,7 @@ fn editor_with_deleted_text(
                 move |_, cx| {
                     parent_editor
                         .update(cx, |editor, model, cx| {
-                            editor.toggle_hovered_hunk(&hunk, cx);
+                            editor.toggle_hovered_hunk(&hunk, model, cx);
                         })
                         .ok();
                 }
@@ -1488,7 +1490,6 @@ mod tests {
                         BufferChangeSet::new_with_base_text(
                             diff_base.to_string(),
                             buffer.read(cx).text_snapshot(),
-                            model,
                             model,
                             cx,
                         )

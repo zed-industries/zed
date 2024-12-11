@@ -393,7 +393,7 @@ impl PickerDelegate for TasksModalDelegate {
                     item
                 })
                 .selected(selected)
-                .child(highlighted_location.render(model, window, cx)),
+                .child(highlighted_location.render(window, cx)),
         )
     }
 
@@ -818,7 +818,7 @@ mod tests {
 
         let editor = cx.update(|cx| second_item.act_as::<Editor>(cx)).unwrap();
         editor.update(cx, |editor, model, cx| {
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, model, cx, |s| {
                 s.select_ranges(Some(Point::new(1, 2)..Point::new(1, 5)))
             })
         });

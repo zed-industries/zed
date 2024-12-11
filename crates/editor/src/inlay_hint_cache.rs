@@ -696,7 +696,7 @@ fn spawn_new_update_tasks(
         };
 
         let mut new_update_task =
-            |query_ranges| new_update_task(query, query_ranges, excerpt_buffer.clone(), cx);
+            |query_ranges| new_update_task(query, query_ranges, excerpt_buffer.clone(), model, cx);
 
         match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
             hash_map::Entry::Occupied(mut o) => {
@@ -1265,7 +1265,7 @@ fn apply_hint_update(
         editor.inlay_hint_cache.version += 1;
     }
     if displayed_inlays_changed {
-        editor.splice_inlays(to_remove, to_insert, cx)
+        editor.splice_inlays(to_remove, to_insert, model, cx)
     }
 }
 
@@ -1375,7 +1375,7 @@ pub mod tests {
 
         editor
             .update(cx, |editor, model, cx| {
-                editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+                editor.change_selections(None, model, cx, |s| s.select_ranges([13..13]));
                 editor.handle_input("some change", cx);
                 edits_made += 1;
             })
@@ -1611,7 +1611,7 @@ pub mod tests {
 
         let rs_buffer = project
             .update(cx, |project, model, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer("/a/main.rs", model, cx)
             })
             .await
             .unwrap();
@@ -1619,7 +1619,7 @@ pub mod tests {
         cx.executor().start_waiting();
         let rs_fake_server = rs_fake_servers.unwrap().next().await.unwrap();
         let rs_editor =
-            cx.add_window(|cx| Editor::for_buffer(rs_buffer, Some(project.clone()), cx));
+            cx.add_window(|cx| Editor::for_buffer(rs_buffer, Some(project.clone()), model, cx));
         let rs_lsp_request_count = Arc::new(AtomicU32::new(0));
         rs_fake_server
             .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
@@ -1665,14 +1665,16 @@ pub mod tests {
         cx.executor().run_until_parked();
         let md_buffer = project
             .update(cx, |project, model, cx| {
-                project.open_local_buffer("/a/other.md", cx)
+                project.open_local_buffer("/a/other.md", model, cx)
             })
             .await
             .unwrap();
         cx.executor().run_until_parked();
         cx.executor().start_waiting();
         let md_fake_server = md_fake_servers.unwrap().next().await.unwrap();
-        let md_editor = cx.add_window(|cx| Editor::for_buffer(md_buffer, Some(project), cx));
+        let md_editor = cx.add_window(|model, window, cx| {
+            Editor::for_buffer(md_buffer, Some(project), model, cx)
+        });
         let md_lsp_request_count = Arc::new(AtomicU32::new(0));
         md_fake_server
             .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
@@ -1713,7 +1715,7 @@ pub mod tests {
 
         rs_editor
             .update(cx, |editor, model, cx| {
-                editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+                editor.change_selections(None, model, cx, |s| s.select_ranges([13..13]));
                 editor.handle_input("some rs change", cx);
             })
             .unwrap();
@@ -1749,7 +1751,7 @@ pub mod tests {
 
         md_editor
             .update(cx, |editor, model, cx| {
-                editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+                editor.change_selections(None, model, cx, |s| s.select_ranges([13..13]));
                 editor.handle_input("some md change", cx);
             })
             .unwrap();
@@ -2180,7 +2182,7 @@ pub mod tests {
         ] {
             editor
                 .update(cx, |editor, model, cx| {
-                    editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+                    editor.change_selections(None, model, cx, |s| s.select_ranges([13..13]));
                     editor.handle_input(change_after_opening, cx);
                 })
                 .unwrap();
@@ -2226,7 +2228,7 @@ pub mod tests {
             edits.push(cx.spawn(|mut cx| async move {
                 task_editor
                     .update(&mut cx, |editor, cx| {
-                        editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+                        editor.change_selections(None, model, cx, |s| s.select_ranges([13..13]));
                         editor.handle_input(async_later_change, cx);
                     })
                     .unwrap();
@@ -2306,14 +2308,15 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, model, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer("/a/main.rs", model, cx)
             })
             .await
             .unwrap();
         cx.executor().run_until_parked();
         cx.executor().start_waiting();
         let fake_server = fake_servers.next().await.unwrap();
-        let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), cx));
+        let editor =
+            cx.add_window(|model, window, cx| Editor::for_buffer(buffer, Some(project), model, cx));
         let lsp_request_ranges = Arc::new(Mutex::new(Vec::new()));
         let lsp_request_count = Arc::new(AtomicUsize::new(0));
         let closure_lsp_request_ranges = Arc::clone(&lsp_request_ranges);
@@ -2607,13 +2610,13 @@ pub mod tests {
 
         let buffer_1 = project
             .update(cx, |project, model, cx| {
-                project.open_buffer((worktree_id, "main.rs"), cx)
+                project.open_buffer((worktree_id, "main.rs"), model, cx)
             })
             .await
             .unwrap();
         let buffer_2 = project
             .update(cx, |project, model, cx| {
-                project.open_buffer((worktree_id, "other.rs"), cx)
+                project.open_buffer((worktree_id, "other.rs"), model, cx)
             })
             .await
             .unwrap();
@@ -2678,6 +2681,7 @@ pub mod tests {
                         primary: None,
                     },
                 ],
+                model,
                 cx,
             );
             multibuffer
@@ -2877,7 +2881,7 @@ pub mod tests {
         editor_edited.store(true, Ordering::Release);
         editor
             .update(cx, |editor, model, cx| {
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, model, cx, |s| {
                     s.select_ranges([Point::new(57, 0)..Point::new(57, 0)])
                 });
                 editor.handle_input("++++more text++++", cx);
@@ -2960,13 +2964,13 @@ pub mod tests {
 
         let buffer_1 = project
             .update(cx, |project, model, cx| {
-                project.open_buffer((worktree_id, "main.rs"), cx)
+                project.open_buffer((worktree_id, "main.rs"), model, cx)
             })
             .await
             .unwrap();
         let buffer_2 = project
             .update(cx, |project, model, cx| {
-                project.open_buffer((worktree_id, "other.rs"), cx)
+                project.open_buffer((worktree_id, "other.rs"), model, cx)
             })
             .await
             .unwrap();
@@ -2979,6 +2983,7 @@ pub mod tests {
                         context: Point::new(0, 0)..Point::new(2, 0),
                         primary: None,
                     }],
+                    model,
                     cx,
                 );
                 let buffer_2_excerpts = multibuffer.push_excerpts(
@@ -2987,6 +2992,7 @@ pub mod tests {
                         context: Point::new(0, 1)..Point::new(2, 1),
                         primary: None,
                     }],
+                    model,
                     cx,
                 );
                 (buffer_1_excerpts, buffer_2_excerpts)
@@ -3189,14 +3195,15 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, model, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer("/a/main.rs", model, cx)
             })
             .await
             .unwrap();
         cx.executor().run_until_parked();
         cx.executor().start_waiting();
         let fake_server = fake_servers.next().await.unwrap();
-        let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), cx));
+        let editor =
+            cx.add_window(|model, window, cx| Editor::for_buffer(buffer, Some(project), model, cx));
         let lsp_request_count = Arc::new(AtomicU32::new(0));
         let closure_lsp_request_count = Arc::clone(&lsp_request_count);
         fake_server
@@ -3227,7 +3234,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, model, cx| {
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, model, cx, |s| {
                     s.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
                 })
             })
@@ -3432,14 +3439,15 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, model, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer("/a/main.rs", model, cx)
             })
             .await
             .unwrap();
         cx.executor().run_until_parked();
         cx.executor().start_waiting();
         let fake_server = fake_servers.next().await.unwrap();
-        let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), cx));
+        let editor =
+            cx.add_window(|model, window, cx| Editor::for_buffer(buffer, Some(project), model, cx));
 
         editor
             .update(cx, |editor, model, cx| {

@@ -378,8 +378,9 @@ impl Vim {
     pub fn action<A: Action>(
         editor: &mut Editor,
         model: &Model<Vim>,
+        window: &mut Window,
         cx: &mut AppContext,
-        f: impl Fn(&mut Vim, &A, &Model<Vim>, &mut AppContext) + 'static,
+        f: impl Fn(&mut Vim, &A, &Model<Vim>, &mut Window, &mut AppContext) + 'static,
     ) {
         let subscription = editor.register_action(cx.listener(f));
         model.on_release(cx, |_, _, _| drop(subscription)).detach();
@@ -583,7 +584,7 @@ impl Vim {
                 }
             }
 
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, model, cx, |s| {
                 // we cheat with visual block mode and use multiple cursors.
                 // the cost of this cheat is we need to convert back to a single
                 // cursor whenever vim would.
@@ -759,7 +760,7 @@ impl Vim {
             } else {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.set_clip_at_line_ends(false, cx);
-                    editor.change_selections(None, cx, |s| {
+                    editor.change_selections(None, model, cx, |s| {
                         s.move_with(|_, selection| {
                             selection.collapse_to(selection.start, selection.goal)
                         })
@@ -1014,7 +1015,7 @@ impl Vim {
             Mode::VisualLine | Mode::VisualBlock | Mode::Visual => {
                 self.update_editor(cx, |vim, editor, cx| {
                     let original_mode = vim.undo_modes.get(transaction_id);
-                    editor.change_selections(None, cx, |s| match original_mode {
+                    editor.change_selections(None, model, cx, |s| match original_mode {
                         Some(Mode::VisualLine) => {
                             s.move_with(|map, selection| {
                                 selection.collapse_to(
@@ -1042,7 +1043,7 @@ impl Vim {
             }
             Mode::Normal => {
                 self.update_editor(cx, |_, editor, cx| {
-                    editor.change_selections(None, cx, |s| {
+                    editor.change_selections(None, model, cx, |s| {
                         s.move_with(|map, selection| {
                             selection
                                 .collapse_to(map.clip_at_line_end(selection.end), selection.goal)

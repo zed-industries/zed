@@ -53,7 +53,7 @@ struct EditorState {
 
 impl MarkdownPreviewView {
     pub fn register(workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext) {
-        workspace.register_action(move |workspace, _: &OpenPreview, cx| {
+        workspace.register_action(move |workspace, _: &OpenPreview, model, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, model, cx)
             {
                 let view = Self::create_markdown_view(workspace, editor, model, cx);
@@ -68,7 +68,7 @@ impl MarkdownPreviewView {
             }
         });
 
-        workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, cx| {
+        workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, model, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, model, cx)
             {
                 let view = Self::create_markdown_view(workspace, editor.clone(), model, cx);
@@ -83,9 +83,7 @@ impl MarkdownPreviewView {
                         )
                     });
                 pane.update(cx, |pane, model, cx| {
-                    if let Some(existing_view_idx) =
-                        Self::find_existing_preview_item_idx(model, pane)
-                    {
+                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane) {
                         pane.activate_item(existing_view_idx, true, true, model, cx);
                     } else {
                         pane.add_item(Box::new(view.clone()), false, false, None, model, cx)
@@ -133,6 +131,7 @@ impl MarkdownPreviewView {
             workspace_handle,
             language_registry,
             None,
+            model,
             cx,
         )
     }
@@ -352,6 +351,7 @@ impl MarkdownPreviewView {
             self.parsing_markdown_task = Some(self.parse_markdown_in_background(
                 wait_for_debounce,
                 state.editor.clone(),
+                model,
                 cx,
             ));
         }
@@ -405,10 +405,11 @@ impl MarkdownPreviewView {
             state.editor.update(cx, |editor, model, cx| {
                 editor.change_selections(
                     Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
+                    model,
                     cx,
                     |selections| selections.select_ranges(vec![selection]),
                 );
-                editor.focus(window);
+                editor.focus(window, cx);
             });
         }
     }

@@ -134,7 +134,7 @@ impl ProposedChangesEditor {
                 None
             }),
         };
-        this.reset_locations(locations, cx);
+        this.reset_locations(locations, model, cx);
         this
     }
 
@@ -174,12 +174,12 @@ impl ProposedChangesEditor {
                         }
                     })
                     .collect();
-                buffer.undo_operations(undo_counts, cx);
+                buffer.undo_operations(undo_counts, model, cx);
             });
         }
 
         self.multibuffer.update(cx, |multibuffer, model, cx| {
-            multibuffer.clear(cx);
+            multibuffer.clear(model, cx);
         });
 
         let mut buffer_entries = Vec::new();
@@ -197,7 +197,7 @@ impl ProposedChangesEditor {
             } else {
                 branch_buffer = location
                     .buffer
-                    .update(cx, |buffer, model, cx| buffer.branch(cx));
+                    .update(cx, |buffer, model, cx| buffer.branch(model, cx));
                 new_change_sets.push(cx.new_model(|model, cx| {
                     let mut change_set = BufferChangeSet::new(branch_buffer.read(cx));
                     let _ = change_set.set_base_text(
@@ -230,9 +230,9 @@ impl ProposedChangesEditor {
 
         self.buffer_entries = buffer_entries;
         self.editor.update(cx, |editor, model, cx| {
-            editor.change_selections(None, cx, |selections| selections.refresh());
+            editor.change_selections(None, model, cx, |selections| selections.refresh());
             for change_set in new_change_sets {
-                editor.diff_map.add_change_set(change_set, cx)
+                editor.diff_map.add_change_set(change_set, model, cx)
             }
         });
     }
@@ -331,7 +331,7 @@ impl Item for ProposedChangesEditor {
         cx: &mut AppContext,
     ) {
         self.editor.update(cx, |editor, model, cx| {
-            Item::added_to_workspace(editor, workspace, cx)
+            Item::added_to_workspace(editor, workspace, model, cx)
         });
     }
 
@@ -345,8 +345,9 @@ impl Item for ProposedChangesEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> bool {
-        self.editor
-            .update(cx, |editor, model, cx| Item::navigate(editor, data, cx))
+        self.editor.update(cx, |editor, model, cx| {
+            Item::navigate(editor, data, model, cx)
+        })
     }
 
     fn set_nav_history(
@@ -356,7 +357,7 @@ impl Item for ProposedChangesEditor {
         cx: &mut AppContext,
     ) {
         self.editor.update(cx, |editor, model, cx| {
-            Item::set_nav_history(editor, nav_history, cx)
+            Item::set_nav_history(editor, nav_history, model, cx)
         });
     }
 
@@ -372,7 +373,7 @@ impl Item for ProposedChangesEditor {
         cx: &mut AppContext,
     ) -> Task<gpui::Result<()>> {
         self.editor.update(cx, |editor, model, cx| {
-            Item::save(editor, format, project, cx)
+            Item::save(editor, format, project, model, cx)
         })
     }
 }
@@ -405,11 +406,12 @@ impl Render for ProposedChangesEditorToolbar {
         match &self.current_editor {
             Some(editor) => {
                 let focus_handle = editor.focus_handle(cx);
-                let keybinding = KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, cx)
-                    .map(|binding| binding.into_any_element());
+                let keybinding =
+                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, model, cx)
+                        .map(|binding| binding.into_any_element());
 
                 button_like.children(keybinding).on_click({
-                    move |_event, cx| focus_handle.dispatch_action(&ApplyAllDiffHunks, cx)
+                    move |_event, cx| focus_handle.dispatch_action(&ApplyAllDiffHunks, model, cx)
                 })
             }
             None => button_like.disabled(true),

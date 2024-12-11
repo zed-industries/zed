@@ -8,8 +8,8 @@ use collab_ui::{
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    point, BackgroundExecutor, BorrowAppContext, Context, Entity, SharedString, TestAppContext,
-    View, VisualContext, VisualTestContext,
+    point, AppContext, BackgroundExecutor, BorrowAppContext, Context, Entity, SharedString,
+    TestAppContext, View, VisualContext, VisualTestContext,
 };
 use language::Capability;
 use project::WorktreeSettings;
@@ -291,7 +291,6 @@ async fn test_basic_following(
                 primary: None,
             }],
             model,
-            model,
             cx,
         );
         result.push_excerpts(
@@ -300,6 +299,7 @@ async fn test_basic_following(
                 context: 4..7,
                 primary: None,
             }],
+            model,
             cx,
         );
         result
@@ -369,7 +369,7 @@ async fn test_basic_following(
 
     // Changes to client A's editor are reflected on client B.
     editor_a1.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2]));
+        editor.change_selections(None, model, cx, |s| s.select_ranges([1..1, 2..2]));
     });
     executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     executor.run_until_parked();
@@ -384,7 +384,7 @@ async fn test_basic_following(
     editor_b1.update(cx_b, |editor, cx| assert_eq!(editor.text(cx), "TWO"));
 
     editor_a1.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
+        editor.change_selections(None, model, cx, |s| s.select_ranges([3..3]));
         editor.set_scroll_position(point(0., 100.), cx);
     });
     executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
@@ -1610,7 +1610,7 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
 
     // b should follow a to position 1
     editor_a.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([1..1]))
+        editor.change_selections(None, model, cx, |s| s.select_ranges([1..1]))
     });
     cx_a.executor()
         .advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
@@ -1620,7 +1620,8 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     });
 
     // a unshares the project
-    cx_a.update(|cx| {
+    // todo! why do i need the annotation
+    cx_a.update(|cx: &mut AppContext| {
         let project = workspace_a.read(cx).project().clone();
         ActiveCall::global(cx).update(cx, |call, model, cx| {
             call.unshare_project(project, model, cx).unwrap();
@@ -1630,7 +1631,7 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
 
     // b should not follow a to position 2
     editor_a.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([2..2]))
+        editor.change_selections(None, model, cx, |s| s.select_ranges([2..2]))
     });
     cx_a.executor()
         .advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
@@ -1933,7 +1934,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
         notes.editor.update(cx, |editor, model, cx| {
             editor.insert("Hello from A.", cx);
-            editor.change_selections(None, cx, |selections| {
+            editor.change_selections(None, model, cx, |selections| {
                 selections.select_ranges(vec![3..4]);
             });
         });

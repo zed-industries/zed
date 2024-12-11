@@ -249,12 +249,12 @@ impl LocalLspStore {
                 buffer.finalize_last_transaction();
                 buffer.start_transaction();
                 if let Some(diff) = trailing_whitespace_diff {
-                    buffer.apply_diff(diff, cx);
+                    buffer.apply_diff(diff, model, cx);
                 }
                 if ensure_final_newline {
-                    buffer.ensure_final_newline(cx);
+                    buffer.ensure_final_newline(model, cx);
                 }
-                buffer.end_transaction(cx)
+                buffer.end_transaction(model, cx)
             })?;
 
             // Apply the `code_actions_on_format` before we run the formatter.
@@ -472,13 +472,13 @@ impl LocalLspStore {
                 for operation in format_operations {
                     match operation {
                         FormatOperation::Lsp(edits) => {
-                            b.edit(edits, None, cx);
+                            b.edit(edits, None, model,  cx);
                         }
                         FormatOperation::External(diff) => {
-                            b.apply_diff(diff, cx);
+                            b.apply_diff(diff, model,  cx);
                         }
                         FormatOperation::Prettier(diff) => {
-                            b.apply_diff(diff, cx);
+                            b.apply_diff(diff, model,  cx);
                         }
                     }
 
@@ -882,13 +882,13 @@ impl LspStore {
         cx: &mut AppContext,
     ) -> Self {
         let yarn = YarnPathStore::new(fs.clone(), cx);
-        model.subscribe(&buffer_store, model, cx, Self::on_buffer_store_event)
+        model.subscribe(&buffer_store, cx, Self::on_buffer_store_event)
             .detach();
-        model.subscribe(&worktree_store, model, cx, Self::on_worktree_store_event)
+        model.subscribe(&worktree_store, cx, Self::on_worktree_store_event)
             .detach();
-        model.subscribe(&prettier_store, model, cx, Self::on_prettier_store_event)
+        model.subscribe(&prettier_store, cx, Self::on_prettier_store_event)
             .detach();
-        model.subscribe(&toolchain_store, model, cx, Self::on_toolchain_store_event)
+        model.subscribe(&toolchain_store, cx, Self::on_toolchain_store_event)
             .detach();
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
@@ -965,9 +965,9 @@ impl LspStore {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
-        model.subscribe(&buffer_store, model, cx, Self::on_buffer_store_event)
+        model.subscribe(&buffer_store, cx, Self::on_buffer_store_event)
             .detach();
-        model.subscribe(&worktree_store, model, cx, Self::on_worktree_store_event)
+        model.subscribe(&worktree_store, cx, Self::on_worktree_store_event)
             .detach();
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
@@ -1012,6 +1012,7 @@ impl LspStore {
     fn on_buffer_store_event(
         &mut self,
         event: &BufferStoreEvent,
+        model: &Model<Self>,
         cx: &mut AppContext,
     ) {
         match event {
@@ -1042,7 +1043,7 @@ impl LspStore {
                 }
                 model.subscribe(worktree, cx, |this, worktree, event, model, cx| match event {
                     worktree::Event::UpdatedEntries(changes) => {
-                        this.update_local_worktree_language_servers(&worktree, changes, cx);
+                        this.update_local_worktree_language_servers(&worktree, changes, model, cx);
                     }
                     worktree::Event::UpdatedGitRepositories(_)
                     | worktree::Event::DeletedEntry(_) => {}
@@ -1136,7 +1137,7 @@ impl LspStore {
         });
 
         model.subscribe(buffer, cx, |this, buffer, event, model, cx| {
-            this.on_buffer_event(buffer, event, cx);
+            this.on_buffer_event(buffer, event, model, cx);
         })
         .detach();
 
@@ -1209,7 +1210,7 @@ impl LspStore {
                             }
                         }
                         for buffer in plain_text_buffers {
-                            this.register_buffer_with_language_servers(&buffer, cx);
+                            this.register_buffer_with_language_servers(&buffer, model, cx);
                         }
 
                         for buffer in buffers_with_unknown_injections {
@@ -1243,10 +1244,10 @@ impl LspStore {
                 self.set_language_for_buffer(buffer_handle, new_language, model, cx);
             }
         } else {
-            model.emit(, cxLspStoreEvent::LanguageDetected {
+            model.emit(LspStoreEvent::LanguageDetected {
                 buffer: buffer_handle.clone(),
                 new_language: None,
-            });
+            }, cx);
         }
 
         available_language
@@ -1298,7 +1299,7 @@ impl LspStore {
             }
         }
 
-        model.emit(, cxLspStoreEvent::LanguageDetected {
+        model.emit(LspStoreEvent::LanguageDetected {
             buffer: buffer.clone(),
             new_language: Some(new_language),
         })
@@ -1483,7 +1484,7 @@ impl LspStore {
                 let worktree = self.worktree_for_id(worktree_id, model, cx).ok();
                 let root_file = worktree.as_ref().and_then(|worktree| {
                     worktree
-                        .update(cx, |tree, model, cx| tree.root_file(cx))
+                        .update(cx, |tree, model, cx| tree.root_file(model, cx))
                         .map(|f| f as _)
                 });
                 let settings = language_settings(Some(language.name()), root_file.as_ref(), cx);
@@ -1875,7 +1876,7 @@ impl LspStore {
                     .await?;
                 this.update(&mut cx, |this, model, cx| {
                     let position = position.to_point_utf16(buffer.read(cx));
-                    this.on_type_format(buffer, position, trigger, false, cx)
+                    this.on_type_format(buffer, position, trigger, false, model, cx)
                 })?
                 .await
             })
@@ -2106,7 +2107,8 @@ impl LspStore {
                     range: range.clone(),
                     kinds: kinds.clone(),
                 },
-                model, model,cx,
+                model,
+                cx,
             );
             cx.spawn(
                 |_, _| async move { Ok(all_actions_task.await.into_iter().flatten().collect()) },
@@ -2544,11 +2546,11 @@ impl LspStore {
                             //Skip additional edits which overlap with the primary completion edit
                             //https://github.com/zed-industries/zed/pull/1871
                             if !start_within && !end_within {
-                                buffer.edit([(range, text)], None, cx);
+                                buffer.edit([(range, text)], None, model, cx);
                             }
                         }
 
-                        let transaction = if buffer.end_transaction(cx).is_some() {
+                        let transaction = if buffer.end_transaction(model, cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
                             if !push_to_history {
                                 buffer.forget_transaction(transaction.id);
@@ -2683,7 +2685,7 @@ impl LspStore {
                 buffer,
                 Some(position),
                 GetSignatureHelp { position },
-                model, model,cx,
+                model, cx,
             );
             cx.spawn(|_, _| async move {
                 all_actions_task
@@ -2762,7 +2764,7 @@ impl LspStore {
                 buffer,
                 Some(position),
                 GetHover { position },
-                model, model,cx,
+                model, cx,
             );
             cx.spawn(|_, _| async move {
                 all_actions_task
@@ -3133,7 +3135,7 @@ impl LspStore {
             }
         }
 
-        for language_server_id in self.language_server_ids_for_buffer(buffer.read(cx), model, cx) {
+        for language_server_id in self.language_server_ids_for_buffer(buffer.read(cx), cx) {
             self.simulate_disk_based_diagnostics_events_if_needed(language_server_id, model, cx);
         }
 
@@ -3153,7 +3155,7 @@ impl LspStore {
                             let worktree = this
                                 .worktree_store
                                 .read(cx)
-                                .worktree_for_id(*worktree_id, model, cx)?;
+                                .worktree_for_id(*worktree_id, cx)?;
                             let state = this.as_local()?.language_servers.get(server_id)?;
                             let delegate = LocalLspAdapterDelegate::for_local(this, &worktree, model, cx);
                             match state {
@@ -3541,7 +3543,7 @@ impl LspStore {
             )
         })?;
         if updated {
-            model.emit(, cxLspStoreEvent::DiagnosticsUpdated {
+            model.emit(LspStoreEvent::DiagnosticsUpdated {
                 language_server_id: server_id,
                 path: project_path,
             })
@@ -3625,7 +3627,7 @@ impl LspStore {
                 let response = request.await?;
                 let buffer_id = BufferId::new(response.buffer_id)?;
                 this.update(&mut cx, |this, model, cx| {
-                    this.wait_for_remote_buffer(buffer_id, cx)
+                    this.wait_for_remote_buffer(buffer_id, model, cx)
                 })?
                 .await
             })
@@ -4162,10 +4164,10 @@ impl LspStore {
                         })
                         .log_err();
                 }
-                model.emit(, cxLspStoreEvent::DiagnosticsUpdated {
+                model.emit(LspStoreEvent::DiagnosticsUpdated {
                     language_server_id: LanguageServerId(message.language_server_id as usize),
                     path: project_path,
-                });
+                }, cx);
             }
             Ok(())
         })?
@@ -4192,11 +4194,11 @@ impl LspStore {
                     progress_tokens: Default::default(),
                 },
             );
-            model.emit(, cxLspStoreEvent::LanguageServerAdded(
+            model.emit(LspStoreEvent::LanguageServerAdded(
                 server_id,
                 LanguageServerName(server.name.into()),
                 server.worktree_id.map(WorktreeId::from_proto),
-            ));
+            ), cx);
             model.notify(cx);
         })?;
         Ok(())
@@ -4250,15 +4252,15 @@ impl LspStore {
                 }
 
                 proto::update_language_server::Variant::WorkEnd(payload) => {
-                    this.on_lsp_work_end(language_server_id, payload.token, cx);
+                    this.on_lsp_work_end(language_server_id, payload.token, model, cx);
                 }
 
                 proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(_) => {
-                    this.disk_based_diagnostics_started(language_server_id, cx);
+                    this.disk_based_diagnostics_started(language_server_id, model, cx);
                 }
 
                 proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(_) => {
-                    this.disk_based_diagnostics_finished(language_server_id, cx)
+                    this.disk_based_diagnostics_finished(language_server_id, model, cx)
                 }
             }
 
@@ -4281,7 +4283,7 @@ impl LspStore {
         let message = envelope.payload.message;
 
         this.update(&mut cx, |_, cx| {
-            model.emit(, cxLspStoreEvent::LanguageServerLog(
+            model.emit(LspStoreEvent::LanguageServerLog(
                 language_server_id,
                 log_type,
                 message,
@@ -4302,12 +4304,12 @@ impl LspStore {
         }
 
         model.emit(LspStoreEvent::DiskBasedDiagnosticsStarted { language_server_id }, cx);
-        model.emit(, cxLspStoreEvent::LanguageServerUpdate {
+        model.emit(LspStoreEvent::LanguageServerUpdate {
             language_server_id,
             message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
                 Default::default(),
             ),
-        })
+        }, cx)
     }
 
     pub fn disk_based_diagnostics_finished(
@@ -4323,12 +4325,12 @@ impl LspStore {
         }
 
         model.emit(LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id }, cx);
-        model.emit(, cxLspStoreEvent::LanguageServerUpdate {
+        model.emit(LspStoreEvent::LanguageServerUpdate {
             language_server_id,
             message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
                 Default::default(),
             ),
-        })
+        }, cx)
     }
 
     // After saving a buffer using a language server that doesn't provide a disk-based progress token,
@@ -4860,7 +4862,7 @@ impl LspStore {
                     model,
                     cx,
                 ) {
-                    model.emit(, cxLspStoreEvent::LanguageServerUpdate {
+                    model.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
                         message: proto::update_language_server::Variant::WorkProgress(
                             proto::LspWorkProgress {
@@ -4870,7 +4872,7 @@ impl LspStore {
                                 is_cancellable: report.cancellable,
                             },
                         ),
-                    })
+                    }, cx)
                 }
             }
             lsp::WorkDoneProgress::End(_) => {
@@ -4895,7 +4897,7 @@ impl LspStore {
             status.pending_work.insert(token.clone(), progress.clone());
             model.notify(cx);
         }
-        model.emit(, cxLspStoreEvent::LanguageServerUpdate {
+        model.emit(LspStoreEvent::LanguageServerUpdate {
             language_server_id,
             message: proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
                 token,
@@ -4904,7 +4906,7 @@ impl LspStore {
                 percentage: progress.percentage.map(|p| p as u32),
                 is_cancellable: Some(progress.is_cancellable),
             }),
-        })
+        }, cx)
     }
 
     fn on_lsp_work_progress(
@@ -4963,10 +4965,10 @@ impl LspStore {
             model.notify(cx);
         }
 
-        model.emit(, cxLspStoreEvent::LanguageServerUpdate {
+        model.emit(LspStoreEvent::LanguageServerUpdate {
             language_server_id,
             message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd { token }),
-        })
+        }, cx)
     }
 
     fn on_lsp_did_change_watched_files(
@@ -5278,13 +5280,13 @@ impl LspStore {
             .await
             .context("inlay hints fetch")?;
 
-        this.update(&mut cx, |project, cx| {
+        this.update(&mut cx, |project, model, cx| {
             InlayHints::response_to_proto(
                 buffer_hints,
                 project,
                 sender_id,
                 &buffer.read(cx).version(),
-                model,cx,
+                cx,
             )
         })
     }
@@ -5374,9 +5376,9 @@ impl LspStore {
             } else {
                 this.buffer_store
                     .update(cx, |buffer_store, model, cx| {
-                        buffer_store.create_buffer_for_peer(&buffer, peer_id, cx)
+                        buffer_store.create_buffer_for_peer(&buffer, peer_id, model, cx)
                     })
-                    .detach_and_log_err(model, cx);
+                    .detach_and_log_err(cx);
                 let buffer_id = buffer.read(cx).remote_id().to_proto();
                 Ok(proto::OpenBufferForSymbolResponse { buffer_id })
             }
@@ -5398,7 +5400,7 @@ impl LspStore {
     ) -> Result<proto::GetProjectSymbolsResponse> {
         let symbols = this
             .update(&mut cx, |this, model, cx| {
-                this.symbols(&envelope.payload.query, cx)
+                this.symbols(&envelope.payload.query, model, cx)
             })?
             .await?;
 
@@ -5413,8 +5415,8 @@ impl LspStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |this, model, cx| {
-            let buffers = this.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
-            this.restart_language_servers_for_buffers(buffers, cx);
+            let buffers = this.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), model, cx);
+            this.restart_language_servers_for_buffers(buffers, model, cx);
         })?;
 
         Ok(proto::Ack {})
@@ -5430,12 +5432,12 @@ impl LspStore {
                 match work {
                     proto::cancel_language_server_work::Work::Buffers(buffers) => {
                         let buffers =
-                            this.buffer_ids_to_buffers(buffers.buffer_ids.into_iter(), cx);
-                        this.cancel_language_server_work_for_buffers(buffers, cx);
+                            this.buffer_ids_to_buffers(buffers.buffer_ids.into_iter(), model, cx);
+                        this.cancel_language_server_work_for_buffers(buffers, model, cx);
                     }
                     proto::cancel_language_server_work::Work::LanguageServerWork(work) => {
                         let server_id = LanguageServerId::from_proto(work.language_server_id);
-                        this.cancel_language_server_work(server_id, work.token, cx);
+                        this.cancel_language_server_work(server_id, work.token, model, cx);
                     }
                 }
             }
@@ -5640,7 +5642,7 @@ impl LspStore {
                 buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
             }
             let trigger = FormatTrigger::from_proto(envelope.payload.trigger);
-            anyhow::Ok(this.format(buffers, false, trigger, FormatTarget::Buffer, cx))
+            anyhow::Ok(this.format(buffers, false, trigger, FormatTarget::Buffer, model, cx))
         })??;
 
         let project_transaction = format.await?;
@@ -5667,7 +5669,7 @@ impl LspStore {
         cx: &mut AppContext,
     ) {
         let root_file = worktree
-            .update(cx, |tree, model, cx| tree.root_file(cx))
+            .update(cx, |tree, model, cx| tree.root_file(model, cx))
             .map(|f| f as _);
         let settings = language_settings(Some(language.clone()), root_file.as_ref(), model, cx);
         if !settings.enable_language_server || self.mode.is_remote() {
@@ -6193,7 +6195,7 @@ impl LspStore {
 
             this.update(&mut cx, |this, model, cx| {
                 // Restart the language server for the given worktree.
-                this.start_language_servers(&worktree, language.clone(), cx);
+                this.start_language_servers(&worktree, language.clone(), model, cx);
 
                 // Lookup new server ids and set them for each of the orphaned worktrees
                 for (affected_worktree_id, language_server_name) in affected_worktrees {
@@ -6670,7 +6672,7 @@ impl LspStore {
                 move |params, mut cx| {
                     if let Some(this) = this.upgrade() {
                         this.update(&mut cx, |_, cx| {
-                            model.emit(, cxLspStoreEvent::LanguageServerLog(
+                            model.emit(LspStoreEvent::LanguageServerLog(
                                 server_id,
                                 LanguageServerLogType::Log(params.typ),
                                 params.message,
@@ -6688,7 +6690,7 @@ impl LspStore {
                 move |params, mut cx| {
                     if let Some(this) = this.upgrade() {
                         this.update(&mut cx, |_, cx| {
-                            model.emit(, cxLspStoreEvent::LanguageServerLog(
+                            model.emit(LspStoreEvent::LanguageServerLog(
                                 server_id,
                                 LanguageServerLogType::Trace(params.verbose),
                                 params.message,
@@ -6887,7 +6889,7 @@ impl LspStore {
             },
         );
 
-        model.emit(, cxLspStoreEvent::LanguageServerAdded(
+        model.emit(LspStoreEvent::LanguageServerAdded(
             server_id,
             language_server.name(),
             Some(key.0),
@@ -7516,11 +7518,11 @@ impl LspStore {
                                 // Check if the edit that triggered that edit has been made by this participant.
 
                                 if let Some(most_recent_edit) = most_recent_edit {
-                                    model.emit(, cxLspStoreEvent::SnippetEdit {
+                                    model.emit(LspStoreEvent::SnippetEdit {
                                         buffer_id,
                                         edits: snippet_edits,
                                         most_recent_edit,
-                                    });
+                                    }, cx);
                                 }
                             }
 

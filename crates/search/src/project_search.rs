@@ -544,7 +544,7 @@ impl Item for ProjectSearchView {
 
     fn navigate(&mut self, data: Box<dyn Any>, model: &Model<Self>, cx: &mut AppContext) -> bool {
         self.results_editor
-            .update(cx, |editor, model, cx| editor.navigate(data, cx))
+            .update(cx, |editor, model, cx| editor.navigate(data, model, cx))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
@@ -1174,7 +1174,7 @@ impl ProjectSearchView {
     fn focus_results_editor(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.query_editor.update(cx, |query_editor, model, cx| {
             let cursor = query_editor.selections.newest_anchor().head();
-            query_editor.change_selections(None, cx, |s| s.select_ranges([cursor..cursor]));
+            query_editor.change_selections(None, model, cx, |s| s.select_ranges([cursor..cursor]));
         });
         let results_handle = self.results_editor.focus_handle(cx);
         cx.focus(&results_handle);

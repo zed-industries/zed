@@ -308,7 +308,7 @@ impl Vim {
 
     pub fn visual_object(&mut self, object: Object, model: &Model<Vim>, cx: &mut AppContext) {
         if let Some(Operator::Object { around }) = self.active_operator() {
-            self.pop_operator(cx);
+            self.pop_operator(model, cx);
             let current_mode = self.mode;
             let target_mode = object.target_visual_mode(current_mode, around);
             if target_mode != current_mode {
@@ -491,7 +491,7 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             let line_mode = editor.selections.line_mode;
             vim.yank_selections_content(editor, line_mode, cx);
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, model, cx, |s| {
                 s.move_with(|map, selection| {
                     if line_mode {
                         selection.start = start_of_line(map, false, selection.start);
@@ -512,7 +512,7 @@ impl Vim {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.stop_recording(cx);
+        self.stop_recording(model, cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 let (display_map, selections) = editor.selections.all_adjusted_display(cx);
@@ -544,7 +544,7 @@ impl Vim {
                 }
 
                 editor.edit(edits, model, cx);
-                editor.change_selections(None, cx, |s| s.select_ranges(stable_anchors));
+                editor.change_selections(None, model, cx, |s| s.select_ranges(stable_anchors));
             });
         });
         self.switch_mode(Mode::Normal, false, cx);
@@ -657,7 +657,7 @@ impl Vim {
         match self.maybe_pop_operator() {
             Some(Operator::Change) => self.substitute(None, false, cx),
             Some(Operator::Delete) => {
-                self.stop_recording(cx);
+                self.stop_recording(model, cx);
                 self.visual_delete(false, cx)
             }
             Some(Operator::Yank) => self.visual_yank(cx),

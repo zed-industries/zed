@@ -254,7 +254,7 @@ impl ProjectDiagnosticsEditor {
                     .log_err()
                 {
                     this.update(&mut cx, |this, model, cx| {
-                        this.update_excerpts(path, language_server_id, buffer, cx);
+                        this.update_excerpts(path, language_server_id, buffer, model, cx);
                     })?;
                 }
             }
@@ -641,7 +641,7 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
             }
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, model, cx, |s| {
                 s.select(selections);
             });
             Some(())

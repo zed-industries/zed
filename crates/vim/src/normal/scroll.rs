@@ -87,7 +87,7 @@ fn scroll_editor(
         _ => amount.clone(),
     };
 
-    editor.scroll_screen(&amount, cx);
+    editor.scroll_screen(&amount, model, cx);
     if !should_move_cursor {
         return;
     }
@@ -99,7 +99,7 @@ fn scroll_editor(
     let top_anchor = editor.scroll_manager.anchor().anchor;
     let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
 
-    editor.change_selections(None, cx, |s| {
+    editor.change_selections(None, model, cx, |s| {
         s.move_with(|map, selection| {
             let mut head = selection.head();
             let top = top_anchor.to_display_point(map);

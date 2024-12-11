@@ -61,7 +61,7 @@ impl EditorTestContext {
         let editor = cx.add_window(|cx| {
             let editor =
                 build_editor_with_project(project, MultiBuffer::build_from_buffer(buffer, cx), cx);
-            editor.focus(window);
+            editor.focus(window, cx);
             editor
         });
         let editor_view = editor.root_view(cx).unwrap();
@@ -103,7 +103,7 @@ impl EditorTestContext {
         let buffer = cx.new_model(|model, cx| {
             for excerpt in excerpts.into_iter() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
-                let buffer = cx.new_model(|model, cx| Buffer::local(text, cx));
+                let buffer = cx.new_model(|model, cx| Buffer::local(text, model, cx));
                 multibuffer.push_excerpts(
                     buffer,
                     ranges.into_iter().map(|range| ExcerptRange {
@@ -118,8 +118,8 @@ impl EditorTestContext {
         });
 
         let editor = cx.add_window(|cx| {
-            let editor = build_editor(buffer, cx);
-            editor.focus(window);
+            let editor = build_editor(buffer, model, cx);
+            editor.focus(window, cx);
             editor
         });
 

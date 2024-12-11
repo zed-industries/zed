@@ -775,7 +775,7 @@ impl InlineAssistant {
                     let assist = &self.assists[&scroll_lock.assist_id];
                     if let Some(decorations) = assist.decorations.as_ref() {
                         let distance_from_top = editor.update(cx, |editor, model, cx| {
-                            let scroll_top = editor.scroll_position(cx).y;
+                            let scroll_top = editor.scroll_position(model, cx).y;
                             let prompt_row = editor
                                 .row_for_block(decorations.prompt_block_id, model, cx)
                                 .unwrap()
@@ -889,7 +889,7 @@ impl InlineAssistant {
             if undo {
                 assist
                     .codegen
-                    .update(cx, |codegen, model, cx| codegen.undo(cx));
+                    .update(cx, |codegen, model, cx| codegen.undo(model, cx));
             } else {
                 self.confirmed_assists.insert(assist_id, active_alternative);
             }
@@ -973,7 +973,7 @@ impl InlineAssistant {
 
         assist
             .editor
-            .update(cx, |editor, model, cx| editor.focus(window))
+            .update(cx, |editor, model, cx| editor.focus(window, cx))
             .ok();
     }
 
@@ -992,7 +992,7 @@ impl InlineAssistant {
                 .prompt_editor
                 .update(cx, |prompt_editor, model, cx| {
                     prompt_editor.editor.update(cx, |editor, model, cx| {
-                        editor.focus(window);
+                        editor.focus(window, cx);
                         editor.select_all(&SelectAll, model, cx);
                     })
                 });
@@ -1016,7 +1016,7 @@ impl InlineAssistant {
 
         let position = assist.range.start;
         editor.update(cx, |editor, model, cx| {
-            editor.change_selections(None, cx, |selections| {
+            editor.change_selections(None, model, cx, |selections| {
                 selections.select_anchor_ranges([position..position])
             });
 
@@ -1706,7 +1706,7 @@ impl Render for PromptEditor {
                                                 .position_mode(gpui::AnchoredPositionMode::Local)
                                                 .position(point(px(0.), px(24.)))
                                                 .anchor(gpui::AnchorCorner::TopLeft)
-                                                .child(self.render_rate_limit_notice(cx)),
+                                                .child(self.render_rate_limit_notice(model, cx)),
                                         )
                                     })),
                             )
@@ -1726,12 +1726,12 @@ impl Render for PromptEditor {
                         }
                     }),
             )
-            .child(div().flex_1().child(self.render_prompt_editor(cx)))
+            .child(div().flex_1().child(self.render_prompt_editor(model, cx)))
             .child(
                 h_flex()
                     .gap_2()
                     .pr_6()
-                    .children(self.render_token_count(cx))
+                    .children(self.render_token_count(model, cx))
                     .children(buttons),
             )
     }
@@ -1925,7 +1925,7 @@ impl PromptEditor {
                         .assists
                         .get(&assist_id)
                         .context("assist not found")?;
-                    anyhow::Ok(assist.count_tokens(cx))
+                    anyhow::Ok(assist.count_tokens(model, cx))
                 })??
                 .await?;
 
@@ -2099,12 +2099,12 @@ impl PromptEditor {
         cx: &mut AppContext,
     ) {
         self.codegen
-            .update(cx, |codegen, model, cx| codegen.cycle_prev(cx));
+            .update(cx, |codegen, model, cx| codegen.cycle_prev(model, cx));
     }
 
     fn cycle_next(&mut self, _: &CycleNextInlineAssist, model: &Model<Self>, cx: &mut AppContext) {
         self.codegen
-            .update(cx, |codegen, model, cx| codegen.cycle_next(cx));
+            .update(cx, |codegen, model, cx| codegen.cycle_next(model, cx));
     }
 
     fn render_cycle_controls(&self, model: &Model<Self>, cx: &AppContext) -> AnyElement {
@@ -2671,7 +2671,7 @@ impl Codegen {
             .to_vec();
 
         self.active_alternative()
-            .update(cx, |alternative, model, cx| alternative.undo(cx));
+            .update(cx, |alternative, model, cx| alternative.undo(model, cx));
         self.activate(0, model, cx);
         self.alternatives.truncate(1);
 
@@ -2713,13 +2713,13 @@ impl Codegen {
 
     pub fn stop(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         for codegen in &self.alternatives {
-            codegen.update(cx, |codegen, model, cx| codegen.stop(cx));
+            codegen.update(cx, |codegen, model, cx| codegen.stop(model, cx));
         }
     }
 
     pub fn undo(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         self.active_alternative()
-            .update(cx, |codegen, model, cx| codegen.undo(cx));
+            .update(cx, |codegen, model, cx| codegen.undo(model, cx));
 
         self.buffer.update(cx, |buffer, model, cx| {
             if let Some(transaction_id) = self.initial_transaction_id.take() {
@@ -2878,7 +2878,7 @@ impl CodegenAlternative {
                     let line_operations = self.line_operations.clone();
                     self.reapply_line_based_diff(line_operations, model, cx);
                 } else {
-                    self.reapply_batch_diff(cx).detach();
+                    self.reapply_batch_diff(model, cx).detach();
                 }
             } else if let Some(transaction_id) = self.transformation_transaction_id.take() {
                 self.buffer.update(cx, |buffer, model, cx| {

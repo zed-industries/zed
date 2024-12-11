@@ -48,7 +48,7 @@ impl MouseContextMenu {
         model: &Model<Editor>,
         cx: &mut AppContext,
     ) -> Option<Self> {
-        let editor_snapshot = editor.snapshot(cx);
+        let editor_snapshot = editor.snapshot(model, cx);
         let content_origin = editor.last_bounds?.origin
             + Point {
                 x: editor.gutter_dimensions.width,
@@ -81,7 +81,7 @@ impl MouseContextMenu {
             move |editor, _, _event: &DismissEvent, cx| {
                 editor.mouse_context_menu.take();
                 if context_menu_focus.contains_focused(cx) {
-                    editor.focus(window);
+                    editor.focus(window, cx);
                 }
             },
         );
@@ -117,7 +117,7 @@ pub fn deploy_context_menu(
     cx: &mut AppContext,
 ) {
     if !editor.is_focused(window) {
-        editor.focus(window);
+        editor.focus(window, cx);
     }
 
     // Don't show context menu for inline editors
@@ -141,11 +141,11 @@ pub fn deploy_context_menu(
         }
 
         let display_map = editor.selections.display_map(cx);
-        let buffer = &editor.snapshot(cx).buffer_snapshot;
+        let buffer = &editor.snapshot(model, cx).buffer_snapshot;
         let anchor = buffer.anchor_before(point.to_point(&display_map));
         if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
             // Move the cursor to the clicked location so that dispatched actions make sense
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, model, cx, |s| {
                 s.clear_disjoint();
                 s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
             });
@@ -218,7 +218,7 @@ pub fn deploy_context_menu(
         None => {
             let menu_position = MenuPosition::PinnedToEditor {
                 source: source_anchor,
-                offset: editor.character_size(cx),
+                offset: editor.character_size(model, cx),
             };
             Some(MouseContextMenu::new(
                 menu_position,

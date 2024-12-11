@@ -149,7 +149,7 @@ impl TerminalInlineAssistant {
         if let Some(prompt_editor) = assist.prompt_editor.as_ref() {
             prompt_editor.update(cx, |this, model, cx| {
                 this.editor.update(cx, |editor, model, cx| {
-                    editor.focus(window);
+                    editor.focus(window, cx);
                     editor.select_all(&SelectAll, model, cx);
                 });
             });
@@ -246,7 +246,7 @@ impl TerminalInlineAssistant {
 
         assist
             .codegen
-            .update(cx, |codegen, model, cx| codegen.stop(cx));
+            .update(cx, |codegen, model, cx| codegen.stop(model, cx));
     }
 
     fn request_for_inline_assist(
@@ -365,9 +365,9 @@ impl TerminalInlineAssistant {
 
             assist.codegen.update(cx, |codegen, model, cx| {
                 if undo {
-                    codegen.undo(cx);
+                    codegen.undo(model, cx);
                 } else if execute {
-                    codegen.complete(cx);
+                    codegen.complete(model, cx);
                 }
             });
         }
@@ -722,12 +722,12 @@ impl Render for PromptEditor {
                         },
                     ),
             )
-            .child(div().flex_1().child(self.render_prompt_editor(cx)))
+            .child(div().flex_1().child(self.render_prompt_editor(model, cx)))
             .child(
                 h_flex()
                     .gap_1()
                     .pr_4()
-                    .children(self.render_token_count(cx))
+                    .children(self.render_token_count(model, cx))
                     .children(buttons),
             )
     }
@@ -768,11 +768,9 @@ impl PromptEditor {
             editor.set_soft_wrap_mode(
                 language::language_settings::SoftWrap::EditorWidth,
                 model,
-                model,
-                model,
                 cx,
             );
-            editor.set_placeholder_text(Self::placeholder_text(cx), model, cx);
+            editor.set_placeholder_text(Self::placeholder_text(model, cx), model, cx);
             editor
         });
 
@@ -799,9 +797,9 @@ impl PromptEditor {
             _token_count_subscriptions: token_count_subscriptions,
             workspace,
         };
-        this.count_lines(cx);
-        this.count_tokens(cx);
-        this.subscribe_to_editor(cx);
+        this.count_lines(model, cx);
+        this.count_tokens(model, cx);
+        this.subscribe_to_editor(model, cx);
         this
     }
 
@@ -849,7 +847,7 @@ impl PromptEditor {
         cx: &mut AppContext,
     ) {
         let AssistantPanelEvent::ContextEdited { .. } = event;
-        self.count_tokens(cx);
+        self.count_tokens(model, cx);
     }
 
     fn count_tokens(&mut self, model: &Model<Self>, cx: &mut AppContext) {
@@ -878,7 +876,7 @@ impl PromptEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        self.count_lines(cx);
+        self.count_lines(model, cx);
     }
 
     fn handle_prompt_editor_events(
@@ -903,7 +901,7 @@ impl PromptEditor {
                 model.notify(cx);
             }
             EditorEvent::BufferEdited => {
-                self.count_tokens(cx);
+                self.count_tokens(model, cx);
             }
             _ => {}
         }

@@ -887,18 +887,20 @@ impl Buffer {
             }
         }
 
-        let operation = base_buffer.update(cx, |base_buffer, model, cx| {            // model.emit( BufferEvent::DiffBaseChanged);
-            base_buffer.edit(edits, None, model, cx)
-            , cx});
+        todo!("what's going on here with DiffBaseChanged not being defined?")
+        // let operation = base_buffer.update(cx, |base_buffer, model, cx| {
+        //     model.emit(BufferEvent::DiffBaseChanged, cx);
+        //     base_buffer.edit(edits, None, model, cx)
+        // });
 
-        if let Some(operation) = operation {
-            if let Some(BufferBranchState {
-                merged_operations, ..
-            }) = &mut self.branch_state
-            {
-                merged_operations.push(operation);
-            }
-        }
+        // if let Some(operation) = operation {
+        //     if let Some(BufferBranchState {
+        //         merged_operations, ..
+        //     }) = &mut self.branch_state
+        //     {
+        //         merged_operations.push(operation);
+        //     }
+        // }
     }
 
     fn on_base_buffer_event(
@@ -2339,11 +2341,11 @@ impl Buffer {
         cx: &mut AppContext,
     ) {
         model.emit(
-            cx,
             BufferEvent::Operation {
                 operation,
                 is_local,
             },
+            cx
         );
     }
 

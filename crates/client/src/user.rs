@@ -393,11 +393,11 @@ impl UserStore {
                         this.incoming_contact_requests.retain(|user| {
                             if removed_incoming_requests.contains(&user.id) {
                                 model.emit(
-                                    cx,
                                     Event::Contact {
                                         user: user.clone(),
                                         kind: ContactEventKind::Cancelled,
                                     },
+                                    cx,
                                 );
                                 false
                             } else {

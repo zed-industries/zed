@@ -179,7 +179,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                     for completion in completions {
                         this.push_completion(completion);
                     }
-                    this.cycle(buffer, cursor_position, direction, cx);
+                    this.cycle(buffer, cursor_position, direction, model, cx);
                 })?;
 
                 Ok(())
@@ -191,7 +191,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         if let Some(completion) = self.active_completion() {
             self.copilot
                 .update(cx, |copilot, model, cx| {
-                    copilot.accept_completion(completion, cx)
+                    copilot.accept_completion(completion, model, cx)
                 })
                 .detach_and_log_err(cx);
             if self.active_completion().is_some() {
@@ -222,7 +222,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
         self.copilot
             .update(cx, |copilot, model, cx| {
-                copilot.discard_completions(&self.completions, cx)
+                copilot.discard_completions(&self.completions, model, cx)
             })
             .detach_and_log_err(cx);
 
@@ -533,7 +533,7 @@ mod tests {
         // Reset the editor to verify how suggestions behave when tabbing on leading indentation.
         cx.update_editor(|editor, cx| {
             editor.set_text("fn foo() {\n  \n}", cx);
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, model, cx, |s| {
                 s.select_ranges([Point::new(1, 2)..Point::new(1, 2)])
             });
         });
@@ -779,6 +779,7 @@ mod tests {
                     context: Point::new(0, 0)..Point::new(2, 0),
                     primary: None,
                 }],
+                model,
                 cx,
             );
             multibuffer.push_excerpts(
@@ -787,6 +788,7 @@ mod tests {
                     context: Point::new(0, 0)..Point::new(2, 0),
                     primary: None,
                 }],
+                model,
                 cx,
             );
             multibuffer
@@ -794,7 +796,7 @@ mod tests {
         let editor =
             cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, model, cx));
         editor
-            .update(cx, |editor, model, cx| editor.focus(window))
+            .update(cx, |editor, model, cx| editor.focus(window, cx))
             .unwrap();
         let copilot_provider = cx.new_model(|_, _| CopilotCompletionProvider::new(copilot));
         editor
@@ -814,7 +816,7 @@ mod tests {
         );
         _ = editor.update(cx, |editor, model, cx| {
             // Ensure copilot suggestions are shown for the first excerpt.
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, model, cx, |s| {
                 s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
             });
             editor.next_inline_completion(&Default::default(), cx);
@@ -840,7 +842,7 @@ mod tests {
         );
         _ = editor.update(cx, |editor, model, cx| {
             // Move to another excerpt, ensuring the suggestion gets cleared.
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, model, cx, |s| {
                 s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
             });
             assert!(!editor.has_active_inline_completion(cx));
@@ -1014,13 +1016,13 @@ mod tests {
 
         let private_buffer = project
             .update(cx, |project, model, cx| {
-                project.open_local_buffer("/test/.env", cx)
+                project.open_local_buffer("/test/.env", model, cx)
             })
             .await
             .unwrap();
         let public_buffer = project
             .update(cx, |project, model, cx| {
-                project.open_local_buffer("/test/README.md", cx)
+                project.open_local_buffer("/test/README.md", model, cx)
             })
             .await
             .unwrap();
@@ -1033,6 +1035,7 @@ mod tests {
                     context: Point::new(0, 0)..Point::new(1, 0),
                     primary: None,
                 }],
+                model,
                 cx,
             );
             multibuffer.push_excerpts(
@@ -1041,6 +1044,7 @@ mod tests {
                     context: Point::new(0, 0)..Point::new(1, 0),
                     primary: None,
                 }],
+                model,
                 cx,
             );
             multibuffer
@@ -1071,7 +1075,7 @@ mod tests {
             );
 
         _ = editor.update(cx, |editor, model, cx| {
-            editor.change_selections(None, cx, |selections| {
+            editor.change_selections(None, model, cx, |selections| {
                 selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
             });
             editor.refresh_inline_completion(true, false, cx);
@@ -1081,7 +1085,7 @@ mod tests {
         assert!(copilot_requests.try_next().is_err());
 
         _ = editor.update(cx, |editor, model, cx| {
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, model, cx, |s| {
                 s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
             });
             editor.refresh_inline_completion(true, false, cx);

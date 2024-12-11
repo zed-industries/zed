@@ -171,7 +171,7 @@ impl GoToLine {
                 editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                     s.select_ranges([point..point])
                 });
-                editor.focus(window);
+                editor.focus(window, cx);
                 model.notify(cx);
             });
             self.prev_scroll_position.take();

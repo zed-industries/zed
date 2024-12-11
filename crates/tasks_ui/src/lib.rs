@@ -374,7 +374,9 @@ mod tests {
 
         // And now, let's select an identifier.
         editor2.update(cx, |editor, model, cx| {
-            editor.change_selections(None, cx, |selections| selections.select_ranges([14..18]))
+            editor.change_selections(None, model, cx, |selections| {
+                selections.select_ranges([14..18])
+            })
         });
 
         assert_eq!(
