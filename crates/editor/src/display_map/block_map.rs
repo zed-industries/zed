@@ -1219,7 +1219,6 @@ impl<'a> BlockMapWriter<'a> {
     }
 
     // TODO kb the last buffer folded disappears
-    // TODO kb editor elements (buttons, indent guides) leak through folds
     pub fn fold_buffer(
         &mut self,
         buffer_id: BufferId,
@@ -1544,7 +1543,18 @@ impl BlockSnapshot {
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
-    pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
+    pub(super) fn is_line_replaced_or_folded(&self, row: MultiBufferRow) -> bool {
+        let folded = self
+            .wrap_snapshot
+            .buffer_snapshot()
+            .buffer_line_for_row(row)
+            .map_or(false, |(buffer, _)| {
+                self.folded_buffers.contains(&buffer.remote_id())
+            });
+        if folded {
+            return true;
+        }
+
         let wrap_point = self
             .wrap_snapshot
             .make_wrap_point(Point::new(row.0, 0), Bias::Left);
@@ -2897,12 +2907,14 @@ mod tests {
                         unfolded_buffers
                             .retain(|buffer_id| !block_map.0.folded_buffers.contains(buffer_id));
                         let buffer_to_fold = if unfolded_buffers.len() > 1 {
-                            Some(unfolded_buffers[rng.gen_range(0..unfolded_buffers.len())])
+                            let range_with_one_miss = rng.gen_range(0..=unfolded_buffers.len());
+                            unfolded_buffers.get(range_with_one_miss).copied()
                         } else {
                             None
                         };
                         let buffer_to_unfold = if folded_buffers.len() > 1 {
-                            Some(folded_buffers[rng.gen_range(0..folded_buffers.len())])
+                            let range_with_one_miss = rng.gen_range(0..=folded_buffers.len());
+                            folded_buffers.get(range_with_one_miss).copied()
                         } else {
                             None
                         };
@@ -3053,6 +3065,7 @@ mod tests {
                 }
 
                 if fold_started {
+                    expected_replaced_buffer_rows.insert(MultiBufferRow(multibuffer_row));
                     continue;
                 }
 
@@ -3322,12 +3335,11 @@ mod tests {
 
             for buffer_row in 0..=buffer_snapshot.max_point().row {
                 let buffer_row = MultiBufferRow(buffer_row);
-                // TODO kb uncomment and fix
-                // assert_eq!(
-                //     blocks_snapshot.is_line_replaced(buffer_row),
-                //     expected_replaced_buffer_rows.contains(&buffer_row),
-                //     "incorrect is_line_replaced({buffer_row:?})",
-                // );
+                assert_eq!(
+                    blocks_snapshot.is_line_replaced_or_folded(buffer_row),
+                    expected_replaced_buffer_rows.contains(&buffer_row),
+                    "incorrect is_line_replaced({buffer_row:?})",
+                );
             }
         }
     }

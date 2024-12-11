@@ -756,7 +756,6 @@ impl DisplaySnapshot {
             let mut display_point = self.point_to_display_point(point, Bias::Right);
             *display_point.column_mut() = self.line_len(display_point.row());
             let next_point = self.display_point_to_point(display_point, Bias::Right);
-            // TODO kb why is it a fix?
             if next_point == point || original_point == point || original_point == next_point {
                 return (point, display_point);
             }
@@ -1111,12 +1110,8 @@ impl DisplaySnapshot {
     }
 
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
-        self.block_snapshot.is_line_replaced(buffer_row)
+        self.block_snapshot.is_line_replaced_or_folded(buffer_row)
             || self.fold_snapshot.is_line_folded(buffer_row)
-    }
-
-    pub fn is_line_replaced(&self, buffer_row: MultiBufferRow) -> bool {
-        self.block_snapshot.is_line_replaced(buffer_row)
     }
 
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {

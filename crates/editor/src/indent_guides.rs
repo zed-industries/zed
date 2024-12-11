@@ -172,13 +172,7 @@ pub fn indent_guides_in_range(
             let start =
                 MultiBufferRow(indent_guide.multibuffer_row_range.start.0.saturating_sub(1));
             // Filter out indent guides that are inside a fold
-            let is_folded = snapshot.is_line_folded(start);
-            let line_indent = snapshot.line_indent_for_buffer_row(start);
-
-            let contained_in_fold =
-                line_indent.len(indent_guide.tab_size) <= indent_guide.indent_level();
-
-            !(is_folded && contained_in_fold)
+            !snapshot.is_line_folded(start)
         })
         .collect()
 }
