@@ -4073,6 +4073,17 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn buffer_range_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<Range<text::Anchor>> {
+        let mut cursor = self.excerpts.cursor::<Option<&Locator>>(&());
+        let locator = self.excerpt_locator_for_id(excerpt_id);
+        if cursor.seek(&Some(locator), Bias::Left, &()) {
+            if let Some(excerpt) = cursor.item() {
+                return Some(excerpt.range.context.clone());
+            }
+        }
+        None
+    }
+
     fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>(&());
         let locator = self.excerpt_locator_for_id(excerpt_id);
