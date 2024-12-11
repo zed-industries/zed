@@ -77,10 +77,7 @@ pub fn derive_into_component(input: TokenStream) -> TokenStream {
 
         #[linkme::distributed_slice(component_system::__ALL_PREVIEWS)]
         fn __register_preview() {
-            component_system::PREVIEWS
-                .lock()
-                .unwrap()
-                .push(<#name as component_system::Component>::name());
+            component_system::register_preview::<#name>();
         }
     };
 

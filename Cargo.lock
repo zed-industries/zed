@@ -2877,6 +2877,7 @@ dependencies = [
 name = "component_system"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "gpui",
  "lazy_static",
  "linkme",

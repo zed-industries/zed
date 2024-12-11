@@ -54,9 +54,7 @@ impl ComponentPreview {
             ComponentPreviewPage::Overview => self.render_overview_page(cx).into_any_element(),
         }
     }
-}
 
-impl ComponentPreview {
     fn render_sidebar(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         div()
     }
@@ -74,8 +72,8 @@ impl ComponentPreview {
             .size_full()
             .gap_2()
             .child(v_flex().child(Headline::new("Component Preview").size(HeadlineSize::Large)))
-            .children(all_previews.into_iter().map(|preview_name| {
-                let id = ElementId::Name(format!("{}-preview", preview_name).into());
+            .children(all_previews.into_iter().map(|(name, preview)| {
+                let id = ElementId::Name(format!("{}-preview", name).into());
                 v_flex()
                     .gap_4()
                     .child(Headline::new(preview_name).size(HeadlineSize::Small))
