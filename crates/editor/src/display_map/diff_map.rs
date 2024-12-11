@@ -216,7 +216,7 @@ impl DiffMap {
         let multibuffer = self.multibuffer.read(cx);
         let multibuffer_snapshot = multibuffer.snapshot(cx);
 
-        let changes: Vec<(InlayEdit, Range<usize>)> = match &operation {
+        let changes: Vec<(InlayEdit, bool, Range<usize>)> = match &operation {
             DiffMapOperation::BufferDiffUpdated { buffer_id } => {
                 let buffer_id = *buffer_id;
                 let multibuffer = self.multibuffer.read(cx);
@@ -241,6 +241,7 @@ impl DiffMap {
                                 old: inlay_start..inlay_end,
                                 new: inlay_start..inlay_end,
                             },
+                            false,
                             multibuffer_start..multibuffer_end,
                         )
                     })
@@ -255,8 +256,9 @@ impl DiffMap {
                     let multibuffer_start = inlay_snapshot.to_buffer_offset(edit.new.start);
                     let multibuffer_end = inlay_snapshot.to_buffer_offset(edit.new.end);
                     let multibuffer_range = multibuffer_start..multibuffer_end;
-                    changes.push((edit.clone(), multibuffer_range))
+                    changes.push((edit.clone(), true, multibuffer_range))
                 }
+                self.snapshot.inlay_snapshot = inlay_snapshot.clone();
                 changes
             }
             DiffMapOperation::ExpandHunks { ranges }
@@ -277,6 +279,7 @@ impl DiffMap {
                             old: inlay_start..inlay_end,
                             new: inlay_start..inlay_end,
                         },
+                        false,
                         multibuffer_range,
                     ));
                 }
@@ -291,8 +294,16 @@ impl DiffMap {
         let mut new_transforms = SumTree::default();
         let mut edits = Patch::default();
 
-        for (inlay_edit, multibuffer_range) in changes {
-            new_transforms.append(cursor.slice(&inlay_edit.old.start, Bias::Left, &()), &());
+        for (mut edit, is_inlay_edit, multibuffer_range) in changes {
+            new_transforms.append(cursor.slice(&edit.old.start, Bias::Left, &()), &());
+
+            let edit_start_overshoot = (edit.old.start - cursor.start().0).0;
+            edit.new.start.0 -= edit_start_overshoot;
+            edit.old.start = cursor.start().0;
+
+            let diff_edit_old_start = cursor.start().1 + DiffOffset(edit_start_overshoot);
+            let diff_edit_new_start =
+                DiffOffset(new_transforms.summary().output.len + edit_start_overshoot);
 
             for (buffer, buffer_range, excerpt_id) in
                 multibuffer.range_to_buffer_ranges(multibuffer_range.clone(), cx)
@@ -447,31 +458,46 @@ impl DiffMap {
                             cursor.next(&());
                         }
                     }
+                }
 
-                    while cursor.start().0 < inlay_edit.old.end {
-                        let Some(item) = cursor.item() else {
-                            break;
+                while cursor.start().0 < edit.old.end {
+                    let Some(item) = cursor.item() else {
+                        break;
+                    };
+                    if let DiffTransform::DeletedHunk {
+                        base_text_byte_range,
+                        ..
+                    } = item
+                    {
+                        let old_start = cursor.start().1;
+                        let new_offset = DiffOffset(new_transforms.summary().output.len);
+                        let edit = Edit {
+                            old: old_start..old_start + DiffOffset(base_text_byte_range.len()),
+                            new: new_offset..new_offset,
                         };
-                        if let DiffTransform::DeletedHunk {
-                            base_text_byte_range,
-                            ..
-                        } = item
-                        {
-                            let old_start = cursor.start().1;
-                            let new_offset = DiffOffset(new_transforms.summary().output.len);
-                            let edit = Edit {
-                                old: old_start..old_start + DiffOffset(base_text_byte_range.len()),
-                                new: new_offset..new_offset,
-                            };
-                            dbg!(&edit);
-                            edits.push(edit);
-                        }
-                        cursor.next(&());
+                        dbg!(&edit);
+                        edits.push(edit);
                     }
+                    cursor.next(&());
                 }
             }
 
-            self.push_buffer_content_transform(&mut new_transforms, cursor.start().0);
+            let edit_undershoot = (cursor.start().0 - edit.old.end).0;
+            edit.new.end.0 += edit_undershoot;
+            edit.old.end = cursor.start().0;
+
+            self.push_buffer_content_transform(&mut new_transforms, edit.new.end);
+
+            let diff_edit_old_end = cursor.start().1 - DiffOffset(edit_undershoot);
+            let diff_edit_new_end =
+                DiffOffset(new_transforms.summary().output.len - edit_undershoot);
+
+            if is_inlay_edit {
+                edits.push(DiffEdit {
+                    old: diff_edit_old_start..diff_edit_old_end,
+                    new: diff_edit_new_start..diff_edit_new_end,
+                })
+            }
         }
 
         self.edits_since_sync = self.edits_since_sync.compose(edits);
