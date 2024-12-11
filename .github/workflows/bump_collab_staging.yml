@@ -7,7 +7,7 @@ on:
 
 jobs:
   update-collab-staging-tag:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'the-code-editor-company'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

@@ -30,7 +30,7 @@ env:
 jobs:
   migration_checks:
     name: Check Postgres and Protobuf migrations, mergability
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'the-code-editor-company'
     timeout-minutes: 60
     runs-on:
       - self-hosted
@@ -74,7 +74,7 @@ jobs:
   style:
     timeout-minutes: 60
     name: Check formatting and spelling
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'the-code-editor-company'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
@@ -92,7 +92,7 @@ jobs:
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'the-code-editor-company'
     runs-on:
       - self-hosted
       - test
@@ -136,7 +136,7 @@ jobs:
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'the-code-editor-company'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
@@ -171,7 +171,7 @@ jobs:
   build_remote_server:
     timeout-minutes: 60
     name: (Linux) Build Remote Server
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'the-code-editor-company'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
@@ -199,7 +199,7 @@ jobs:
   windows_tests:
     timeout-minutes: 60
     name: (Windows) Run Clippy and tests
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'the-code-editor-company'
     runs-on: hosted-windows-1
     steps:
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
