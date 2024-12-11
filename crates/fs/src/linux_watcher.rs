@@ -85,7 +85,10 @@ impl Watcher for LinuxWatcher {
 
 pub struct GlobalWatcher {
     // two mutexes because calling inotify.add triggers an inotify.event, which needs watchers.
+    #[cfg(target_os = "linux")]
     pub(super) inotify: Mutex<notify::INotifyWatcher>,
+    #[cfg(target_os = "freebsd")]
+    pub(super) inotify: Mutex<notify::KqueueWatcher>,
     pub(super) watchers: Mutex<Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>>,
 }
 

@@ -2,7 +2,7 @@ use super::{latest, since_v0_1_0};
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
-use language::LspAdapterDelegate;
+use extension::WorktreeDelegate;
 use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
@@ -26,7 +26,7 @@ mod settings {
     include!(concat!(env!("OUT_DIR"), "/since_v0.0.6/settings.rs"));
 }
 
-pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
+pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
@@ -113,23 +113,20 @@ impl From<CodeLabel> for latest::CodeLabel {
 
 #[async_trait]
 impl HostWorktree for WasmState {
-    async fn id(
-        &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
-    ) -> wasmtime::Result<u64> {
+    async fn id(&mut self, delegate: Resource<Arc<dyn WorktreeDelegate>>) -> wasmtime::Result<u64> {
         latest::HostWorktree::id(self, delegate).await
     }
 
     async fn root_path(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> wasmtime::Result<String> {
         latest::HostWorktree::root_path(self, delegate).await
     }
 
     async fn read_text_file(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
         path: String,
     ) -> wasmtime::Result<Result<String, String>> {
         latest::HostWorktree::read_text_file(self, delegate, path).await
@@ -137,14 +134,14 @@ impl HostWorktree for WasmState {
 
     async fn shell_env(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> wasmtime::Result<EnvVars> {
         latest::HostWorktree::shell_env(self, delegate).await
     }
 
     async fn which(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
         binary_name: String,
     ) -> wasmtime::Result<Option<String>> {
         latest::HostWorktree::which(self, delegate, binary_name).await

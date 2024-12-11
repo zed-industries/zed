@@ -14,21 +14,37 @@ use settings::WorktreeId;
 use crate::LanguageName;
 
 /// Represents a single toolchain.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Toolchain {
     /// User-facing label
     pub name: SharedString,
     pub path: SharedString,
     pub language_name: LanguageName,
+    /// Full toolchain data (including language-specific details)
+    pub as_json: serde_json::Value,
 }
 
-#[async_trait(?Send)]
+impl PartialEq for Toolchain {
+    fn eq(&self, other: &Self) -> bool {
+        // Do not use as_json for comparisons; it shouldn't impact equality, as it's not user-surfaced.
+        // Thus, there could be multiple entries that look the same in the UI.
+        (&self.name, &self.path, &self.language_name).eq(&(
+            &other.name,
+            &other.path,
+            &other.language_name,
+        ))
+    }
+}
+
+#[async_trait]
 pub trait ToolchainLister: Send + Sync {
     async fn list(
         &self,
         worktree_root: PathBuf,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList;
+    // Returns a term which we should use in UI to refer to a toolchain.
+    fn term(&self) -> SharedString;
 }
 
 #[async_trait(?Send)]

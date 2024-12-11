@@ -79,11 +79,13 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
             crate::Operation::UpdateCompletionTriggers {
                 triggers,
                 lamport_timestamp,
+                server_id,
             } => proto::operation::Variant::UpdateCompletionTriggers(
                 proto::operation::UpdateCompletionTriggers {
                     replica_id: lamport_timestamp.replica_id as u32,
                     lamport_timestamp: lamport_timestamp.value,
-                    triggers: triggers.clone(),
+                    triggers: triggers.iter().cloned().collect(),
+                    language_server_id: server_id.to_proto(),
                 },
             ),
         }),
@@ -326,6 +328,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                         replica_id: message.replica_id as ReplicaId,
                         value: message.lamport_timestamp,
                     },
+                    server_id: LanguageServerId::from_proto(message.language_server_id),
                 }
             }
         },

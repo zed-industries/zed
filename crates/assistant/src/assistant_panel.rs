@@ -1,6 +1,5 @@
 use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -17,12 +16,13 @@ use crate::{
     ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
     DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
     InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
-    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
-    ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    RequestType, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    MessageMetadata, MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus,
+    QuoteSelection, RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
+use assistant_tool::ToolWorkingSet;
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{
@@ -50,11 +50,12 @@ use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, BufferSnapshot, LanguageRegistry, LspAdapterDelegate, ToOffset,
 };
-use language_model::{
-    provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelRegistry, Role,
-};
 use language_model::{LanguageModelImage, LanguageModelToolUse};
+use language_model::{
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role,
+    ZED_CLOUD_PROVIDER_ID,
+};
+use language_model_selector::{LanguageModelPickerDelegate, LanguageModelSelector};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -142,7 +143,7 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
+    model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
@@ -415,7 +416,6 @@ impl AssistantPanel {
                 ControlFlow::Break(())
             });
 
-            pane.set_can_split(false, cx);
             pane.set_can_navigate(true, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
@@ -447,9 +447,10 @@ impl AssistantPanel {
                     );
                 let _pane = cx.view().clone();
                 let right_children = h_flex()
-                    .gap(Spacing::XSmall.rems(cx))
+                    .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         IconButton::new("new-chat", IconName::Plus)
+                            .icon_size(IconSize::Small)
                             .on_click(
                                 cx.listener(|_, _, cx| {
                                     cx.dispatch_action(NewContext.boxed_clone())
@@ -664,7 +665,7 @@ impl AssistantPanel {
         // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
         // the provider, we want to show a nudge to sign in.
         let show_zed_ai_notice = client_status.is_signed_out()
-            && active_provider.map_or(true, |provider| provider.id().0 == PROVIDER_ID);
+            && active_provider.map_or(true, |provider| provider.id().0 == ZED_CLOUD_PROVIDER_ID);
 
         self.show_zed_ai_notice = show_zed_ai_notice;
         cx.notify();
@@ -1315,7 +1316,7 @@ impl AssistantPanel {
 
     fn restart_context_servers(
         workspace: &mut Workspace,
-        _action: &context_servers::Restart,
+        _action: &context_server::Restart,
         cx: &mut ViewContext<Workspace>,
     ) {
         let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
@@ -1480,7 +1481,6 @@ struct ScrollPosition {
 }
 
 struct PatchViewState {
-    footer_block_id: CustomBlockId,
     crease_id: CreaseId,
     editor: Option<PatchEditorState>,
     update_task: Option<Task<()>>,
@@ -1925,7 +1925,7 @@ impl ContextEditor {
                                     Content::ToolUse {
                                         range: tool_use.source_range.clone(),
                                         tool_use: LanguageModelToolUse {
-                                            id: tool_use.id.to_string(),
+                                            id: tool_use.id.clone(),
                                             name: tool_use.name.clone(),
                                             input: tool_use.input.clone(),
                                         },
@@ -1934,7 +1934,7 @@ impl ContextEditor {
                                 );
                             });
 
-                            Crease::new(
+                            Crease::inline(
                                 start..end,
                                 placeholder,
                                 fold_toggle("tool-use"),
@@ -2032,7 +2032,7 @@ impl ContextEditor {
                             let end = buffer
                                 .anchor_in_excerpt(excerpt_id, command.source_range.end)
                                 .unwrap();
-                            Crease::new(start..end, placeholder, render_toggle, render_trailer)
+                            Crease::inline(start..end, placeholder, render_toggle, render_trailer)
                         }),
                         cx,
                     );
@@ -2050,30 +2050,6 @@ impl ContextEditor {
             }
             ContextEvent::SlashCommandOutputSectionAdded { section } => {
                 self.insert_slash_command_output_sections([section.clone()], false, cx);
-            }
-            ContextEvent::SlashCommandFinished {
-                output_range: _output_range,
-                run_commands_in_ranges,
-            } => {
-                for range in run_commands_in_ranges {
-                    let commands = self.context.update(cx, |context, cx| {
-                        context.reparse(cx);
-                        context
-                            .pending_commands_for_range(range.clone(), cx)
-                            .to_vec()
-                    });
-
-                    for command in commands {
-                        self.run_command(
-                            command.source_range,
-                            &command.name,
-                            &command.arguments,
-                            false,
-                            self.workspace.clone(),
-                            cx,
-                        );
-                    }
-                }
             }
             ContextEvent::UsePendingTools => {
                 let pending_tool_uses = self
@@ -2124,7 +2100,7 @@ impl ContextEditor {
 
                     let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
 
-                    let crease = Crease::new(
+                    let crease = Crease::inline(
                         start..end,
                         placeholder,
                         fold_toggle("tool-use"),
@@ -2153,6 +2129,37 @@ impl ContextEditor {
         command_id: InvokedSlashCommandId,
         cx: &mut ViewContext<Self>,
     ) {
+        if let Some(invoked_slash_command) =
+            self.context.read(cx).invoked_slash_command(&command_id)
+        {
+            if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
+                let run_commands_in_ranges = invoked_slash_command
+                    .run_commands_in_ranges
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for range in run_commands_in_ranges {
+                    let commands = self.context.update(cx, |context, cx| {
+                        context.reparse(cx);
+                        context
+                            .pending_commands_for_range(range.clone(), cx)
+                            .to_vec()
+                    });
+
+                    for command in commands {
+                        self.run_command(
+                            command.source_range,
+                            &command.name,
+                            &command.arguments,
+                            false,
+                            self.workspace.clone(),
+                            cx,
+                        );
+                    }
+                }
+            }
+        }
+
         self.editor.update(cx, |editor, cx| {
             if let Some(invoked_slash_command) =
                 self.context.read(cx).invoked_slash_command(&command_id)
@@ -2192,18 +2199,14 @@ impl ContextEditor {
                     let crease_end = buffer
                         .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
                         .unwrap();
-                    let fold_placeholder =
-                        invoked_slash_command_fold_placeholder(command_id, context);
-                    let crease_ids = editor.insert_creases(
-                        [Crease::new(
-                            crease_start..crease_end,
-                            fold_placeholder.clone(),
-                            fold_toggle("invoked-slash-command"),
-                            |_row, _folded, _cx| Empty.into_any(),
-                        )],
-                        cx,
+                    let crease = Crease::inline(
+                        crease_start..crease_end,
+                        invoked_slash_command_fold_placeholder(command_id, context),
+                        fold_toggle("invoked-slash-command"),
+                        |_row, _folded, _cx| Empty.into_any(),
                     );
-                    editor.fold_ranges([(crease_start..crease_end, fold_placeholder)], false, cx);
+                    let crease_ids = editor.insert_creases([crease.clone()], cx);
+                    editor.fold_creases(vec![crease], false, cx);
                     entry.insert(crease_ids[0]);
                 } else {
                     cx.notify()
@@ -2225,23 +2228,32 @@ impl ContextEditor {
         cx: &mut ViewContext<ContextEditor>,
     ) {
         let this = cx.view().downgrade();
-        let mut removed_crease_ids = Vec::new();
-        let mut removed_block_ids = HashSet::default();
         let mut editors_to_close = Vec::new();
-        for range in removed {
-            if let Some(state) = self.patches.remove(range) {
-                editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
-                removed_block_ids.insert(state.footer_block_id);
-                removed_crease_ids.push(state.crease_id);
-            }
-        }
 
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let multibuffer = &snapshot.buffer_snapshot;
             let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
 
-            let mut replaced_blocks = HashMap::default();
+            let mut removed_crease_ids = Vec::new();
+            let mut ranges_to_unfold: Vec<Range<Anchor>> = Vec::new();
+            for range in removed {
+                if let Some(state) = self.patches.remove(range) {
+                    let patch_start = multibuffer
+                        .anchor_in_excerpt(excerpt_id, range.start)
+                        .unwrap();
+                    let patch_end = multibuffer
+                        .anchor_in_excerpt(excerpt_id, range.end)
+                        .unwrap();
+
+                    editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
+                    ranges_to_unfold.push(patch_start..patch_end);
+                    removed_crease_ids.push(state.crease_id);
+                }
+            }
+            editor.unfold_ranges(&ranges_to_unfold, true, false, cx);
+            editor.remove_creases(removed_crease_ids, cx);
+
             for range in updated {
                 let Some(patch) = self.context.read(cx).patch_for_range(&range, cx).cloned() else {
                     continue;
@@ -2254,19 +2266,21 @@ impl ContextEditor {
                 let patch_end = multibuffer
                     .anchor_in_excerpt(excerpt_id, patch.range.end)
                     .unwrap();
-                let render_block: RenderBlock = Box::new({
+                let render_block: RenderBlock = Arc::new({
                     let this = this.clone();
                     let patch_range = range.clone();
                     move |cx: &mut BlockContext<'_, '_>| {
                         let max_width = cx.max_width;
                         let gutter_width = cx.gutter_dimensions.full_width();
                         let block_id = cx.block_id;
+                        let selected = cx.selected;
                         this.update(&mut **cx, |this, cx| {
-                            this.render_patch_footer(
+                            this.render_patch_block(
                                 patch_range.clone(),
                                 max_width,
                                 gutter_width,
                                 block_id,
+                                selected,
                                 cx,
                             )
                         })
@@ -2276,25 +2290,16 @@ impl ContextEditor {
                     }
                 });
 
-                let header_placeholder = FoldPlaceholder {
-                    render: {
-                        let this = this.clone();
-                        let patch_range = range.clone();
-                        Arc::new(move |fold_id, _range, cx| {
-                            this.update(cx, |this, cx| {
-                                this.render_patch_header(patch_range.clone(), fold_id, cx)
-                            })
-                            .ok()
-                            .flatten()
-                            .unwrap_or_else(|| Empty.into_any())
-                        })
-                    },
-                    ..Default::default()
-                };
+                let height = path_count as u32 + 1;
+                let crease = Crease::block(
+                    patch_start..patch_end,
+                    height,
+                    BlockStyle::Flex,
+                    render_block.clone(),
+                );
 
                 let should_refold;
                 if let Some(state) = self.patches.get_mut(&range) {
-                    replaced_blocks.insert(state.footer_block_id, render_block);
                     if let Some(editor_state) = &state.editor {
                         if editor_state.opened_patch != patch {
                             state.update_task = Some({
@@ -2311,33 +2316,11 @@ impl ContextEditor {
                     should_refold =
                         snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
                 } else {
-                    let block_ids = editor.insert_blocks(
-                        [BlockProperties {
-                            height: path_count as u32 + 1,
-                            style: BlockStyle::Flex,
-                            render: render_block,
-                            placement: BlockPlacement::Below(patch_start),
-                            priority: 0,
-                        }],
-                        None,
-                        cx,
-                    );
-
-                    let new_crease_ids = editor.insert_creases(
-                        [Crease::new(
-                            patch_start..patch_end,
-                            header_placeholder.clone(),
-                            fold_toggle("patch-header"),
-                            |_, _, _| Empty.into_any_element(),
-                        )],
-                        cx,
-                    );
-
+                    let crease_id = editor.insert_creases([crease.clone()], cx)[0];
                     self.patches.insert(
                         range.clone(),
                         PatchViewState {
-                            footer_block_id: block_ids[0],
-                            crease_id: new_crease_ids[0],
+                            crease_id,
                             editor: None,
                             update_task: None,
                         },
@@ -2348,13 +2331,9 @@ impl ContextEditor {
 
                 if should_refold {
                     editor.unfold_ranges(&[patch_start..patch_end], true, false, cx);
-                    editor.fold_ranges([(patch_start..patch_end, header_placeholder)], false, cx);
+                    editor.fold_creases(vec![crease], false, cx);
                 }
             }
-
-            editor.remove_creases(removed_crease_ids, cx);
-            editor.remove_blocks(removed_block_ids, None, cx);
-            editor.replace_blocks(replaced_blocks, None, cx);
         });
 
         for editor in editors_to_close {
@@ -2385,7 +2364,7 @@ impl ContextEditor {
                 let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
                 creases.push(
-                    Crease::new(
+                    Crease::inline(
                         start..end,
                         FoldPlaceholder {
                             render: render_fold_icon_button(
@@ -2674,7 +2653,7 @@ impl ContextEditor {
             let mut blocks_to_replace: HashMap<_, RenderBlock> = Default::default();
 
             let render_block = |message: MessageMetadata| -> RenderBlock {
-                Box::new({
+                Arc::new({
                     let context = self.context.clone();
 
                     move |cx| {
@@ -3127,7 +3106,7 @@ impl ContextEditor {
                                     crease_title,
                                     cx.view().downgrade(),
                                 );
-                                let crease = Crease::new(
+                                let crease = Crease::inline(
                                     anchor_before..anchor_after,
                                     fold_placeholder,
                                     render_quote_selection_output_toggle,
@@ -3217,31 +3196,29 @@ impl ContextEditor {
                             &snapshot,
                         )
                         .filter_map(|crease| {
-                            if let Some(metadata) = &crease.metadata {
-                                let start = crease
-                                    .range
+                            if let Crease::Inline {
+                                range, metadata, ..
+                            } = &crease
+                            {
+                                let metadata = metadata.as_ref()?;
+                                let start = range
                                     .start
                                     .to_offset(&snapshot)
                                     .saturating_sub(selection_start);
-                                let end = crease
-                                    .range
+                                let end = range
                                     .end
                                     .to_offset(&snapshot)
                                     .saturating_sub(selection_start);
 
                                 let range_relative_to_selection = start..end;
-
-                                if range_relative_to_selection.is_empty() {
-                                    None
-                                } else {
-                                    Some(SelectedCreaseMetadata {
+                                if !range_relative_to_selection.is_empty() {
+                                    return Some(SelectedCreaseMetadata {
                                         range_relative_to_selection,
                                         crease: metadata.clone(),
-                                    })
+                                    });
                                 }
-                            } else {
-                                None
                             }
+                            None
                         })
                         .collect::<Vec<_>>()
                 }),
@@ -3322,7 +3299,7 @@ impl ContextEditor {
 
                             let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                             buffer_rows_to_fold.insert(buffer_row);
-                            Crease::new(
+                            Crease::inline(
                                 start..end,
                                 FoldPlaceholder {
                                     render: render_fold_icon_button(
@@ -3364,7 +3341,8 @@ impl ContextEditor {
 
             self.context.update(cx, |context, cx| {
                 for image in images {
-                    let Some(render_image) = image.to_image_data(cx).log_err() else {
+                    let Some(render_image) = image.to_image_data(cx.svg_renderer()).log_err()
+                    else {
                         continue;
                     };
                     let image_id = image.id();
@@ -3415,7 +3393,7 @@ impl ContextEditor {
                         placement: BlockPlacement::Above(anchor),
                         height: MAX_HEIGHT_IN_LINES,
                         style: BlockStyle::Sticky,
-                        render: Box::new(move |cx| {
+                        render: Arc::new(move |cx| {
                             let image_size = size_for_image(
                                 &image,
                                 size(
@@ -3472,33 +3450,13 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    fn render_patch_header(
-        &self,
-        range: Range<text::Anchor>,
-        _id: FoldId,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement> {
-        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
-        let theme = cx.theme().clone();
-        Some(
-            h_flex()
-                .px_1()
-                .py_0p5()
-                .border_b_1()
-                .border_color(theme.status().info_border)
-                .gap_1()
-                .child(Icon::new(IconName::Diff).size(IconSize::Small))
-                .child(Label::new(patch.title.clone()).size(LabelSize::Small))
-                .into_any(),
-        )
-    }
-
-    fn render_patch_footer(
+    fn render_patch_block(
         &mut self,
         range: Range<text::Anchor>,
         max_width: Pixels,
         gutter_width: Pixels,
         id: BlockId,
+        selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
@@ -3509,10 +3467,7 @@ impl ContextEditor {
             .anchor_in_excerpt(excerpt_id, range.start)
             .unwrap();
 
-        if !snapshot.intersects_fold(anchor) {
-            return None;
-        }
-
+        let theme = cx.theme().clone();
         let patch = self.context.read(cx).patch_for_range(&range, cx)?;
         let paths = patch
             .paths()
@@ -3522,9 +3477,18 @@ impl ContextEditor {
         Some(
             v_flex()
                 .id(id)
-                .pl(gutter_width)
-                .w(max_width)
-                .py_2()
+                .bg(theme.colors().editor_background)
+                .ml(gutter_width)
+                .pb_1()
+                .w(max_width - gutter_width)
+                .rounded_md()
+                .border_1()
+                .border_color(theme.colors().border_variant)
+                .overflow_hidden()
+                .hover(|style| style.border_color(theme.colors().text_accent))
+                .when(selected, |this| {
+                    this.border_color(theme.colors().text_accent)
+                })
                 .cursor(CursorStyle::PointingHand)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.editor.update(cx, |editor, cx| {
@@ -3534,24 +3498,60 @@ impl ContextEditor {
                     });
                     this.focus_active_patch(cx);
                 }))
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .border_b_1()
+                        .border_color(theme.colors().border_variant)
+                        .bg(theme.colors().element_background)
+                        .child(
+                            Label::new(patch.title.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
                 .children(paths.into_iter().map(|path| {
                     h_flex()
-                        .pl_1()
-                        .gap_1()
+                        .px_2()
+                        .pt_1()
+                        .gap_1p5()
                         .child(Icon::new(IconName::File).size(IconSize::Small))
                         .child(Label::new(path).size(LabelSize::Small))
                 }))
                 .when(patch.status == AssistantPatchStatus::Pending, |div| {
                     div.child(
-                        Label::new("Generating")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small)
-                            .with_animation(
-                                "pulsating-label",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 1.)),
-                                |label, delta| label.alpha(delta),
+                        h_flex()
+                            .pt_1()
+                            .px_2()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
+                                    ),
+                            )
+                            .child(
+                                Label::new("Generating…")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small)
+                                    .with_animation(
+                                        "pulsating-label",
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.4, 0.8)),
+                                        |label, delta| label.alpha(delta),
+                                    ),
                             ),
                     )
                 })
@@ -3929,7 +3929,7 @@ impl ContextEditor {
             .child(
                 div()
                     .id("error-message")
-                    .max_h_24()
+                    .max_h_32()
                     .overflow_y_scroll()
                     .child(Label::new(error_message.clone())),
             )
@@ -4458,13 +4458,13 @@ pub struct ContextEditorToolbarItem {
     fs: Arc<dyn Fs>,
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_summary_editor: View<Editor>,
-    model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
+    model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
 }
 
 impl ContextEditorToolbarItem {
     pub fn new(
         workspace: &Workspace,
-        model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
+        model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
         model_summary_editor: View<Editor>,
     ) -> Self {
         Self {
@@ -4560,8 +4560,17 @@ impl Render for ContextEditorToolbarItem {
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
             .child(
-                ModelSelector::new(
-                    self.fs.clone(),
+                LanguageModelSelector::new(
+                    {
+                        let fs = self.fs.clone();
+                        move |model, cx| {
+                            update_settings_file::<AssistantSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| settings.set_model(model.clone()),
+                            );
+                        }
+                    },
                     ButtonLike::new("active-model")
                         .style(ButtonStyle::Subtle)
                         .child(
@@ -4838,7 +4847,7 @@ impl ConfigurationView {
             )
             .child(
                 div()
-                    .p(Spacing::Large.rems(cx))
+                    .p(DynamicSpacing::Base08.rems(cx))
                     .bg(cx.theme().colors().surface_background)
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
@@ -4872,7 +4881,7 @@ impl Render for ConfigurationView {
             .overflow_y_scroll()
             .child(
                 v_flex()
-                    .p(Spacing::XXLarge.rems(cx))
+                    .p(DynamicSpacing::Base16.rems(cx))
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .gap_1()
@@ -4886,7 +4895,7 @@ impl Render for ConfigurationView {
             )
             .child(
                 v_flex()
-                    .p(Spacing::XXLarge.rems(cx))
+                    .p(DynamicSpacing::Base16.rems(cx))
                     .mt_1()
                     .gap_6()
                     .flex_1()

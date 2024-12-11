@@ -1,4 +1,5 @@
 pub mod arc_cow;
+pub mod command;
 pub mod fs;
 pub mod paths;
 pub mod serde;
@@ -7,6 +8,7 @@ pub mod test;
 
 use futures::Future;
 
+use itertools::Either;
 use regex::Regex;
 use std::sync::OnceLock;
 use std::{
@@ -33,142 +35,6 @@ macro_rules! debug_panic {
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
     };
-}
-
-#[macro_export]
-macro_rules! with_clone {
-    ($i:ident, move ||$l:expr) => {{
-        let $i = $i.clone();
-        move || {
-            $l
-        }
-    }};
-    ($i:ident, move |$($k:pat_param),*|$l:expr) => {{
-        let $i = $i.clone();
-        move |$( $k ),*| {
-            $l
-        }
-    }};
-
-    (($($i:ident),+), move ||$l:expr) => {{
-        let ($($i),+) = ($($i.clone()),+);
-        move || {
-            $l
-        }
-    }};
-    (($($i:ident),+), move |$($k:pat_param),*|$l:expr) => {{
-        let ($($i),+) = ($($i.clone()),+);
-        move |$( $k ),*| {
-            $l
-        }
-    }};
-}
-
-mod test_with_clone {
-
-    // If this test compiles, it works
-    #[test]
-    fn test() {
-        let x = "String".to_string();
-        let y = std::sync::Arc::new(5);
-
-        fn no_arg(f: impl FnOnce()) {
-            f()
-        }
-
-        no_arg(with_clone!(x, move || {
-            drop(x);
-        }));
-
-        no_arg(with_clone!((x, y), move || {
-            drop(x);
-            drop(y);
-        }));
-
-        fn one_arg(f: impl FnOnce(usize)) {
-            f(1)
-        }
-
-        one_arg(with_clone!(x, move |_| {
-            drop(x);
-        }));
-        one_arg(with_clone!((x, y), move |b| {
-            drop(x);
-            drop(y);
-            println!("{}", b);
-        }));
-
-        fn two_arg(f: impl FnOnce(usize, bool)) {
-            f(5, true)
-        }
-
-        two_arg(with_clone!((x, y), move |a, b| {
-            drop(x);
-            drop(y);
-            println!("{}{}", a, b)
-        }));
-        two_arg(with_clone!((x, y), move |a, _| {
-            drop(x);
-            drop(y);
-            println!("{}", a)
-        }));
-        two_arg(with_clone!((x, y), move |_, b| {
-            drop(x);
-            drop(y);
-            println!("{}", b)
-        }));
-
-        struct Example {
-            z: usize,
-        }
-
-        fn destructuring_example(f: impl FnOnce(Example)) {
-            f(Example { z: 10 })
-        }
-
-        destructuring_example(with_clone!(x, move |Example { z }| {
-            drop(x);
-            println!("{}", z);
-        }));
-
-        let a_long_variable_1 = "".to_string();
-        let a_long_variable_2 = "".to_string();
-        let a_long_variable_3 = "".to_string();
-        let a_long_variable_4 = "".to_string();
-        two_arg(with_clone!(
-            (
-                x,
-                y,
-                a_long_variable_1,
-                a_long_variable_2,
-                a_long_variable_3,
-                a_long_variable_4
-            ),
-            move |a, b| {
-                drop(x);
-                drop(y);
-                drop(a_long_variable_1);
-                drop(a_long_variable_2);
-                drop(a_long_variable_3);
-                drop(a_long_variable_4);
-                println!("{}{}", a, b)
-            }
-        ));
-
-        fn single_expression_body(f: impl FnOnce(usize) -> usize) -> usize {
-            f(20)
-        }
-
-        let _result = single_expression_body(with_clone!(y, move |z| *y + z));
-
-        // Explicitly move all variables
-        drop(x);
-        drop(y);
-        drop(a_long_variable_1);
-        drop(a_long_variable_2);
-        drop(a_long_variable_3);
-        drop(a_long_variable_4);
-    }
 }
 
 pub fn truncate(s: &str, max_chars: usize) -> &str {
@@ -284,6 +150,12 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
             }
         }
 
+        (Value::Array(source), Value::Array(target)) => {
+            for value in source {
+                target.push(value);
+            }
+        }
+
         (source, target) => *target = source,
     }
 }
@@ -328,6 +200,35 @@ pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
     }
 }
 
+pub fn iterate_expanded_and_wrapped_usize_range(
+    range: Range<usize>,
+    additional_before: usize,
+    additional_after: usize,
+    wrap_length: usize,
+) -> impl Iterator<Item = usize> {
+    let start_wraps = range.start < additional_before;
+    let end_wraps = wrap_length < range.end + additional_after;
+    if start_wraps && end_wraps {
+        Either::Left(0..wrap_length)
+    } else if start_wraps {
+        let wrapped_start = (range.start + wrap_length).saturating_sub(additional_before);
+        if wrapped_start <= range.end {
+            Either::Left(0..wrap_length)
+        } else {
+            Either::Right((0..range.end + additional_after).chain(wrapped_start..wrap_length))
+        }
+    } else if end_wraps {
+        let wrapped_end = range.end + additional_after - wrap_length;
+        if range.start <= wrapped_end {
+            Either::Left(0..wrap_length)
+        } else {
+            Either::Right((0..wrapped_end).chain(range.start - additional_before..wrap_length))
+        }
+    } else {
+        Either::Left((range.start - additional_before)..(range.end + additional_after))
+    }
+}
+
 pub trait ResultExt<E> {
     type Ok;
 
@@ -335,6 +236,9 @@ pub trait ResultExt<E> {
     /// Assert that this result should never be an error in development or tests.
     fn debug_assert_ok(self, reason: &str) -> Self;
     fn warn_on_err(self) -> Option<Self::Ok>;
+    fn anyhow(self) -> anyhow::Result<Self::Ok>
+    where
+        E: Into<anyhow::Error>;
 }
 
 impl<T, E> ResultExt<E> for Result<T, E>
@@ -371,6 +275,13 @@ where
                 None
             }
         }
+    }
+
+    fn anyhow(self) -> anyhow::Result<T>
+    where
+        E: Into<anyhow::Error>,
+    {
+        self.map_err(Into::into)
     }
 }
 
@@ -850,6 +761,50 @@ Line 2
             r#"Line 1
 Line 2
 Line 3"#
+        );
+    }
+
+    #[test]
+    fn test_iterate_expanded_and_wrapped_usize_range() {
+        // Neither wrap
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
+            (1..5).collect::<Vec<usize>>()
+        );
+        // Start wraps
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
+            ((0..5).chain(7..8)).collect::<Vec<usize>>()
+        );
+        // Start wraps all the way around
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // Start wraps all the way around and past 0
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // End wraps
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
+            (0..1).chain(2..8).collect::<Vec<usize>>()
+        );
+        // End wraps all the way around
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // End wraps all the way around and past the end
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // Both start and end wrap
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
         );
     }
 }

@@ -20,26 +20,28 @@ path_suffixes = ["myl"]
 line_comments = ["# "]
 ```
 
-- `name` is the human readable name that will show up in the Select Language dropdown.
-- `grammar` is the name of a grammar. Grammars are registered separately, described below.
-- `path_suffixes` (optional) is an array of file suffixes that should be associated with this language. This supports glob patterns like `config/**/*.toml` where `**` matches 0 or more directories and `*` matches 0 or more characters.
-- `line_comments` (optional) is an array of strings that are used to identify line comments in the language.
+- `name` (required) is the human readable name that will show up in the Select Language dropdown.
+- `grammar` (required) is the name of a grammar. Grammars are registered separately, described below.
+- `path_suffixes` is an array of file suffixes that should be associated with this language. Unlike `file_types` in settings, this does not support glob patterns.
+- `line_comments` is an array of strings that are used to identify line comments in the language. This is used for the `editor::ToggleComments` keybind: `{#kb editor::ToggleComments}` for toggling lines of code.
+- `tab_size` defines the indentation/tab size used for this language (default is `4`).
+- `hard_tabs` whether to indent with tabs (`true`) or spaces (`false`, the default).
+- `first_line_pattern` is a regular expression, that in addition to `path_suffixes` (above) or `file_types` in settings can be used to match files which should use this language. For example Zed uses this to identify Shell Scripts by matching the [shebangs lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
 
 <!--
 TBD: Document `language_name/config.toml` keys
 
-- line_comments, block_comment
 - autoclose_before
 - brackets (start, end, close, newline, not_in: ["comment", "string"])
-- tab_size, hard_tabs
 - word_characters
 - prettier_parser_name
 - opt_into_language_servers
-- first_line_pattern
 - code_fence_block_name
 - scope_opt_in_language_servers
 - increase_indent_pattern, decrease_indent_pattern
 - collapsed_placeholder
+- auto_indent_on_paste, auto_indent_using_last_non_empty_line
+- overrides: `[overrides.element]`, `[overrides.string]`
 -->
 
 ## Grammar
@@ -67,6 +69,7 @@ several features:
 - Syntax overrides
 - Text redactions
 - Runnable code detection
+- Selecting classes, functions, etc.
 
 The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers#query-syntax) enable these
 features in Zed, using [JSON syntax](https://www.json.org/json-en.html) as a guiding example.
@@ -255,6 +258,44 @@ For example, in JavaScript, we also disable auto-closing of single quotes within
 
 ```scheme
 (comment) @comment.inclusive
+```
+
+### Text objects
+
+The `textobjects.scm` file defines rules for navigating by text objects. This was added in Zed v0.165 and is currently used only in Vim mode.
+
+Vim provides two levels of granularity for navigating around files. Section-by-section with `[]` etc., and method-by-method with `]m` etc. Even languages that don't support functions and classes can work well by defining similar concepts. For example CSS defines a rule-set as a method, and a media-query as a class.
+
+For languages with closures, these typically should not count as functions in Zed. This is best-effort however, as languages like Javascript do not syntactically differentiate syntactically between closures and top-level function declarations.
+
+For languages with declarations like C, provide queries that match `@class.around` or `@function.around`. The `if` and `ic` text objects will default to these if there is no inside.
+
+If you are not sure what to put in textobjects.scm, both [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects), and the [Helix editor](https://github.com/helix-editor/helix) have queries for many languages. You can refer to the Zed [built-in languages](https://github.com/zed-industries/zed/tree/main/crates/languages/src) to see how to adapt these.
+
+| Capture          | Description                                                             | Vim mode                                         |
+| ---------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
+| @function.around | An entire function definition or equivalent small section of a file.    | `[m`, `]m`, `[M`,`]M` motions. `af` text object  |
+| @function.inside | The function body (the stuff within the braces).                        | `if` text object                                 |
+| @class.around    | An entire class definition or equivalent large section of a file.       | `[[`, `]]`, `[]`, `][` motions. `ac` text object |
+| @class.inside    | The contents of a class definition.                                     | `ic` text object                                 |
+| @comment.around  | An entire comment (e.g. all adjacent line comments, or a block comment) | `gc` text object                                 |
+| @comment.inside  | The contents of a comment                                               | `igc` text object (rarely supported)             |
+
+For example:
+
+```scheme
+; include only the content of the method in the function
+(method_definition
+    body: (_
+        "{"
+        (_)* @function.inside
+        "}")) @function.around
+
+; match function.around for declarations with no body
+(function_signature_item) @function.around
+
+; join all adjacent comments into one
+(comment)+ @comment.around
 ```
 
 ### Text redactions

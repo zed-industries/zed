@@ -1,37 +1,31 @@
 use editor::Editor;
 use gpui::{
-    div, AsyncWindowContext, EventEmitter, IntoElement, ParentElement, Render, Subscription, Task,
-    View, ViewContext, WeakModel, WeakView,
+    div, AsyncWindowContext, IntoElement, ParentElement, Render, Subscription, Task, View,
+    ViewContext, WeakModel, WeakView,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
-use project::WorktreeId;
-use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
+use project::{Project, WorktreeId};
+use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::ToolchainSelector;
 
 pub struct ActiveToolchain {
     active_toolchain: Option<Toolchain>,
+    term: SharedString,
     workspace: WeakView<Workspace>,
     active_buffer: Option<(WorktreeId, WeakModel<Buffer>, Subscription)>,
-    _observe_language_changes: Subscription,
     _update_toolchain_task: Task<Option<()>>,
 }
 
-struct LanguageChanged;
-
-impl EventEmitter<LanguageChanged> for ActiveToolchain {}
-
 impl ActiveToolchain {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let view = cx.view().clone();
         Self {
             active_toolchain: None,
             active_buffer: None,
+            term: SharedString::new_static("Toolchain"),
             workspace: workspace.weak_handle(),
-            _observe_language_changes: cx.subscribe(&view, |this, _, _: &LanguageChanged, cx| {
-                this._update_toolchain_task = Self::spawn_tracker_task(cx);
-            }),
+
             _update_toolchain_task: Self::spawn_tracker_task(cx),
         }
     }
@@ -48,12 +42,21 @@ impl ActiveToolchain {
             let workspace = this
                 .update(&mut cx, |this, _| this.workspace.clone())
                 .ok()?;
-
             let language_name = active_file
                 .update(&mut cx, |this, _| Some(this.language()?.name()))
                 .ok()
                 .flatten()?;
-
+            let term = workspace
+                .update(&mut cx, |workspace, cx| {
+                    let languages = workspace.project().read(cx).languages();
+                    Project::toolchain_term(languages.clone(), language_name.clone())
+                })
+                .ok()?
+                .await?;
+            let _ = this.update(&mut cx, |this, cx| {
+                this.term = term;
+                cx.notify();
+            });
             let worktree_id = active_file
                 .update(&mut cx, |this, cx| Some(this.file()?.worktree_id(cx)))
                 .ok()
@@ -73,13 +76,13 @@ impl ActiveToolchain {
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
             if let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx)) {
-                let subscription = cx.subscribe(&buffer, |_, _, event: &BufferEvent, cx| {
-                    if let BufferEvent::LanguageChanged = event {
-                        cx.emit(LanguageChanged)
+                let subscription = cx.subscribe(&buffer, |this, _, event: &BufferEvent, cx| {
+                    if matches!(event, BufferEvent::LanguageChanged) {
+                        this._update_toolchain_task = Self::spawn_tracker_task(cx);
                     }
                 });
                 self.active_buffer = Some((worktree_id, buffer.downgrade(), subscription));
-                cx.emit(LanguageChanged);
+                self._update_toolchain_task = Self::spawn_tracker_task(cx);
             }
         }
 
@@ -142,6 +145,7 @@ impl ActiveToolchain {
 impl Render for ActiveToolchain {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().when_some(self.active_toolchain.as_ref(), |el, active_toolchain| {
+            let term = self.term.clone();
             el.child(
                 Button::new("change-toolchain", active_toolchain.name.clone())
                     .label_size(LabelSize::Small)
@@ -152,7 +156,7 @@ impl Render for ActiveToolchain {
                             });
                         }
                     }))
-                    .tooltip(|cx| Tooltip::text("Select Toolchain", cx)),
+                    .tooltip(move |cx| Tooltip::text(format!("Select {}", &term), cx)),
             )
         })
     }
@@ -164,7 +168,7 @@ impl StatusItemView for ActiveToolchain {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self.active_toolchain.take();
             self.update_lister(editor, cx);
         }

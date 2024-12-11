@@ -67,7 +67,7 @@ impl ComponentPreview for Facepile {
         \n\nFacepiles are used to display a group of people or things,\
         such as a list of participants in a collaboration session."
     }
-    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         let few_faces: [&'static str; 3] = [
             "https://avatars.githubusercontent.com/u/1714999?s=60&v=4",
             "https://avatars.githubusercontent.com/u/67129314?s=60&v=4",

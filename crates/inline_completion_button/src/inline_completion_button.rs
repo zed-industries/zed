@@ -1,6 +1,7 @@
 use anyhow::Result;
-use copilot::{Copilot, CopilotCodeVerification, Status};
+use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
+use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
 use fs::Fs;
 use gpui::{
     div, Action, AnchorCorner, AppContext, AsyncWindowContext, Entity, IntoElement, ParentElement,
@@ -15,7 +16,7 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use supermaven::{AccountStatus, Supermaven};
-use util::ResultExt;
+use ui::{Button, LabelSize};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -26,10 +27,9 @@ use workspace::{
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
+use zeta::RateCompletionModal;
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
-
-struct CopilotStartingToast;
 
 struct CopilotErrorToast;
 
@@ -39,6 +39,7 @@ pub struct InlineCompletionButton {
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
     fs: Arc<dyn Fs>,
+    workspace: WeakView<Workspace>,
 }
 
 enum SupermavenButtonStatus {
@@ -196,12 +197,35 @@ impl Render for InlineCompletionButton {
                         ),
                 );
             }
+
+            InlineCompletionProvider::Zeta => {
+                if !cx.has_flag::<ZetaFeatureFlag>() {
+                    return div();
+                }
+
+                div().child(
+                    Button::new("zeta", "ζ")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(|this, _, cx| {
+                            if let Some(workspace) = this.workspace.upgrade() {
+                                workspace.update(cx, |workspace, cx| {
+                                    RateCompletionModal::toggle(workspace, cx)
+                                });
+                            }
+                        }))
+                        .tooltip(|cx| Tooltip::text("Rate Completions", cx)),
+                )
+            }
         }
     }
 }
 
 impl InlineCompletionButton {
-    pub fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        workspace: WeakView<Workspace>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
         }
@@ -214,6 +238,7 @@ impl InlineCompletionButton {
             editor_enabled: None,
             language: None,
             file: None,
+            workspace,
             fs,
         }
     }
@@ -221,7 +246,7 @@ impl InlineCompletionButton {
     pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(cx, |menu, _| {
-            menu.entry("Sign In", None, initiate_sign_in)
+            menu.entry("Sign In", None, copilot::initiate_sign_in)
                 .entry("Disable Copilot", None, {
                     let fs = fs.clone();
                     move |cx| hide_copilot(fs.clone(), cx)
@@ -483,69 +508,4 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
             .get_or_insert(Default::default())
             .inline_completion_provider = Some(InlineCompletionProvider::None);
     });
-}
-
-pub fn initiate_sign_in(cx: &mut WindowContext) {
-    let Some(copilot) = Copilot::global(cx) else {
-        return;
-    };
-    let status = copilot.read(cx).status();
-    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
-        return;
-    };
-    match status {
-        Status::Starting { task } => {
-            let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
-                return;
-            };
-
-            let Ok(workspace) = workspace.update(cx, |workspace, cx| {
-                workspace.show_toast(
-                    Toast::new(
-                        NotificationId::unique::<CopilotStartingToast>(),
-                        "Copilot is starting...",
-                    ),
-                    cx,
-                );
-                workspace.weak_handle()
-            }) else {
-                return;
-            };
-
-            cx.spawn(|mut cx| async move {
-                task.await;
-                if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
-                    workspace
-                        .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
-                            Status::Authorized => workspace.show_toast(
-                                Toast::new(
-                                    NotificationId::unique::<CopilotStartingToast>(),
-                                    "Copilot has started!",
-                                ),
-                                cx,
-                            ),
-                            _ => {
-                                workspace.dismiss_toast(
-                                    &NotificationId::unique::<CopilotStartingToast>(),
-                                    cx,
-                                );
-                                copilot
-                                    .update(cx, |copilot, cx| copilot.sign_in(cx))
-                                    .detach_and_log_err(cx);
-                            }
-                        })
-                        .log_err();
-                }
-            })
-            .detach();
-        }
-        _ => {
-            copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
-            workspace
-                .update(cx, |this, cx| {
-                    this.toggle_modal(cx, |cx| CopilotCodeVerification::new(&copilot, cx));
-                })
-                .ok();
-        }
-    }
 }

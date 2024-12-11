@@ -79,12 +79,41 @@ The following commands use the language server to help you navigate and refactor
 
 ### Treesitter
 
-Treesitter is a powerful tool that Zed uses to understand the structure of your code. These commands help you navigate your code semantically.
+Treesitter is a powerful tool that Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
 
-| Command                      | Default Shortcut |
-| ---------------------------- | ---------------- |
-| Select a smaller syntax node | `] x`            |
-| Select a larger syntax node  | `[ x`            |
+| Command                         | Default Shortcut            |
+| ------------------------------- | --------------------------- |
+| Go to next/previous method      | `] m` / `[ m`               |
+| Go to next/previous method end  | `] M` / `[ M`               |
+| Go to next/previous section     | `] ]` / `[ [`               |
+| Go to next/previous section end | `] [` / `[ ]`               |
+| Go to next/previous comment     | `] /`, `] *` / `[ /`, `[ *` |
+| Select a larger syntax node     | `[ x`                       |
+| Select a larger syntax node     | `[ x`                       |
+
+| Text Objects                                               | Default Shortcut |
+| ---------------------------------------------------------- | ---------------- |
+| Around a class, definition, etc.                           | `a c`            |
+| Inside a class, definition, etc.                           | `i c`            |
+| Around a function, method etc.                             | `a f`            |
+| Inside a function, method, etc.                            | `i f`            |
+| A comment                                                  | `g c`            |
+| An argument, or list item, etc.                            | `i a`            |
+| An argument, or list item, etc. (including trailing comma) | `a a`            |
+| Around an HTML-like tag                                    | `i a`            |
+| Inside an HTML-like tag                                    | `i a`            |
+| The current indent level, and one line before and after    | `a I`            |
+| The current indent level, and one line before              | `a i`            |
+| The current indent level                                   | `i i`            |
+
+Note that the definitions for the targets of the `[m` family of motions are the same as the
+boundaries defined by `af`. The targets of the `[[` are the same as those defined by `ac`, though
+if there are no classes, then functions are also used. Similarly `gc` is used to find `[ /`. `g c`
+
+The definition of functions, classes and comments is language dependent, and support can be added
+to extensions by adding a [`textobjects.scm`]. The definition of arguments and tags operates at
+the tree-sitter level, but looks for certain patterns in the parse tree and is not currently configurable
+per language.
 
 ### Multi cursor
 
@@ -409,6 +438,7 @@ You can change the following settings to modify vim mode's behavior:
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |
 | toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
 | custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
+| highlight_on_yank_duration   | The duration of the highlight animation(in ms). Set to `0` to disable                                                                                                                         | 200           |
 
 Here's an example of adding a digraph for the zombie emoji. This allows you to type `ctrl-k f z` to insert a zombie emoji. You can add as many digraphs as you like.
 
@@ -431,6 +461,7 @@ Here's an example of these settings changed:
     "use_multiline_find": true,
     "use_smartcase_find": true,
     "toggle_relative_line_numbers": true,
+    "highlight_on_yank_duration": 50,
     "custom_digraphs": {
       "fz": "🧟‍♀️"
     }
@@ -442,15 +473,15 @@ Here's an example of these settings changed:
 
 Here are a few general Zed settings that can help you fine-tune your Vim experience:
 
-| Property                | Description                                                                                                                                                   | Default Value          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| cursor_blink            | If `true`, the cursor blinks.                                                                                                                                 | `true`                 |
-| relative_line_numbers   | If `true`, line numbers in the left gutter are relative to the cursor.                                                                                        | `true`                 |
-| scrollbar               | Object that controls the scrollbar display. Set to `{ "show": "never" }` to hide the scroll bar.                                                              | `{ "show": "always" }` |
-| scroll_beyond_last_line | If set to `"one_page"`, allows scrolling up to one page beyond the last line. Set to `"off"` to prevent this behavior.                                        | `"one_page"`           |
-| vertical_scroll_margin  | The number of lines to keep above or below the cursor when scrolling. Set to `0` to allow the cursor to go up to the edges of the screen vertically.          | `3`                    |
-| gutter.line_numbers     | Controls the display of line numbers in the gutter. Set the `"line_numbers"` property to `false` to hide line numbers.                                        | `true`                 |
-| command_aliases         | Object that defines aliases for commands in the command palette. You can use it to define shortcut names for commands you use often. Read below for examples. | `{}`                   |
+| Property                | Description                                                                                                                                                   | Default Value        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| cursor_blink            | If `true`, the cursor blinks.                                                                                                                                 | `true`               |
+| relative_line_numbers   | If `true`, line numbers in the left gutter are relative to the cursor.                                                                                        | `false`              |
+| scrollbar               | Object that controls the scrollbar display. Set to `{ "show": "never" }` to hide the scroll bar.                                                              | `{ "show": "auto" }` |
+| scroll_beyond_last_line | If set to `"one_page"`, allows scrolling up to one page beyond the last line. Set to `"off"` to prevent this behavior.                                        | `"one_page"`         |
+| vertical_scroll_margin  | The number of lines to keep above or below the cursor when scrolling. Set to `0` to allow the cursor to go up to the edges of the screen vertically.          | `3`                  |
+| gutter.line_numbers     | Controls the display of line numbers in the gutter. Set the `"line_numbers"` property to `false` to hide line numbers.                                        | `true`               |
+| command_aliases         | Object that defines aliases for commands in the command palette. You can use it to define shortcut names for commands you use often. Read below for examples. | `{}`                 |
 
 Here's an example of these settings changed:
 

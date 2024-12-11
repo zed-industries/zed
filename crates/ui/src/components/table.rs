@@ -160,7 +160,7 @@ impl ComponentPreview for Table {
         ExampleLabelSide::Top
     }
 
-    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group(vec![
                 single_example(

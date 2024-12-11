@@ -4,8 +4,10 @@ use crate::KERNEL_DOCS_URL;
 
 use gpui::DismissEvent;
 
+use gpui::FontWeight;
 use picker::Picker;
 use picker::PickerDelegate;
+use project::WorktreeId;
 
 use std::sync::Arc;
 use ui::ListItemSpacing;
@@ -22,7 +24,7 @@ pub struct KernelSelector<T: PopoverTrigger> {
     on_select: OnSelect,
     trigger: T,
     info_text: Option<SharedString>,
-    current_kernelspec: Option<KernelSpecification>,
+    worktree_id: WorktreeId,
 }
 
 pub struct KernelPickerDelegate {
@@ -32,18 +34,24 @@ pub struct KernelPickerDelegate {
     on_select: OnSelect,
 }
 
+// Helper function to truncate long paths
+fn truncate_path(path: &SharedString, max_length: usize) -> SharedString {
+    if path.len() <= max_length {
+        path.to_string().into()
+    } else {
+        let truncated = path.chars().rev().take(max_length - 3).collect::<String>();
+        format!("...{}", truncated.chars().rev().collect::<String>()).into()
+    }
+}
+
 impl<T: PopoverTrigger> KernelSelector<T> {
-    pub fn new(
-        on_select: OnSelect,
-        current_kernelspec: Option<KernelSpecification>,
-        trigger: T,
-    ) -> Self {
+    pub fn new(on_select: OnSelect, worktree_id: WorktreeId, trigger: T) -> Self {
         KernelSelector {
             on_select,
             handle: None,
             trigger,
             info_text: None,
-            current_kernelspec,
+            worktree_id,
         }
     }
 
@@ -118,11 +126,25 @@ impl PickerDelegate for KernelPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let kernelspec = self.filtered_kernels.get(ix)?;
-
         let is_selected = self.selected_kernelspec.as_ref() == Some(kernelspec);
+        let icon = kernelspec.icon(cx);
+
+        let (name, kernel_type, path_or_url) = match kernelspec {
+            KernelSpecification::Jupyter(_) => (kernelspec.name(), "Jupyter", None),
+            KernelSpecification::PythonEnv(_) => (
+                kernelspec.name(),
+                "Python Env",
+                Some(truncate_path(&kernelspec.path(), 42)),
+            ),
+            KernelSpecification::Remote(_) => (
+                kernelspec.name(),
+                "Remote",
+                Some(truncate_path(&kernelspec.path(), 42)),
+            ),
+        };
 
         Some(
             ListItem::new(ix)
@@ -130,24 +152,55 @@ impl PickerDelegate for KernelPickerDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(
-                    h_flex().w_full().justify_between().min_w(px(200.)).child(
-                        h_flex()
-                            .gap_1p5()
-                            .child(Label::new(kernelspec.name()))
-                            .child(
-                                Label::new(kernelspec.type_name())
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
-                    ),
+                    h_flex()
+                        .w_full()
+                        .gap_3()
+                        .child(icon.color(Color::Default).size(IconSize::Medium))
+                        .child(
+                            v_flex()
+                                .flex_grow()
+                                .gap_0p5()
+                                .child(
+                                    h_flex()
+                                        .justify_between()
+                                        .child(
+                                            div().w_48().text_ellipsis().child(
+                                                Label::new(name)
+                                                    .weight(FontWeight::MEDIUM)
+                                                    .size(LabelSize::Default),
+                                            ),
+                                        )
+                                        .when_some(path_or_url.clone(), |flex, path| {
+                                            flex.text_ellipsis().child(
+                                                Label::new(path)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        }),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Label::new(kernelspec.language())
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(kernel_type)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                ),
+                        ),
                 )
-                .end_slot(div().when(is_selected, |this| {
-                    this.child(
+                .when(is_selected, |item| {
+                    item.end_slot(
                         Icon::new(IconName::Check)
                             .color(Color::Accent)
                             .size(IconSize::Small),
                     )
-                })),
+                }),
         )
     }
 
@@ -175,10 +228,13 @@ impl PickerDelegate for KernelPickerDelegate {
 impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let store = ReplStore::global(cx).read(cx);
-        let all_kernels: Vec<KernelSpecification> =
-            store.kernel_specifications().cloned().collect();
 
-        let selected_kernelspec = self.current_kernelspec;
+        let all_kernels: Vec<KernelSpecification> = store
+            .kernel_specifications_for_worktree(self.worktree_id)
+            .cloned()
+            .collect();
+
+        let selected_kernelspec = store.active_kernelspec(self.worktree_id, None, cx);
 
         let delegate = KernelPickerDelegate {
             on_select: self.on_select,
@@ -188,7 +244,9 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
         };
 
         let picker_view = cx.new_view(|cx| {
-            let picker = Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into()));
+            let picker = Picker::uniform_list(delegate, cx)
+                .width(rems(30.))
+                .max_height(Some(rems(20.).into()));
             picker
         });
 

@@ -36,13 +36,13 @@ use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrev};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
-use project::{File, Fs, Item, Project};
+use project::{File, Fs, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
-use ui::{IndentGuideColors, IndentGuideLayout};
+use ui::{DynamicSpacing, IndentGuideColors, IndentGuideLayout};
 use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -51,8 +51,8 @@ use workspace::{
     ui::{
         h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder,
         HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
-        LabelCommon, ListItem, Scrollbar, ScrollbarState, Selectable, Spacing, StyledExt,
-        StyledTypography, Tooltip,
+        LabelCommon, ListItem, Scrollbar, ScrollbarState, Selectable, StyledExt, StyledTypography,
+        Tooltip,
     },
     OpenInTerminal, WeakItemHandle, Workspace,
 };
@@ -811,7 +811,7 @@ impl OutlinePanel {
         if self.filter_editor.focus_handle(cx).is_focused(cx) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.open_entry(&selected_entry, true, cx);
+            self.open_entry(&selected_entry, true, false, cx);
         }
     }
 
@@ -834,7 +834,7 @@ impl OutlinePanel {
         } else if let Some((active_editor, selected_entry)) =
             self.active_editor().zip(self.selected_entry().cloned())
         {
-            self.open_entry(&selected_entry, true, cx);
+            self.open_entry(&selected_entry, true, true, cx);
             active_editor.update(cx, |editor, cx| editor.open_excerpts(action, cx));
         }
     }
@@ -849,7 +849,7 @@ impl OutlinePanel {
         } else if let Some((active_editor, selected_entry)) =
             self.active_editor().zip(self.selected_entry().cloned())
         {
-            self.open_entry(&selected_entry, true, cx);
+            self.open_entry(&selected_entry, true, true, cx);
             active_editor.update(cx, |editor, cx| editor.open_excerpts_in_split(action, cx));
         }
     }
@@ -857,7 +857,8 @@ impl OutlinePanel {
     fn open_entry(
         &mut self,
         entry: &PanelEntry,
-        change_selection: bool,
+        prefer_selection_change: bool,
+        change_focus: bool,
         cx: &mut ViewContext<OutlinePanel>,
     ) {
         let Some(active_editor) = self.active_editor() else {
@@ -871,9 +872,11 @@ impl OutlinePanel {
             Point::new(0.0, -(active_editor.read(cx).file_header_size() as f32))
         };
 
+        let mut change_selection = prefer_selection_change;
         let scroll_target = match entry {
             PanelEntry::FoldedDirs(..) | PanelEntry::Fs(FsEntry::Directory(..)) => None,
             PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
+                change_selection = false;
                 let scroll_target = multi_buffer_snapshot.excerpts().find_map(
                     |(excerpt_id, buffer_snapshot, excerpt_range)| {
                         if &buffer_snapshot.remote_id() == buffer_id {
@@ -887,6 +890,7 @@ impl OutlinePanel {
                 Some(offset_from_top).zip(scroll_target)
             }
             PanelEntry::Fs(FsEntry::File(_, file_entry, ..)) => {
+                change_selection = false;
                 let scroll_target = self
                     .project
                     .update(cx, |project, cx| {
@@ -929,9 +933,9 @@ impl OutlinePanel {
                 .workspace
                 .update(cx, |workspace, cx| match self.active_item() {
                     Some(active_item) => {
-                        workspace.activate_item(active_item.as_ref(), true, change_selection, cx)
+                        workspace.activate_item(active_item.as_ref(), true, change_focus, cx)
                     }
-                    None => workspace.activate_item(&active_editor, true, change_selection, cx),
+                    None => workspace.activate_item(&active_editor, true, change_focus, cx),
                 });
 
             if activate.is_ok() {
@@ -939,16 +943,20 @@ impl OutlinePanel {
                 if change_selection {
                     active_editor.update(cx, |editor, cx| {
                         editor.change_selections(
-                            Some(Autoscroll::Strategy(AutoscrollStrategy::Top)),
+                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
                             cx,
                             |s| s.select_ranges(Some(anchor..anchor)),
                         );
                     });
-                    active_editor.focus_handle(cx).focus(cx);
                 } else {
                     active_editor.update(cx, |editor, cx| {
                         editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
                     });
+                }
+
+                if change_focus {
+                    active_editor.focus_handle(cx).focus(cx);
+                } else {
                     self.focus_handle.focus(cx);
                 }
             }
@@ -969,7 +977,7 @@ impl OutlinePanel {
             self.select_first(&SelectFirst {}, cx)
         }
         if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.open_entry(&selected_entry, false, cx);
+            self.open_entry(&selected_entry, true, false, cx);
         }
     }
 
@@ -988,7 +996,7 @@ impl OutlinePanel {
             self.select_last(&SelectLast, cx)
         }
         if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.open_entry(&selected_entry, false, cx);
+            self.open_entry(&selected_entry, true, false, cx);
         }
     }
 
@@ -2027,9 +2035,9 @@ impl OutlinePanel {
                     if event.down.button == MouseButton::Right || event.down.first_mouse {
                         return;
                     }
-                    let change_selection = event.down.click_count > 1;
+                    let change_focus = event.down.click_count > 1;
                     outline_panel.toggle_expanded(&clicked_entry, cx);
-                    outline_panel.open_entry(&clicked_entry, change_selection, cx);
+                    outline_panel.open_entry(&clicked_entry, true, change_focus, cx);
                 })
             })
             .cursor_pointer()
@@ -2178,8 +2186,10 @@ impl OutlinePanel {
                 .background_executor()
                 .spawn(async move {
                     let mut processed_external_buffers = HashSet::default();
-                    let mut new_worktree_entries =
-                        HashMap::<WorktreeId, (worktree::Snapshot, HashSet<Entry>)>::default();
+                    let mut new_worktree_entries = HashMap::<
+                        WorktreeId,
+                        (worktree::Snapshot, HashMap<ProjectEntryId, Entry>),
+                    >::default();
                     let mut worktree_excerpts = HashMap::<
                         WorktreeId,
                         HashMap<ProjectEntryId, (BufferId, Vec<ExcerptId>)>,
@@ -2213,7 +2223,7 @@ impl OutlinePanel {
                                         entry.path.as_ref(),
                                     );
 
-                                    let mut entries_to_add = HashSet::default();
+                                    let mut entries_to_add = HashMap::default();
                                     worktree_excerpts
                                         .entry(worktree_id)
                                         .or_default()
@@ -2238,7 +2248,9 @@ impl OutlinePanel {
                                             }
                                         }
 
-                                        let new_entry_added = entries_to_add.insert(current_entry);
+                                        let new_entry_added = entries_to_add
+                                            .insert(current_entry.id, current_entry)
+                                            .is_none();
                                         if new_entry_added && traversal.back_to_parent() {
                                             if let Some(parent_entry) = traversal.entry() {
                                                 current_entry = parent_entry.clone();
@@ -2249,7 +2261,7 @@ impl OutlinePanel {
                                     }
                                     new_worktree_entries
                                         .entry(worktree_id)
-                                        .or_insert_with(|| (worktree.clone(), HashSet::default()))
+                                        .or_insert_with(|| (worktree.clone(), HashMap::default()))
                                         .1
                                         .extend(entries_to_add);
                                 }
@@ -2276,11 +2288,10 @@ impl OutlinePanel {
                     let worktree_entries = new_worktree_entries
                         .into_iter()
                         .map(|(worktree_id, (worktree_snapshot, entries))| {
-                            let mut entries = entries.into_iter().collect::<Vec<_>>();
+                            let mut entries = entries.into_values().collect::<Vec<_>>();
                             // For a proper git status propagation, we have to keep the entries sorted lexicographically.
                             entries.sort_by(|a, b| a.path.as_ref().cmp(b.path.as_ref()));
                             worktree_snapshot.propagate_git_statuses(&mut entries);
-                            project::sort_worktree_entries(&mut entries);
                             (worktree_id, entries)
                         })
                         .flat_map(|(worktree_id, entries)| {
@@ -3867,7 +3878,7 @@ impl OutlinePanel {
                 })
                 .child(
                     h_flex()
-                        .pt(Spacing::Small.rems(cx))
+                        .pt(DynamicSpacing::Base04.rems(cx))
                         .justify_center()
                         .child({
                             let keystroke = match self.position(cx) {
@@ -4860,9 +4871,13 @@ mod tests {
                 ),
                 select_first_in_all_matches(navigated_outline_selection)
             );
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        outline_panel.update(cx, |_, cx| {
             assert_eq!(
                 selected_row_text(&active_editor, cx),
-                initial_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
+                navigated_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
                 "Should still have the initial caret position after SelectNext calls"
             );
         });
@@ -4892,9 +4907,13 @@ mod tests {
                 ),
                 select_first_in_all_matches(next_navigated_outline_selection)
             );
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        outline_panel.update(cx, |_, cx| {
             assert_eq!(
                 selected_row_text(&active_editor, cx),
-                navigated_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
+                next_navigated_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
                 "Should again preserve the selection after another SelectNext call"
             );
         });

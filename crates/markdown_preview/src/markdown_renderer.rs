@@ -1,29 +1,33 @@
 use crate::markdown_elements::{
-    HeadingLevel, Link, ParsedMarkdown, ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock,
-    ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem,
-    ParsedMarkdownListItemType, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
-    ParsedMarkdownTableRow, ParsedMarkdownText,
+    HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
+    ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
+    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
+    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
-    ElementId, HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Length, Modifiers,
-    ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
+    div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
+    ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length,
+    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, View,
+    WeakView, WindowContext,
 };
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
     sync::Arc,
+    vec,
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, v_flex, Checkbox, Clickable, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, LinkPreview, Selection, StatefulInteractiveElement, StyledExt, Tooltip,
-    VisibleOnHover,
+    h_flex, relative, tooltip_container, v_flex, Checkbox, Clickable, Color, FluentBuilder,
+    IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview,
+    Selection, StatefulInteractiveElement, StyledExt, StyledImage, ViewContext, VisibleOnHover,
+    VisualContext as _,
 };
 use workspace::Workspace;
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>;
 
+#[derive(Clone)]
 pub struct RenderContext {
     workspace: Option<WeakView<Workspace>>,
     next_id: usize,
@@ -153,7 +157,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .text_color(color)
         .pt(rems(0.15))
         .pb_1()
-        .child(render_markdown_text(&parsed.contents, cx))
+        .children(render_markdown_text(&parsed.contents, cx))
         .whitespace_normal()
         .into_any()
 }
@@ -203,15 +207,7 @@ fn render_markdown_list_item(
             )
             .hover(|s| s.cursor_pointer())
             .tooltip(|cx| {
-                let secondary_modifier = Keystroke {
-                    key: "".to_string(),
-                    modifiers: Modifiers::secondary_key(),
-                    ime_key: None,
-                };
-                Tooltip::text(
-                    format!("{}-click to toggle the checkbox", secondary_modifier),
-                    cx,
-                )
+                InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", cx).into()
             })
             .into_any_element(),
     };
@@ -231,17 +227,29 @@ fn render_markdown_list_item(
     cx.with_common_p(item).into_any()
 }
 
+fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
+    paragraphs
+        .iter()
+        .map(|paragraph| match paragraph {
+            MarkdownParagraphChunk::Text(text) => text.contents.len(),
+            // TODO: Scale column width based on image size
+            MarkdownParagraphChunk::Image(_) => 1,
+        })
+        .sum()
+}
+
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
     let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
 
     for (index, cell) in parsed.header.children.iter().enumerate() {
-        let length = cell.contents.len();
+        let length = paragraph_len(&cell);
         max_lengths[index] = length;
     }
 
     for row in &parsed.body {
         for (index, cell) in row.children.iter().enumerate() {
-            let length = cell.contents.len();
+            let length = paragraph_len(&cell);
+
             if length > max_lengths[index] {
                 max_lengths[index] = length;
             }
@@ -307,11 +315,10 @@ fn render_markdown_table_row(
         };
 
         let max_width = max_column_widths.get(index).unwrap_or(&0.0);
-
         let mut cell = container
             .w(Length::Definite(relative(*max_width)))
             .h_full()
-            .child(contents)
+            .children(contents)
             .px_2()
             .py_1()
             .border_color(cx.border_color);
@@ -398,86 +405,202 @@ fn render_markdown_code_block(
         .into_any()
 }
 
-fn render_markdown_paragraph(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> AnyElement {
+fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
     cx.with_common_p(div())
-        .child(render_markdown_text(parsed, cx))
+        .children(render_markdown_text(parsed, cx))
+        .flex()
+        .flex_col()
         .into_any_element()
 }
 
-fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> AnyElement {
-    let element_id = cx.next_id(&parsed.source_range);
+fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
+    let mut any_element = vec![];
+    // these values are cloned in-order satisfy borrow checker
+    let syntax_theme = cx.syntax_theme.clone();
+    let workspace_clone = cx.workspace.clone();
+    let code_span_bg_color = cx.code_span_background_color;
+    let text_style = cx.text_style.clone();
 
-    let highlights = gpui::combine_highlights(
-        parsed.highlights.iter().filter_map(|(range, highlight)| {
-            let highlight = highlight.to_highlight_style(&cx.syntax_theme)?;
-            Some((range.clone(), highlight))
-        }),
-        parsed
-            .regions
-            .iter()
-            .zip(&parsed.region_ranges)
-            .filter_map(|(region, range)| {
-                if region.code {
-                    Some((
-                        range.clone(),
-                        HighlightStyle {
-                            background_color: Some(cx.code_span_background_color),
-                            ..Default::default()
+    for parsed_region in parsed_new {
+        match parsed_region {
+            MarkdownParagraphChunk::Text(parsed) => {
+                let element_id = cx.next_id(&parsed.source_range);
+
+                let highlights = gpui::combine_highlights(
+                    parsed.highlights.iter().filter_map(|(range, highlight)| {
+                        highlight
+                            .to_highlight_style(&syntax_theme)
+                            .map(|style| (range.clone(), style))
+                    }),
+                    parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
+                        |(region, range)| {
+                            if region.code {
+                                Some((
+                                    range.clone(),
+                                    HighlightStyle {
+                                        background_color: Some(code_span_bg_color),
+                                        ..Default::default()
+                                    },
+                                ))
+                            } else {
+                                None
+                            }
                         },
-                    ))
-                } else {
-                    None
+                    ),
+                );
+                let mut links = Vec::new();
+                let mut link_ranges = Vec::new();
+                for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+                    if let Some(link) = region.link.clone() {
+                        links.push(link);
+                        link_ranges.push(range.clone());
+                    }
                 }
-            }),
-    );
+                let workspace = workspace_clone.clone();
+                let element = div()
+                    .child(
+                        InteractiveText::new(
+                            element_id,
+                            StyledText::new(parsed.contents.clone())
+                                .with_highlights(&text_style, highlights),
+                        )
+                        .tooltip({
+                            let links = links.clone();
+                            let link_ranges = link_ranges.clone();
+                            move |idx, cx| {
+                                for (ix, range) in link_ranges.iter().enumerate() {
+                                    if range.contains(&idx) {
+                                        return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                                    }
+                                }
+                                None
+                            }
+                        })
+                        .on_click(
+                            link_ranges,
+                            move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
+                                Link::Web { url } => window_cx.open_url(url),
+                                Link::Path { path, .. } => {
+                                    if let Some(workspace) = &workspace {
+                                        _ = workspace.update(window_cx, |workspace, cx| {
+                                            workspace
+                                                .open_abs_path(path.clone(), false, cx)
+                                                .detach();
+                                        });
+                                    }
+                                }
+                            },
+                        ),
+                    )
+                    .into_any();
+                any_element.push(element);
+            }
 
-    let mut links = Vec::new();
-    let mut link_ranges = Vec::new();
-    for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
-        if let Some(link) = region.link.clone() {
-            links.push(link);
-            link_ranges.push(range.clone());
+            MarkdownParagraphChunk::Image(image) => {
+                let image_resource = match image.link.clone() {
+                    Link::Web { url } => Resource::Uri(url.into()),
+                    Link::Path { path, .. } => Resource::Path(Arc::from(path)),
+                };
+
+                let element_id = cx.next_id(&image.source_range);
+
+                let image_element = div()
+                    .id(element_id)
+                    .cursor_pointer()
+                    .child(img(ImageSource::Resource(image_resource)).with_fallback({
+                        let alt_text = image.alt_text.clone();
+                        {
+                            move || div().children(alt_text.clone()).into_any_element()
+                        }
+                    }))
+                    .tooltip({
+                        let link = image.link.clone();
+                        move |cx| {
+                            InteractiveMarkdownElementTooltip::new(
+                                Some(link.to_string()),
+                                "open image",
+                                cx,
+                            )
+                            .into()
+                        }
+                    })
+                    .on_click({
+                        let workspace = workspace_clone.clone();
+                        let link = image.link.clone();
+                        move |_, cx| {
+                            if cx.modifiers().secondary() {
+                                match &link {
+                                    Link::Web { url } => cx.open_url(url),
+                                    Link::Path { path, .. } => {
+                                        if let Some(workspace) = &workspace {
+                                            _ = workspace.update(cx, |workspace, cx| {
+                                                workspace
+                                                    .open_abs_path(path.clone(), false, cx)
+                                                    .detach();
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    })
+                    .into_any();
+                any_element.push(image_element);
+            }
         }
     }
 
-    let workspace = cx.workspace.clone();
-
-    InteractiveText::new(
-        element_id,
-        StyledText::new(parsed.contents.clone()).with_highlights(&cx.text_style, highlights),
-    )
-    .tooltip({
-        let links = links.clone();
-        let link_ranges = link_ranges.clone();
-        move |idx, cx| {
-            for (ix, range) in link_ranges.iter().enumerate() {
-                if range.contains(&idx) {
-                    return Some(LinkPreview::new(&links[ix].to_string(), cx));
-                }
-            }
-            None
-        }
-    })
-    .on_click(
-        link_ranges,
-        move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
-            Link::Web { url } => window_cx.open_url(url),
-            Link::Path {
-                path,
-                display_path: _,
-            } => {
-                if let Some(workspace) = &workspace {
-                    _ = workspace.update(window_cx, |workspace, cx| {
-                        workspace.open_abs_path(path.clone(), false, cx).detach();
-                    });
-                }
-            }
-        },
-    )
-    .into_any_element()
+    any_element
 }
 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     let rule = div().w_full().h(px(2.)).bg(cx.border_color);
     div().pt_3().pb_3().child(rule).into_any()
+}
+
+struct InteractiveMarkdownElementTooltip {
+    tooltip_text: Option<SharedString>,
+    action_text: String,
+}
+
+impl InteractiveMarkdownElementTooltip {
+    pub fn new(
+        tooltip_text: Option<String>,
+        action_text: &str,
+        cx: &mut WindowContext,
+    ) -> View<Self> {
+        let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
+
+        cx.new_view(|_| Self {
+            tooltip_text,
+            action_text: action_text.to_string(),
+        })
+    }
+}
+
+impl Render for InteractiveMarkdownElementTooltip {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        tooltip_container(cx, |el, _| {
+            let secondary_modifier = Keystroke {
+                modifiers: Modifiers::secondary_key(),
+                ..Default::default()
+            };
+
+            el.child(
+                v_flex()
+                    .gap_1()
+                    .when_some(self.tooltip_text.clone(), |this, text| {
+                        this.child(Label::new(text).size(LabelSize::Small))
+                    })
+                    .child(
+                        Label::new(format!(
+                            "{}-click to {}",
+                            secondary_modifier, self.action_text
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+        })
+    }
 }

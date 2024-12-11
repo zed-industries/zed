@@ -27,12 +27,10 @@ parking_lot.workspace = true
 postage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 smol.workspace = true
 util.workspace = true
 release_channel.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true

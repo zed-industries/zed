@@ -109,17 +109,17 @@ spec:
                 secretKeyRef:
                   name: zed-client
                   key: checksum-seed
-            - name: LIVE_KIT_SERVER
+            - name: LIVEKIT_SERVER
               valueFrom:
                 secretKeyRef:
                   name: livekit
                   key: server
-            - name: LIVE_KIT_KEY
+            - name: LIVEKIT_KEY
               valueFrom:
                 secretKeyRef:
                   name: livekit
                   key: key
-            - name: LIVE_KIT_SECRET
+            - name: LIVEKIT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: livekit
@@ -149,6 +149,21 @@ spec:
                 secretKeyRef:
                   name: google-ai
                   key: api_key
+            - name: PREDICTION_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: prediction
+                  key: api_url
+            - name: PREDICTION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: prediction
+                  key: api_key
+            - name: PREDICTION_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: prediction
+                  key: model
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
@@ -174,26 +189,31 @@ spec:
                 secretKeyRef:
                   name: blob-store
                   key: bucket
-            - name: CLICKHOUSE_URL
+            - name: KINESIS_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: clickhouse
-                  key: url
-            - name: CLICKHOUSE_USER
+                  name: kinesis
+                  key: access_key
+            - name: KINESIS_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: clickhouse
-                  key: user
-            - name: CLICKHOUSE_PASSWORD
+                  name: kinesis
+                  key: secret_key
+            - name: KINESIS_STREAM
               valueFrom:
                 secretKeyRef:
-                  name: clickhouse
-                  key: password
-            - name: CLICKHOUSE_DATABASE
+                  name: kinesis
+                  key: stream
+            - name: KINESIS_REGION
               valueFrom:
                 secretKeyRef:
-                  name: clickhouse
-                  key: database
+                  name: kinesis
+                  key: region
+            - name: BLOB_STORE_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: blob-store
+                  key: bucket
             - name: SLACK_PANICS_WEBHOOK
               valueFrom:
                 secretKeyRef:

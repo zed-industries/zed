@@ -22,7 +22,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         if vim.mode != Mode::Replace {
             return;
         }
-        let count = vim.take_count(cx);
+        let count = Vim::take_count(cx);
         vim.undo_replace(count, cx)
     });
 }
@@ -135,7 +135,7 @@ mod test {
     }
 
     #[gpui::test]
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     async fn test_replace_mode(cx: &mut gpui::TestAppContext) {
         let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
 

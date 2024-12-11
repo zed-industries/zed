@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     insert::NormalBefore,
     motion::Motion,
+    normal::InsertBefore,
     state::{Mode, Operator, RecordedSelection, ReplayableAction, VimGlobals},
     Vim,
 };
@@ -157,7 +158,7 @@ impl Vim {
     }
 
     pub(crate) fn replay_register(&mut self, mut register: char, cx: &mut ViewContext<Self>) {
-        let mut count = self.take_count(cx).unwrap_or(1);
+        let mut count = Vim::take_count(cx).unwrap_or(1);
         self.clear_operator(cx);
 
         let globals = Vim::globals(cx);
@@ -183,7 +184,7 @@ impl Vim {
     }
 
     pub(crate) fn repeat(&mut self, from_insert_mode: bool, cx: &mut ViewContext<Self>) {
-        let count = self.take_count(cx);
+        let count = Vim::take_count(cx);
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
             if actions.is_empty() {
@@ -307,6 +308,11 @@ impl Vim {
         }
 
         actions.push(ReplayableAction::Action(EndRepeat.boxed_clone()));
+
+        if self.temp_mode {
+            self.temp_mode = false;
+            actions.push(ReplayableAction::Action(InsertBefore.boxed_clone()));
+        }
 
         let globals = Vim::globals(cx);
         globals.dot_replaying = true;

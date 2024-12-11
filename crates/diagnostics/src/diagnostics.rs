@@ -16,8 +16,8 @@ use editor::{
 };
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
-    SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
+    FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement,
+    Render, SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
     WeakView, WindowContext,
 };
 use language::{
@@ -32,6 +32,8 @@ use std::{
     cmp::Ordering,
     mem,
     ops::Range,
+    sync::Arc,
+    time::Duration,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
@@ -43,6 +45,9 @@ use workspace::{
 };
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
+
+struct IncludeWarnings(bool);
+impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
@@ -81,6 +86,8 @@ struct DiagnosticGroupState {
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 
+const DIAGNOSTICS_UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+
 impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let child = if self.path_states.is_empty() {
@@ -113,6 +120,7 @@ impl ProjectDiagnosticsEditor {
 
     fn new_with_context(
         context: u32,
+        include_warnings: bool,
         project_handle: Model<Project>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
@@ -171,19 +179,24 @@ impl ProjectDiagnosticsEditor {
             }
         })
         .detach();
+        cx.observe_global::<IncludeWarnings>(|this, cx| {
+            this.include_warnings = cx.global::<IncludeWarnings>().0;
+            this.update_all_excerpts(cx);
+        })
+        .detach();
 
         let project = project_handle.read(cx);
         let mut this = Self {
             project: project_handle.clone(),
             context,
             summary: project.diagnostic_summary(false, cx),
+            include_warnings,
             workspace,
             excerpts,
             focus_handle,
             editor,
             path_states: Default::default(),
             paths_to_update: Default::default(),
-            include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
             update_excerpts_task: None,
             _subscription: project_event_subscription,
         };
@@ -197,6 +210,9 @@ impl ProjectDiagnosticsEditor {
         }
         let project_handle = self.project.clone();
         self.update_excerpts_task = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(DIAGNOSTICS_UPDATE_DEBOUNCE)
+                .await;
             loop {
                 let Some((path, language_server_id)) = this.update(&mut cx, |this, _| {
                     let Some((path, language_server_id)) = this.paths_to_update.pop_first() else {
@@ -225,11 +241,13 @@ impl ProjectDiagnosticsEditor {
 
     fn new(
         project_handle: Model<Project>,
+        include_warnings: bool,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self::new_with_context(
             editor::DEFAULT_MULTIBUFFER_CONTEXT,
+            include_warnings,
             project_handle,
             workspace,
             cx,
@@ -241,8 +259,19 @@ impl ProjectDiagnosticsEditor {
             workspace.activate_item(&existing, true, true, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
+
+            let include_warnings = match cx.try_global::<IncludeWarnings>() {
+                Some(include_warnings) => include_warnings.0,
+                None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
+            };
+
             let diagnostics = cx.new_view(|cx| {
-                ProjectDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
+                ProjectDiagnosticsEditor::new(
+                    workspace.project().clone(),
+                    include_warnings,
+                    workspace_handle,
+                    cx,
+                )
             });
             workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, cx);
         }
@@ -250,6 +279,7 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
+        cx.set_global(IncludeWarnings(self.include_warnings));
         self.update_all_excerpts(cx);
         cx.notify();
     }
@@ -694,7 +724,7 @@ impl Item for ProjectDiagnosticsEditor {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(gpui::EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.editor.for_each_project_item(cx, f)
     }
@@ -718,12 +748,21 @@ impl Item for ProjectDiagnosticsEditor {
         Self: Sized,
     {
         Some(cx.new_view(|cx| {
-            ProjectDiagnosticsEditor::new(self.project.clone(), self.workspace.clone(), cx)
+            ProjectDiagnosticsEditor::new(
+                self.project.clone(),
+                self.include_warnings,
+                self.workspace.clone(),
+                cx,
+            )
         }))
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
         self.excerpts.read(cx).is_dirty(cx)
+    }
+
+    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+        self.excerpts.read(cx).has_deleted_file(cx)
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
@@ -771,7 +810,7 @@ impl Item for ProjectDiagnosticsEditor {
         }
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
         ToolbarItemLocation::PrimaryLeft
     }
 
@@ -790,10 +829,11 @@ const DIAGNOSTIC_HEADER: &str = "diagnostic header";
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic, None);
     let message: SharedString = message;
-    Box::new(move |cx| {
+    Arc::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_flex()
             .id(DIAGNOSTIC_HEADER)
+            .block_mouse_down()
             .h(2. * cx.line_height())
             .pl_10()
             .pr_5()

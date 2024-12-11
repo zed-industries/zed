@@ -5,16 +5,17 @@ use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
-use lsp::LanguageServerBinary;
+use lsp::{LanguageServerBinary, LanguageServerName};
 use regex::Regex;
 use serde_json::json;
-use smol::{fs, process};
+use smol::fs;
 use std::{
     any::Any,
     borrow::Cow,
     ffi::{OsStr, OsString},
     ops::Range,
     path::PathBuf,
+    process::Output,
     str,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
@@ -35,8 +36,8 @@ impl GoLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("gopls");
 }
 
-static GOPLS_VERSION_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Failed to create GOPLS_VERSION_REGEX"));
+static VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Failed to create VERSION_REGEX"));
 
 static GO_ESCAPE_SUBTEST_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"[.*+?^${}()|\[\]\\]"#).expect("Failed to create GO_ESCAPE_SUBTEST_NAME_REGEX")
@@ -67,6 +68,7 @@ impl super::LspAdapter for GoLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -89,8 +91,7 @@ impl super::LspAdapter for GoLspAdapter {
 
         let delegate = delegate.clone();
         Some(cx.spawn(|cx| async move {
-            let install_output = process::Command::new("go").args(["version"]).output().await;
-            if install_output.is_err() {
+            if delegate.which("go".as_ref()).await.is_none() {
                 if DID_SHOW_NOTIFICATION
                     .compare_exchange(false, true, SeqCst, SeqCst)
                     .is_ok()
@@ -111,11 +112,18 @@ impl super::LspAdapter for GoLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
+        let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
+        let go_version_output = util::command::new_smol_command(&go)
+            .args(["version"])
+            .output()
+            .await
+            .context("failed to get go version via `go version` command`")?;
+        let go_version = parse_version_output(&go_version_output)?;
         let version = version.downcast::<Option<String>>().unwrap();
         let this = *self;
 
         if let Some(version) = *version {
-            let binary_path = container_dir.join(format!("gopls_{version}"));
+            let binary_path = container_dir.join(format!("gopls_{version}_go_{go_version}"));
             if let Ok(metadata) = fs::metadata(&binary_path).await {
                 if metadata.is_file() {
                     remove_matching(&container_dir, |entry| {
@@ -139,7 +147,7 @@ impl super::LspAdapter for GoLspAdapter {
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
-        let install_output = process::Command::new("go")
+        let install_output = util::command::new_smol_command(go)
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
             .args(["install", "golang.org/x/tools/gopls@latest"])
@@ -157,18 +165,13 @@ impl super::LspAdapter for GoLspAdapter {
         }
 
         let installed_binary_path = gobin_dir.join("gopls");
-        let version_output = process::Command::new(&installed_binary_path)
+        let version_output = util::command::new_smol_command(&installed_binary_path)
             .arg("version")
             .output()
             .await
             .context("failed to run installed gopls binary")?;
-        let version_stdout = str::from_utf8(&version_output.stdout)
-            .context("gopls version produced invalid utf8 output")?;
-        let version = GOPLS_VERSION_REGEX
-            .find(version_stdout)
-            .with_context(|| format!("failed to parse golps version output '{version_stdout}'"))?
-            .as_str();
-        let binary_path = container_dir.join(format!("gopls_{version}"));
+        let gopls_version = parse_version_output(&version_output)?;
+        let binary_path = container_dir.join(format!("gopls_{gopls_version}_go_{go_version}"));
         fs::rename(&installed_binary_path, &binary_path).await?;
 
         Ok(LanguageServerBinary {
@@ -364,6 +367,18 @@ impl super::LspAdapter for GoLspAdapter {
     }
 }
 
+fn parse_version_output(output: &Output) -> Result<&str> {
+    let version_stdout =
+        str::from_utf8(&output.stdout).context("version command produced invalid utf8 output")?;
+
+    let version = VERSION_REGEX
+        .find(version_stdout)
+        .with_context(|| format!("failed to parse version output '{version_stdout}'"))?
+        .as_str();
+
+    Ok(version)
+}
+
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
     maybe!(async {
         let mut last_binary_path = None;
@@ -418,9 +433,10 @@ impl ContextProvider for GoContextProvider {
         &self,
         variables: &TaskVariables,
         location: &Location,
-        _: Option<&HashMap<String, String>>,
+        _: Option<HashMap<String, String>>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::AppContext,
-    ) -> Result<TaskVariables> {
+    ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
             .read(cx)
@@ -468,7 +484,7 @@ impl ContextProvider for GoContextProvider {
         let go_subtest_variable = extract_subtest_name(_subtest_name.unwrap_or(""))
             .map(|subtest_name| (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest_name));
 
-        Ok(TaskVariables::from_iter(
+        Task::ready(Ok(TaskVariables::from_iter(
             [
                 go_package_variable,
                 go_subtest_variable,
@@ -476,7 +492,7 @@ impl ContextProvider for GoContextProvider {
             ]
             .into_iter()
             .flatten(),
-        ))
+        )))
     }
 
     fn associated_tasks(

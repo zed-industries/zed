@@ -158,16 +158,6 @@ impl NotebookEditor {
         })
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.cell_map.values().any(|cell| {
-            if let Cell::Code(code_cell) = cell {
-                code_cell.read(cx).is_dirty(cx)
-            } else {
-                false
-            }
-        })
-    }
-
     fn clear_outputs(&mut self, cx: &mut ViewContext<Self>) {
         for cell in self.cell_map.values() {
             if let Cell::Code(code_cell) = cell {
@@ -273,7 +263,7 @@ impl NotebookEditor {
 
     fn button_group(cx: &ViewContext<Self>) -> Div {
         v_flex()
-            .gap(Spacing::Small.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
             .items_center()
             .w(px(CONTROL_SIZE + 4.0))
             .overflow_hidden()
@@ -299,14 +289,14 @@ impl NotebookEditor {
         v_flex()
             .max_w(px(CONTROL_SIZE + 4.0))
             .items_center()
-            .gap(Spacing::XXLarge.rems(cx))
+            .gap(DynamicSpacing::Base16.rems(cx))
             .justify_between()
             .flex_none()
             .h_full()
-            .py(Spacing::XLarge.px(cx))
+            .py(DynamicSpacing::Base12.px(cx))
             .child(
                 v_flex()
-                    .gap(Spacing::Large.rems(cx))
+                    .gap(DynamicSpacing::Base08.rems(cx))
                     .child(
                         Self::button_group(cx)
                             .child(
@@ -390,7 +380,7 @@ impl NotebookEditor {
             )
             .child(
                 v_flex()
-                    .gap(Spacing::Large.rems(cx))
+                    .gap(DynamicSpacing::Base08.rems(cx))
                     .items_center()
                     .child(Self::render_notebook_control(
                         "more-menu",
@@ -468,8 +458,8 @@ impl Render for NotebookEditor {
             .items_start()
             .size_full()
             .overflow_hidden()
-            .px(Spacing::XLarge.px(cx))
-            .gap(Spacing::XLarge.px(cx))
+            .px(DynamicSpacing::Base12.px(cx))
+            .gap(DynamicSpacing::Base12.px(cx))
             .bg(cx.theme().colors().tab_bar_background)
             .child(
                 v_flex()
@@ -500,7 +490,7 @@ pub struct NotebookItem {
     id: ProjectEntryId,
 }
 
-impl project::Item for NotebookItem {
+impl project::ProjectItem for NotebookItem {
     fn try_open(
         project: &Model<Project>,
         path: &ProjectPath,
@@ -560,6 +550,10 @@ impl project::Item for NotebookItem {
 
     fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
         Some(self.project_path.clone())
+    }
+
+    fn is_dirty(&self) -> bool {
+        false
     }
 }
 
@@ -656,7 +650,7 @@ impl Item for NotebookEditor {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(gpui::EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         f(self.notebook_item.entity_id(), self.notebook_item.read(cx))
     }
@@ -734,8 +728,13 @@ impl Item for NotebookEditor {
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        // self.is_dirty(cx) TODO
-        false
+        self.cell_map.values().any(|cell| {
+            if let Cell::Code(code_cell) = cell {
+                code_cell.read(cx).is_dirty(cx)
+            } else {
+                false
+            }
+        })
     }
 }
 

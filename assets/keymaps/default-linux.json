@@ -108,7 +108,9 @@
       "ctrl-'": "editor::ToggleHunkDiff",
       "ctrl-\"": "editor::ExpandAllHunkDiffs",
       "ctrl-i": "editor::ShowSignatureHelp",
-      "alt-g b": "editor::ToggleGitBlame"
+      "alt-g b": "editor::ToggleGitBlame",
+      "menu": "editor::OpenContextMenu",
+      "shift-f10": "editor::OpenContextMenu"
     }
   },
   {
@@ -251,6 +253,8 @@
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-shift-pageup": "pane::SwapItemLeft",
       "ctrl-shift-pagedown": "pane::SwapItemRight",
+      "back": "pane::GoBack",
+      "forward": "pane::GoForward",
       "ctrl-w": "pane::CloseActiveItem",
       "ctrl-f4": "pane::CloseActiveItem",
       "alt-ctrl-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
@@ -403,7 +407,7 @@
       "ctrl-shift-p": "command_palette::Toggle",
       "f1": "command_palette::Toggle",
       "ctrl-shift-m": "diagnostics::Deploy",
-      "ctrl-shift-e": "project_panel::ToggleFocus",
+      "ctrl-shift-e": "pane::RevealInProjectPanel",
       "ctrl-shift-b": "outline_panel::ToggleFocus",
       "ctrl-?": "assistant::ToggleFocus",
       "ctrl-alt-s": "workspace::SaveAll",
@@ -464,13 +468,21 @@
   },
   {
     "context": "Editor && showing_completions",
+    "use_key_equivalents": true,
     "bindings": {
-      "enter": "editor::ConfirmCompletion",
+      "enter": "editor::ConfirmCompletion"
+    }
+  },
+  {
+    "context": "Editor && !inline_completion && showing_completions",
+    "use_key_equivalents": true,
+    "bindings": {
       "tab": "editor::ComposeCompletion"
     }
   },
   {
-    "context": "Editor && inline_completion && !showing_completions",
+    "context": "Editor && inline_completion",
+    "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::AcceptInlineCompletion"
     }
@@ -592,6 +604,7 @@
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
+      "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
@@ -649,7 +662,28 @@
   },
   {
     "context": "FileFinder",
-    "bindings": { "ctrl-shift-p": "file_finder::SelectPrev" }
+    "bindings": {
+      "ctrl": "file_finder::ToggleMenu"
+    }
+  },
+  {
+    "context": "FileFinder && !menu_open",
+    "bindings": {
+      "ctrl-shift-p": "file_finder::SelectPrev",
+      "ctrl-j": "pane::SplitDown",
+      "ctrl-k": "pane::SplitUp",
+      "ctrl-h": "pane::SplitLeft",
+      "ctrl-l": "pane::SplitRight"
+    }
+  },
+  {
+    "context": "FileFinder && menu_open",
+    "bindings": {
+      "j": "pane::SplitDown",
+      "k": "pane::SplitUp",
+      "h": "pane::SplitLeft",
+      "l": "pane::SplitRight"
+    }
   },
   {
     "context": "TabSwitcher",

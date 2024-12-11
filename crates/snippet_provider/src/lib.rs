@@ -1,3 +1,4 @@
+mod extension_snippet;
 mod format;
 mod registry;
 
@@ -18,6 +19,7 @@ use util::ResultExt;
 
 pub fn init(cx: &mut AppContext) {
     SnippetRegistry::init_global(cx);
+    extension_snippet::init(cx);
 }
 
 // Is `None` if the snippet file is global.

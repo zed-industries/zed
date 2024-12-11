@@ -1258,6 +1258,7 @@ pub mod tests {
 
     use crate::{
         scroll::{scroll_amount::ScrollAmount, Autoscroll},
+        test::editor_lsp_test_context::rust_lang,
         ExcerptRange,
     };
     use futures::StreamExt;
@@ -2274,7 +2275,7 @@ pub mod tests {
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(crate::editor_tests::rust_lang());
+        language_registry.add(rust_lang());
         let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
@@ -2570,7 +2571,7 @@ pub mod tests {
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        let language = crate::editor_tests::rust_lang();
+        let language = rust_lang();
         language_registry.add(language);
         let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
@@ -2922,7 +2923,7 @@ pub mod tests {
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(crate::editor_tests::rust_lang());
+        language_registry.add(rust_lang());
         let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
@@ -3153,7 +3154,7 @@ pub mod tests {
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(crate::editor_tests::rust_lang());
+        language_registry.add(rust_lang());
         let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
@@ -3396,7 +3397,7 @@ pub mod tests {
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(crate::editor_tests::rust_lang());
+        language_registry.add(rust_lang());
         let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {

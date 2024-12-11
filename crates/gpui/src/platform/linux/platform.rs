@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::Read;
 use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
-use std::panic::Location;
+use std::panic::{AssertUnwindSafe, Location};
 use std::rc::Weak;
 use std::{
     path::{Path, PathBuf},
@@ -18,12 +18,12 @@ use std::{
     time::Duration,
 };
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
 use flume::{Receiver, Sender};
-use futures::channel::oneshot;
+use futures::{channel::oneshot, future::FutureExt};
 use parking_lot::Mutex;
 use util::ResultExt;
 
@@ -35,8 +35,8 @@ use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
-    PlatformWindow, Point, PromptLevel, Result, SemanticVersion, SharedString, Size, Task,
-    WindowAppearance, WindowOptions, WindowParams,
+    PlatformWindow, Point, PromptLevel, Result, ScreenCaptureSource, SemanticVersion, SharedString,
+    Size, Task, WindowAppearance, WindowOptions, WindowParams,
 };
 
 pub(crate) const SCROLL_LINES: f32 = 3.0;
@@ -242,6 +242,14 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (mut tx, rx) = oneshot::channel();
+        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
+        rx
+    }
+
     fn active_window(&self) -> Option<AnyWindowHandle> {
         self.active_window()
     }
@@ -374,14 +382,14 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn open_with_system(&self, path: &Path) {
-        let executor = self.background_executor().clone();
         let path = path.to_owned();
-        executor
+        self.background_executor()
             .spawn(async move {
                 let _ = std::process::Command::new("xdg-open")
                     .arg(path)
                     .spawn()
-                    .expect("Failed to open file with xdg-open");
+                    .context("invoking xdg-open")
+                    .log_err();
             })
             .detach();
     }
@@ -481,7 +489,12 @@ impl<P: LinuxClient + 'static> Platform for P {
                     let username = attributes
                         .get("username")
                         .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
-                    let secret = item.secret().await?;
+                    // oo7 panics if the retrieved secret can't be decrypted due to
+                    // unexpected padding.
+                    let secret = AssertUnwindSafe(item.secret())
+                        .catch_unwind()
+                        .await
+                        .map_err(|_| anyhow!("oo7 panicked while trying to read credentials"))??;
 
                     // we lose the zeroizing capabilities at this boundary,
                     // a current limitation GPUI's credentials api
@@ -684,6 +697,8 @@ impl Keystroke {
             Keysym::ISO_Left_Tab => "tab".to_owned(),
             Keysym::KP_Prior => "pageup".to_owned(),
             Keysym::KP_Next => "pagedown".to_owned(),
+            Keysym::XF86_Back => "back".to_owned(),
+            Keysym::XF86_Forward => "forward".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
@@ -740,14 +755,14 @@ impl Keystroke {
             }
         }
 
-        // Ignore control characters (and DEL) for the purposes of ime_key
-        let ime_key =
+        // Ignore control characters (and DEL) for the purposes of key_char
+        let key_char =
             (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
         Keystroke {
             modifiers,
             key,
-            ime_key,
+            key_char,
         }
     }
 

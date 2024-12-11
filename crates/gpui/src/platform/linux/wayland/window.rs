@@ -26,14 +26,14 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, AnyWindowHandle, Bounds, Decorations, GPUSpecs, Globals, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, ScaledPixels, Size, Tiling,
-    WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowParams,
+    PlatformDisplay, PlatformInput, Point, PromptLevel, RequestFrameOptions, ResizeEdge,
+    ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams,
 };
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
-    request_frame: Option<Box<dyn FnMut()>>,
+    request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     input: Option<Box<dyn FnMut(crate::PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
@@ -194,6 +194,23 @@ impl WaylandWindowState {
         self.decorations == WindowDecorations::Client
             || self.background_appearance != WindowBackgroundAppearance::Opaque
     }
+
+    pub fn primary_output_scale(&mut self) -> i32 {
+        let mut scale = 1;
+        let mut current_output = self.display.take();
+        for (id, output) in self.outputs.iter() {
+            if let Some((_, output_data)) = &current_output {
+                if output.scale > output_data.scale {
+                    current_output = Some((id.clone(), output.clone()));
+                }
+            } else {
+                current_output = Some((id.clone(), output.clone()));
+            }
+            scale = scale.max(output.scale);
+        }
+        self.display = current_output;
+        scale
+    }
 }
 
 pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
@@ -323,7 +340,7 @@ impl WaylandWindowStatePtr {
 
         let mut cb = self.callbacks.borrow_mut();
         if let Some(fun) = cb.request_frame.as_mut() {
-            fun();
+            fun(Default::default());
         }
     }
 
@@ -560,7 +577,7 @@ impl WaylandWindowStatePtr {
 
                 state.outputs.insert(id, output.clone());
 
-                let scale = primary_output_scale(&mut state);
+                let scale = state.primary_output_scale();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
                 if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
@@ -572,7 +589,7 @@ impl WaylandWindowStatePtr {
             wl_surface::Event::Leave { output } => {
                 state.outputs.remove(&output.id());
 
-                let scale = primary_output_scale(&mut state);
+                let scale = state.primary_output_scale();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
                 if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
@@ -687,11 +704,11 @@ impl WaylandWindowStatePtr {
             }
         }
         if let PlatformInput::KeyDown(event) = input {
-            if let Some(ime_key) = &event.keystroke.ime_key {
+            if let Some(key_char) = &event.keystroke.key_char {
                 let mut state = self.state.borrow_mut();
                 if let Some(mut input_handler) = state.input_handler.take() {
                     drop(state);
-                    input_handler.replace_text_in_range(None, ime_key);
+                    input_handler.replace_text_in_range(None, key_char);
                     self.state.borrow_mut().input_handler = Some(input_handler);
                 }
             }
@@ -719,6 +736,10 @@ impl WaylandWindowStatePtr {
             (fun)()
         }
     }
+
+    pub fn primary_output_scale(&self) -> i32 {
+        self.state.borrow_mut().primary_output_scale()
+    }
 }
 
 fn extract_states<'a, S: TryFrom<u32> + 'a>(states: &'a [u8]) -> impl Iterator<Item = S> + 'a
@@ -730,23 +751,6 @@ where
         .flat_map(TryInto::<[u8; 4]>::try_into)
         .map(u32::from_ne_bytes)
         .flat_map(S::try_from)
-}
-
-fn primary_output_scale(state: &mut RefMut<WaylandWindowState>) -> i32 {
-    let mut scale = 1;
-    let mut current_output = state.display.take();
-    for (id, output) in state.outputs.iter() {
-        if let Some((_, output_data)) = &current_output {
-            if output.scale > output_data.scale {
-                current_output = Some((id.clone(), output.clone()));
-            }
-        } else {
-            current_output = Some((id.clone(), output.clone()));
-        }
-        scale = scale.max(output.scale);
-    }
-    state.display = current_output;
-    scale
 }
 
 impl rwh::HasWindowHandle for WaylandWindow {
@@ -902,7 +906,7 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().fullscreen
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
