@@ -500,6 +500,7 @@ request_messages!(
     (CancelLanguageServerWork, Ack),
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
+    (RegisterBufferWithLanguageServers, Ack),
 );
 
 entity_messages!(

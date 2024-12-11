@@ -2821,7 +2821,6 @@ impl LspStore {
         client.add_model_message_handler(Self::handle_update_language_server);
         client.add_model_message_handler(Self::handle_language_server_log);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
-        client.add_model_message_handler(Self::handle_register_buffer_with_language_servers);
         client.add_model_request_handler(Self::handle_format_buffers);
         client.add_model_request_handler(Self::handle_resolve_completion_documentation);
         client.add_model_request_handler(Self::handle_apply_code_action);
@@ -2832,6 +2831,7 @@ impl LspStore {
         client.add_model_request_handler(Self::handle_refresh_inlay_hints);
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
+        client.add_model_request_handler(Self::handle_register_buffer_with_language_servers);
         client.add_model_request_handler(Self::handle_lsp_command::<GetCodeActions>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetCompletions>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
@@ -3338,15 +3338,17 @@ impl LspStore {
         cx: &mut ModelContext<Self>,
     ) {
         let buffer_file = buffer.read(cx).file().cloned();
+        let buffer_id = buffer.read(cx).remote_id();
         if let Some(local_store) = self.as_local_mut() {
-            let Some(abs_path) = File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
-            else {
-                return;
-            };
-            let Some(file_url) = lsp::Url::from_file_path(&abs_path).log_err() else {
-                return;
-            };
-            local_store.unregister_buffer_from_language_servers(buffer, file_url, cx);
+            if local_store.registered_buffers.contains_key(&buffer_id) {
+                if let Some(abs_path) =
+                    File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
+                {
+                    if let Some(file_url) = lsp::Url::from_file_path(&abs_path).log_err() {
+                        local_store.unregister_buffer_from_language_servers(buffer, file_url, cx);
+                    }
+                }
+            }
         }
         buffer.update(cx, |buffer, cx| {
             if buffer.language().map_or(true, |old_language| {
@@ -3364,7 +3366,9 @@ impl LspStore {
             let worktree = file.worktree.clone();
 
             if let Some(local) = self.as_local_mut() {
-                local.register_buffer_with_language_servers(buffer, cx);
+                if local.registered_buffers.contains_key(&buffer_id) {
+                    local.register_buffer_with_language_servers(buffer, cx);
+                }
             }
             Some(worktree.read(cx).id())
         } else {
@@ -5789,8 +5793,9 @@ impl LspStore {
         this: Model<Self>,
         envelope: TypedEnvelope<proto::RegisterBufferWithLanguageServers>,
         mut cx: AsyncAppContext,
-    ) -> Result<()> {
+    ) -> Result<proto::Ack> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         this.update(&mut cx, |this, cx| {
             if let Some((upstream_client, upstream_project_id)) = this.upstream_client() {
                 return upstream_client.send(proto::RegisterBufferWithLanguageServers {
@@ -5799,17 +5804,18 @@ impl LspStore {
                 });
             }
 
-            let Some(local) = this.as_local() else {
-                return Ok(());
+            let Some(buffer) = this.buffer_store().read(cx).get(buffer_id) else {
+                anyhow::bail!("buffer is not open");
             };
 
-            let Some(buffer) = this.buffer_store().read(cx).get(buffer_id) else {
-                anyhow::bail!("buffer is not open")
-            };
+            let handle = this.register_buffer_with_language_servers(&buffer, cx);
+            this.buffer_store().update(cx, |buffer_store, _| {
+                buffer_store.register_shared_lsp_handle(peer_id, buffer_id, handle);
+            });
 
             Ok(())
         })??;
-        Ok(())
+        Ok(proto::Ack {})
     }
 
     async fn handle_update_diagnostic_summary(
