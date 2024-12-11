@@ -122,7 +122,7 @@ unicode-segmentation.workspace = true
 embed-resource = "3.0"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.70.0"
+bindgen = "0.71.0"
 cbindgen = { version = "0.27.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
