@@ -36,8 +36,9 @@ use workspace::{
     move_item, pane,
     ui::IconName,
     ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane, DraggedTab,
-    ItemId, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight,
-    SplitUp, SwapPaneInDirection, ToggleZoom, Workspace,
+    ItemId, MovableActiveItem, MoveItemToPane, MoveItemToPaneInDirection, NewTerminal, Pane,
+    PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneInDirection,
+    ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -1124,8 +1125,8 @@ impl Render for TerminalPanel {
                         .detach();
                     }
                 }))
-                .on_action(cx.listener(
-                    |terminal_panel, action: &SwapPaneInDirection, cx| {
+                .on_action(
+                    cx.listener(|terminal_panel, action: &SwapPaneInDirection, cx| {
                         if let Some(to) = terminal_panel
                             .center
                             .find_pane_in_direction(&terminal_panel.active_pane, action.0, cx)
@@ -1136,6 +1137,27 @@ impl Render for TerminalPanel {
                                 .swap(&terminal_panel.active_pane.clone(), &to);
                             cx.notify();
                         }
+                    }),
+                )
+                .on_action(cx.listener(|terminal_panel, action: &MoveItemToPane, cx| {
+                    let panes = terminal_panel.center.panes();
+                    let Some(target_pane) = panes.get(action.0).map(|p| (*p).clone()) else {
+                        return;
+                    };
+                    let source_pane = terminal_panel.active_pane.clone();
+                    source_pane.move_active_item_to(target_pane, true, true, cx);
+                }))
+                .on_action(cx.listener(
+                    |terminal_panel, action: &MoveItemToPaneInDirection, cx| {
+                        let source_pane = terminal_panel.active_pane.clone();
+                        let Some(target_pane) = terminal_panel
+                            .center
+                            .find_pane_in_direction(&source_pane, action.0, cx)
+                            .cloned()
+                        else {
+                            return;
+                        };
+                        source_pane.move_active_item_to(target_pane, true, true, cx);
                     },
                 ))
             })
