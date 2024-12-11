@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AppContext, FocusableView, Model, TextStyle, View};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
@@ -10,7 +12,7 @@ use ui::{
     PopoverMenuHandle, Tooltip,
 };
 
-use crate::context::{Context, ContextKind};
+use crate::context::{Context, ContextId, ContextKind};
 use crate::context_picker::{ContextPicker, ContextPickerDelegate};
 use crate::thread::{RequestKind, Thread};
 use crate::ui::ContextPill;
@@ -20,19 +22,14 @@ pub struct MessageEditor {
     thread: Model<Thread>,
     editor: View<Editor>,
     context: Vec<Context>,
+    next_context_id: ContextId,
     pub(crate) context_picker_handle: PopoverMenuHandle<Picker<ContextPickerDelegate>>,
     use_tools: bool,
 }
 
 impl MessageEditor {
     pub fn new(thread: Model<Thread>, cx: &mut ViewContext<Self>) -> Self {
-        let mocked_context = vec![Context {
-            name: "shape.rs".into(),
-            kind: ContextKind::File,
-            text: "```rs\npub enum Shape {\n    Circle,\n    Square,\n    Triangle,\n}".into(),
-        }];
-
-        Self {
+        let mut this = Self {
             thread,
             editor: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(80, cx);
@@ -40,10 +37,20 @@ impl MessageEditor {
 
                 editor
             }),
-            context: mocked_context,
+            context: Vec::new(),
+            next_context_id: ContextId(0),
             context_picker_handle: PopoverMenuHandle::default(),
             use_tools: false,
-        }
+        };
+
+        this.context.push(Context {
+            id: this.next_context_id.post_inc(),
+            name: "shape.rs".into(),
+            kind: ContextKind::File,
+            text: "```rs\npub enum Shape {\n    Circle,\n    Square,\n    Triangle,\n}".into(),
+        });
+
+        this
     }
 
     fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
@@ -178,11 +185,15 @@ impl Render for MessageEditor {
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small),
                     ))
-                    .children(
-                        self.context
-                            .iter()
-                            .map(|context| ContextPill::new(context.clone())),
-                    )
+                    .children(self.context.iter().map(|context| {
+                        ContextPill::new(context.clone()).on_remove({
+                            let context = context.clone();
+                            Rc::new(cx.listener(move |this, _event, cx| {
+                                this.context.retain(|other| other.id != context.id);
+                                cx.notify();
+                            }))
+                        })
+                    }))
                     .when(!self.context.is_empty(), |parent| {
                         parent.child(
                             IconButton::new("remove-all-context", IconName::Eraser)
