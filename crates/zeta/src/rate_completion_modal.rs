@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use crate::{InlineCompletion, InlineCompletionRating, Zeta};
-use client::Client;
 use editor::Editor;
 use gpui::{
     actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
@@ -26,16 +23,11 @@ actions!(
         PreviousEdit,
         FocusCompletions,
         PreviewCompletion,
-        SelectFirst,
-        SelectLast,
-        SelectNext,
-        SelectPrev,
-        Confirm,
     ]
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(move |workspace: &mut Workspace, cx| {
+    cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &RateCompletions, cx| {
             RateCompletionModal::toggle(workspace, cx);
         });
@@ -78,7 +70,7 @@ impl RateCompletionModal {
         cx.emit(DismissEvent);
     }
 
-    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         self.selected_index += 1;
         self.selected_index = usize::min(
             self.selected_index,
@@ -87,7 +79,7 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
         self.selected_index = self.selected_index.saturating_sub(1);
         cx.notify();
     }
@@ -133,12 +125,12 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
+    fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
         self.selected_index = 0;
         cx.notify();
     }
 
-    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
         self.selected_index = self.zeta.read(cx).recent_completions_len() - 1;
         cx.notify();
     }
@@ -249,7 +241,7 @@ impl RateCompletionModal {
         self.select_completion(completion, false, cx);
     }
 
-    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         let completion = self
             .zeta
             .read(cx)

@@ -798,24 +798,7 @@
       "cmd-delete": "zeta::ThumbsDown",
       "shift-down": "zeta::NextEdit",
       "shift-up": "zeta::PreviousEdit",
-      "space": "zeta::PreviewCompletion",
-
-      // These bindings are copied from menu:: to make them mutually exclusive with the editor focus
-      "up": "zeta::SelectPrev",
-      "shift-tab": "zeta::SelectPrev",
-      "home": "zeta::SelectFirst",
-      "pageup": "zeta::SelectFirst",
-      "shift-pageup": "zeta::SelectFirst",
-      "ctrl-p": "zeta::SelectPrev",
-      "down": "zeta::SelectNext",
-      "tab": "zeta::SelectNext",
-      "end": "zeta::SelectLast",
-      "pagedown": "zeta::SelectLast",
-      "shift-pagedown": "zeta::SelectFirst",
-      "ctrl-n": "zeta::SelectNext",
-      "cmd-up": "zeta::SelectFirst",
-      "cmd-down": "zeta::SelectLast",
-      "enter": "zeta::Confirm"
+      "space": "zeta::PreviewCompletion"
     }
   },
   {
