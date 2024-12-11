@@ -182,7 +182,7 @@ pub struct ScrollManager {
     last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
-    dragging_scrollbar: (bool, bool),
+    dragging_scrollbar: AxisPair<bool>,
     visible_line_count: Option<f32>,
     forbid_vertical_scroll: bool,
 }
@@ -196,7 +196,7 @@ impl ScrollManager {
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
-            dragging_scrollbar: (false, false),
+            dragging_scrollbar: axis_pair(false, false),
             last_autoscroll: None,
             visible_line_count: None,
             forbid_vertical_scroll: false,
@@ -358,10 +358,7 @@ impl ScrollManager {
     }
 
     pub fn is_dragging_scrollbar(&self, axis: Axis) -> bool {
-        match axis {
-            Axis::Horizontal => self.dragging_scrollbar.0,
-            Axis::Vertical => self.dragging_scrollbar.1,
-        }
+        self.dragging_scrollbar.along(axis)
     }
 
     pub fn set_is_dragging_scrollbar(
@@ -370,20 +367,8 @@ impl ScrollManager {
         dragging: bool,
         cx: &mut ViewContext<Editor>,
     ) {
-        match axis {
-            Axis::Horizontal => {
-                if dragging != self.dragging_scrollbar.0 {
-                    self.dragging_scrollbar.0 = dragging;
-                    cx.notify();
-                }
-            }
-            Axis::Vertical => {
-                if dragging != self.dragging_scrollbar.1 {
-                    self.dragging_scrollbar.1 = dragging;
-                    cx.notify();
-                }
-            }
-        }
+        self.dragging_scrollbar = self.dragging_scrollbar.apply_along(axis, |_| dragging);
+        cx.notify();
     }
 
     pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
