@@ -1,4 +1,5 @@
-use gpui::{MouseButton, View};
+use gpui::View;
+use smallvec::SmallVec;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
 use install_cli;
@@ -52,12 +53,12 @@ impl MenuItem {
 }
 
 pub struct ApplicationMenu {
-    menu_items: Vec<MenuItem>,
+    menu_items: SmallVec<[MenuItem; 8]>,
 }
 
 impl ApplicationMenu {
     pub fn new(_cx: &mut ViewContext<Self>) -> Self {
-        let menu_types = vec![
+        let menu_types = [
             MenuType::Zed,
             MenuType::File,
             MenuType::Edit,
@@ -267,7 +268,24 @@ impl ApplicationMenu {
         })
     }
 
-    fn render_menu_item(&self, item: &MenuItem, show_all_menu_items: bool) -> impl IntoElement {
+    fn render_application_menu(&self, item: &MenuItem) -> impl IntoElement {
+        let item_handle = item.handle.clone();
+        div().id(item.id()).occlude().child(
+            PopoverMenu::new(SharedString::from(format!("menu-{}", item.id())))
+                .menu(move |cx| Some(Self::build_zed_menu(cx)))
+                .trigger(
+                    IconButton::new("application-menu", ui::IconName::Menu)
+                        .style(ButtonStyle::Subtle)
+                        .icon_size(IconSize::Small)
+                        .when(!item_handle.is_deployed(), |this| {
+                            this.tooltip(|cx| Tooltip::text("Open Application Menu", cx))
+                        }),
+                )
+                .with_handle(item_handle),
+        )
+    }
+
+    fn render_standard_menu(&self, item: &MenuItem) -> impl IntoElement {
         let menu_type = item.menu_type;
         let item_handle = item.handle.clone();
         let other_handles: Vec<_> = self
@@ -277,82 +295,58 @@ impl ApplicationMenu {
             .map(|other| other.handle.clone())
             .collect();
 
-        let show_application_menu = matches!(menu_type, MenuType::Zed) && !show_all_menu_items;
-
         div()
             .id(item.id())
             .occlude()
-            .when(show_application_menu, |ele| {
-                ele.child(
-                    PopoverMenu::new(SharedString::from(format!("menu-{}", item.id())))
-                        .menu(move |cx| {
-                            Some(match menu_type {
-                                MenuType::Zed => Self::build_zed_menu(cx),
-                                MenuType::File => Self::build_file_menu(cx),
-                                MenuType::Edit => Self::build_edit_menu(cx),
-                                MenuType::Selection => Self::build_selection_menu(cx),
-                                MenuType::View => Self::build_view_menu(cx),
-                                MenuType::Go => Self::build_go_menu(cx),
-                                MenuType::Window => Self::build_window_menu(cx),
-                                MenuType::Help => Self::build_help_menu(cx),
-                            })
+            .child(
+                PopoverMenu::new(SharedString::from(format!("menu-{}", item.id())))
+                    .menu(move |cx| {
+                        Some(match menu_type {
+                            MenuType::File => Self::build_file_menu(cx),
+                            MenuType::Edit => Self::build_edit_menu(cx),
+                            MenuType::Selection => Self::build_selection_menu(cx),
+                            MenuType::View => Self::build_view_menu(cx),
+                            MenuType::Go => Self::build_go_menu(cx),
+                            MenuType::Window => Self::build_window_menu(cx),
+                            MenuType::Help => Self::build_help_menu(cx),
+                            MenuType::Zed => Self::build_zed_menu(cx),
                         })
-                        .trigger(
-                            IconButton::new("application-menu", ui::IconName::Menu)
-                                .style(ButtonStyle::Subtle)
-                                .icon_size(IconSize::Small)
-                                .when(!item_handle.is_deployed(), |this| {
-                                    this.tooltip(|cx| Tooltip::text("Open Application Menu", cx))
-                                }),
+                    })
+                    .trigger(
+                        Button::new(
+                            SharedString::from(format!("menu-trigger-{}", item.id())),
+                            item.label(),
                         )
-                        .with_handle(item_handle.clone()),
-                )
-            })
-            .when(!show_application_menu, |ele| {
-                ele.child(
-                    PopoverMenu::new(SharedString::from(format!("menu-{}", item.id())))
-                        .menu(move |cx| {
-                            Some(match menu_type {
-                                MenuType::Zed => Self::build_zed_menu(cx),
-                                MenuType::File => Self::build_file_menu(cx),
-                                MenuType::Edit => Self::build_edit_menu(cx),
-                                MenuType::Selection => Self::build_selection_menu(cx),
-                                MenuType::View => Self::build_view_menu(cx),
-                                MenuType::Go => Self::build_go_menu(cx),
-                                MenuType::Window => Self::build_window_menu(cx),
-                                MenuType::Help => Self::build_help_menu(cx),
-                            })
-                        })
-                        .trigger(
-                            Button::new(
-                                SharedString::from(format!("menu-trigger-{}", item.id())),
-                                item.label(),
-                            )
-                            .style(ButtonStyle::Subtle)
-                            .label_size(LabelSize::Small),
-                        )
-                        .with_handle(item_handle.clone()),
-                )
-            })
-            .when(show_all_menu_items, |ele| {
-                ele.on_hover(move |_, cx| {
-                    other_handles.iter().for_each(|handle| handle.hide(cx));
-                    item_handle.show(cx);
-                })
+                        .style(ButtonStyle::Subtle)
+                        .label_size(LabelSize::Small),
+                    )
+                    .with_handle(item_handle.clone()),
+            )
+            .on_hover(move |_, cx| {
+                other_handles.iter().for_each(|handle| handle.hide(cx));
+                item_handle.show(cx);
             })
     }
 }
 
 impl Render for ApplicationMenu {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let menu_items = self.menu_items.clone();
-        let show_all_menu_items = menu_items.iter().any(|item| item.handle.is_deployed());
-
-        div().flex().flex_row().gap_x_1().children(
-            menu_items
-                .iter()
-                .filter(|item| matches!(item.menu_type, MenuType::Zed) || show_all_menu_items)
-                .map(|item| self.render_menu_item(item, show_all_menu_items)),
-        )
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let show_all_menu_items = self.menu_items.iter().any(|item| item.handle.is_deployed());
+        div()
+            .flex()
+            .flex_row()
+            .gap_x_1()
+            .when(!show_all_menu_items, |this| {
+                this.child(self.render_application_menu(&self.menu_items[0]))
+            })
+            .when(show_all_menu_items, |this| {
+                this.child(self.render_standard_menu(&self.menu_items[0]))
+                    .children(
+                        self.menu_items
+                            .iter()
+                            .skip(1)
+                            .map(|item| self.render_standard_menu(item)),
+                    )
+            })
     }
 }
