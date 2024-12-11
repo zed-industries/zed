@@ -6,7 +6,9 @@ use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
-use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Subscription, Task};
+use gpui::{
+    actions, AppContext, Context, EntityId, Global, Model, ModelContext, Subscription, Task,
+};
 use http_client::{HttpClient, Method};
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, OffsetRangeExt,
@@ -835,9 +837,14 @@ impl Event {
     }
 }
 
+struct CurrentInlineCompletion {
+    buffer_id: EntityId,
+    completion: InlineCompletion,
+}
+
 pub struct ZetaInlineCompletionProvider {
     zeta: Model<Zeta>,
-    current_completion: Option<InlineCompletion>,
+    current_completion: Option<CurrentInlineCompletion>,
     pending_refresh: Task<()>,
 }
 
@@ -878,28 +885,34 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        self.pending_refresh = cx.spawn(|this, mut cx| async move {
-            if debounce {
-                cx.background_executor().timer(Self::DEBOUNCE_TIMEOUT).await;
-            }
+        self.pending_refresh =
+            cx.spawn(|this, mut cx| async move {
+                if debounce {
+                    cx.background_executor().timer(Self::DEBOUNCE_TIMEOUT).await;
+                }
 
-            let completion_request = this.update(&mut cx, |this, cx| {
-                this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_completion(&buffer, position, cx)
+                let completion_request = this.update(&mut cx, |this, cx| {
+                    this.zeta.update(cx, |zeta, cx| {
+                        zeta.request_completion(&buffer, position, cx)
+                    })
+                });
+
+                let mut completion = None;
+                if let Ok(completion_request) = completion_request {
+                    completion = completion_request.await.log_err().map(|completion| {
+                        CurrentInlineCompletion {
+                            buffer_id: buffer.entity_id(),
+                            completion,
+                        }
+                    });
+                }
+
+                this.update(&mut cx, |this, cx| {
+                    this.current_completion = completion;
+                    cx.notify();
                 })
+                .ok();
             });
-
-            let mut completion = None;
-            if let Ok(completion_request) = completion_request {
-                completion = completion_request.await.log_err();
-            }
-
-            this.update(&mut cx, |this, cx| {
-                this.current_completion = completion;
-                cx.notify();
-            })
-            .ok();
-        });
     }
 
     fn cycle(
@@ -924,7 +937,16 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         cursor_position: language::Anchor,
         cx: &mut ModelContext<Self>,
     ) -> Option<inline_completion::InlineCompletion> {
-        let completion = self.current_completion.as_mut()?;
+        let CurrentInlineCompletion {
+            buffer_id,
+            completion,
+        } = self.current_completion.as_mut()?;
+
+        // Invalidate previous completion if it was generated for a different buffer.
+        if *buffer_id != buffer.entity_id() {
+            self.current_completion.take();
+            return None;
+        }
 
         let buffer = buffer.read(cx);
         let Some(edits) = completion.interpolate(buffer.snapshot()) else {
