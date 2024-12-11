@@ -795,10 +795,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-enter": "zeta::ThumbsUp",
-      "cmd-delete": "zeta::ThumbsDown",
       "shift-down": "zeta::NextEdit",
       "shift-up": "zeta::PreviousEdit",
-      "space": "zeta::PreviewCompletion"
+      "right": "zeta::PreviewCompletion"
     }
   },
   {
