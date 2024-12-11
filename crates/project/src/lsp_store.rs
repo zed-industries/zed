@@ -3331,12 +3331,23 @@ impl LspStore {
         available_language
     }
 
-    pub fn set_language_for_buffer(
+    pub(crate) fn set_language_for_buffer(
         &mut self,
         buffer: &Model<Buffer>,
         new_language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        let buffer_file = buffer.read(cx).file().cloned();
+        if let Some(local_store) = self.as_local_mut() {
+            let Some(abs_path) = File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
+            else {
+                return;
+            };
+            let Some(file_url) = lsp::Url::from_file_path(&abs_path).log_err() else {
+                return;
+            };
+            local_store.unregister_buffer_from_language_servers(buffer, file_url, cx);
+        }
         buffer.update(cx, |buffer, cx| {
             if buffer.language().map_or(true, |old_language| {
                 !Arc::ptr_eq(old_language, &new_language)
@@ -3345,7 +3356,6 @@ impl LspStore {
             }
         });
 
-        let buffer_file = buffer.read(cx).file().cloned();
         let settings =
             language_settings(Some(new_language.name()), buffer_file.as_ref(), cx).into_owned();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
@@ -3353,6 +3363,9 @@ impl LspStore {
         let worktree_id = if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
 
+            if let Some(local) = self.as_local_mut() {
+                local.register_buffer_with_language_servers(buffer, cx);
+            }
             Some(worktree.read(cx).id())
         } else {
             None
