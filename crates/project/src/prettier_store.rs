@@ -36,6 +36,7 @@ pub struct PrettierStore {
     worktree_store: Model<WorktreeStore>,
     default_prettier: DefaultPrettier,
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
+    prettier_ignores_per_worktree: HashMap<WorktreeId, HashSet<PathBuf>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
 }
 
@@ -65,11 +66,13 @@ impl PrettierStore {
             worktree_store,
             default_prettier: DefaultPrettier::default(),
             prettiers_per_worktree: HashMap::default(),
+            prettier_ignores_per_worktree: HashMap::default(),
             prettier_instances: HashMap::default(),
         }
     }
 
     pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+        self.prettier_ignores_per_worktree.remove(&id_to_remove);
         let mut prettier_instances_to_clean = FuturesUnordered::new();
         if let Some(prettier_paths) = self.prettiers_per_worktree.remove(&id_to_remove) {
             for path in prettier_paths.iter().flatten() {
@@ -208,6 +211,65 @@ impl PrettierStore {
                 let new_task = self.default_prettier.prettier_task(&node, None, cx);
                 cx.spawn(|_, _| async move { Some((None, new_task?.log_err().await?)) })
             }
+        }
+    }
+
+    fn prettier_ignore_for_buffer(
+        &mut self,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<PathBuf>> {
+        let buffer = buffer.read(cx);
+        let buffer_file = buffer.file();
+        if buffer.language().is_none() {
+            return Task::ready(None);
+        }
+        match File::from_dyn(buffer_file).map(|file| (file.worktree_id(cx), file.abs_path(cx))) {
+            Some((worktree_id, buffer_path)) => {
+                let fs = Arc::clone(&self.fs);
+                let prettier_ignores = self
+                    .prettier_ignores_per_worktree
+                    .get(&worktree_id)
+                    .cloned()
+                    .unwrap_or_default();
+                cx.spawn(|lsp_store, mut cx| async move {
+                    match cx
+                        .background_executor()
+                        .spawn(async move {
+                            Prettier::locate_prettier_ignore(
+                                fs.as_ref(),
+                                &prettier_ignores,
+                                &buffer_path,
+                            )
+                            .await
+                        })
+                        .await
+                    {
+                        Ok(ControlFlow::Break(())) => None,
+                        Ok(ControlFlow::Continue(None)) => None,
+                        Ok(ControlFlow::Continue(Some(ignore_dir))) => {
+                            log::debug!("Found prettier ignore in {ignore_dir:?}");
+                            lsp_store
+                                .update(&mut cx, |store, _| {
+                                    store
+                                        .prettier_ignores_per_worktree
+                                        .entry(worktree_id)
+                                        .or_default()
+                                        .insert(ignore_dir.clone());
+                                })
+                                .ok();
+                            Some(ignore_dir)
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Failed to determine prettier ignore path for buffer: {e:#}"
+                            );
+                            None
+                        }
+                    }
+                })
+            }
+            None => Task::ready(None),
         }
     }
 
@@ -654,6 +716,13 @@ pub(super) async fn format_with_prettier(
         .ok()?
         .await;
 
+    let ignore_dir = prettier_store
+        .update(cx, |prettier_store, cx| {
+            prettier_store.prettier_ignore_for_buffer(buffer, cx)
+        })
+        .ok()?
+        .await;
+
     let (prettier_path, prettier_task) = prettier_instance?;
 
     let prettier_description = match prettier_path.as_ref() {
@@ -671,7 +740,7 @@ pub(super) async fn format_with_prettier(
                 .flatten();
 
             let format_result = prettier
-                .format(buffer, buffer_path, cx)
+                .format(buffer, buffer_path, ignore_dir, cx)
                 .await
                 .map(crate::lsp_store::FormatOperation::Prettier)
                 .with_context(|| format!("{} failed to format buffer", prettier_description));
