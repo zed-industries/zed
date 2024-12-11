@@ -275,7 +275,7 @@ impl RateCompletionModal {
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
                 editor.set_show_inline_completions(Some(false), cx);
-                editor.set_placeholder_text("Add your feedback about this completion… (Negative feedback requires an explanation for why it was bad, and what you expected instead.)", cx);
+                editor.set_placeholder_text("Add your feedback…", cx);
                 if focus {
                     cx.focus_self();
                 }
@@ -370,11 +370,27 @@ impl RateCompletionModal {
                         .child(StyledText::new(diff).with_highlights(&text_style, diff_highlights)),
                 )
                 .child(
+                    h_flex()
+                        .p_2()
+                        .gap_2()
+                        .border_y_1()
+                        .border_color(border_color)
+                        .child(
+                            Icon::new(IconName::Info)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted)
+                        )
+                        .child(
+                            Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                        )
+                )
+                .child(
                     div()
                         .h_40()
+                        .pt_1()
                         .bg(bg_color)
-                        .border_t_1()
-                        .border_color(border_color)
                         .child(active_completion.feedback_editor.clone()),
                 )
                 .child(
