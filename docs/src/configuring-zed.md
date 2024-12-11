@@ -2394,8 +2394,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 "calls": {
-  // Join calls with the microphone live by default
-  "mute_on_join": false,
+  // Join calls with the microphone initially muted
+  "mute_on_join": true,
   // Share your project when you are the first to join a channel
   "share_on_join": false
 },
