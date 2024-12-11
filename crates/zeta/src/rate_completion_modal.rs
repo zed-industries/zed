@@ -7,7 +7,7 @@ use gpui::{
 use language::{language_settings, OffsetRangeExt};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, ListItem, ListItemSpacing};
+use ui::{prelude::*, List, ListItem, ListItemSpacing, TintColor};
 use workspace::{ModalView, Workspace};
 
 pub struct RateCompletionModal {
@@ -69,7 +69,7 @@ impl RateCompletionModal {
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
                 editor.set_show_inline_completions(Some(false), cx);
-                editor.set_placeholder_text("Your feedback about this completion...", cx);
+                editor.set_placeholder_text("Add your feedback about this completion…", cx);
                 editor
             }),
         });
@@ -134,94 +134,116 @@ impl RateCompletionModal {
         };
 
         let rated = self.zeta.read(cx).is_completion_rated(completion_id);
+
+        let border_color = cx.theme().colors().border;
+        let bg_color = cx.theme().colors().editor_background;
+
+        let label_container = || h_flex().pl_1().gap_1p5();
+
         Some(
             v_flex()
-                .flex_1()
                 .size_full()
-                .gap_2()
-                .child(h_flex().justify_center().children(if rated {
-                    Some(
-                        Label::new("This completion was already rated")
-                            .color(Color::Muted)
-                            .size(LabelSize::Large),
-                    )
-                } else if active_completion.completion.edits.is_empty() {
-                    Some(
-                        Label::new("This completion didn't produce any edits")
-                            .color(Color::Warning)
-                            .size(LabelSize::Large),
-                    )
-                } else {
-                    None
-                }))
+                .overflow_hidden()
                 .child(
-                    v_flex()
+                    div()
                         .id("diff")
-                        .flex_1()
-                        .flex_basis(relative(0.75))
-                        .bg(cx.theme().colors().editor_background)
-                        .overflow_y_scroll()
-                        .p_2()
-                        .border_color(cx.theme().colors().border)
-                        .border_1()
-                        .rounded_lg()
+                        .py_4()
+                        .px_6()
+                        .size_full()
+                        .bg(bg_color)
+                        .overflow_scroll()
                         .child(StyledText::new(diff).with_highlights(&text_style, diff_highlights)),
                 )
                 .child(
                     div()
-                        .flex_1()
-                        .flex_basis(relative(0.25))
-                        .bg(cx.theme().colors().editor_background)
-                        .border_color(cx.theme().colors().border)
-                        .border_1()
-                        .rounded_lg()
+                        .h_40()
+                        .bg(bg_color)
+                        .border_t_1()
+                        .border_color(border_color)
                         .child(active_completion.feedback_editor.clone()),
                 )
                 .child(
                     h_flex()
-                        .gap_2()
-                        .justify_end()
+                        .p_1()
+                        .h_8()
+                        .border_t_1()
+                        .border_color(border_color)
+                        .max_w_full()
+                        .justify_between()
+                        .children(if rated {
+                            Some(
+                                label_container()
+                                    .child(
+                                        Icon::new(IconName::Check)
+                                            .size(IconSize::Small)
+                                            .color(Color::Success),
+                                    )
+                                    .child(Label::new("Rated completion").color(Color::Muted)),
+                            )
+                        } else if active_completion.completion.edits.is_empty() {
+                            Some(
+                                label_container()
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::Small)
+                                            .color(Color::Warning),
+                                    )
+                                    .child(Label::new("No edits produced").color(Color::Muted)),
+                            )
+                        } else {
+                            Some(label_container())
+                        })
                         .child(
-                            Button::new("bad", "👎 Bad Completion")
-                                .size(ButtonSize::Large)
-                                .disabled(rated)
-                                .label_size(LabelSize::Large)
-                                .color(Color::Error)
-                                .on_click({
-                                    let completion = active_completion.completion.clone();
-                                    let feedback_editor = active_completion.feedback_editor.clone();
-                                    cx.listener(move |this, _, cx| {
-                                        this.zeta.update(cx, |zeta, cx| {
-                                            zeta.rate_completion(
-                                                &completion,
-                                                InlineCompletionRating::Negative,
-                                                feedback_editor.read(cx).text(cx),
-                                                cx,
-                                            )
-                                        })
-                                    })
-                                }),
-                        )
-                        .child(
-                            Button::new("good", "👍 Good Completion")
-                                .size(ButtonSize::Large)
-                                .disabled(rated)
-                                .label_size(LabelSize::Large)
-                                .color(Color::Success)
-                                .on_click({
-                                    let completion = active_completion.completion.clone();
-                                    let feedback_editor = active_completion.feedback_editor.clone();
-                                    cx.listener(move |this, _, cx| {
-                                        this.zeta.update(cx, |zeta, cx| {
-                                            zeta.rate_completion(
-                                                &completion,
-                                                InlineCompletionRating::Positive,
-                                                feedback_editor.read(cx).text(cx),
-                                                cx,
-                                            )
-                                        })
-                                    })
-                                }),
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new("bad", "Bad Completion")
+                                        .style(ButtonStyle::Tinted(TintColor::Negative))
+                                        .icon(IconName::ThumbsDown)
+                                        .icon_size(IconSize::Small)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_color(Color::Error)
+                                        .disabled(rated)
+                                        .on_click({
+                                            let completion = active_completion.completion.clone();
+                                            let feedback_editor =
+                                                active_completion.feedback_editor.clone();
+                                            cx.listener(move |this, _, cx| {
+                                                this.zeta.update(cx, |zeta, cx| {
+                                                    zeta.rate_completion(
+                                                        &completion,
+                                                        InlineCompletionRating::Negative,
+                                                        feedback_editor.read(cx).text(cx),
+                                                        cx,
+                                                    )
+                                                })
+                                            })
+                                        }),
+                                )
+                                .child(
+                                    Button::new("good", "Good Completion")
+                                        .style(ButtonStyle::Tinted(TintColor::Positive))
+                                        .icon(IconName::ThumbsUp)
+                                        .icon_size(IconSize::Small)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_color(Color::Success)
+                                        .disabled(rated)
+                                        .on_click({
+                                            let completion = active_completion.completion.clone();
+                                            let feedback_editor =
+                                                active_completion.feedback_editor.clone();
+                                            cx.listener(move |this, _, cx| {
+                                                this.zeta.update(cx, |zeta, cx| {
+                                                    zeta.rate_completion(
+                                                        &completion,
+                                                        InlineCompletionRating::Positive,
+                                                        feedback_editor.read(cx).text(cx),
+                                                        cx,
+                                                    )
+                                                })
+                                            })
+                                        }),
+                                ),
                         ),
                 ),
         )
@@ -230,27 +252,38 @@ impl RateCompletionModal {
 
 impl Render for RateCompletionModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let border_color = cx.theme().colors().border;
+
         h_flex()
-            .gap_2()
-            .bg(cx.theme().colors().elevated_surface_background)
-            .w(cx.viewport_size().width - px(256.))
-            .h(cx.viewport_size().height - px(256.))
-            .rounded_lg()
-            .shadow_lg()
-            .p_2()
             .key_context("RateCompletionModal")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::dismiss))
+            .bg(cx.theme().colors().elevated_surface_background)
+            .border_1()
+            .border_color(border_color)
+            .w(cx.viewport_size().width - px(320.))
+            .h(cx.viewport_size().height - px(300.))
+            .rounded_lg()
+            .shadow_lg()
             .child(
                 div()
                     .id("completion_list")
+                    .border_r_1()
+                    .border_color(border_color)
                     .w_96()
                     .h_full()
+                    .p_0p5()
                     .overflow_y_scroll()
                     .child(
-                        ui::List::new()
+                        List::new()
                             .empty_message(
-                                "No completions, use the editor to generate some and rate them!",
+                                div()
+                                    .p_2()
+                                    .child(
+                                            Label::new("No completions yet. Use the editor to generate some and rate them!")
+                                                .color(Color::Muted),
+                                    )
+                                    .into_any_element(),
                             )
                             .children(self.zeta.read(cx).recent_completions().cloned().map(
                                 |completion| {
@@ -261,22 +294,26 @@ impl Render for RateCompletionModal {
                                     let rated =
                                         self.zeta.read(cx).is_completion_rated(completion.id);
                                     ListItem::new(completion.id)
+                                        .inset(true)
                                         .spacing(ListItemSpacing::Sparse)
                                         .selected(selected)
-                                        .end_slot(if rated {
+                                        .start_slot(if rated {
                                             Icon::new(IconName::Check).color(Color::Success)
                                         } else if completion.edits.is_empty() {
-                                            Icon::new(IconName::Ellipsis).color(Color::Muted)
+                                            Icon::new(IconName::File).color(Color::Muted).size(IconSize::Small)
                                         } else {
-                                            Icon::new(IconName::Diff).color(Color::Muted)
+                                            Icon::new(IconName::FileDiff).color(Color::Accent).size(IconSize::Small)
                                         })
                                         .child(Label::new(
                                             completion.path.to_string_lossy().to_string(),
-                                        ))
+                                        ).size(LabelSize::Small))
                                         .child(
-                                            Label::new(format!("({})", completion.id))
-                                                .color(Color::Muted)
-                                                .size(LabelSize::XSmall),
+                                            div()
+                                                .overflow_hidden()
+                                                .text_ellipsis()
+                                                .child(Label::new(format!("({})", completion.id))
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall)),
                                         )
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.select_completion(Some(completion.clone()), cx);
