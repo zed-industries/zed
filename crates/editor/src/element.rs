@@ -50,7 +50,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot,
+    MultiBufferSnapshot, ToOffset,
 };
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -1696,16 +1696,23 @@ impl EditorElement {
                     None
                 };
 
+            let offset_range_start = snapshot
+                .display_point_to_anchor(DisplayPoint::new(range.start, 0), Bias::Left)
+                .to_offset(&snapshot.buffer_snapshot);
+            let offset_range_end = snapshot
+                .display_point_to_anchor(DisplayPoint::new(range.end, 0), Bias::Right)
+                .to_offset(&snapshot.buffer_snapshot);
+
             editor
                 .tasks
                 .iter()
                 .filter_map(|(_, tasks)| {
-                    let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
-                    let multibuffer_row = MultiBufferRow(multibuffer_point.row);
-                    let display_row = multibuffer_point.to_display_point(snapshot).row();
-                    if range.start > display_row || range.end < display_row {
+                    if tasks.offset.0 < offset_range_start || tasks.offset.0 >= offset_range_end {
                         return None;
                     }
+                    let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
+                    let multibuffer_row = MultiBufferRow(multibuffer_point.row);
+
                     if snapshot.is_line_folded(multibuffer_row) {
                         // Skip folded indicators, unless it's the starting line of a fold.
                         if multibuffer_row
@@ -1718,6 +1725,7 @@ impl EditorElement {
                             return None;
                         }
                     }
+                    let display_row = multibuffer_point.to_display_point(snapshot).row();
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
