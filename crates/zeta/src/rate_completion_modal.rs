@@ -473,9 +473,6 @@ impl Render for RateCompletionModal {
         h_flex()
             .key_context("RateCompletionModal")
             .track_focus(&self.focus_handle)
-            .focus(|this| {
-                this.border_1().border_color(cx.theme().colors().border_focused)
-            })
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::select_prev))
