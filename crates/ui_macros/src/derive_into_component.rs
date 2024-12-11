@@ -31,12 +31,17 @@ pub fn derive_into_component(input: TokenStream) -> TokenStream {
 
     let name = &input.ident;
 
-    let scope_expr = match scope_val {
-        Some(s) => quote! { #s },
-        None => {
-            return syn::Error::new_spanned(&input.ident, "Missing `scope` attribute")
-                .to_compile_error()
-                .into();
+    let scope_impl = if let Some(s) = scope_val {
+        quote! {
+            fn scope() -> Option<&'static str> {
+                Some(#s)
+            }
+        }
+    } else {
+        quote! {
+            fn scope() -> Option<&'static str> {
+                None
+            }
         }
     };
 
@@ -52,9 +57,7 @@ pub fn derive_into_component(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl component_system::Component for #name {
-            fn scope() -> &'static str {
-                #scope_expr
-            }
+            #scope_impl
 
             fn name() -> &'static str {
                 stringify!(#name)
@@ -65,14 +68,7 @@ pub fn derive_into_component(input: TokenStream) -> TokenStream {
 
         #[linkme::distributed_slice(component_system::__ALL_COMPONENTS)]
         fn __register_component() {
-            component_system::COMPONENTS
-                .lock()
-                .unwrap()
-                .push((
-                    <#name as component_system::Component>::scope(),
-                    <#name as component_system::Component>::name(),
-                    <#name as component_system::Component>::description()
-                ));
+            component_system::register_component::<#name>();
         }
 
         #[linkme::distributed_slice(component_system::__ALL_PREVIEWS)]

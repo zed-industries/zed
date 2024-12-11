@@ -21,7 +21,6 @@ use ui_macros::IntoComponent;
 ///     .border_color(gpui::red());
 /// ```
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "user")]
 pub struct Avatar {
     image: Img,
     size: Option<AbsoluteLength>,

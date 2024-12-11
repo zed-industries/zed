@@ -2,7 +2,7 @@
 //!
 //! A view for exploring Zed components.
 
-use component_system::{get_all_component_previews, ComponentPreview as _};
+use component_system::ComponentPreview as _;
 use gpui::{prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView};
 use strum::{EnumIter, IntoEnumIterator};
 use ui::{prelude::*, Avatar, TintColor};
@@ -64,7 +64,7 @@ impl ComponentPreview {
     }
 
     fn render_overview_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        let all_previews = get_all_component_previews();
+        // let all_previews = get_all_component_previews();
 
         v_flex()
             .id("component-preview-overview")
@@ -72,22 +72,22 @@ impl ComponentPreview {
             .size_full()
             .gap_2()
             .child(v_flex().child(Headline::new("Component Preview").size(HeadlineSize::Large)))
-            .children(all_previews.into_iter().map(|(name, preview)| {
-                let id = ElementId::Name(format!("{}-preview", name).into());
-                v_flex()
-                    .gap_4()
-                    .child(Headline::new(preview_name).size(HeadlineSize::Small))
-                    .child(
-                        // TODO: We should get preview functions from all_previews,
-                        // not just strings so we don't have to do this match
-                        div().id(id).child(match preview_name {
-                            "Avatar" => Avatar::preview(cx),
-                            _ => div()
-                                .child(format!("Preview not implemented for {}", preview_name))
-                                .into_any_element(),
-                        }),
-                    )
-            }))
+        // .children(all_previews.into_iter().map(|(name, preview)| {
+        //     let id = ElementId::Name(format!("{}-preview", name).into());
+        //     v_flex()
+        //         .gap_4()
+        //         .child(Headline::new(preview_name).size(HeadlineSize::Small))
+        //         .child(
+        //             // TODO: We should get preview functions from all_previews,
+        //             // not just strings so we don't have to do this match
+        //             div().id(id).child(match preview_name {
+        //                 "Avatar" => Avatar::preview(cx),
+        //                 _ => div()
+        //                     .child(format!("Preview not implemented for {}", preview_name))
+        //                     .into_any_element(),
+        //             }),
+        //         )
+        // }))
     }
 
     fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {

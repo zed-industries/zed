@@ -5,7 +5,7 @@ use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
 pub trait Component {
-    fn scope() -> &'static str;
+    fn scope() -> Option<&'static str>;
     fn name() -> &'static str {
         std::any::type_name::<Self>()
     }
@@ -24,13 +24,25 @@ pub static __ALL_COMPONENTS: [fn()] = [..];
 #[distributed_slice]
 pub static __ALL_PREVIEWS: [fn()] = [..];
 
-pub static COMPONENTS: Lazy<Mutex<Vec<(&'static str, &'static str, Option<&'static str>)>>> =
-    Lazy::new(|| Mutex::new(Vec::new()));
+pub static COMPONENT_DATA: Lazy<Mutex<ComponentData>> =
+    Lazy::new(|| Mutex::new(ComponentData::new()));
 
-pub static PREVIEWS: Lazy<Mutex<Vec<(&'static str, fn(&WindowContext) -> AnyElement)>>> =
-    Lazy::new(|| Mutex::new(Vec::new()));
+pub struct ComponentData {
+    components: Vec<(Option<&'static str>, &'static str, Option<&'static str>)>,
+    previews: HashMap<&'static str, fn(&WindowContext) -> AnyElement>,
+}
+
+impl ComponentData {
+    fn new() -> Self {
+        ComponentData {
+            components: Vec::new(),
+            previews: HashMap::default(),
+        }
+    }
+}
 
 pub fn init() {
+    let mut data = COMPONENT_DATA.lock().unwrap();
     for f in __ALL_COMPONENTS {
         f();
     }
@@ -39,12 +51,15 @@ pub fn init() {
     }
 }
 
-fn components() -> Vec<(&'static str, &'static str, Option<&'static str>)> {
-    COMPONENTS.lock().unwrap().clone()
+pub fn register_component<T: Component>() {
+    let mut data = COMPONENT_DATA.lock().unwrap();
+    data.components
+        .push((T::scope(), T::name(), T::description()));
 }
 
-fn component_previews() -> Vec<(&'static str, fn(&WindowContext) -> AnyElement)> {
-    PREVIEWS.lock().unwrap().clone()
+pub fn register_preview<T: ComponentPreview>() {
+    let mut data = COMPONENT_DATA.lock().unwrap();
+    data.previews.insert(T::name(), T::preview);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -52,7 +67,7 @@ pub struct ComponentId(pub &'static str);
 
 pub struct ComponentMetadata {
     pub(crate) name: SharedString,
-    pub(crate) scope: SharedString,
+    pub(crate) scope: Option<SharedString>,
     pub(crate) description: Option<SharedString>,
     pub(crate) preview: Option<fn(&WindowContext) -> AnyElement>,
 }
@@ -84,20 +99,17 @@ impl AllComponents {
 }
 
 pub fn all_components() -> AllComponents {
+    let data = COMPONENT_DATA.lock().unwrap();
     let mut all_components = AllComponents::new();
-    let components = components();
-    let previews = component_previews();
 
-    for (scope, name, description) in components {
-        let preview = previews
-            .iter()
-            .find(|&(p_name, _)| *p_name == name)
-            .map(|&(_, preview_fn)| preview_fn);
+    for &(scope, name, description) in &data.components {
+        let scope = scope.map(Into::into);
+        let preview = data.previews.get(name).cloned();
         all_components.add(
             ComponentId(name),
             ComponentMetadata {
                 name: name.into(),
-                scope: scope.into(),
+                scope,
                 description: description.map(Into::into),
                 preview,
             },
@@ -105,11 +117,4 @@ pub fn all_components() -> AllComponents {
     }
 
     all_components
-}
-
-pub fn register_preview<T: ComponentPreview>() {
-    PREVIEWS
-        .lock()
-        .unwrap()
-        .push((T::name(), |cx| T::preview(cx)));
 }
