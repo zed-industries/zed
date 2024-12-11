@@ -4262,7 +4262,6 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
-    use ui::Context;
     use workspace::{
         item::{Item, ProjectItem},
         register_project_item, AppState,
