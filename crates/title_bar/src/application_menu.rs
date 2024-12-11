@@ -2,6 +2,7 @@ use gpui::View;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle};
 
 use install_cli;
+use terminal_view::terminal_panel;
 use workspace;
 
 #[derive(Copy, Clone)]
@@ -205,7 +206,7 @@ impl ApplicationMenu {
                 .separator()
                 .action("Project Panel", Box::new(project_panel::ToggleFocus))
                 .action("Outline Panel", Box::new(outline_panel::ToggleFocus))
-                .action("Collab Panel", Box::new(collab_panel::ToggleFocus))
+                // .action("Collab Panel", Box::new(collab_panel::ToggleFocus))
                 .action("Terminal Panel", Box::new(terminal_panel::ToggleFocus))
         })
     }
@@ -237,8 +238,10 @@ impl ApplicationMenu {
 
     fn build_window_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, _cx| {
-            menu.action("Minimize", Box::new(super::Minimize))
-                .action("Zoom", Box::new(super::Zoom))
+            menu
+
+            // .action("Minimize", Box::new(super::Minimize))
+            //     .action("Zoom", Box::new(super::Zoom))
         })
     }
 
@@ -271,7 +274,7 @@ impl Render for ApplicationMenu {
         div()
             .flex()
             .flex_row()
-            .gap_x_0p5()
+            .gap_x_1()
             .children(menu_items.iter().map(|item| {
                 let menu_type = item.menu_type;
                 let item_handle = item.handle.clone();
