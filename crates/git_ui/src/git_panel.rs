@@ -1,15 +1,16 @@
 use gpui::*;
 use ui::{prelude::*, Divider, DividerColor, ElevationIndex};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::item::TabContentParams;
 use workspace::Workspace;
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, _: &ToggleFocus, cx| {
-            workspace.toggle_panel_focus::<GitPanel>(cx);
-        });
-    })
+    cx.observe_new_views(
+        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
+            workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+                workspace.toggle_panel_focus::<GitPanel>(cx);
+            });
+        },
+    )
     .detach();
 }
 
@@ -17,15 +18,22 @@ actions!(git_panel, [Deploy, ToggleFocus]);
 
 #[derive(Clone)]
 pub struct GitPanel {
-    id: ElementId,
     focus_handle: FocusHandle,
     width: Option<Pixels>,
 }
 
 impl GitPanel {
-    pub fn new(id: impl Into<ElementId>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn load(
+        workspace: WeakView<Workspace>,
+        cx: AsyncWindowContext,
+    ) -> Task<Result<View<Self>>> {
+        cx.spawn(|mut cx| async move {
+            workspace.update(&mut cx, |_, cx| cx.new_view(|cx| Self::new(cx)))
+        })
+    }
+
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
-            id: id.into(),
             focus_handle: cx.focus_handle(),
             width: Some(px(400.).into()),
         }
@@ -35,10 +43,10 @@ impl GitPanel {
 impl Render for GitPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
+            .key_context("GitPanel")
             .font_buffer(cx)
             .py_1()
-            .id(self.id.clone())
-            .key_context("git_panel")
+            .id("git_panel")
             .track_focus(&self.focus_handle)
             .size_full()
             .overflow_hidden()
@@ -59,16 +67,19 @@ impl Render for GitPanel {
     }
 }
 
-impl EventEmitter<()> for GitPanel {}
-impl EventEmitter<PanelEvent> for GitPanel {}
-
 impl FocusableView for GitPanel {
     fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
 
+impl EventEmitter<PanelEvent> for GitPanel {}
+
 impl Panel for GitPanel {
+    fn persistent_name() -> &'static str {
+        "GitPanel"
+    }
+
     fn position(&self, _cx: &gpui::WindowContext) -> DockPosition {
         DockPosition::Left
     }
@@ -93,14 +104,10 @@ impl Panel for GitPanel {
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
-        Some("Git")
+        Some("Git Panel")
     }
 
-    fn toggle_action(&self) -> Box<dyn gpui::Action> {
+    fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
-    }
-
-    fn persistent_name() -> &'static str {
-        "GitPanel"
     }
 }
