@@ -28,6 +28,9 @@ pub enum MenuItem {
     /// A submenu
     Submenu(Menu),
 
+    /// A submenu which should contain the (macOS) services menu
+    ServicesSubmenu(Menu),
+
     /// An action that can be performed
     Action {
         /// The name of this menu item
@@ -51,6 +54,11 @@ impl MenuItem {
     /// Creates a new menu item that is a submenu
     pub fn submenu(menu: Menu) -> Self {
         Self::Submenu(menu)
+    }
+
+    /// Creates a new menu item which should contain the (macOS) services menu
+    pub fn services_submenu(menu: Menu) -> Self {
+        Self::ServicesSubmenu(menu)
     }
 
     /// Creates a new menu item that invokes an action
@@ -80,6 +88,7 @@ impl MenuItem {
         match self {
             MenuItem::Separator => OwnedMenuItem::Separator,
             MenuItem::Submenu(submenu) => OwnedMenuItem::Submenu(submenu.owned()),
+            MenuItem::ServicesSubmenu(submenu) => OwnedMenuItem::ServicesSubmenu(submenu.owned()),
             MenuItem::Action {
                 name,
                 action,
@@ -111,6 +120,9 @@ pub enum OwnedMenuItem {
     /// A submenu
     Submenu(OwnedMenu),
 
+    /// A submenu which should contain the (macOS) services menu
+    ServicesSubmenu(OwnedMenu),
+
     /// An action that can be performed
     Action {
         /// The name of this menu item
@@ -130,6 +142,9 @@ impl Clone for OwnedMenuItem {
         match self {
             OwnedMenuItem::Separator => OwnedMenuItem::Separator,
             OwnedMenuItem::Submenu(submenu) => OwnedMenuItem::Submenu(submenu.clone()),
+            OwnedMenuItem::ServicesSubmenu(submenu) => {
+                OwnedMenuItem::ServicesSubmenu(submenu.clone())
+            }
             OwnedMenuItem::Action {
                 name,
                 action,
