@@ -3,7 +3,7 @@
 
 use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
 use crate::{
-    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, GPUSpecs, Hsla,
+    AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels, GPUSpecs,
     MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
     ScaledPixels, Scene, Shadow, Size, Underline,
 };
@@ -174,7 +174,7 @@ struct ShaderSurfacesData {
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
-    color: Hsla,
+    color: Background,
     tile: AtlasTile,
 }
 

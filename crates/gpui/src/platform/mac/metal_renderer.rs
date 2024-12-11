@@ -1,7 +1,7 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
-    Hsla, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
+    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask,
+    DevicePixels, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
     PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use anyhow::{anyhow, Result};
@@ -1242,7 +1242,7 @@ enum PathRasterizationInputIndex {
 #[repr(C)]
 pub struct PathSprite {
     pub bounds: Bounds<ScaledPixels>,
-    pub color: Hsla,
+    pub color: Background,
     pub tile: AtlasTile,
 }
 
