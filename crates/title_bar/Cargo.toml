@@ -51,7 +51,8 @@ editor.workspace = true
 project_panel.workspace = true
 search.workspace = true
 outline_panel.workspace = true
-collab_ui.workspace = true
+terminal_view.workspace = true
+
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
