@@ -1,5 +1,5 @@
 use super::inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlaySnapshot};
-use crate::{Highlights, InlayOffset};
+use crate::{Highlights, InlayOffset, InlayPoint};
 use collections::HashMap;
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{BufferChunks, BufferId, Chunk};
@@ -67,7 +67,8 @@ struct DiffMapChunks<'a> {
 }
 
 struct DiffMapBufferRows<'a> {
-    cursor: Cursor<'a, DiffTransform, DiffTransformSummary>,
+    cursor: Cursor<'a, DiffTransform, (DiffPoint, InlayPoint)>,
+    diff_point: DiffPoint,
     input_buffer_rows: InlayBufferRows<'a>,
 }
 
@@ -91,6 +92,9 @@ enum DiffMapOperation {
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct DiffOffset(pub usize);
+
+#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
+pub struct DiffPoint(pub Point);
 
 impl DiffMap {
     pub fn new(
@@ -223,7 +227,7 @@ impl DiffMap {
                 multibuffer
                     .ranges_for_buffer(buffer_id, cx)
                     .into_iter()
-                    .map(|(excerpt_id, range, buffer_range)| {
+                    .map(|(_, range, _)| {
                         let multibuffer_start =
                             ToOffset::to_offset(&range.start, &multibuffer_snapshot);
                         let multibuffer_end =
@@ -638,7 +642,23 @@ impl DiffMapSnapshot {
     }
 
     pub fn buffer_rows(&self, start_row: u32) -> DiffMapBufferRows {
-        todo!()
+        if start_row > self.transforms.summary().output.lines.row {
+            panic!("invalid diff map row {}", start_row);
+        }
+
+        let diff_point = DiffPoint(Point::new(start_row, 0));
+        let mut cursor = self.transforms.cursor::<(DiffPoint, InlayPoint)>(&());
+        cursor.seek(&diff_point, Bias::Left, &());
+
+        let overshoot = diff_point.0 - cursor.start().0 .0;
+        let inlay_point = InlayPoint(cursor.start().1 .0 + overshoot);
+        let input_buffer_rows = self.inlay_snapshot.buffer_rows(inlay_point.row());
+
+        DiffMapBufferRows {
+            diff_point,
+            input_buffer_rows,
+            cursor,
+        }
     }
 }
 
@@ -718,6 +738,22 @@ impl<'a> Iterator for DiffMapChunks<'a> {
     }
 }
 
+impl<'a> Iterator for DiffMapBufferRows<'a> {
+    type Item = Option<u32>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = match self.cursor.item()? {
+            DiffTransform::DeletedHunk { .. } => Some(None),
+            DiffTransform::BufferContent { .. } => self.input_buffer_rows.next(),
+        };
+        self.diff_point.0 += Point::new(1, 0);
+        if self.diff_point >= self.cursor.end(&()).0 {
+            self.cursor.next(&());
+        }
+        result
+    }
+}
+
 impl sum_tree::Item for DiffTransform {
     type Summary = DiffTransformSummary;
 
@@ -771,11 +807,23 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for DiffOffset {
     }
 }
 
-impl<'a> Iterator for DiffMapBufferRows<'a> {
-    type Item = Option<u32>;
+impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for InlayPoint {
+    fn zero(_: &()) -> Self {
+        InlayPoint(Point::zero())
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
+        self.0 += summary.input.lines
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for DiffPoint {
+    fn zero(_: &()) -> Self {
+        DiffPoint(Point::zero())
+    }
+
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
+        self.0 += summary.output.lines
     }
 }
 
@@ -890,6 +938,19 @@ mod tests {
                 six
                 "
             ),
+        );
+        assert_eq!(
+            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            vec![
+                Some(0),
+                Some(1),
+                None,
+                Some(2),
+                Some(3),
+                None,
+                None,
+                Some(4)
+            ]
         );
 
         diff_map.update(cx, |diff_map, cx| {
