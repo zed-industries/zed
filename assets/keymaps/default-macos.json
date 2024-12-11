@@ -66,6 +66,7 @@
       "cmd-v": "editor::Paste",
       "cmd-z": "editor::Undo",
       "cmd-shift-z": "editor::Redo",
+      "ctrl-shift-z": "zeta::RateCompletions",
       "up": "editor::MoveUp",
       "ctrl-up": "editor::MoveToStartOfParagraph",
       "pageup": "editor::MovePageUp",
@@ -787,6 +788,26 @@
       "ctrl-k down": "pane::SplitDown",
       "ctrl-k left": "pane::SplitLeft",
       "ctrl-k right": "pane::SplitRight"
+    }
+  },
+  {
+    "context": "RateCompletionModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "zeta::ThumbsUp",
+      "cmd-delete": "zeta::ThumbsDown",
+      "shift-down": "zeta::NextEdit",
+      "shift-up": "zeta::PreviousEdit",
+      "space": "zeta::PreviewCompletion"
+    }
+  },
+  {
+    "context": "RateCompletionModal > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "zeta::FocusCompletions",
+      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
+      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion"
     }
   }
 ]

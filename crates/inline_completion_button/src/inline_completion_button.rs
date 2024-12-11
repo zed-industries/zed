@@ -204,7 +204,7 @@ impl Render for InlineCompletionButton {
                 }
 
                 div().child(
-                    Button::new("zeta", "Zeta")
+                    Button::new("zeta", "ζ")
                         .label_size(LabelSize::Small)
                         .on_click(cx.listener(|this, _, cx| {
                             if let Some(workspace) = this.workspace.upgrade() {
