@@ -5138,6 +5138,7 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "feature_flags",
  "git",
  "gpui",
  "itertools 0.13.0",

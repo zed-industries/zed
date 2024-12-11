@@ -22,8 +22,6 @@ use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use git_ui::git_panel::GitPanel;
-use git_ui::GitStatusIndicator;
-use git_ui::{git_panel, GitStatusIndicator};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem,
     PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
@@ -205,8 +203,6 @@ pub fn initialize_workspace(
 
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
-        let git_indicator =
-            cx.new_view(|cx| GitStatusIndicator::new(workspace, cx));
         let activity_indicator =
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
         let active_buffer_language =
@@ -217,12 +213,11 @@ pub fn initialize_workspace(
         let cursor_position =
             cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
-            status_bar.add_left_item(git_indicator, cx);
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(inline_completion_button, cx);
             status_bar.add_right_item(active_buffer_language, cx);
-                        status_bar.add_right_item(active_toolchain_language, cx);
+            status_bar.add_right_item(active_toolchain_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);
         });
@@ -248,11 +243,6 @@ pub fn initialize_workspace(
         let git_panel = cx.new_view(|cx| GitPanel::new("git-panel", cx));
 
         cx.spawn(|workspace_handle, mut cx| async move {
-
-            let assistant_panel =
-                assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
-
-
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -282,9 +272,7 @@ pub fn initialize_workspace(
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-
                 workspace.add_panel(git_panel, cx);
-                workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);

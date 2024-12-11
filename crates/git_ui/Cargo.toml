@@ -25,6 +25,7 @@ project.workspace = true
 smallvec.workspace = true
 git.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
