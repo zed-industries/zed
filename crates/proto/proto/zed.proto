@@ -307,7 +307,6 @@ message Envelope {
         GetStagedTextResponse get_staged_text_response = 289;
 
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
-        UnregisterBufferFromLanguageServers unregister_buffer_from_language_servers = 291;
     }
 
     reserved 87 to 88;
@@ -2540,7 +2539,6 @@ message UpdateGitBranch {
     string branch_name = 2;
     ProjectPath repository = 3;
 }
-
 message GetPanicFiles {
 }
 
@@ -2587,10 +2585,6 @@ message InstallExtension {
 }
 
 message RegisterBufferWithLanguageServers{
-    uint64 project_id = 1;
-    uint64 buffer_id = 2;
-}
-message UnregisterBufferFromLanguageServers{
     uint64 project_id = 1;
     uint64 buffer_id = 2;
 }

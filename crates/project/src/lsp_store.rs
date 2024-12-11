@@ -2822,7 +2822,6 @@ impl LspStore {
         client.add_model_message_handler(Self::handle_language_server_log);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_message_handler(Self::handle_register_buffer_with_language_servers);
-        client.add_model_message_handler(Self::handle_unregister_buffer_from_language_servers);
         client.add_model_request_handler(Self::handle_format_buffers);
         client.add_model_request_handler(Self::handle_resolve_completion_documentation);
         client.add_model_request_handler(Self::handle_apply_code_action);
@@ -3222,23 +3221,6 @@ impl LspStore {
                         local.unregister_old_buffer_from_language_servers(&buffer, &file, cx);
                     }
                 }
-            })
-            .detach();
-        } else if let Some((upstream_client, project_id)) = self.upstream_client() {
-            upstream_client
-                .send(proto::RegisterBufferWithLanguageServers {
-                    project_id,
-                    buffer_id: buffer.read(cx).remote_id().to_proto(),
-                })
-                .ok();
-
-            cx.observe_release(&handle, move |_, buffer, cx| {
-                upstream_client
-                    .send(proto::UnregisterBufferFromLanguageServers {
-                        project_id,
-                        buffer_id: buffer.read(cx).remote_id().to_proto(),
-                    })
-                    .ok();
             })
             .detach();
         }
@@ -5815,13 +5797,6 @@ impl LspStore {
             Ok(())
         })??;
         Ok(())
-    }
-
-    async fn handle_unregister_buffer_from_language_servers(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::UnregisterBufferFromLanguageServers>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
     }
 
     async fn handle_update_diagnostic_summary(
