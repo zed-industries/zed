@@ -13,6 +13,8 @@ use gpui::{
     Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
+use repl::worktree_id_for_editor;
+use repl_menu::ReplMenu;
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{
@@ -33,6 +35,7 @@ pub struct QuickActionBar {
     toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
     workspace: WeakView<Workspace>,
+    repl_menu: Option<View<ReplMenu>>,
 }
 
 impl QuickActionBar {
@@ -49,6 +52,7 @@ impl QuickActionBar {
             toggle_selections_handle: Default::default(),
             toggle_settings_handle: Default::default(),
             workspace: workspace.weak_handle(),
+            repl_menu: None,
         };
         this.apply_settings(cx);
         cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx))
@@ -350,7 +354,7 @@ impl Render for QuickActionBar {
         h_flex()
             .id("quick action bar")
             .gap(DynamicSpacing::Base06.rems(cx))
-            .children(self.render_repl_menu(cx))
+            .children(self.repl_menu.clone())
             .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
             .children(search_button)
             .when(
@@ -425,7 +429,15 @@ impl ToolbarItemView for QuickActionBar {
         if let Some(active_item) = active_pane_item {
             self._inlay_hints_enabled_subscription.take();
 
-            if let Some(editor) = active_item.downcast::<Editor>() {
+            let editor = active_item.downcast::<Editor>();
+
+            let work_tree_id = active_item
+                .downcast::<Editor>()
+                .and_then(|editor| worktree_id_for_editor(editor.downgrade(), cx));
+
+            if let (Some(editor), Some(work_tree_id)) = (editor, work_tree_id) {
+                self.repl_menu =
+                    Some(cx.new_view(|cx| ReplMenu::new(work_tree_id, editor.downgrade(), cx)));
                 let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
                 let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
                 self._inlay_hints_enabled_subscription =
@@ -441,6 +453,8 @@ impl ToolbarItemView for QuickActionBar {
                             cx.notify()
                         }
                     }));
+            } else {
+                self.repl_menu = None
             }
         }
         self.get_toolbar_item_location()
