@@ -1,14 +1,37 @@
+use std::sync::Arc;
+
 use crate::{InlineCompletion, InlineCompletionRating, Zeta};
+use client::Client;
 use editor::Editor;
 use gpui::{
-    prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
-    Model, StyledText, TextStyle, View, ViewContext,
+    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    HighlightStyle, Model, StyledText, TextStyle, View, ViewContext,
 };
 use language::{language_settings, OffsetRangeExt};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, List, ListItem, ListItemSpacing, TintColor};
 use workspace::{ModalView, Workspace};
+
+actions!(zeta, [RateCompletions]);
+
+pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+    cx.observe_new_views(move |workspace: &mut Workspace, cx| {
+        workspace.register_action(|workspace, _: &RateCompletions, cx| {
+            RateCompletionModal::toggle(workspace, cx);
+        });
+
+        // TODO: remove
+        Zeta::register(client.clone(), cx);
+
+        Zeta::global(cx).unwrap().update(cx, |zeta, cx| {
+            zeta.fill_with_fake_completions(cx).detach();
+        });
+
+        RateCompletionModal::toggle(workspace, cx);
+    })
+    .detach();
+}
 
 pub struct RateCompletionModal {
     zeta: Model<Zeta>,
