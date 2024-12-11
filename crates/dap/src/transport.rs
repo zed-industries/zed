@@ -329,7 +329,7 @@ impl TransportDelegate {
         if response.success {
             Ok(response)
         } else {
-            if let Some(body) = response.body {
+            if let Some(body) = response.body.clone() {
                 if let Ok(error) = serde_json::from_value::<ErrorResponse>(body) {
                     if let Some(message) = error.error {
                         return Err(anyhow!(message.format));
@@ -337,7 +337,10 @@ impl TransportDelegate {
                 };
             }
 
-            Err(anyhow!("Received error response from adapter"))
+            Err(anyhow!(
+                "Received error response from adapter. Response: {:?}",
+                response.clone()
+            ))
         }
     }
 
@@ -625,7 +628,14 @@ impl Transport for StdioTransport {
         let stderr = process
             .stdout
             .take()
-            .ok_or_else(|| anyhow!("Failed to open stderr"))?;
+            .map(|io_err| Box::new(io_err) as Box<dyn AsyncRead + Unpin + Send>);
+
+        if stderr.is_none() {
+            log::error!(
+                "Failed to connect to stderr for debug adapter command {}",
+                &binary.command
+            );
+        }
 
         log::info!("Debug adapter has connected to stdio adapter");
 
@@ -637,7 +647,7 @@ impl Transport for StdioTransport {
             Box::new(stdin),
             Box::new(BufReader::new(stdout)),
             None,
-            Some(Box::new(stderr) as Box<dyn AsyncRead + Unpin + Send>),
+            stderr,
         ))
     }
 
