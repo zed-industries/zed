@@ -13,7 +13,7 @@ use crate::{
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
 use gpui::{
-    point, px, Along, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext,
+    point, px, Along, AppContext, Axis, Entity, Global, Pixels, Task, ViewContext, WindowContext,
 };
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
@@ -61,12 +61,6 @@ impl ScrollAnchor {
     pub fn top_row(&self, buffer: &MultiBufferSnapshot) -> u32 {
         self.anchor.to_point(buffer).row
     }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Axis {
-    Vertical,
-    Horizontal,
 }
 
 #[derive(Debug, Clone)]
