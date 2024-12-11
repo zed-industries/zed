@@ -144,6 +144,10 @@ pub struct RevealInProjectPanel {
     pub entry_id: Option<u64>,
 }
 
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RevealInFileManager {}
+
 #[derive(Default, PartialEq, Clone, Deserialize)]
 pub struct DeploySearch {
     #[serde(default)]
@@ -161,6 +165,7 @@ impl_actions!(
         CloseInactiveItems,
         ActivateItem,
         RevealInProjectPanel,
+        RevealInFileManager,
         DeploySearch,
     ]
 );
@@ -2291,7 +2296,9 @@ impl Pane {
                             .read(cx)
                             .item_for_entry(entry, cx)
                             .and_then(|item| item.project_path(cx))
-                            .map(|project_path| project_path.path);
+                            .map(|project_path| project_path.path)
+                            .map_or(None, |path| if path.exists() { Some(path) } else { None });
+                        let has_relative_path = relative_path.is_some();
 
                         let entry_id = entry.to_proto();
                         menu = menu
@@ -2320,19 +2327,36 @@ impl Pane {
                             })
                             .map(pin_tab_entries)
                             .separator()
-                            .entry(
-                                "Reveal In Project Panel",
-                                Some(Box::new(RevealInProjectPanel {
-                                    entry_id: Some(entry_id),
-                                })),
-                                cx.handler_for(&pane, move |pane, cx| {
-                                    pane.project.update(cx, |_, cx| {
-                                        cx.emit(project::Event::RevealInProjectPanel(
-                                            ProjectEntryId::from_proto(entry_id),
-                                        ))
-                                    });
-                                }),
-                            )
+                            .when(has_relative_path, |menu| {
+                                menu.entry(
+                                    "Reveal In Project Panel",
+                                    Some(Box::new(RevealInProjectPanel {
+                                        entry_id: Some(entry_id),
+                                    })),
+                                    cx.handler_for(&pane, move |pane, cx| {
+                                        pane.project.update(cx, |_, cx| {
+                                            cx.emit(project::Event::RevealInProjectPanel(
+                                                ProjectEntryId::from_proto(entry_id),
+                                            ))
+                                        });
+                                    }),
+                                )
+                            })
+                            .when_some(parent_abs_path.clone(), |menu, parent_abs_path| {
+                                let reveal_in_finder_label = if cfg!(target_os = "macos") {
+                                    "Reveal in Finder"
+                                } else {
+                                    "Reveal in File Manager"
+                                };
+
+                                menu.entry(
+                                    reveal_in_finder_label,
+                                    Some(Box::new(RevealInFileManager {})),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.reveal_path(&parent_abs_path);
+                                    }),
+                                )
+                            })
                             .when_some(parent_abs_path, |menu, parent_abs_path| {
                                 menu.entry(
                                     "Open in Terminal",
