@@ -320,19 +320,23 @@ impl ApplicationMenu {
                 item_handle.show(cx);
             })
     }
+
+    pub fn is_any_deployed(&self) -> bool {
+        self.menu_items.iter().any(|item| item.handle.is_deployed())
+    }
 }
 
 impl Render for ApplicationMenu {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let show_all_menu_items = self.menu_items.iter().any(|item| item.handle.is_deployed());
+        let is_any_deployed = self.is_any_deployed();
         div()
             .flex()
             .flex_row()
             .gap_x_1()
-            .when(!show_all_menu_items, |this| {
+            .when(!is_any_deployed, |this| {
                 this.child(self.render_application_menu(&self.menu_items[0]))
             })
-            .when(show_all_menu_items, |this| {
+            .when(is_any_deployed, |this| {
                 this.child(self.render_standard_menu(&self.menu_items[0]))
                     .children(
                         self.menu_items
