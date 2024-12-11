@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::{InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
 use gpui::{
@@ -7,8 +5,8 @@ use gpui::{
     HighlightStyle, Model, StyledText, TextStyle, View, ViewContext,
 };
 use language::{language_settings, OffsetRangeExt};
-
 use settings::Settings;
+use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, TintColor, Tooltip};
 use workspace::{ModalView, Workspace};
