@@ -18,7 +18,7 @@ use crate::{
     InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
     MessageMetadata, MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus,
     QuoteSelection, RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector,
+    ToggleModelSelector, TurboFix,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -47,8 +47,10 @@ use gpui::{
     Task, Transformation, UpdateGlobal, View, WeakModel, WeakView,
 };
 use indexed_docs::IndexedDocsStore;
+use itertools::Itertools;
 use language::{
-    language_settings::SoftWrap, BufferSnapshot, LanguageRegistry, LspAdapterDelegate, ToOffset,
+    language_settings::SoftWrap, BufferSnapshot, DiagnosticGroup, LanguageRegistry,
+    LspAdapterDelegate, ToOffset,
 };
 use language_model::{LanguageModelImage, LanguageModelToolUse};
 use language_model::{
@@ -56,6 +58,7 @@ use language_model::{
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_model_selector::{LanguageModelPickerDelegate, LanguageModelSelector};
+use lsp::LanguageServerId;
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -75,7 +78,7 @@ use std::{
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use text::SelectionGoal;
+use text::{OffsetRangeExt, SelectionGoal};
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
@@ -115,7 +118,8 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context)
-                .register_action(AssistantPanel::restart_context_servers);
+                .register_action(AssistantPanel::restart_context_servers)
+                .register_action(AssistantPanel::turbo_fix);
         },
     )
     .detach();
@@ -149,6 +153,7 @@ pub struct AssistantPanel {
     configuration_subscription: Option<Subscription>,
     client_status: Option<client::Status>,
     watch_client_status: Option<Task<()>>,
+    turbo_fix_task: Option<Task<()>>,
     show_zed_ai_notice: bool,
 }
 
@@ -538,6 +543,7 @@ impl AssistantPanel {
             configuration_subscription: None,
             client_status: None,
             watch_client_status: Some(watch_client_status),
+            turbo_fix_task: None,
             show_zed_ai_notice: false,
         };
         this.new_context(cx);
@@ -1329,6 +1335,98 @@ impl AssistantPanel {
                 .update(cx, |context_store, cx| {
                     context_store.restart_context_servers(cx);
                 });
+        });
+    }
+
+    fn turbo_fix(workspace: &mut Workspace, _: &TurboFix, cx: &mut ViewContext<Workspace>) {
+        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        // Snapshots of all buffers that have errors.
+        let buffer_snapshots = assistant_panel.model.read_with(cx, |assistant_panel, cx| {
+            assistant_panel.project.read_with(cx, |project, cx| {
+                let lsp_store = project.lsp_store();
+                let paths_that_have_errors = lsp_store.read_with(cx, |lsp_store, cx| {
+                    lsp_store
+                        .diagnostic_summaries(false, cx)
+                        .filter(|(_, _, summary)| summary.error_count > 0)
+                        .map(|(path, _, _)| path)
+                        .sorted()
+                        .dedup()
+                });
+
+                paths_that_have_errors
+                    .filter_map(|path| {
+                        project
+                            .buffer_store()
+                            .read_with(cx, |buffer_store, cx| buffer_store.get_by_path(&path, cx))
+                            .map(|buffer| (path, buffer))
+                    })
+                    .map(|(path, buffer)| {
+                        (path, buffer.read_with(cx, |buffer, _| buffer.snapshot()))
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+
+        let task = cx.spawn(move |_this, _cx| async {
+            for (path, snapshot) in buffer_snapshots {
+                let mut groups = snapshot
+                    .diagnostic_groups(None)
+                    .into_iter()
+                    .flat_map(|(language_server_id, group)| {
+                        let entry = &group.entries[group.primary_ix];
+                        let range = entry.range.clone();
+                        // TODO: instead move up to statement level orso.
+                        let Some(expanded_range) = snapshot.range_for_syntax_ancestor(range) else {
+                            log::error!(
+                                "Turbo-fix skipping diagnostic due to no TreeSitter node:\n{:?}",
+                                group
+                            );
+                            return None;
+                        };
+                        Some((expanded_range, language_server_id, group))
+                    })
+                    .collect::<Vec<_>>();
+                groups.sort_by_key(|(ancestor_range, _, _)| ancestor_range.start);
+
+                #[derive(Debug)]
+                struct Chunk {
+                    range: Range<Point>,
+                    entry_groups: Vec<(LanguageServerId, DiagnosticGroup<text::Anchor>)>,
+                }
+
+                let mut chunks = Vec::new();
+                let mut chunk_accumulator: Option<Chunk> = None;
+                for (range, language_server_id, group) in groups {
+                    let range = range.to_point(&snapshot);
+                    if let Some(mut chunk) = chunk_accumulator.take() {
+                        if range.start.row - 1 <= range.end.row {
+                            chunk.range = cmp::min(chunk.range.start, range.start)
+                                ..cmp::max(chunk.range.end, range.end);
+                            chunk.entry_groups.push((language_server_id, group));
+                            chunk_accumulator.replace(chunk);
+                            continue;
+                        } else {
+                            chunks.push(chunk);
+                        }
+                    }
+                    chunk_accumulator = Some(Chunk {
+                        range,
+                        entry_groups: vec![(language_server_id, group)],
+                    });
+                }
+
+                log::error!("TurboFix chunks for {:?}:\n{:?}", path, chunks);
+
+                // TODO: 1 LLM call per chunk and apply delta directly to buffer.
+            }
+        });
+
+        // TODO: should take() when the task is done.
+        assistant_panel.update(cx, |assistant_panel, _cx| {
+            assistant_panel.turbo_fix_task = Some(task);
         });
     }
 }

@@ -70,7 +70,8 @@ actions!(
         NewContext,
         ToggleModelSelector,
         CycleNextInlineAssist,
-        CyclePreviousInlineAssist
+        CyclePreviousInlineAssist,
+        TurboFix
     ]
 );
 
