@@ -2,10 +2,10 @@
 //!
 //! A view for exploring Zed components.
 
-use component_system::{components, AllComponents, ComponentPreview as _};
+use component_system::components;
 use gpui::{prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView};
 use strum::{EnumIter, IntoEnumIterator};
-use ui::{prelude::*, Avatar, TintColor};
+use ui::{prelude::*, TintColor};
 
 use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
 
@@ -19,39 +19,14 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, EnumIter)]
-enum ComponentPreviewPage {
-    Overview,
-}
-
-impl ComponentPreviewPage {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Overview => "Overview",
-        }
-    }
-}
-
 struct ComponentPreview {
-    current_page: ComponentPreviewPage,
     focus_handle: FocusHandle,
 }
 
 impl ComponentPreview {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
-            current_page: ComponentPreviewPage::Overview,
             focus_handle: cx.focus_handle(),
-        }
-    }
-
-    pub fn view(
-        &self,
-        page: ComponentPreviewPage,
-        cx: &mut ViewContext<ComponentPreview>,
-    ) -> impl IntoElement {
-        match page {
-            ComponentPreviewPage::Overview => self.render_overview_page(cx).into_any_element(),
         }
     }
 
@@ -66,59 +41,21 @@ impl ComponentPreview {
     }
 
     fn render_preview(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        div()
-    }
-
-    fn render_overview_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        // let all_previews = get_all_component_previews();
-
         v_flex()
-            .id("component-preview-overview")
-            .overflow_scroll()
             .size_full()
-            .gap_2()
-            .child(v_flex().child(Headline::new("Component Preview").size(HeadlineSize::Large)))
-            .child(self.render_sidebar(cx))
-        // .children(all_previews.into_iter().map(|(name, preview)| {
-        //     let id = ElementId::Name(format!("{}-preview", name).into());
-        //     v_flex()
-        //         .gap_4()
-        //         .child(Headline::new(preview_name).size(HeadlineSize::Small))
-        //         .child(
-        //             // TODO: We should get preview functions from all_previews,
-        //             // not just strings so we don't have to do this match
-        //             div().id(id).child(match preview_name {
-        //                 "Avatar" => Avatar::preview(cx),
-        //                 _ => div()
-        //                     .child(format!("Preview not implemented for {}", preview_name))
-        //                     .into_any_element(),
-        //             }),
-        //         )
-        // }))
-    }
-
-    fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        h_flex()
-            .id("component-preview-nav")
-            .items_center()
-            .gap_4()
-            .py_2()
-            .bg(cx.theme().colors().editor_background)
-            .children(ComponentPreviewPage::iter().map(|p| {
-                Button::new(ElementId::Name(p.name().into()), p.name())
-                    .on_click(cx.listener(move |this, _, cx| {
-                        this.current_page = p;
-                        cx.notify();
-                    }))
-                    .selected(p == self.current_page)
-                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .children(components().all_previews().iter().map(|component| {
+                if let Some(preview) = component.preview() {
+                    preview(cx)
+                } else {
+                    div().into_any_element()
+                }
             }))
     }
 }
 
 impl Render for ComponentPreview {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
+        h_flex()
             .id("component-preview")
             .key_context("ComponentPreview")
             .items_start()
@@ -128,8 +65,8 @@ impl Render for ComponentPreview {
             .track_focus(&self.focus_handle)
             .px_2()
             .bg(cx.theme().colors().editor_background)
-            .child(self.render_page_nav(cx))
-            .child(self.view(self.current_page, cx))
+            .child(self.render_sidebar(cx))
+            .child(self.render_preview(cx))
     }
 }
 
