@@ -1,145 +1,319 @@
-use ui::{prelude::*, ContextMenu, NumericStepper, PopoverMenu, PopoverMenuHandle, Tooltip};
+use gpui::View;
+use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle};
+
+use install_cli;
+use workspace;
+
+#[derive(Copy, Clone)]
+enum MenuType {
+    Zed,
+    File,
+    Edit,
+    Selection,
+    View,
+    Go,
+    Window,
+    Help,
+}
+
+#[derive(Clone)]
+struct MenuItem {
+    menu_type: MenuType,
+    handle: PopoverMenuHandle<ContextMenu>,
+}
+
+impl MenuItem {
+    fn id(&self) -> &'static str {
+        match self.menu_type {
+            MenuType::Zed => "zed",
+            MenuType::File => "file",
+            MenuType::Edit => "edit",
+            MenuType::Selection => "selection",
+            MenuType::View => "view",
+            MenuType::Go => "go",
+            MenuType::Window => "window",
+            MenuType::Help => "help",
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self.menu_type {
+            MenuType::Zed => "Zed",
+            MenuType::File => "File",
+            MenuType::Edit => "Edit",
+            MenuType::Selection => "Selection",
+            MenuType::View => "View",
+            MenuType::Go => "Go",
+            MenuType::Window => "Window",
+            MenuType::Help => "Help",
+        }
+    }
+}
 
 pub struct ApplicationMenu {
-    context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    menu_items: Vec<MenuItem>,
 }
 
 impl ApplicationMenu {
-    pub fn new(_: &mut ViewContext<Self>) -> Self {
-        Self {
-            context_menu_handle: PopoverMenuHandle::default(),
-        }
+    pub fn new(_cx: &mut ViewContext<Self>) -> Self {
+        let menu_types = vec![
+            MenuType::Zed,
+            MenuType::File,
+            MenuType::Edit,
+            MenuType::Selection,
+            MenuType::View,
+            MenuType::Go,
+            MenuType::Window,
+            MenuType::Help,
+        ];
+
+        let menu_items = menu_types
+            .into_iter()
+            .map(|menu_type| MenuItem {
+                menu_type,
+                handle: PopoverMenuHandle::default(),
+            })
+            .collect();
+
+        Self { menu_items }
+    }
+
+    fn build_zed_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
+        ContextMenu::build(cx, |menu, _cx| {
+            menu.action("About Zed", Box::new(zed_actions::About))
+                .action("Check for Updates", Box::new(auto_update::Check))
+                .separator()
+                .action("Open Settings", Box::new(zed_actions::OpenSettings))
+                .action("Open Key Bindings", Box::new(zed_actions::OpenKeymap))
+                // .action(
+                //     "Open Default Settings",
+                //     Box::new(super::OpenDefaultSettings),
+                // )
+                .action(
+                    "Open Default Key Bindings",
+                    Box::new(zed_actions::OpenDefaultKeymap),
+                )
+                // .action(
+                //     "Open Project Settings",
+                //     Box::new(super::OpenProjectSettings),
+                // )
+                .action(
+                    "Select Theme...",
+                    Box::new(zed_actions::theme_selector::Toggle::default()),
+                )
+                .separator()
+                .action("Extensions", Box::new(zed_actions::Extensions))
+                .action("Install CLI", Box::new(install_cli::Install))
+                .separator()
+                // .action("Hide Zed", Box::new(super::Hide))
+                // .action("Hide Others", Box::new(super::HideOthers))
+                // .action("Show All", Box::new(super::ShowAll))
+                .separator()
+                .action("Quit", Box::new(zed_actions::Quit))
+        })
+    }
+
+    fn build_file_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
+        ContextMenu::build(cx, |menu, _cx| {
+            menu.action("New", Box::new(workspace::NewFile))
+                .action("New Window", Box::new(workspace::NewWindow))
+                .separator()
+                .action("Open...", Box::new(workspace::Open))
+                .action(
+                    "Open Recent...",
+                    Box::new(zed_actions::OpenRecent {
+                        create_new_window: true,
+                    }),
+                )
+                .separator()
+                .action(
+                    "Add Folder to Project...",
+                    Box::new(workspace::AddFolderToProject),
+                )
+                .action("Save", Box::new(workspace::Save { save_intent: None }))
+                .action("Save As...", Box::new(workspace::SaveAs))
+                .action(
+                    "Save All",
+                    Box::new(workspace::SaveAll { save_intent: None }),
+                )
+                .separator()
+                .action(
+                    "Close Editor",
+                    Box::new(workspace::CloseActiveItem { save_intent: None }),
+                )
+                .action("Close Window", Box::new(workspace::CloseWindow))
+        })
+    }
+
+    fn build_edit_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
+        ContextMenu::build(cx, |menu, _cx| {
+            menu.action("Undo", Box::new(editor::actions::Undo))
+                .action("Redo", Box::new(editor::actions::Redo))
+                .separator()
+                .action("Cut", Box::new(editor::actions::Cut))
+                .action("Copy", Box::new(editor::actions::Copy))
+                .action("Paste", Box::new(editor::actions::Paste))
+                .separator()
+                .action("Find", Box::new(search::buffer_search::Deploy::find()))
+                .action("Find In Project", Box::new(workspace::DeploySearch::find()))
+                .separator()
+                .action(
+                    "Toggle Line Comment",
+                    Box::new(editor::actions::ToggleComments::default()),
+                )
+        })
+    }
+
+    fn build_selection_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
+        ContextMenu::build(cx, |menu, _cx| {
+            menu.action("Select All", Box::new(editor::actions::SelectAll))
+                .action(
+                    "Expand Selection",
+                    Box::new(editor::actions::SelectLargerSyntaxNode),
+                )
+                .action(
+                    "Shrink Selection",
+                    Box::new(editor::actions::SelectSmallerSyntaxNode),
+                )
+                .separator()
+                .action(
+                    "Add Cursor Above",
+                    Box::new(editor::actions::AddSelectionAbove),
+                )
+                .action(
+                    "Add Cursor Below",
+                    Box::new(editor::actions::AddSelectionBelow),
+                )
+                .action(
+                    "Select Next Occurrence",
+                    Box::new(editor::actions::SelectNext {
+                        replace_newest: false,
+                    }),
+                )
+        })
+    }
+
+    fn build_view_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
+        ContextMenu::build(cx, |menu, _cx| {
+            menu.action("Zoom In", Box::new(zed_actions::IncreaseBufferFontSize))
+                .action("Zoom Out", Box::new(zed_actions::DecreaseBufferFontSize))
+                .action("Reset Zoom", Box::new(zed_actions::ResetBufferFontSize))
+                .separator()
+                .action("Toggle Left Dock", Box::new(workspace::ToggleLeftDock))
+                .action("Toggle Right Dock", Box::new(workspace::ToggleRightDock))
+                .action("Toggle Bottom Dock", Box::new(workspace::ToggleBottomDock))
+                .separator()
+                .action("Project Panel", Box::new(project_panel::ToggleFocus))
+                .action("Outline Panel", Box::new(outline_panel::ToggleFocus))
+                .action("Collab Panel", Box::new(collab_panel::ToggleFocus))
+                .action("Terminal Panel", Box::new(terminal_panel::ToggleFocus))
+        })
+    }
+
+    fn build_go_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
+        ContextMenu::build(cx, |menu, _cx| {
+            menu.action("Back", Box::new(workspace::GoBack))
+                .action("Forward", Box::new(workspace::GoForward))
+                .separator()
+                .action(
+                    "Command Palette...",
+                    Box::new(zed_actions::command_palette::Toggle),
+                )
+                .separator()
+                .action(
+                    "Go to File...",
+                    Box::new(workspace::ToggleFileFinder::default()),
+                )
+                .action(
+                    "Go to Symbol in Editor...",
+                    Box::new(editor::actions::ToggleOutline),
+                )
+                .action(
+                    "Go to Line/Column...",
+                    Box::new(editor::actions::ToggleGoToLine),
+                )
+        })
+    }
+
+    fn build_window_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
+        ContextMenu::build(cx, |menu, _cx| {
+            menu.action("Minimize", Box::new(super::Minimize))
+                .action("Zoom", Box::new(super::Zoom))
+        })
+    }
+
+    fn build_help_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
+        ContextMenu::build(cx, |menu, _cx| {
+            menu.action("View Telemetry", Box::new(zed_actions::OpenTelemetryLog))
+                .action(
+                    "View Dependency Licenses",
+                    Box::new(zed_actions::OpenLicenses),
+                )
+                .action("Show Welcome", Box::new(workspace::Welcome))
+                .action(
+                    "Give Feedback...",
+                    Box::new(zed_actions::feedback::GiveFeedback),
+                )
+                .separator()
+                .action(
+                    "Documentation",
+                    Box::new(super::OpenBrowser {
+                        url: "https://zed.dev/docs".into(),
+                    }),
+                )
+        })
     }
 }
 
 impl Render for ApplicationMenu {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        PopoverMenu::new("application-menu")
-            .menu(move |cx| {
-                ContextMenu::build(cx, move |menu, cx| {
-                    menu.header("Workspace")
-                        .action(
-                            "Open Command Palette",
-                            Box::new(zed_actions::command_palette::Toggle),
-                        )
-                        .when_some(cx.focused(), |menu, focused| menu.context(focused))
-                        .custom_row(move |cx| {
-                            h_flex()
-                                .gap_2()
-                                .w_full()
-                                .justify_between()
-                                .cursor(gpui::CursorStyle::Arrow)
-                                .child(Label::new("Buffer Font Size"))
-                                .child(
-                                    NumericStepper::new(
-                                        "buffer-font-size",
-                                        theme::get_buffer_font_size(cx).to_string(),
-                                        |_, cx| {
-                                            cx.dispatch_action(Box::new(
-                                                zed_actions::DecreaseBufferFontSize,
-                                            ))
-                                        },
-                                        |_, cx| {
-                                            cx.dispatch_action(Box::new(
-                                                zed_actions::IncreaseBufferFontSize,
-                                            ))
-                                        },
-                                    )
-                                    .reserve_space_for_reset(true)
-                                    .when(
-                                        theme::has_adjusted_buffer_font_size(cx),
-                                        |stepper| {
-                                            stepper.on_reset(|_, cx| {
-                                                cx.dispatch_action(Box::new(
-                                                    zed_actions::ResetBufferFontSize,
-                                                ))
-                                            })
-                                        },
-                                    ),
+        let menu_items = self.menu_items.clone();
+        div()
+            .flex()
+            .flex_row()
+            .gap_x_0p5()
+            .children(menu_items.iter().map(|item| {
+                let menu_type = item.menu_type;
+                let item_handle = item.handle.clone();
+                let other_handles: Vec<_> = self
+                    .menu_items
+                    .iter()
+                    .filter(|other| other.id() != item.id())
+                    .map(|other| other.handle.clone())
+                    .collect();
+                div()
+                    .id(item.id())
+                    .occlude()
+                    .child(
+                        PopoverMenu::new(SharedString::from(format!("menu-{}", item.id())))
+                            .menu(move |cx| {
+                                Some(match menu_type {
+                                    MenuType::Zed => Self::build_zed_menu(cx),
+                                    MenuType::File => Self::build_file_menu(cx),
+                                    MenuType::Edit => Self::build_edit_menu(cx),
+                                    MenuType::Selection => Self::build_selection_menu(cx),
+                                    MenuType::View => Self::build_view_menu(cx),
+                                    MenuType::Go => Self::build_go_menu(cx),
+                                    MenuType::Window => Self::build_window_menu(cx),
+                                    MenuType::Help => Self::build_help_menu(cx),
+                                })
+                            })
+                            .trigger(
+                                Button::new(
+                                    SharedString::from(format!("menu-trigger-{}", item.id())),
+                                    item.label(),
                                 )
-                                .into_any_element()
-                        })
-                        .custom_row(move |cx| {
-                            h_flex()
-                                .gap_2()
-                                .w_full()
-                                .justify_between()
-                                .cursor(gpui::CursorStyle::Arrow)
-                                .child(Label::new("UI Font Size"))
-                                .child(
-                                    NumericStepper::new(
-                                        "ui-font-size",
-                                        theme::get_ui_font_size(cx).to_string(),
-                                        |_, cx| {
-                                            cx.dispatch_action(Box::new(
-                                                zed_actions::DecreaseUiFontSize,
-                                            ))
-                                        },
-                                        |_, cx| {
-                                            cx.dispatch_action(Box::new(
-                                                zed_actions::IncreaseUiFontSize,
-                                            ))
-                                        },
-                                    )
-                                    .reserve_space_for_reset(true)
-                                    .when(
-                                        theme::has_adjusted_ui_font_size(cx),
-                                        |stepper| {
-                                            stepper.on_reset(|_, cx| {
-                                                cx.dispatch_action(Box::new(
-                                                    zed_actions::ResetUiFontSize,
-                                                ))
-                                            })
-                                        },
-                                    ),
-                                )
-                                .into_any_element()
-                        })
-                        .header("Project")
-                        .action(
-                            "Add Folder to Project...",
-                            Box::new(workspace::AddFolderToProject),
-                        )
-                        .action("Open a new Project...", Box::new(workspace::Open))
-                        .action(
-                            "Open Recent Projects...",
-                            Box::new(zed_actions::OpenRecent {
-                                create_new_window: false,
-                            }),
-                        )
-                        .header("Help")
-                        .action("About Zed", Box::new(zed_actions::About))
-                        .action("Welcome", Box::new(workspace::Welcome))
-                        .link(
-                            "Documentation",
-                            Box::new(zed_actions::OpenBrowser {
-                                url: "https://zed.dev/docs".into(),
-                            }),
-                        )
-                        .action(
-                            "Give Feedback",
-                            Box::new(zed_actions::feedback::GiveFeedback),
-                        )
-                        .action("Check for Updates", Box::new(auto_update::Check))
-                        .action("View Telemetry", Box::new(zed_actions::OpenTelemetryLog))
-                        .action(
-                            "View Dependency Licenses",
-                            Box::new(zed_actions::OpenLicenses),
-                        )
-                        .separator()
-                        .action("Quit", Box::new(zed_actions::Quit))
-                })
-                .into()
-            })
-            .trigger(
-                IconButton::new("application-menu", ui::IconName::Menu)
-                    .style(ButtonStyle::Subtle)
-                    .icon_size(IconSize::Small)
-                    .when(!self.context_menu_handle.is_deployed(), |this| {
-                        this.tooltip(|cx| Tooltip::text("Open Application Menu", cx))
-                    }),
-            )
-            .with_handle(self.context_menu_handle.clone())
-            .into_any_element()
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::Small),
+                            )
+                            .with_handle(item_handle.clone()),
+                    )
+                    .on_hover(move |_, cx| {
+                        if other_handles.iter().any(|handle| handle.is_deployed()) {
+                            other_handles.iter().for_each(|handle| handle.hide(cx));
+                            item_handle.show(cx);
+                        }
+                    })
+            }))
     }
 }
