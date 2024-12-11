@@ -335,7 +335,6 @@ impl Zeta {
             Then a few lines
 
             and then another
-            longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
             "#};
 
         let buffer = cx.new_model(|cx| Buffer::local(test_buffer_text, cx));
@@ -347,12 +346,11 @@ impl Zeta {
                 position,
                 PredictEditsResponse {
                     output_excerpt: format!("{EDITABLE_REGION_START_MARKER}
-                        a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
-[here's a sneaky edit]
+a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
+[here's an edit]
 And maybe a short line
 Then a few lines
 and then another
-longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 {EDITABLE_REGION_END_MARKER}
                         ", ),
                 },
@@ -365,10 +363,41 @@ longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
-[and another sneaky edit]
+[and another edit]
 Then a few lines
 and then another
-longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
+{EDITABLE_REGION_END_MARKER}
+                        "#),
+                },
+                cx,
+            ),
+            self.fake_completion(
+                &buffer,
+                position,
+                PredictEditsResponse {
+                    output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
+a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
+And maybe a short line
+
+Then a few lines
+
+and then another
+{EDITABLE_REGION_END_MARKER}
+                        "#),
+                },
+                cx,
+            ),
+            self.fake_completion(
+                &buffer,
+                position,
+                PredictEditsResponse {
+                    output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
+a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
+And maybe a short line
+
+Then a few lines
+
+and then another
 {EDITABLE_REGION_END_MARKER}
                         "#),
                 },
@@ -384,7 +413,6 @@ And maybe a short line
 Then a few lines
 [a third completion]
 and then another
-longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 {EDITABLE_REGION_END_MARKER}
                         "#),
                 },
@@ -399,7 +427,6 @@ a longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg
 And maybe a short line
 and then another
 [fourth completion example]
-longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 {EDITABLE_REGION_END_MARKER}
                         "#),
                 },
@@ -414,7 +441,6 @@ a longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg
 And maybe a short line
 Then a few lines
 and then another
-longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 [fifth and final completion]
 {EDITABLE_REGION_END_MARKER}
                         "#),
@@ -423,11 +449,16 @@ longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg
             ),
         ];
 
-        cx.spawn(|_, _| async move {
-            for (ix, task) in completion_tasks.into_iter().enumerate() {
-                dbg!(ix);
+        cx.spawn(|zeta, mut cx| async move {
+            for task in completion_tasks {
                 task.await.unwrap();
             }
+
+            zeta.update(&mut cx, |zeta, _cx| {
+                zeta.recent_completions.get_mut(2).unwrap().edits = Arc::new([]);
+                zeta.recent_completions.get_mut(3).unwrap().edits = Arc::new([]);
+            })
+            .ok();
         })
     }
 
@@ -635,8 +666,12 @@ longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg
         cx.notify();
     }
 
-    pub fn recent_completions(&self) -> impl Iterator<Item = &InlineCompletion> {
+    pub fn recent_completions(&self) -> impl DoubleEndedIterator<Item = &InlineCompletion> {
         self.recent_completions.iter()
+    }
+
+    pub fn recent_completions_len(&self) -> usize {
+        self.recent_completions.len()
     }
 
     fn report_changes_for_buffer(

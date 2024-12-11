@@ -66,6 +66,7 @@
       "cmd-v": "editor::Paste",
       "cmd-z": "editor::Undo",
       "cmd-shift-z": "editor::Redo",
+      "ctrl-shift-z": "zeta::RateCompletions",
       "up": "editor::MoveUp",
       "ctrl-up": "editor::MoveToStartOfParagraph",
       "pageup": "editor::MovePageUp",
@@ -787,6 +788,43 @@
       "ctrl-k down": "pane::SplitDown",
       "ctrl-k left": "pane::SplitLeft",
       "ctrl-k right": "pane::SplitRight"
+    }
+  },
+  {
+    "context": "RateCompletionModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "zeta::ThumbsUp",
+      "cmd-delete": "zeta::ThumbsDown",
+      "shift-down": "zeta::NextEdit",
+      "shift-up": "zeta::PreviousEdit",
+      "space": "zeta::PreviewCompletion",
+
+      // These bindings are copied from menu:: to make them mutually exclusive with the editor focus
+      "up": "zeta::SelectPrev",
+      "shift-tab": "zeta::SelectPrev",
+      "home": "zeta::SelectFirst",
+      "pageup": "zeta::SelectFirst",
+      "shift-pageup": "zeta::SelectFirst",
+      "ctrl-p": "zeta::SelectPrev",
+      "down": "zeta::SelectNext",
+      "tab": "zeta::SelectNext",
+      "end": "zeta::SelectLast",
+      "pagedown": "zeta::SelectLast",
+      "shift-pagedown": "zeta::SelectFirst",
+      "ctrl-n": "zeta::SelectNext",
+      "cmd-up": "zeta::SelectFirst",
+      "cmd-down": "zeta::SelectLast",
+      "enter": "zeta::Confirm"
+    }
+  },
+  {
+    "context": "RateCompletionModal > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "zeta::FocusCompletions",
+      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
+      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion"
     }
   }
 ]
