@@ -41,7 +41,7 @@ pub struct BlockMap {
     buffer_header_height: u32,
     excerpt_header_height: u32,
     excerpt_footer_height: u32,
-    folded_buffers: HashSet<BufferId>,
+    folded_buffers: Arc<HashSet<BufferId>>,
 }
 
 pub struct BlockMapReader<'a> {
@@ -56,7 +56,7 @@ pub struct BlockSnapshot {
     wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
-    folded_buffers: HashSet<BufferId>,
+    folded_buffers: Arc<HashSet<BufferId>>,
     pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
     pub(super) excerpt_footer_height: u32,
@@ -440,7 +440,7 @@ impl BlockMap {
             next_block_id: AtomicUsize::new(0),
             custom_blocks: Vec::new(),
             custom_blocks_by_id: TreeMap::default(),
-            folded_buffers: HashSet::default(),
+            folded_buffers: Arc::default(),
             transforms: RefCell::new(transforms),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             show_excerpt_controls,
@@ -465,7 +465,7 @@ impl BlockMap {
             blocks: &self.custom_blocks,
             snapshot: BlockSnapshot {
                 wrap_snapshot,
-                folded_buffers: self.folded_buffers.clone(),
+                folded_buffers: Arc::clone(&self.folded_buffers),
                 transforms: self.transforms.borrow().clone(),
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
                 buffer_header_height: self.buffer_header_height,
@@ -822,12 +822,6 @@ impl BlockMap {
                         Block::ExcerptBoundary {
                             prev_excerpt,
                             height: height + buffer_header_height,
-                            // TODO kb how to return the separator as last?
-                            // kind: if next_excerpt.is_some() {
-                            //     ExcerptBoundaryKind::FoldedBufferBoundary
-                            // } else {
-                            //     ExcerptBoundaryKind::ExcerptSeparator
-                            // },
                             kind: ExcerptBoundaryKind::FoldedBufferBoundary,
                             next_excerpt,
                             show_excerpt_controls,
@@ -1225,14 +1219,15 @@ impl<'a> BlockMapWriter<'a> {
     }
 
     // TODO kb the last buffer folded disappears
-    // TODO kb indent guides and gutter buttons for folded blocks are pushed upwards, and can be seen between the blocks
     pub fn fold_buffer(
         &mut self,
         buffer_id: BufferId,
         multi_buffer: &MultiBuffer,
         cx: &AppContext,
     ) {
-        self.0.folded_buffers.insert(buffer_id);
+        let mut new_buffers = self.0.folded_buffers.as_ref().clone();
+        new_buffers.insert(buffer_id);
+        self.0.folded_buffers = Arc::new(new_buffers);
         self.recompute_blocks_for_buffer(buffer_id, multi_buffer, cx);
     }
 
@@ -1242,7 +1237,9 @@ impl<'a> BlockMapWriter<'a> {
         multi_buffer: &MultiBuffer,
         cx: &AppContext,
     ) {
-        self.0.folded_buffers.remove(&buffer_id);
+        let mut new_buffers = self.0.folded_buffers.as_ref().clone();
+        new_buffers.remove(&buffer_id);
+        self.0.folded_buffers = Arc::new(new_buffers);
         self.recompute_blocks_for_buffer(buffer_id, multi_buffer, cx);
     }
 
