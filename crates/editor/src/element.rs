@@ -33,10 +33,10 @@ use gpui::{
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
     FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, View, ViewContext,
-    WeakView, WindowContext,
+    Model, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, View,
+    ViewContext, WeakView, WindowContext,
 };
 use gpui::{ClickEvent, Subscription};
 use itertools::Itertools;
@@ -45,7 +45,7 @@ use language::{
         IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
         ShowWhitespaceSetting,
     },
-    ChunkRendererContext,
+    Buffer, ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -2818,7 +2818,7 @@ impl EditorElement {
                     Some(element)
                 }
             }
-            InlineCompletion::Edit(edits) => {
+            InlineCompletion::Edit((edits, buffer_with_edits)) => {
                 let edit_start = edits
                     .first()
                     .unwrap()
@@ -2842,7 +2842,12 @@ impl EditorElement {
                     return None;
                 }
 
-                let (text, highlights) = inline_completion_popover_text(editor_snapshot, edits, cx);
+                let (text, highlights) = inline_completion_popover_text(
+                    buffer_with_edits.clone(),
+                    editor_snapshot,
+                    edits,
+                    cx,
+                );
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -4307,6 +4312,7 @@ impl EditorElement {
 }
 
 fn inline_completion_popover_text(
+    buffer_with_edits: Option<Model<Buffer>>,
     editor_snapshot: &EditorSnapshot,
     edits: &Vec<(Range<Anchor>, String)>,
     cx: &WindowContext,
@@ -4334,13 +4340,47 @@ fn inline_completion_popover_text(
         let start = text.len();
         text.push_str(new_text);
         let end = text.len();
-        highlights.push((
-            start..end,
-            HighlightStyle {
-                background_color: Some(cx.theme().status().created_background),
-                ..Default::default()
-            },
-        ));
+        // highlights.push((
+        //     start..end,
+        //     HighlightStyle {
+        //         background_color: Some(cx.theme().status().created_background),
+        //         ..Default::default()
+        //     },
+        // ));
+    }
+
+    if let Some(buffer) = buffer_with_edits {
+        let snapshot = buffer.read(cx).snapshot();
+
+        let edit_range = {
+            use text::ToOffset as _;
+
+            let edit_start = edits
+                .first()
+                .unwrap()
+                .0
+                .start
+                .text_anchor
+                .to_offset(&snapshot);
+            let start = snapshot.offset_to_point(edit_start);
+            let end = snapshot.offset_to_point(edit_start + text.len());
+
+            Point::new(start.row, 0)..Point::new(end.row, snapshot.line_len(end.row))
+        };
+
+        let mut offset = 0;
+        for chunk in snapshot.chunks(edit_range, true) {
+            let start = offset;
+            offset += chunk.text.len();
+            let end = offset;
+
+            if let Some(highlight_style) = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(cx.theme().syntax()))
+            {
+                highlights.push((start..end, highlight_style));
+            }
+        }
     }
 
     let edit_end = edits
@@ -7158,7 +7198,8 @@ mod tests {
                         "That".to_string(),
                     )];
 
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+                    let (text, highlights) =
+                        inline_completion_popover_text(None, &snapshot, &edits, cx);
 
                     assert_eq!(text, "That is a test.");
                     assert_eq!(highlights.len(), 1);
@@ -7195,7 +7236,8 @@ mod tests {
                         ),
                     ];
 
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+                    let (text, highlights) =
+                        inline_completion_popover_text(None, &snapshot, &edits, cx);
 
                     assert_eq!(text, "Greetings, world and universe!");
                     assert_eq!(highlights.len(), 2);
@@ -7245,7 +7287,8 @@ mod tests {
                         ),
                     ];
 
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+                    let (text, highlights) =
+                        inline_completion_popover_text(None, &snapshot, &edits, cx);
 
                     assert_eq!(text, "Second modified\nNew third line\nFourth updated line");
                     assert_eq!(highlights.len(), 3);

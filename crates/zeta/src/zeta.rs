@@ -76,6 +76,7 @@ pub struct InlineCompletion {
     input_events: Arc<str>,
     input_excerpt: Arc<str>,
     output_excerpt: Arc<str>,
+    buffer_with_edits: Model<Buffer>,
 }
 
 impl InlineCompletion {
@@ -280,7 +281,7 @@ impl Zeta {
 
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
-
+        let buffer = buffer.downgrade();
         cx.spawn(|this, mut cx| async move {
             let start = std::time::Instant::now();
 
@@ -302,12 +303,14 @@ impl Zeta {
             };
 
             let response = perform_predict_edits(client, llm_token, body).await?;
+            let branch_buffer = buffer.update(&mut cx, |buffer, cx| buffer.branch(cx))?;
 
             let output_excerpt = response.output_excerpt;
             log::debug!("prediction took: {:?}", start.elapsed());
             log::debug!("completion response: {}", output_excerpt);
 
             let inline_completion = Self::process_completion_response(
+                branch_buffer,
                 output_excerpt,
                 &snapshot,
                 excerpt_range,
@@ -540,6 +543,7 @@ and then another
     }
 
     fn process_completion_response(
+        buffer_with_edits: Model<Buffer>,
         output_excerpt: String,
         snapshot: &BufferSnapshot,
         excerpt_range: Range<usize>,
@@ -549,37 +553,58 @@ and then another
         cx: &AsyncAppContext,
     ) -> Task<Result<InlineCompletion>> {
         let snapshot = snapshot.clone();
-        cx.background_executor().spawn(async move {
-            let content = output_excerpt.replace(CURSOR_MARKER, "");
+        cx.spawn(|mut cx| async move {
+            let input_events: Arc<str> = input_events.into();
+            let input_excerpt: Arc<str> = input_excerpt.into();
+            let output_excerpt: Arc<str> = output_excerpt.into();
+            let edits = cx
+                .background_executor()
+                .spawn({
+                    let snapshot = snapshot.clone();
+                    let output_excerpt = output_excerpt.clone();
+                    let excerpt_range = excerpt_range.clone();
+                    async move {
+                        let content = output_excerpt.replace(CURSOR_MARKER, "");
 
-            let codefence_start = content
-                .find(EDITABLE_REGION_START_MARKER)
-                .context("could not find start marker")?;
-            let content = &content[codefence_start..];
+                        let codefence_start = content
+                            .find(EDITABLE_REGION_START_MARKER)
+                            .context("could not find start marker")?;
+                        let content = &content[codefence_start..];
 
-            let newline_ix = content.find('\n').context("could not find newline")?;
-            let content = &content[newline_ix + 1..];
+                        let newline_ix = content.find('\n').context("could not find newline")?;
+                        let content = &content[newline_ix + 1..];
 
-            let codefence_end = content
-                .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
-                .context("could not find end marker")?;
-            let new_text = &content[..codefence_end];
+                        let codefence_end = content
+                            .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
+                            .context("could not find end marker")?;
+                        let new_text = &content[..codefence_end];
 
-            let old_text = snapshot
-                .text_for_range(excerpt_range.clone())
-                .collect::<String>();
+                        let old_text = snapshot
+                            .text_for_range(excerpt_range.clone())
+                            .collect::<String>();
 
-            let edits = Self::compute_edits(old_text, new_text, excerpt_range.start, &snapshot);
+                        anyhow::Ok(Self::compute_edits(
+                            old_text,
+                            new_text,
+                            excerpt_range.start,
+                            &snapshot,
+                        ))
+                    }
+                })
+                .await?;
+
+            buffer_with_edits.update(&mut cx, |buffer, cx| buffer.edit(edits.clone(), None, cx))?;
 
             Ok(InlineCompletion {
                 id: InlineCompletionId::new(),
                 path,
                 excerpt_range,
                 edits: edits.into(),
-                snapshot: snapshot.clone(),
-                input_events: input_events.into(),
-                input_excerpt: input_excerpt.into(),
-                output_excerpt: output_excerpt.into(),
+                buffer_with_edits,
+                snapshot,
+                input_events,
+                input_excerpt,
+                output_excerpt,
             })
         })
     }
@@ -993,6 +1018,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         Some(inline_completion::InlineCompletion {
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
+            buffer_with_edits: Some(completion.buffer_with_edits.clone()),
         })
     }
 }

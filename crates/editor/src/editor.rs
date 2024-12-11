@@ -445,7 +445,7 @@ pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
 type CompletionId = usize;
 
 enum InlineCompletion {
-    Edit(Vec<(Range<Anchor>, String)>),
+    Edit((Vec<(Range<Anchor>, String)>, Option<Model<Buffer>>)),
     Move(Anchor),
 }
 
@@ -4488,7 +4488,7 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit(edits) => {
+            InlineCompletion::Edit((edits, _)) => {
                 if let Some(provider) = self.inline_completion_provider() {
                     provider.accept(cx);
                 }
@@ -4535,7 +4535,7 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit(edits) => {
+            InlineCompletion::Edit((edits, _)) => {
                 if edits.len() == 1 && edits[0].0.start == edits[0].0.end {
                     let text = edits[0].1.as_str();
                     let mut partial_completion = text
@@ -4685,13 +4685,13 @@ impl Editor {
 
         let mut inlay_ids = Vec::new();
         let invalidation_row_range;
-        let completion;
+        let editor_completion;
         if cursor_row < edit_start_row {
             invalidation_row_range = cursor_row..edit_end_row;
-            completion = InlineCompletion::Move(first_edit_start);
+            editor_completion = InlineCompletion::Move(first_edit_start);
         } else if cursor_row > edit_end_row {
             invalidation_row_range = edit_start_row..cursor_row;
-            completion = InlineCompletion::Move(first_edit_start);
+            editor_completion = InlineCompletion::Move(first_edit_start);
         } else {
             if edits
                 .iter()
@@ -4722,7 +4722,8 @@ impl Editor {
             }
 
             invalidation_row_range = edit_start_row..edit_end_row;
-            completion = InlineCompletion::Edit(edits);
+            editor_completion =
+                InlineCompletion::Edit((edits, completion.buffer_with_edits.clone()));
         };
 
         let invalidation_range = multibuffer
@@ -4734,7 +4735,7 @@ impl Editor {
 
         self.active_inline_completion = Some(InlineCompletionState {
             inlay_ids,
-            completion,
+            completion: editor_completion,
             invalidation_range,
         });
         cx.notify();

@@ -15,6 +15,7 @@ pub enum Direction {
 #[derive(Clone)]
 pub struct InlineCompletion {
     pub edits: Vec<(Range<language::Anchor>, String)>,
+    pub buffer_with_edits: Option<Model<Buffer>>,
 }
 
 pub trait InlineCompletionProvider: 'static + Sized {
