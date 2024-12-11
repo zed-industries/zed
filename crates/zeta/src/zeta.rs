@@ -7,7 +7,8 @@ use client::Client;
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
-    actions, AppContext, Context, EntityId, Global, Model, ModelContext, Subscription, Task,
+    actions, AppContext, AsyncAppContext, Context, EntityId, Global, Model, ModelContext,
+    Subscription, Task,
 };
 use http_client::{HttpClient, Method};
 use language::{
@@ -313,7 +314,9 @@ impl Zeta {
                 path,
                 input_events,
                 input_excerpt,
-            )?;
+                &cx,
+            )
+            .await?;
 
             this.update(&mut cx, |this, cx| {
                 this.recent_completions
@@ -543,37 +546,41 @@ and then another
         path: Arc<Path>,
         input_events: String,
         input_excerpt: String,
-    ) -> Result<InlineCompletion> {
-        let content = output_excerpt.replace(CURSOR_MARKER, "");
+        cx: &AsyncAppContext,
+    ) -> Task<Result<InlineCompletion>> {
+        let snapshot = snapshot.clone();
+        cx.background_executor().spawn(async move {
+            let content = output_excerpt.replace(CURSOR_MARKER, "");
 
-        let codefence_start = content
-            .find(EDITABLE_REGION_START_MARKER)
-            .context("could not find start marker")?;
-        let content = &content[codefence_start..];
+            let codefence_start = content
+                .find(EDITABLE_REGION_START_MARKER)
+                .context("could not find start marker")?;
+            let content = &content[codefence_start..];
 
-        let newline_ix = content.find('\n').context("could not find newline")?;
-        let content = &content[newline_ix + 1..];
+            let newline_ix = content.find('\n').context("could not find newline")?;
+            let content = &content[newline_ix + 1..];
 
-        let codefence_end = content
-            .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
-            .context("could not find end marker")?;
-        let new_text = &content[..codefence_end];
+            let codefence_end = content
+                .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
+                .context("could not find end marker")?;
+            let new_text = &content[..codefence_end];
 
-        let old_text = snapshot
-            .text_for_range(excerpt_range.clone())
-            .collect::<String>();
+            let old_text = snapshot
+                .text_for_range(excerpt_range.clone())
+                .collect::<String>();
 
-        let edits = Self::compute_edits(old_text, new_text, excerpt_range.start, snapshot);
+            let edits = Self::compute_edits(old_text, new_text, excerpt_range.start, &snapshot);
 
-        Ok(InlineCompletion {
-            id: InlineCompletionId::new(),
-            path,
-            excerpt_range,
-            edits: edits.into(),
-            snapshot: snapshot.clone(),
-            input_events: input_events.into(),
-            input_excerpt: input_excerpt.into(),
-            output_excerpt: output_excerpt.into(),
+            Ok(InlineCompletion {
+                id: InlineCompletionId::new(),
+                path,
+                excerpt_range,
+                edits: edits.into(),
+                snapshot: snapshot.clone(),
+                input_events: input_events.into(),
+                input_excerpt: input_excerpt.into(),
+                output_excerpt: output_excerpt.into(),
+            })
         })
     }
 
