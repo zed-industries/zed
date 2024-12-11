@@ -2855,6 +2855,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "component_preview"
+version = "0.1.0"
+dependencies = [
+ "component_system",
+ "gpui",
+ "strum 0.25.0",
+ "ui",
+ "workspace",
+]
+
+[[package]]
+name = "component_system"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "gpui",
+ "lazy_static",
+ "linkme",
+ "once_cell",
+ "parking_lot",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13744,9 +13767,14 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "collections",
+ "component_system",
  "gpui",
  "itertools 0.13.0",
+ "lazy_static",
+ "linkme",
  "menu",
+ "once_cell",
  "serde",
  "settings",
  "smallvec",
@@ -13772,6 +13800,7 @@ dependencies = [
 name = "ui_macros"
 version = "0.1.0"
 dependencies = [
+ "component_system",
  "convert_case 0.6.0",
  "proc-macro2",
  "quote",
@@ -15547,6 +15576,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "component_system",
  "db",
  "derive_more",
  "env_logger 0.11.5",
@@ -15978,6 +16008,7 @@ dependencies = [
  "collections",
  "command_palette",
  "command_palette_hooks",
+ "component_preview",
  "copilot",
  "db",
  "diagnostics",

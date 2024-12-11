@@ -466,6 +466,7 @@ fn main() {
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);
+        component_preview::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);

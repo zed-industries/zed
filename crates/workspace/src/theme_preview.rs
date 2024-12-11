@@ -1,12 +1,10 @@
-#![allow(unused, dead_code)]
-use gpui::{actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
+use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
-    element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
-    Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
-    Checkbox, CheckboxWithLabel, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
-    IconDecoration, Indicator, Table, TintColor, Tooltip,
+    prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar,
+    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, ElevationIndex, Facepile,
+    TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -27,7 +25,6 @@ pub fn init(cx: &mut AppContext) {
 enum ThemePreviewPage {
     Overview,
     Typography,
-    Components,
 }
 
 impl ThemePreviewPage {
@@ -35,7 +32,6 @@ impl ThemePreviewPage {
         match self {
             Self::Overview => "Overview",
             Self::Typography => "Typography",
-            Self::Components => "Components",
         }
     }
 }
@@ -61,7 +57,6 @@ impl ThemePreview {
         match page {
             ThemePreviewPage::Overview => self.render_overview_page(cx).into_any_element(),
             ThemePreviewPage::Typography => self.render_typography_page(cx).into_any_element(),
-            ThemePreviewPage::Components => self.render_components_page(cx).into_any_element(),
         }
     }
 }
@@ -101,152 +96,9 @@ impl Item for ThemePreview {
     }
 }
 
-const AVATAR_URL: &str = "https://avatars.githubusercontent.com/u/1714999?v=4";
-
 impl ThemePreview {
     fn preview_bg(cx: &WindowContext) -> Hsla {
         cx.theme().colors().editor_background
-    }
-
-    fn render_avatars(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .gap_1()
-            .child(
-                Headline::new("Avatars")
-                    .size(HeadlineSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap_4()
-                    .child(Avatar::new(AVATAR_URL).size(px(24.)))
-                    .child(Avatar::new(AVATAR_URL).size(px(24.)).grayscale(true))
-                    .child(
-                        Avatar::new(AVATAR_URL)
-                            .size(px(24.))
-                            .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Muted)),
-                    )
-                    .child(
-                        Avatar::new(AVATAR_URL)
-                            .size(px(24.))
-                            .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Deafened)),
-                    )
-                    .child(
-                        Avatar::new(AVATAR_URL)
-                            .size(px(24.))
-                            .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
-                    )
-                    .child(
-                        Avatar::new(AVATAR_URL)
-                            .size(px(24.))
-                            .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
-                    )
-                    .child(
-                        Facepile::empty()
-                            .child(
-                                Avatar::new(AVATAR_URL)
-                                    .border_color(Self::preview_bg(cx))
-                                    .size(px(22.))
-                                    .into_any_element(),
-                            )
-                            .child(
-                                Avatar::new(AVATAR_URL)
-                                    .border_color(Self::preview_bg(cx))
-                                    .size(px(22.))
-                                    .into_any_element(),
-                            )
-                            .child(
-                                Avatar::new(AVATAR_URL)
-                                    .border_color(Self::preview_bg(cx))
-                                    .size(px(22.))
-                                    .into_any_element(),
-                            )
-                            .child(
-                                Avatar::new(AVATAR_URL)
-                                    .border_color(Self::preview_bg(cx))
-                                    .size(px(22.))
-                                    .into_any_element(),
-                            ),
-                    ),
-            )
-    }
-
-    fn render_buttons(&self, layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .gap_1()
-            .child(
-                Headline::new("Buttons")
-                    .size(HeadlineSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap_px()
-                    .child(
-                        IconButton::new("icon_button_transparent", IconName::Check)
-                            .style(ButtonStyle::Transparent),
-                    )
-                    .child(
-                        IconButton::new("icon_button_subtle", IconName::Check)
-                            .style(ButtonStyle::Subtle),
-                    )
-                    .child(
-                        IconButton::new("icon_button_filled", IconName::Check)
-                            .style(ButtonStyle::Filled),
-                    )
-                    .child(
-                        IconButton::new("icon_button_selected_accent", IconName::Check)
-                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                            .selected(true),
-                    )
-                    .child(IconButton::new("icon_button_selected", IconName::Check).selected(true))
-                    .child(
-                        IconButton::new("icon_button_positive", IconName::Check)
-                            .style(ButtonStyle::Tinted(TintColor::Positive)),
-                    )
-                    .child(
-                        IconButton::new("icon_button_warning", IconName::Check)
-                            .style(ButtonStyle::Tinted(TintColor::Warning)),
-                    )
-                    .child(
-                        IconButton::new("icon_button_negative", IconName::Check)
-                            .style(ButtonStyle::Tinted(TintColor::Negative)),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_px()
-                    .child(
-                        Button::new("button_transparent", "Transparent")
-                            .style(ButtonStyle::Transparent),
-                    )
-                    .child(Button::new("button_subtle", "Subtle").style(ButtonStyle::Subtle))
-                    .child(Button::new("button_filled", "Filled").style(ButtonStyle::Filled))
-                    .child(
-                        Button::new("button_selected", "Selected")
-                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                            .selected(true),
-                    )
-                    .child(
-                        Button::new("button_selected_tinted", "Selected (Tinted)")
-                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                            .selected(true),
-                    )
-                    .child(
-                        Button::new("button_positive", "Tint::Positive")
-                            .style(ButtonStyle::Tinted(TintColor::Positive)),
-                    )
-                    .child(
-                        Button::new("button_warning", "Tint::Warning")
-                            .style(ButtonStyle::Tinted(TintColor::Warning)),
-                    )
-                    .child(
-                        Button::new("button_negative", "Tint::Negative")
-                            .style(ButtonStyle::Tinted(TintColor::Negative)),
-                    ),
-            )
     }
 
     fn render_text(&self, layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
@@ -410,8 +262,7 @@ impl ThemePreview {
             )
     }
 
-    fn render_colors(&self, layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
-        let bg = layer.bg(cx);
+    fn render_colors(&self, _layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
         let all_colors = all_theme_colors(cx);
 
         v_flex()
@@ -500,28 +351,6 @@ impl ThemePreview {
                 .child(Headline::new("Body Text").size(HeadlineSize::Small))
                 .child(Label::new("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."))
             )
-    }
-
-    fn render_components_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        let layer = ElevationIndex::Surface;
-
-        v_flex()
-            .id("theme-preview-components")
-            .overflow_scroll()
-            .size_full()
-            .gap_2()
-            .child(ContentGroup::render_component_previews(cx))
-            .child(IconDecoration::render_component_previews(cx))
-            .child(DecoratedIcon::render_component_previews(cx))
-            .child(Checkbox::render_component_previews(cx))
-            .child(CheckboxWithLabel::render_component_previews(cx))
-            .child(Facepile::render_component_previews(cx))
-            .child(Button::render_component_previews(cx))
-            .child(Indicator::render_component_previews(cx))
-            .child(Icon::render_component_previews(cx))
-            .child(Table::render_component_previews(cx))
-            .child(self.render_avatars(cx))
-            .child(self.render_buttons(layer, cx))
     }
 
     fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {
