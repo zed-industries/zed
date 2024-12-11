@@ -57,25 +57,22 @@ use workspace::{
 };
 use workspace::{notifications::DetachAndPromptErr, Pane};
 use zed_actions::{
-    OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
+    Minimize, OpenAccountSettings, OpenBrowser, OpenDefaultSettings, OpenProjectSettings,
+    OpenServerSettings, OpenSettings, OpenZedUrl, Quit, Zoom,
 };
 
 actions!(
     zed,
     [
         DebugElements,
-        Hide,
-        HideOthers,
-        Minimize,
-        OpenDefaultSettings,
-        OpenProjectSettings,
         OpenProjectTasks,
         OpenTasks,
         ResetDatabase,
-        ShowAll,
         ToggleFullScreen,
-        Zoom,
         TestPanic,
+        Hide,
+        HideOthers,
+        ShowAll,
     ]
 );
 

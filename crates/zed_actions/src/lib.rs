@@ -41,7 +41,11 @@ actions!(
         ResetBufferFontSize,
         DecreaseUiFontSize,
         IncreaseUiFontSize,
-        ResetUiFontSize
+        ResetUiFontSize,
+        OpenDefaultSettings,
+        OpenProjectSettings,
+        Minimize,
+        Zoom,
     ]
 );
 
