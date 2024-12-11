@@ -87,18 +87,18 @@ impl ApplicationMenu {
                 .separator()
                 .action("Open Settings", Box::new(zed_actions::OpenSettings))
                 .action("Open Key Bindings", Box::new(zed_actions::OpenKeymap))
-                // .action(
-                //     "Open Default Settings",
-                //     Box::new(super::OpenDefaultSettings),
-                // )
+                .action(
+                    "Open Default Settings",
+                    Box::new(zed_actions::OpenDefaultSettings),
+                )
                 .action(
                     "Open Default Key Bindings",
                     Box::new(zed_actions::OpenDefaultKeymap),
                 )
-                // .action(
-                //     "Open Project Settings",
-                //     Box::new(super::OpenProjectSettings),
-                // )
+                .action(
+                    "Open Project Settings",
+                    Box::new(zed_actions::OpenProjectSettings),
+                )
                 .action(
                     "Select Theme...",
                     Box::new(zed_actions::theme_selector::Toggle::default()),
@@ -106,10 +106,6 @@ impl ApplicationMenu {
                 .separator()
                 .action("Extensions", Box::new(zed_actions::Extensions))
                 .action("Install CLI", Box::new(install_cli::Install))
-                .separator()
-                // .action("Hide Zed", Box::new(super::Hide))
-                // .action("Hide Others", Box::new(super::HideOthers))
-                // .action("Show All", Box::new(super::ShowAll))
                 .separator()
                 .action("Quit", Box::new(zed_actions::Quit))
         })
@@ -207,7 +203,6 @@ impl ApplicationMenu {
                 .separator()
                 .action("Project Panel", Box::new(project_panel::ToggleFocus))
                 .action("Outline Panel", Box::new(outline_panel::ToggleFocus))
-                // .action("Collab Panel", Box::new(collab_panel::ToggleFocus))
                 .action("Terminal Panel", Box::new(terminal_panel::ToggleFocus))
         })
     }
@@ -239,10 +234,8 @@ impl ApplicationMenu {
 
     fn build_window_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, _cx| {
-            menu
-
-            // .action("Minimize", Box::new(super::Minimize))
-            //     .action("Zoom", Box::new(super::Zoom))
+            menu.action("Minimize", Box::new(zed_actions::Minimize))
+                .action("Zoom", Box::new(zed_actions::Zoom))
         })
     }
 
