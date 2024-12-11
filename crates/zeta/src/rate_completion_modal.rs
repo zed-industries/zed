@@ -8,7 +8,7 @@ use language::{language_settings, OffsetRangeExt};
 
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, List, ListItem, ListItemSpacing, TintColor};
+use ui::{prelude::*, List, ListItem, ListItemSpacing, TintColor, Tooltip};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -154,27 +154,6 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn thumbs_down(&mut self, _: &ThumbsDown, cx: &mut ViewContext<Self>) {
-        self.zeta.update(cx, |zeta, cx| {
-            let completion = zeta
-                .recent_completions()
-                .skip(self.selected_index)
-                .next()
-                .cloned();
-
-            if let Some(completion) = completion {
-                zeta.rate_completion(
-                    &completion,
-                    InlineCompletionRating::Negative,
-                    "".to_string(),
-                    cx,
-                );
-            }
-        });
-        self.select_next_edit(&Default::default(), cx);
-        cx.notify();
-    }
-
     fn thumbs_up_active(&mut self, _: &ThumbsUpActiveCompletion, cx: &mut ViewContext<Self>) {
         self.zeta.update(cx, |zeta, cx| {
             if let Some(active) = &self.active_completion {
@@ -199,16 +178,20 @@ impl RateCompletionModal {
     }
 
     fn thumbs_down_active(&mut self, _: &ThumbsDownActiveCompletion, cx: &mut ViewContext<Self>) {
-        self.zeta.update(cx, |zeta, cx| {
-            if let Some(active) = &self.active_completion {
+        if let Some(active) = &self.active_completion {
+            if active.feedback_editor.read(cx).text(cx).is_empty() {
+                return;
+            }
+
+            self.zeta.update(cx, |zeta, cx| {
                 zeta.rate_completion(
                     &active.completion,
                     InlineCompletionRating::Negative,
                     active.feedback_editor.read(cx).text(cx),
                     cx,
                 );
-            }
-        });
+            });
+        }
 
         let current_completion = self
             .active_completion
@@ -292,7 +275,7 @@ impl RateCompletionModal {
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
                 editor.set_show_inline_completions(Some(false), cx);
-                editor.set_placeholder_text("Add your feedback about this completion…", cx);
+                editor.set_placeholder_text("Add your feedback about this completion… (Negative feedback requires an explanation for why it was bad, and what you expected instead.)", cx);
                 if focus {
                     cx.focus_self();
                 }
@@ -361,6 +344,11 @@ impl RateCompletionModal {
         };
 
         let rated = self.zeta.read(cx).is_completion_rated(completion_id);
+        let feedback_empty = active_completion
+            .feedback_editor
+            .read(cx)
+            .text(cx)
+            .is_empty();
 
         let border_color = cx.theme().colors().border;
         let bg_color = cx.theme().colors().editor_background;
@@ -430,7 +418,12 @@ impl RateCompletionModal {
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
                                         .icon_color(Color::Error)
-                                        .disabled(rated)
+                                        .disabled(rated || feedback_empty)
+                                        .when(feedback_empty, |this| {
+                                            this.tooltip(|cx| {
+                                                Tooltip::text("Explain why this completion is bad before reporting it", cx)
+                                            })
+                                        })
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.thumbs_down_active(
                                                 &ThumbsDownActiveCompletion,
@@ -475,7 +468,6 @@ impl Render for RateCompletionModal {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::thumbs_up))
-            .on_action(cx.listener(Self::thumbs_down))
             .on_action(cx.listener(Self::thumbs_up_active))
             .on_action(cx.listener(Self::thumbs_down_active))
             .on_action(cx.listener(Self::focus_completions))
