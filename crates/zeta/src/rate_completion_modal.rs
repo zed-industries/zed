@@ -34,17 +34,10 @@ actions!(
     ]
 );
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         workspace.register_action(|workspace, _: &RateCompletions, cx| {
             RateCompletionModal::toggle(workspace, cx);
-        });
-
-        // TODO: remove
-        Zeta::register(client.clone(), cx);
-
-        Zeta::global(cx).unwrap().update(cx, |zeta, cx| {
-            zeta.fill_with_fake_completions(cx).detach();
         });
     })
     .detach();
