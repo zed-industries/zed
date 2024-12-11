@@ -32,9 +32,12 @@ use project::{
     project_settings::{LspSettings, ProjectSettings},
 };
 use serde_json::{self, json};
-use std::sync::atomic::{self, AtomicUsize};
-use std::{cell::RefCell, future::Future, iter, rc::Rc, time::Instant};
-use test::editor_lsp_test_context::rust_lang;
+use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
+use std::{
+    iter,
+    sync::atomic::{self, AtomicUsize},
+};
+use test::{build_editor_with_project, editor_lsp_test_context::rust_lang};
 use unindent::Unindent;
 use util::{
     assert_set_eq,
@@ -6836,13 +6839,14 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    cx.executor().start_waiting();
-    let fake_server = fake_servers.next().await.unwrap();
-
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+    let (editor, cx) =
+        cx.add_window_view(|cx| build_editor_with_project(project.clone(), buffer, cx));
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
 
     let save = editor
         .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
@@ -7117,6 +7121,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.is_dirty());
         assert_eq!(buffer.text(), sample_text_3,)
     });
+    cx.executor().run_until_parked();
 
     cx.executor().start_waiting();
     let save = multi_buffer_editor
@@ -7188,13 +7193,14 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    cx.executor().start_waiting();
-    let fake_server = fake_servers.next().await.unwrap();
-
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+    let (editor, cx) =
+        cx.add_window_view(|cx| build_editor_with_project(project.clone(), buffer, cx));
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
 
     let save = editor
         .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
@@ -7339,12 +7345,13 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
+    let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) =
+        cx.add_window_view(|cx| build_editor_with_project(project.clone(), buffer, cx));
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+
     cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
-
-    let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
     let format = editor
         .update(cx, |editor, cx| {
@@ -10332,9 +10339,6 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    cx.executor().run_until_parked();
-    cx.executor().start_waiting();
-    let fake_server = fake_servers.next().await.unwrap();
     let editor_handle = workspace
         .update(cx, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -10344,6 +10348,9 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
 
     fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
         assert_eq!(
@@ -10434,7 +10441,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let _window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
     let _buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/a/main.rs", cx)
+            project.open_local_buffer_with_lsp("/a/main.rs", cx)
         })
         .await
         .unwrap();

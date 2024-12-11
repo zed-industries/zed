@@ -292,7 +292,7 @@ mod tests {
 
         let _buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/dir/test.rs", cx)
+                project.open_local_buffer_with_lsp("/dir/test.rs", cx)
             })
             .await
             .unwrap();
