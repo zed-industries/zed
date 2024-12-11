@@ -8,7 +8,7 @@ use language::{language_settings, OffsetRangeExt};
 
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, List, ListItem, ListItemSpacing, TintColor, Tooltip};
+use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, TintColor, Tooltip};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -413,6 +413,11 @@ impl RateCompletionModal {
                                 .gap_1()
                                 .child(
                                     Button::new("bad", "Bad Completion")
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ThumbsDown,
+                                            &self.focus_handle(cx),
+                                            cx,
+                                        ))
                                         .style(ButtonStyle::Tinted(TintColor::Negative))
                                         .icon(IconName::ThumbsDown)
                                         .icon_size(IconSize::Small)
@@ -433,6 +438,11 @@ impl RateCompletionModal {
                                 )
                                 .child(
                                     Button::new("good", "Good Completion")
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ThumbsUp,
+                                            &self.focus_handle(cx),
+                                            cx,
+                                        ))
                                         .style(ButtonStyle::Tinted(TintColor::Positive))
                                         .icon(IconName::ThumbsUp)
                                         .icon_size(IconSize::Small)
@@ -456,9 +466,6 @@ impl Render for RateCompletionModal {
         h_flex()
             .key_context("RateCompletionModal")
             .track_focus(&self.focus_handle)
-            .focus(|this| {
-                this.border_1().border_color(cx.theme().colors().border_focused)
-            })
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::select_prev))
