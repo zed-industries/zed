@@ -20,7 +20,7 @@ pub struct CallSettingsContent {
 
     /// Whether your current project should be shared when joining an empty channel.
     ///
-    /// Default: true
+    /// Default: false
     pub share_on_join: Option<bool>,
 }
 
