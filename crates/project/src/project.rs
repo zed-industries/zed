@@ -1854,15 +1854,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(Model<Buffer>, lsp_store::OpenLspBufferHandle)>> {
         if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
-            let buffer_task = self.open_buffer((worktree.read(cx).id(), relative_path), cx);
-            let lsp_store = self.lsp_store().clone();
-            cx.spawn(|_, mut cx| async move {
-                let buffer = buffer_task.await?;
-                let handle = lsp_store.update(&mut cx, |lsp_store, cx| {
-                    lsp_store.register_buffer_with_language_servers(&buffer, cx)
-                })?;
-                Ok((buffer, handle))
-            })
+            self.open_buffer_with_lsp((worktree.read(cx).id(), relative_path), cx)
         } else {
             Task::ready(Err(anyhow!("no such path")))
         }
@@ -1879,6 +1871,23 @@ impl Project {
 
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.open_buffer(path.into(), cx)
+        })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_buffer_with_lsp(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(Model<Buffer>, lsp_store::OpenLspBufferHandle)>> {
+        let buffer = self.open_buffer(path, cx);
+        let lsp_store = self.lsp_store().clone();
+        cx.spawn(|_, mut cx| async move {
+            let buffer = buffer.await?;
+            let handle = lsp_store.update(&mut cx, |lsp_store, cx| {
+                lsp_store.register_buffer_with_language_servers(&buffer, cx)
+            })?;
+            Ok((buffer, handle))
         })
     }
 
