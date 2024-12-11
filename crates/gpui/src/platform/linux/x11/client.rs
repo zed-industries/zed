@@ -11,6 +11,7 @@ use calloop::{EventLoop, LoopHandle, RegistrationToken};
 
 use anyhow::Context as _;
 use collections::HashMap;
+use futures::channel::oneshot;
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
@@ -40,7 +41,7 @@ use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
     DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
     Platform, PlatformDisplay, PlatformInput, Point, RequestFrameOptions, ScaledPixels,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    ScreenCaptureSource, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 use super::{
@@ -50,6 +51,7 @@ use super::{
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
 use crate::platform::linux::platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES};
+use crate::platform::linux::x11::screen_capture::x11_screen_capture_sources;
 use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 use crate::platform::linux::{
     get_xkb_compose_state, is_within_click_distance, open_uri_internal, reveal_path_internal,
@@ -1249,6 +1251,14 @@ impl LinuxClient for X11Client {
 
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (mut tx, result_rx) = oneshot::channel();
+        tx.send(x11_screen_capture_sources()).ok();
+        result_rx
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

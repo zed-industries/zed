@@ -10,6 +10,7 @@ use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::panic::{AssertUnwindSafe, Location};
 use std::rc::Weak;
+use std::sync::atomic::AtomicBool;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -32,11 +33,12 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::NoopTextSystem;
 use crate::{
-    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
-    PlatformWindow, Point, PromptLevel, Result, ScreenCaptureSource, SemanticVersion, SharedString,
-    Size, Task, WindowAppearance, WindowOptions, WindowParams,
+    px, size, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
+    DevicePixels, DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu,
+    MenuItem, Modifiers, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    PlatformInputHandler, PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result,
+    ScreenCaptureSource, ScreenCaptureStream, SemanticVersion, SharedString, Size, Task,
+    WindowAppearance, WindowOptions, WindowParams,
 };
 
 pub(crate) const SCROLL_LINES: f32 = 3.0;
@@ -56,6 +58,9 @@ pub trait LinuxClient {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -245,9 +250,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        let (mut tx, rx) = oneshot::channel();
-        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
-        rx
+        self.screen_capture_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -845,6 +848,31 @@ impl Modifiers {
             platform,
             function: false,
         }
+    }
+}
+
+pub fn new_scap_capturer(target: Option<scap::Target>) -> anyhow::Result<scap::capturer::Capturer> {
+    Ok(scap::capturer::Capturer::build(scap::capturer::Options {
+        fps: 60,
+        show_cursor: true,
+        show_highlight: true,
+        output_type: scap::frame::FrameType::YUVFrame,
+        output_resolution: scap::capturer::Resolution::Captured,
+        crop_area: None,
+        target,
+        excluded_targets: None,
+    })?)
+}
+
+pub struct ScapFrame(pub scap::frame::Frame);
+
+pub struct ScapStream(pub Arc<AtomicBool>);
+
+impl ScreenCaptureStream for ScapStream {}
+
+impl Drop for ScapStream {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
