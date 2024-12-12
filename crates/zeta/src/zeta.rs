@@ -965,7 +965,6 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             }
 
             this.update(&mut cx, |this, cx| {
-                cx.notify();
                 this.first_pending_completion = None;
                 if !is_first {
                     this.last_pending_completion = None;
@@ -986,7 +985,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                         });
                         this.current_completion = Some(new_completion);
                     }
+                } else {
+                    this.current_completion = None;
                 }
+
+                cx.notify();
             })
         });
 
