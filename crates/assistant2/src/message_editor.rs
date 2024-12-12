@@ -4,7 +4,6 @@ use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AppContext, FocusableView, Model, TextStyle, View, WeakView};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
-use picker::Picker;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
@@ -14,7 +13,7 @@ use ui::{
 use workspace::Workspace;
 
 use crate::context::{Context, ContextId, ContextKind};
-use crate::context_picker::{ContextPicker, ContextPickerDelegate};
+use crate::context_picker::ContextPicker;
 use crate::thread::{RequestKind, Thread};
 use crate::ui::ContextPill;
 use crate::{Chat, ToggleModelSelector};
@@ -192,11 +191,6 @@ impl Render for MessageEditor {
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
         let focus_handle = self.editor.focus_handle(cx);
         let context_picker = self.context_picker.clone();
-
-        // let handle = self
-        //     .message_editor
-        //     .update(cx, |this, _| this.context_picker_handle.clone())
-        //     .ok();
 
         v_flex()
             .key_context("MessageEditor")

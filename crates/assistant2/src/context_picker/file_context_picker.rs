@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{Task, View, WeakView};
+use gpui::{AppContext, FocusHandle, FocusableView, Task, View, WeakView};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, WorktreeId};
 use ui::{prelude::*, ListItem, ListItemSpacing};
@@ -29,6 +29,12 @@ impl FileContextPicker {
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
+    }
+}
+
+impl FocusableView for FileContextPicker {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
     }
 }
 
@@ -231,7 +237,9 @@ impl PickerDelegate for FileContextPickerDelegate {
         .detach_and_log_err(cx);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+        println!("FileContextPicker dismissed");
+    }
 
     fn render_match(
         &self,

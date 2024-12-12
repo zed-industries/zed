@@ -70,7 +70,10 @@ impl EventEmitter<DismissEvent> for ContextPicker {}
 
 impl FocusableView for ContextPicker {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.picker.focus_handle(cx)
+        match &self.mode {
+            ContextPickerMode::Default => self.picker.focus_handle(cx),
+            ContextPickerMode::File(file_picker) => file_picker.focus_handle(cx),
+        }
     }
 }
 
@@ -141,10 +144,13 @@ impl PickerDelegate for ContextPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {}
-
-    fn editor_position(&self) -> PickerEditorPosition {
-        PickerEditorPosition::End
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+        self.context_picker
+            .update(cx, |this, cx| match this.mode {
+                ContextPickerMode::Default => cx.emit(DismissEvent),
+                ContextPickerMode::File(_) => {}
+            })
+            .log_err();
     }
 
     fn render_match(
