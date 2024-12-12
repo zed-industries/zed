@@ -19,13 +19,3 @@ actions!(
 pub fn init(cx: &mut AppContext) {
     GitPanelSettings::register(cx);
 }
-
-/// What changes should be committed.
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CommitMode {
-    /// Commit all changes, regardless of their staging status.
-    All,
-    /// Commit only staged changes.
-    #[default]
-    Staged,
-}

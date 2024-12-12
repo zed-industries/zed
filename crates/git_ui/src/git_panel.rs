@@ -11,7 +11,7 @@ use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::settings::GitPanelSettings;
-use crate::{CommitAllChanges, CommitMode, CommitStagedChanges, DiscardAll, StageAll, UnstageAll};
+use crate::{CommitAllChanges, CommitStagedChanges, DiscardAll, StageAll, UnstageAll};
 
 actions!(git_panel, [ToggleFocus]);
 
@@ -40,6 +40,9 @@ pub struct GitPanel {
     pending_serialization: Task<Option<()>>,
     project: Model<Project>,
     width: Option<Pixels>,
+
+    init_modifiers: Option<Modifiers>,
+    current_modifiers: Modifiers,
 }
 
 impl GitPanel {
@@ -65,6 +68,10 @@ impl GitPanel {
             fs,
             pending_serialization: Task::ready(None),
             project,
+            init_modifiers: cx.modifiers().modified().then_some(cx.modifiers()),
+
+            current_modifiers: cx.modifiers(),
+
             width: Some(px(360.)),
         })
     }
@@ -91,6 +98,15 @@ impl GitPanel {
         dispatch_context.add("menu");
 
         dispatch_context
+    }
+
+    fn handle_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.current_modifiers = event.modifiers;
+        cx.notify();
     }
 }
 
@@ -202,6 +218,39 @@ impl GitPanel {
     }
 
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let focus_handle_1 = self.focus_handle(cx).clone();
+        let focus_handle_2 = self.focus_handle(cx).clone();
+
+        let commit_staged_button = self
+            .panel_button("commit-staged-changes", "Commit")
+            .tooltip(move |cx| {
+                let focus_handle = focus_handle_1.clone();
+                Tooltip::for_action_in(
+                    "Commit all staged changes",
+                    &CommitStagedChanges,
+                    &focus_handle,
+                    cx,
+                )
+            })
+            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
+                this.commit_staged_changes(&CommitStagedChanges, cx)
+            }));
+
+        let commit_all_button = self
+            .panel_button("commit-all-changes", "Commit All")
+            .tooltip(move |cx| {
+                let focus_handle = focus_handle_2.clone();
+                Tooltip::for_action_in(
+                    "Commit all changes, including unstaged changes",
+                    &CommitAllChanges,
+                    &focus_handle,
+                    cx,
+                )
+            })
+            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
+                this.commit_all_changes(&CommitAllChanges, cx)
+            }));
+
         div().w_full().h(px(140.)).px_2().pt_1().pb_2().child(
             v_flex()
                 .h_full()
@@ -214,14 +263,13 @@ impl GitPanel {
                 .child("Add a message")
                 .gap_1()
                 .child(div().flex_grow())
-                .child(
-                    h_flex().child(div().gap_1().flex_grow()).child(
-                        self.panel_button("commit-staged-changes", "Commit Staged Changes")
-                            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
-                                this.commit_staged_changes(&CommitStagedChanges, cx)
-                            })),
-                    ),
-                )
+                .child(h_flex().child(div().gap_1().flex_grow()).child(
+                    if self.current_modifiers.alt {
+                        commit_all_button
+                    } else {
+                        commit_staged_button
+                    },
+                ))
                 .cursor(CursorStyle::OperationNotAllowed)
                 .opacity(0.5),
         )
@@ -247,12 +295,12 @@ impl GitPanel {
 impl Render for GitPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
-        let mut commit_mode = CommitMode::Staged;
 
         v_flex()
             .id("git_panel")
             .key_context(self.dispatch_context())
             .track_focus(&self.focus_handle)
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .when(!project.is_read_only(cx), |this| {
                 this.on_action(cx.listener(|this, &StageAll, cx| this.stage_all(&StageAll, cx)))
                     .on_action(
