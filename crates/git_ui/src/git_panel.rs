@@ -352,14 +352,21 @@ impl GitPanel {
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(true, 0);
             while let Some(entry) = entry_iter.entry() {
-                visible_worktree_entries.push(entry.clone());
+                // Only include entries with a git status
+                if entry.git_status.is_some() {
+                    visible_worktree_entries.push(entry.clone());
+                }
                 entry_iter.advance();
             }
 
             snapshot.propagate_git_statuses(&mut visible_worktree_entries);
             project::sort_worktree_entries(&mut visible_worktree_entries);
-            self.visible_entries
-                .push((worktree_id, visible_worktree_entries, OnceCell::new()));
+
+            // Only add the worktree if it has visible entries
+            if !visible_worktree_entries.is_empty() {
+                self.visible_entries
+                    .push((worktree_id, visible_worktree_entries, OnceCell::new()));
+            }
         }
 
         if let Some((worktree_id, entry_id)) = new_selected_entry {
@@ -551,12 +558,25 @@ impl GitPanel {
         &self,
         id: ProjectEntryId,
         details: EntryDetails,
-        _cx: &ViewContext<Self>,
+        cx: &ViewContext<Self>,
     ) -> impl IntoElement {
+        let label_color = match details.status {
+            Some(GitFileStatus::Modified) => Color::Modified,
+            Some(GitFileStatus::Added) => Color::Created,
+            Some(GitFileStatus::Conflict) => Color::Conflict,
+            _ => Color::Default,
+        };
+
         h_flex()
             .id(id.to_proto() as usize)
             .h(px(28.))
             .w_full()
+            .pl(px(12.))
+            .pr(px(4.))
+            .items_center()
+            .text_color(label_color.color(cx))
+            .font_buffer(cx)
+            .text_ui_sm(cx)
             .child(details.filename.clone())
     }
 }
