@@ -54,6 +54,14 @@
     }
   },
   {
+    "context": "BufferSearchBar > Editor",
+    "bindings": {
+      "ctrl-s": "search::SelectNextMatch",
+      "ctrl-r": "search::SelectPrevMatch",
+      "ctrl-g": "buffer_search::Dismiss"
+    }
+  },
+  {
     "context": "Pane",
     "bindings": {
       "ctrl-alt-left": "pane::GoBack",
