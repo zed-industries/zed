@@ -1,12 +1,20 @@
-use std::sync::Arc;
-use util::TryFutureExt;
+use std::{
+    cell::OnceCell,
+    collections::HashSet,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+
+use util::{ResultExt, TryFutureExt};
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::*;
-use project::{Fs, Project};
+use project::{Entry, Fs, Project, ProjectEntryId, WorktreeId};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use ui::{prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Tooltip};
+use ui::{prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, ScrollbarState, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
@@ -28,6 +36,20 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+#[derive(Debug)]
+pub enum Event {
+    Focus,
+}
+
+pub struct GitStatusEntry {}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct EntryDetails {
+    filename: String,
+    path: Arc<Path>,
+    depth: usize,
+}
+
 #[derive(Serialize, Deserialize)]
 struct SerializedGitPanel {
     width: Option<Pixels>,
@@ -35,13 +57,20 @@ struct SerializedGitPanel {
 
 pub struct GitPanel {
     _workspace: WeakView<Workspace>,
+    current_modifiers: Modifiers,
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
+    hide_scrollbar_task: Option<Task<()>>,
     pending_serialization: Task<Option<()>>,
     project: Model<Project>,
+    scroll_handle: UniformListScrollHandle,
+    scrollbar_state: ScrollbarState,
+    selected_item: Option<usize>,
+    show_scrollbar: bool,
+    // The entries that are currently shown in the panel, aka
+    // not hidden by folding or such
+    visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
     width: Option<Pixels>,
-
-    current_modifiers: Modifiers,
 }
 
 impl GitPanel {
@@ -61,17 +90,35 @@ impl GitPanel {
         let fs = workspace.app_state().fs.clone();
         let weak_workspace = workspace.weak_handle();
 
-        cx.new_view(|cx| Self {
-            _workspace: weak_workspace,
-            focus_handle: cx.focus_handle(),
-            fs,
-            pending_serialization: Task::ready(None),
-            project,
+        let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
+            let focus_handle = cx.focus_handle();
+            cx.on_focus(&focus_handle, Self::focus_in).detach();
+            cx.on_focus_out(&focus_handle, |this, _, cx| {
+                this.hide_scrollbar(cx);
+            })
+            .detach();
 
-            current_modifiers: cx.modifiers(),
+            let scroll_handle = UniformListScrollHandle::new();
 
-            width: Some(px(360.)),
-        })
+            Self {
+                _workspace: weak_workspace,
+                focus_handle: cx.focus_handle(),
+                fs,
+                pending_serialization: Task::ready(None),
+                project,
+                visible_entries: Vec::new(),
+                current_modifiers: cx.modifiers(),
+
+                width: Some(px(360.)),
+                scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
+                scroll_handle,
+                selected_item: None,
+                show_scrollbar: !Self::should_autohide_scrollbar(cx),
+                hide_scrollbar_task: None,
+            }
+        });
+
+        git_panel
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
@@ -96,6 +143,35 @@ impl GitPanel {
         dispatch_context.add("menu");
 
         dispatch_context
+    }
+
+    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.focus_handle.contains_focused(cx) {
+            cx.emit(Event::Focus);
+        }
+    }
+
+    fn should_autohide_scrollbar(cx: &AppContext) -> bool {
+        // todo!(): plug into settings
+        true
+    }
+
+    fn hide_scrollbar(&mut self, cx: &mut ViewContext<Self>) {
+        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+        if !Self::should_autohide_scrollbar(cx) {
+            return;
+        }
+        self.hide_scrollbar_task = Some(cx.spawn(|panel, mut cx| async move {
+            cx.background_executor()
+                .timer(SCROLLBAR_SHOW_INTERVAL)
+                .await;
+            panel
+                .update(&mut cx, |panel, cx| {
+                    panel.show_scrollbar = false;
+                    cx.notify();
+                })
+                .log_err();
+        }))
     }
 
     fn handle_modifiers_changed(
@@ -139,6 +215,19 @@ impl GitPanel {
     fn all_staged(&self) -> bool {
         // todo!(): Implement all_staged
         true
+    }
+
+    fn no_entries(&self) -> bool {
+        // todo!(): Implement no entries
+        false
+    }
+
+    fn for_each_visible_entry(
+        &self,
+        range: Range<usize>,
+        cx: &mut ViewContext<Self>,
+        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<Self>),
+    ) {
     }
 }
 
@@ -268,6 +357,24 @@ impl GitPanel {
         )
     }
 
+    fn render_entries(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let item_count = self
+            .visible_entries
+            .iter()
+            .map(|(_, worktree_entries, _)| worktree_entries.len())
+            .sum();
+
+        uniform_list(cx.view().clone(), "entries", item_count, {
+            |this, range, cx| {
+                let mut items = Vec::with_capacity(range.end - range.start);
+                this.for_each_visible_entry(range, cx, |id, details, cx| {
+                    items.push(this.render_entry(id, details, cx));
+                });
+                items
+            }
+        })
+    }
+
     fn render_empty_state(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .h_full()
@@ -316,7 +423,11 @@ impl Render for GitPanel {
             .bg(ElevationIndex::Surface.bg(cx))
             .child(self.render_panel_header(cx))
             .child(self.render_divider(cx))
-            .child(self.render_empty_state(cx))
+            .child(if !self.no_entries() {
+                self.render_entries(cx).into_any_element()
+            } else {
+                self.render_empty_state(cx).into_any_element()
+            })
             .child(self.render_divider(cx))
             .child(self.render_commit_editor(cx))
     }
@@ -327,6 +438,8 @@ impl FocusableView for GitPanel {
         self.focus_handle.clone()
     }
 }
+
+impl EventEmitter<Event> for GitPanel {}
 
 impl EventEmitter<PanelEvent> for GitPanel {}
 
