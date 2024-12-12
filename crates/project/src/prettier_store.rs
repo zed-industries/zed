@@ -15,9 +15,9 @@ use futures::{
 use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, Task, WeakModel};
 use language::{
     language_settings::{Formatter, LanguageSettings, SelectedFormatter},
-    Buffer, LanguageRegistry, LanguageServerName, LocalFile,
+    Buffer, LanguageRegistry, LocalFile,
 };
-use lsp::{LanguageServer, LanguageServerId};
+use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use prettier::Prettier;

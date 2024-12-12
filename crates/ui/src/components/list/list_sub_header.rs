@@ -45,8 +45,8 @@ impl RenderOnce for ListSubHeader {
             .flex_1()
             .w_full()
             .relative()
-            .pb(Spacing::Small.rems(cx))
-            .px(Spacing::XSmall.rems(cx))
+            .pb(DynamicSpacing::Base04.rems(cx))
+            .px(DynamicSpacing::Base02.rems(cx))
             .child(
                 div()
                     .h_6()

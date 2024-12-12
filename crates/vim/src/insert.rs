@@ -3,10 +3,11 @@ use editor::{scroll::Autoscroll, Bias, Editor};
 use gpui::{actions, Action, ViewContext};
 use language::SelectionGoal;
 
-actions!(vim, [NormalBefore]);
+actions!(vim, [NormalBefore, TemporaryNormal]);
 
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, Vim::normal_before);
+    Vim::action(editor, cx, Vim::temporary_normal);
 }
 
 impl Vim {
@@ -16,7 +17,7 @@ impl Vim {
             self.sync_vim_settings(cx);
             return;
         }
-        let count = self.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         self.stop_recording_immediately(action.boxed_clone(), cx);
         if count <= 1 || Vim::globals(cx).dot_replaying {
             self.create_mark("^".into(), false, cx);
@@ -34,6 +35,11 @@ impl Vim {
         }
 
         self.repeat(true, cx)
+    }
+
+    fn temporary_normal(&mut self, _: &TemporaryNormal, cx: &mut ViewContext<Self>) {
+        self.switch_mode(Mode::Normal, true, cx);
+        self.temp_mode = true;
     }
 }
 

@@ -124,8 +124,6 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 
 3. In the assistant panel, select one of the Ollama models using the model dropdown.
 
-4. (Optional) Specify an [`api_url`](#custom-endpoint) or [`low_speed_timeout_in_seconds`](#provider-timeout) if required.
-
 #### Ollama Context Length {#ollama-context}
 
 Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models. Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box. See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
@@ -139,7 +137,6 @@ Depending on your hardware or use-case you may wish to limit or increase the con
   "language_models": {
     "ollama": {
       "api_url": "http://localhost:11434",
-      "low_speed_timeout_in_seconds": 120,
       "available_models": [
         {
           "name": "qwen2.5-coder",
@@ -195,6 +192,30 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 
 You must provide the model's Context Window in the `max_tokens` parameter, this can be found [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the assistant panel.
 
+### OpenAI API Compatible
+
+Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
+
+#### X.ai Grok
+
+Example configuration for using X.ai Grok with Zed:
+
+```json
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.x.ai/v1",
+      "available_models": [
+        {
+          "name": "grok-beta",
+          "display_name": "X.ai Grok (Beta)",
+          "max_tokens": 131072
+        }
+      ],
+      "version": "1"
+    },
+  }
+```
+
 ### Advanced configuration {#advanced-configuration}
 
 #### Example Configuration
@@ -232,22 +253,6 @@ To do so, add the following to your Zed `settings.json`:
 ```
 
 Where `some-provider` can be any of the following values: `anthropic`, `google`, `ollama`, `openai`.
-
-#### Custom timeout {#provider-timeout}
-
-You can customize the timeout that's used for LLM requests, by adding the following to your Zed `settings.json`:
-
-```json
-{
-  "language_models": {
-    "some-provider": {
-      "low_speed_timeout_in_seconds": 10
-    }
-  }
-}
-```
-
-Where `some-provider` can be any of the following values: `anthropic`, `copilot_chat`, `google`, `ollama`, `openai`.
 
 #### Configuring the default model {#default-model}
 

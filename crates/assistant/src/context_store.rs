@@ -1,16 +1,16 @@
 use crate::slash_command::context_server_command;
+use crate::SlashCommandId;
 use crate::{
     prompts::PromptBuilder, slash_command_working_set::SlashCommandWorkingSet, Context,
     ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext, SavedContextMetadata,
 };
-use crate::{tools, SlashCommandId, ToolId, ToolWorkingSet};
 use anyhow::{anyhow, Context as _, Result};
+use assistant_tool::{ToolId, ToolWorkingSet};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
 use collections::HashMap;
-use command_palette_hooks::CommandPaletteFilter;
-use context_servers::manager::{ContextServerManager, ContextServerSettings};
-use context_servers::{ContextServerFactoryRegistry, CONTEXT_SERVERS_NAMESPACE};
+use context_server::manager::ContextServerManager;
+use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -22,7 +22,6 @@ use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
 use rpc::AnyProtoClient;
-use settings::{Settings as _, SettingsStore};
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -111,7 +110,11 @@ impl ContextStore {
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
             let this = cx.new_model(|cx: &mut ModelContext<Self>| {
-                let context_server_manager = cx.new_model(|_cx| ContextServerManager::new());
+                let context_server_factory_registry =
+                    ContextServerFactoryRegistry::default_global(cx);
+                let context_server_manager = cx.new_model(|cx| {
+                    ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
+                });
                 let mut this = Self {
                     contexts: Vec::new(),
                     contexts_metadata: Vec::new(),
@@ -145,89 +148,17 @@ impl ContextStore {
                     project: project.clone(),
                     prompt_builder,
                 };
-                this.handle_project_changed(project, cx);
+                this.handle_project_changed(project.clone(), cx);
                 this.synchronize_contexts(cx);
                 this.register_context_server_handlers(cx);
-
-                // TODO: At the time when we construct the `ContextStore` we may not have yet initialized the extensions.
-                // In order to register the context servers when the extension is loaded, we're periodically looping to
-                // see if there are context servers to register.
-                //
-                // I tried doing this in a subscription on the `ExtensionStore`, but it never seemed to fire.
-                //
-                // We should find a more elegant way to do this.
-                let context_server_factory_registry =
-                    ContextServerFactoryRegistry::default_global(cx);
-                cx.spawn(|context_store, mut cx| async move {
-                    loop {
-                        let mut servers_to_register = Vec::new();
-                        for (_id, factory) in
-                            context_server_factory_registry.context_server_factories()
-                        {
-                            if let Some(server) = factory(&cx).await.log_err() {
-                                servers_to_register.push(server);
-                            }
-                        }
-
-                        let Some(_) = context_store
-                            .update(&mut cx, |this, cx| {
-                                this.context_server_manager.update(cx, |this, cx| {
-                                    for server in servers_to_register {
-                                        this.add_server(server, cx).detach_and_log_err(cx);
-                                    }
-                                })
-                            })
-                            .log_err()
-                        else {
-                            break;
-                        };
-
-                        smol::Timer::after(Duration::from_millis(100)).await;
-                    }
-
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-
                 this
             })?;
             this.update(&mut cx, |this, cx| this.reload(cx))?
                 .await
                 .log_err();
 
-            this.update(&mut cx, |this, cx| {
-                this.watch_context_server_settings(cx);
-            })
-            .log_err();
-
             Ok(this)
         })
-    }
-
-    fn watch_context_server_settings(&self, cx: &mut ModelContext<Self>) {
-        cx.observe_global::<SettingsStore>(move |this, cx| {
-            this.context_server_manager.update(cx, |manager, cx| {
-                let location = this.project.read(cx).worktrees(cx).next().map(|worktree| {
-                    settings::SettingsLocation {
-                        worktree_id: worktree.read(cx).id(),
-                        path: Path::new(""),
-                    }
-                });
-                let settings = ContextServerSettings::get(location, cx);
-
-                manager.maintain_servers(settings, cx);
-
-                let has_any_context_servers = !manager.servers().is_empty();
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    if has_any_context_servers {
-                        filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
-                    } else {
-                        filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
-                    }
-                });
-            })
-        })
-        .detach();
     }
 
     async fn handle_advertise_contexts(
@@ -840,7 +771,7 @@ impl ContextStore {
                         contexts.push(SavedContextMetadata {
                             title: title.to_string(),
                             path,
-                            mtime: metadata.mtime.into(),
+                            mtime: metadata.mtime.timestamp_for_user().into(),
                         });
                     }
                 }
@@ -878,13 +809,13 @@ impl ContextStore {
     fn handle_context_server_event(
         &mut self,
         context_server_manager: Model<ContextServerManager>,
-        event: &context_servers::manager::Event,
+        event: &context_server::manager::Event,
         cx: &mut ModelContext<Self>,
     ) {
         let slash_command_working_set = self.slash_commands.clone();
         let tool_working_set = self.tools.clone();
         match event {
-            context_servers::manager::Event::ServerStarted { server_id } => {
+            context_server::manager::Event::ServerStarted { server_id } => {
                 if let Some(server) = context_server_manager.read(cx).get_server(server_id) {
                     let context_server_manager = context_server_manager.clone();
                     cx.spawn({
@@ -895,7 +826,7 @@ impl ContextStore {
                                 return;
                             };
 
-                            if protocol.capable(context_servers::protocol::ServerCapability::Prompts) {
+                            if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
                                 if let Some(prompts) = protocol.list_prompts().await.log_err() {
                                     let slash_command_ids = prompts
                                         .into_iter()
@@ -923,12 +854,12 @@ impl ContextStore {
                                 }
                             }
 
-                            if protocol.capable(context_servers::protocol::ServerCapability::Tools) {
+                            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
                                 if let Some(tools) = protocol.list_tools().await.log_err() {
                                     let tool_ids = tools.tools.into_iter().map(|tool| {
                                         log::info!("registering context server tool: {:?}", tool.name);
                                         tool_working_set.insert(
-                                            Arc::new(tools::context_server_tool::ContextServerTool::new(
+                                            Arc::new(ContextServerTool::new(
                                                 context_server_manager.clone(),
                                                 server.id(),
                                                 tool,
@@ -950,7 +881,7 @@ impl ContextStore {
                     .detach();
                 }
             }
-            context_servers::manager::Event::ServerStopped { server_id } => {
+            context_server::manager::Event::ServerStopped { server_id } => {
                 if let Some(slash_command_ids) =
                     self.context_server_slash_command_ids.remove(server_id)
                 {

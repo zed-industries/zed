@@ -1,16 +1,16 @@
 use super::{
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    BoolExt,
+    renderer, screen_capture, BoolExt,
 };
 use crate::{
     hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
     ClipboardString, CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowAppearance,
-    WindowParams,
+    PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task,
+    WindowAppearance, WindowParams,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -19,7 +19,7 @@ use cocoa::{
         NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
         NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
     },
-    base::{id, nil, selector, BOOL, YES},
+    base::{id, nil, selector, BOOL, NO, YES},
     foundation::{
         NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSString,
         NSUInteger, NSURL,
@@ -57,8 +57,7 @@ use std::{
     sync::Arc,
 };
 use strum::IntoEnumIterator;
-
-use super::renderer;
+use util::ResultExt;
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -343,6 +342,10 @@ impl MacPlatform {
                                 ns_string(key_to_native(&keystroke.key).as_ref()),
                             )
                             .autorelease();
+                        if MacPlatform::os_version().unwrap() >= SemanticVersion::new(12, 0, 0) {
+                            let _: () =
+                                msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
+                        }
                         item.setKeyEquivalentModifierMask_(mask);
                     }
                     // For multi-keystroke bindings, render the keystroke as part of the title.
@@ -546,6 +549,12 @@ impl Platform for MacPlatform {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        screen_capture::get_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -771,15 +780,16 @@ impl Platform for MacPlatform {
     }
 
     fn open_with_system(&self, path: &Path) {
-        let path = path.to_path_buf();
+        let path = path.to_owned();
         self.0
             .lock()
             .background_executor
             .spawn(async move {
-                std::process::Command::new("open")
+                let _ = std::process::Command::new("open")
                     .arg(path)
                     .spawn()
-                    .expect("Failed to open file");
+                    .context("invoking open command")
+                    .log_err();
             })
             .detach();
     }
@@ -840,7 +850,9 @@ impl Platform for MacPlatform {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            app.setMainMenu_(self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap));
+            let menu = self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap);
+            drop(state);
+            app.setMainMenu_(menu);
         }
     }
 
@@ -1448,13 +1460,27 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
 
 #[link(name = "Carbon", kind = "framework")]
 extern "C" {
-    fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
-    fn TISGetInputSourceProperty(
+    pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
+    pub(super) fn TISGetInputSourceProperty(
         inputSource: *mut Object,
         propertyKey: *const c_void,
     ) -> *mut Object;
 
-    pub static kTISPropertyInputSourceID: CFStringRef;
+    pub(super) fn UCKeyTranslate(
+        keyLayoutPtr: *const ::std::os::raw::c_void,
+        virtualKeyCode: u16,
+        keyAction: u16,
+        modifierKeyState: u32,
+        keyboardType: u32,
+        keyTranslateOptions: u32,
+        deadKeyState: *mut u32,
+        maxStringLength: usize,
+        actualStringLength: *mut usize,
+        unicodeString: *mut u16,
+    ) -> u32;
+    pub(super) fn LMGetKbdType() -> u16;
+    pub(super) static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
+    pub(super) static kTISPropertyInputSourceID: CFStringRef;
 }
 
 mod security {

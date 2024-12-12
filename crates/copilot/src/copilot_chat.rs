@@ -1,18 +1,17 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::OnceLock;
-use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use chrono::DateTime;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Global};
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
+use gpui::{prelude::*, AppContext, AsyncAppContext, Global};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_file;
 use strum::EnumIter;
-use ui::Context;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
 pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
@@ -197,7 +196,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut AppContext) {
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
-fn copilot_chat_config_path() -> &'static PathBuf {
+fn copilot_chat_config_dir() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
@@ -207,8 +206,12 @@ fn copilot_chat_config_path() -> &'static PathBuf {
             home_dir().join(".config")
         }
         .join("github-copilot")
-        .join("hosts.json")
     })
+}
+
+fn copilot_chat_config_paths() -> [PathBuf; 2] {
+    let base_dir = copilot_chat_config_dir();
+    [base_dir.join("hosts.json"), base_dir.join("apps.json")]
 }
 
 impl CopilotChat {
@@ -218,13 +221,24 @@ impl CopilotChat {
     }
 
     pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &AppContext) -> Self {
-        let mut config_file_rx = watch_config_file(
-            cx.background_executor(),
-            fs,
-            copilot_chat_config_path().clone(),
-        );
+        let config_paths = copilot_chat_config_paths();
+
+        let resolve_config_path = {
+            let fs = fs.clone();
+            async move {
+                for config_path in config_paths.iter() {
+                    if fs.metadata(config_path).await.is_ok_and(|v| v.is_some()) {
+                        return config_path.clone();
+                    }
+                }
+                config_paths[0].clone()
+            }
+        };
 
         cx.spawn(|cx| async move {
+            let config_file = resolve_config_path.await;
+            let mut config_file_rx = watch_config_file(cx.background_executor(), fs, config_file);
+
             while let Some(contents) = config_file_rx.next().await {
                 let oauth_token = extract_oauth_token(contents);
 
@@ -254,7 +268,6 @@ impl CopilotChat {
 
     pub async fn stream_completion(
         request: Request,
-        low_speed_timeout: Option<Duration>,
         mut cx: AsyncAppContext,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let Some(this) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
@@ -274,8 +287,7 @@ impl CopilotChat {
         let token = match api_token {
             Some(api_token) if api_token.remaining_seconds() > 5 * 60 => api_token.clone(),
             _ => {
-                let token =
-                    request_api_token(&oauth_token, client.clone(), low_speed_timeout).await?;
+                let token = request_api_token(&oauth_token, client.clone()).await?;
                 this.update(&mut cx, |this, cx| {
                     this.api_token = Some(token.clone());
                     cx.notify();
@@ -284,24 +296,16 @@ impl CopilotChat {
             }
         };
 
-        stream_completion(client.clone(), token.api_key, request, low_speed_timeout).await
+        stream_completion(client.clone(), token.api_key, request).await
     }
 }
 
-async fn request_api_token(
-    oauth_token: &str,
-    client: Arc<dyn HttpClient>,
-    low_speed_timeout: Option<Duration>,
-) -> Result<ApiToken> {
-    let mut request_builder = HttpRequest::builder()
+async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Result<ApiToken> {
+    let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(COPILOT_CHAT_AUTH_URL)
         .header("Authorization", format!("token {}", oauth_token))
         .header("Accept", "application/json");
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.read_timeout(low_speed_timeout);
-    }
 
     let request = request_builder.body(AsyncBody::empty())?;
 
@@ -328,9 +332,15 @@ async fn request_api_token(
 fn extract_oauth_token(contents: String) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(&contents)
         .map(|v| {
-            v["github.com"]["oauth_token"]
-                .as_str()
-                .map(|v| v.to_string())
+            v.as_object().and_then(|obj| {
+                obj.iter().find_map(|(key, value)| {
+                    if key.starts_with("github.com") {
+                        value["oauth_token"].as_str().map(|v| v.to_string())
+                    } else {
+                        None
+                    }
+                })
+            })
         })
         .ok()
         .flatten()
@@ -340,9 +350,8 @@ async fn stream_completion(
     client: Arc<dyn HttpClient>,
     api_key: String,
     request: Request,
-    low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(COPILOT_CHAT_COMPLETION_URL)
         .header(
@@ -356,9 +365,6 @@ async fn stream_completion(
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat");
 
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.read_timeout(low_speed_timeout);
-    }
     let is_streaming = request.stream;
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;

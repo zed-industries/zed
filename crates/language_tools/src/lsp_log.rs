@@ -7,10 +7,10 @@ use gpui::{
     IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
     ViewContext, VisualContext, WeakModel, WindowContext,
 };
-use language::{LanguageServerId, LanguageServerName};
+use language::LanguageServerId;
 use lsp::{
-    notification::SetTrace, IoKind, LanguageServer, MessageType, ServerCapabilities,
-    SetTraceParams, TraceValue,
+    notification::SetTrace, IoKind, LanguageServer, LanguageServerName, MessageType,
+    ServerCapabilities, SetTraceParams, TraceValue,
 };
 use project::{search::SearchQuery, Project, WorktreeId};
 use std::{borrow::Cow, sync::Arc};
@@ -751,7 +751,7 @@ impl LspLogView {
         let mut rows = log_store
             .language_servers
             .iter()
-            .filter_map(|(server_id, state)| match &state.kind {
+            .map(|(server_id, state)| match &state.kind {
                 LanguageServerKind::Local { .. } | LanguageServerKind::Remote { .. } => {
                     let worktree_root_name = state
                         .worktree_id
@@ -759,8 +759,7 @@ impl LspLogView {
                         .map(|worktree| worktree.read(cx).root_name().to_string())
                         .unwrap_or_else(|| "Unknown worktree".to_string());
 
-                    let state = log_store.language_servers.get(&server_id)?;
-                    Some(LogMenuItem {
+                    LogMenuItem {
                         server_id: *server_id,
                         server_name: state.name.clone().unwrap_or(unknown_server.clone()),
                         server_kind: state.kind.clone(),
@@ -768,10 +767,10 @@ impl LspLogView {
                         rpc_trace_enabled: state.rpc_state.is_some(),
                         selected_entry: self.active_entry_kind,
                         trace_level: lsp::TraceValue::Off,
-                    })
+                    }
                 }
 
-                LanguageServerKind::Global => Some(LogMenuItem {
+                LanguageServerKind::Global => LogMenuItem {
                     server_id: *server_id,
                     server_name: state.name.clone().unwrap_or(unknown_server.clone()),
                     server_kind: state.kind.clone(),
@@ -779,7 +778,7 @@ impl LspLogView {
                     rpc_trace_enabled: state.rpc_state.is_some(),
                     selected_entry: self.active_entry_kind,
                     trace_level: lsp::TraceValue::Off,
-                }),
+                },
             })
             .chain(
                 self.project
@@ -1146,19 +1145,28 @@ impl Render for LspLogToolbarItemView {
                 None
             }
         });
-
+        let available_language_servers: Vec<_> = menu_rows
+            .iter()
+            .map(|row| {
+                (
+                    row.server_id,
+                    row.server_name.clone(),
+                    row.worktree_root_name.clone(),
+                    row.selected_entry,
+                )
+            })
+            .collect();
         let log_toolbar_view = cx.view().clone();
         let lsp_menu = PopoverMenu::new("LspLogView")
             .anchor(AnchorCorner::TopLeft)
             .trigger(Button::new(
                 "language_server_menu_header",
                 current_server
+                    .as_ref()
                     .map(|row| {
                         Cow::Owned(format!(
-                            "{} ({}) - {}",
-                            row.server_name.0,
-                            row.worktree_root_name,
-                            row.selected_entry.label()
+                            "{} ({})",
+                            row.server_name.0, row.worktree_root_name,
                         ))
                     })
                     .unwrap_or_else(|| "No server selected".into()),
@@ -1166,36 +1174,71 @@ impl Render for LspLogToolbarItemView {
             .menu({
                 let log_view = log_view.clone();
                 move |cx| {
-                    let menu_rows = menu_rows.clone();
                     let log_view = log_view.clone();
-                    let log_toolbar_view = log_toolbar_view.clone();
-                    ContextMenu::build(cx, move |mut menu, cx| {
-                        for (ix, row) in menu_rows.into_iter().enumerate() {
-                            let server_selected = Some(row.server_id) == current_server_id;
-                            menu = menu
-                                .header(format!(
-                                    "{} ({})",
-                                    row.server_name.0, row.worktree_root_name
-                                ))
-                                .entry(
-                                    SERVER_LOGS,
-                                    None,
-                                    cx.handler_for(&log_view, move |view, cx| {
-                                        view.show_logs_for_server(row.server_id, cx);
-                                    }),
-                                );
-                            // We do not support tracing for remote language servers right now
-                            if row.server_kind.is_remote() {
-                                return menu;
-                            }
+                    ContextMenu::build(cx, |mut menu, cx| {
+                        for (server_id, name, worktree_root, active_entry_kind) in
+                            available_language_servers.iter()
+                        {
+                            let label = format!("{} ({})", name, worktree_root);
+                            let server_id = *server_id;
+                            let active_entry_kind = *active_entry_kind;
                             menu = menu.entry(
+                                label,
+                                None,
+                                cx.handler_for(&log_view, move |view, cx| {
+                                    view.current_server_id = Some(server_id);
+                                    view.active_entry_kind = active_entry_kind;
+                                    match view.active_entry_kind {
+                                        LogKind::Rpc => {
+                                            view.toggle_rpc_trace_for_server(server_id, true, cx);
+                                            view.show_rpc_trace_for_server(server_id, cx);
+                                        }
+                                        LogKind::Trace => view.show_trace_for_server(server_id, cx),
+                                        LogKind::Logs => view.show_logs_for_server(server_id, cx),
+                                        LogKind::Capabilities => {
+                                            view.show_capabilities_for_server(server_id, cx)
+                                        }
+                                    }
+                                    cx.notify();
+                                }),
+                            );
+                        }
+                        menu
+                    })
+                    .into()
+                }
+            });
+        let view_selector = current_server.map(|server| {
+            let server_id = server.server_id;
+            let is_remote = server.server_kind.is_remote();
+            let rpc_trace_enabled = server.rpc_trace_enabled;
+            let log_view = log_view.clone();
+            PopoverMenu::new("LspViewSelector")
+                .anchor(AnchorCorner::TopLeft)
+                .trigger(Button::new(
+                    "language_server_menu_header",
+                    server.selected_entry.label(),
+                ))
+                .menu(move |cx| {
+                    let log_toolbar_view = log_toolbar_view.clone();
+                    let log_view = log_view.clone();
+                    Some(ContextMenu::build(cx, move |this, cx| {
+                        this.entry(
+                            SERVER_LOGS,
+                            None,
+                            cx.handler_for(&log_view, move |view, cx| {
+                                view.show_logs_for_server(server_id, cx);
+                            }),
+                        )
+                        .when(!is_remote, |this| {
+                            this.entry(
                                 SERVER_TRACE,
                                 None,
                                 cx.handler_for(&log_view, move |view, cx| {
-                                    view.show_trace_for_server(row.server_id, cx);
+                                    view.show_trace_for_server(server_id, cx);
                                 }),
-                            );
-                            menu = menu.custom_entry(
+                            )
+                            .custom_entry(
                                 {
                                     let log_toolbar_view = log_toolbar_view.clone();
                                     move |cx| {
@@ -1206,8 +1249,8 @@ impl Render for LspLogToolbarItemView {
                                             .child(
                                                 div().child(
                                                     Checkbox::new(
-                                                        ix,
-                                                        if row.rpc_trace_enabled {
+                                                        "LspLogEnableRpcTrace",
+                                                        if rpc_trace_enabled {
                                                             Selection::Selected
                                                         } else {
                                                             Selection::Unselected
@@ -1221,9 +1264,7 @@ impl Render for LspLogToolbarItemView {
                                                                 Selection::Selected
                                                             );
                                                             view.toggle_rpc_logging_for_server(
-                                                                row.server_id,
-                                                                enabled,
-                                                                cx,
+                                                                server_id, enabled, cx,
                                                             );
                                                             cx.stop_propagation();
                                                         },
@@ -1234,42 +1275,148 @@ impl Render for LspLogToolbarItemView {
                                     }
                                 },
                                 cx.handler_for(&log_view, move |view, cx| {
-                                    view.show_rpc_trace_for_server(row.server_id, cx);
+                                    view.show_rpc_trace_for_server(server_id, cx);
                                 }),
-                            );
-                            if server_selected && row.selected_entry == LogKind::Rpc {
-                                let selected_ix = menu.select_last();
-                                // Each language server has:
-                                // 1. A title.
-                                // 2. Server logs.
-                                // 3. Server trace.
-                                // 4. RPC messages.
-                                // 5. Server capabilities
-                                // Thus, if nth server's RPC is selected, the index of selected entry should match this formula
-                                let _expected_index = ix * 5 + 3;
-                                debug_assert_eq!(
-                                    Some(_expected_index),
-                                    selected_ix,
-                                    "Could not scroll to a just added LSP menu item"
-                                );
-                            }
-                            menu = menu.entry(
-                                SERVER_CAPABILITIES,
-                                None,
-                                cx.handler_for(&log_view, move |view, cx| {
-                                    view.show_capabilities_for_server(row.server_id, cx);
-                                }),
-                            );
-                        }
-                        menu
-                    })
-                    .into()
-                }
-            });
-
+                            )
+                        })
+                        .entry(
+                            SERVER_CAPABILITIES,
+                            None,
+                            cx.handler_for(&log_view, move |view, cx| {
+                                view.show_capabilities_for_server(server_id, cx);
+                            }),
+                        )
+                    }))
+                })
+        });
         h_flex()
             .size_full()
-            .child(lsp_menu)
+            .justify_between()
+            .child(
+                h_flex()
+                    .child(lsp_menu)
+                    .children(view_selector)
+                    .child(log_view.update(cx, |this, _| match this.active_entry_kind {
+                        LogKind::Trace => {
+                            let log_view = log_view.clone();
+                            div().child(
+                                PopoverMenu::new("lsp-trace-level-menu")
+                                    .anchor(AnchorCorner::TopLeft)
+                                    .trigger(Button::new(
+                                        "language_server_trace_level_selector",
+                                        "Trace level",
+                                    ))
+                                    .menu({
+                                        let log_view = log_view.clone();
+
+                                        move |cx| {
+                                            let id = log_view.read(cx).current_server_id?;
+
+                                            let trace_level = log_view.update(cx, |this, cx| {
+                                                this.log_store.update(cx, |this, _| {
+                                                    Some(
+                                                        this.get_language_server_state(id)?
+                                                            .trace_level,
+                                                    )
+                                                })
+                                            })?;
+
+                                            ContextMenu::build(cx, |mut menu, _| {
+                                                let log_view = log_view.clone();
+
+                                                for (option, label) in [
+                                                    (TraceValue::Off, "Off"),
+                                                    (TraceValue::Messages, "Messages"),
+                                                    (TraceValue::Verbose, "Verbose"),
+                                                ] {
+                                                    menu = menu.entry(label, None, {
+                                                        let log_view = log_view.clone();
+                                                        move |cx| {
+                                                            log_view.update(cx, |this, cx| {
+                                                                if let Some(id) =
+                                                                    this.current_server_id
+                                                                {
+                                                                    this.update_trace_level(
+                                                                        id, option, cx,
+                                                                    );
+                                                                }
+                                                            });
+                                                        }
+                                                    });
+                                                    if option == trace_level {
+                                                        menu.select_last();
+                                                    }
+                                                }
+
+                                                menu
+                                            })
+                                            .into()
+                                        }
+                                    }),
+                            )
+                        }
+                        LogKind::Logs => {
+                            let log_view = log_view.clone();
+                            div().child(
+                                PopoverMenu::new("lsp-log-level-menu")
+                                    .anchor(AnchorCorner::TopLeft)
+                                    .trigger(Button::new(
+                                        "language_server_log_level_selector",
+                                        "Log level",
+                                    ))
+                                    .menu({
+                                        let log_view = log_view.clone();
+
+                                        move |cx| {
+                                            let id = log_view.read(cx).current_server_id?;
+
+                                            let log_level = log_view.update(cx, |this, cx| {
+                                                this.log_store.update(cx, |this, _| {
+                                                    Some(
+                                                        this.get_language_server_state(id)?
+                                                            .log_level,
+                                                    )
+                                                })
+                                            })?;
+
+                                            ContextMenu::build(cx, |mut menu, _| {
+                                                let log_view = log_view.clone();
+
+                                                for (option, label) in [
+                                                    (MessageType::LOG, "Log"),
+                                                    (MessageType::INFO, "Info"),
+                                                    (MessageType::WARNING, "Warning"),
+                                                    (MessageType::ERROR, "Error"),
+                                                ] {
+                                                    menu = menu.entry(label, None, {
+                                                        let log_view = log_view.clone();
+                                                        move |cx| {
+                                                            log_view.update(cx, |this, cx| {
+                                                                if let Some(id) =
+                                                                    this.current_server_id
+                                                                {
+                                                                    this.update_log_level(
+                                                                        id, option, cx,
+                                                                    );
+                                                                }
+                                                            });
+                                                        }
+                                                    });
+                                                    if option == log_level {
+                                                        menu.select_last();
+                                                    }
+                                                }
+
+                                                menu
+                                            })
+                                            .into()
+                                        }
+                                    }),
+                            )
+                        }
+                        _ => div(),
+                    })),
+            )
             .child(
                 div()
                     .child(
@@ -1289,112 +1436,6 @@ impl Render for LspLogToolbarItemView {
                     )
                     .ml_2(),
             )
-            .child(log_view.update(cx, |this, _| match this.active_entry_kind {
-                LogKind::Trace => {
-                    let log_view = log_view.clone();
-                    div().child(
-                        PopoverMenu::new("lsp-trace-level-menu")
-                            .anchor(AnchorCorner::TopLeft)
-                            .trigger(Button::new(
-                                "language_server_trace_level_selector",
-                                "Trace level",
-                            ))
-                            .menu({
-                                let log_view = log_view.clone();
-
-                                move |cx| {
-                                    let id = log_view.read(cx).current_server_id?;
-
-                                    let trace_level = log_view.update(cx, |this, cx| {
-                                        this.log_store.update(cx, |this, _| {
-                                            Some(this.get_language_server_state(id)?.trace_level)
-                                        })
-                                    })?;
-
-                                    ContextMenu::build(cx, |mut menu, _| {
-                                        let log_view = log_view.clone();
-
-                                        for (option, label) in [
-                                            (TraceValue::Off, "Off"),
-                                            (TraceValue::Messages, "Messages"),
-                                            (TraceValue::Verbose, "Verbose"),
-                                        ] {
-                                            menu = menu.entry(label, None, {
-                                                let log_view = log_view.clone();
-                                                move |cx| {
-                                                    log_view.update(cx, |this, cx| {
-                                                        if let Some(id) = this.current_server_id {
-                                                            this.update_trace_level(id, option, cx);
-                                                        }
-                                                    });
-                                                }
-                                            });
-                                            if option == trace_level {
-                                                menu.select_last();
-                                            }
-                                        }
-
-                                        menu
-                                    })
-                                    .into()
-                                }
-                            }),
-                    )
-                }
-                LogKind::Logs => {
-                    let log_view = log_view.clone();
-                    div().child(
-                        PopoverMenu::new("lsp-log-level-menu")
-                            .anchor(AnchorCorner::TopLeft)
-                            .trigger(Button::new(
-                                "language_server_log_level_selector",
-                                "Log level",
-                            ))
-                            .menu({
-                                let log_view = log_view.clone();
-
-                                move |cx| {
-                                    let id = log_view.read(cx).current_server_id?;
-
-                                    let log_level = log_view.update(cx, |this, cx| {
-                                        this.log_store.update(cx, |this, _| {
-                                            Some(this.get_language_server_state(id)?.log_level)
-                                        })
-                                    })?;
-
-                                    ContextMenu::build(cx, |mut menu, _| {
-                                        let log_view = log_view.clone();
-
-                                        for (option, label) in [
-                                            (MessageType::LOG, "Log"),
-                                            (MessageType::INFO, "Info"),
-                                            (MessageType::WARNING, "Warning"),
-                                            (MessageType::ERROR, "Error"),
-                                        ] {
-                                            menu = menu.entry(label, None, {
-                                                let log_view = log_view.clone();
-                                                move |cx| {
-                                                    log_view.update(cx, |this, cx| {
-                                                        if let Some(id) = this.current_server_id {
-                                                            this.update_log_level(id, option, cx);
-                                                        }
-                                                    });
-                                                }
-                                            });
-                                            if option == log_level {
-                                                menu.select_last();
-                                            }
-                                        }
-
-                                        menu
-                                    })
-                                    .into()
-                                }
-                            }),
-                    )
-                }
-                _ => div(),
-            }))
     }
 }
 

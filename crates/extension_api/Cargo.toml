@@ -8,9 +8,6 @@ keywords = ["zed", "extension"]
 edition = "2021"
 license = "Apache-2.0"
 
-# Remove when we're ready to publish v0.2.0.
-publish = false
-
 [lints]
 workspace = true
 

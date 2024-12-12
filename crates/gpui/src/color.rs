@@ -22,6 +22,17 @@ pub fn rgba(hex: u32) -> Rgba {
     Rgba { r, g, b, a }
 }
 
+/// Swap from RGBA with premultiplied alpha to BGRA
+pub(crate) fn swap_rgba_pa_to_bgra(color: &mut [u8]) {
+    color.swap(0, 2);
+    if color[3] > 0 {
+        let a = color[3] as f32 / 255.;
+        color[0] = (color[0] as f32 / a) as u8;
+        color[1] = (color[1] as f32 / a) as u8;
+        color[2] = (color[2] as f32 / a) as u8;
+    }
+}
+
 /// An RGBA color
 #[derive(PartialEq, Clone, Copy, Default)]
 pub struct Rgba {
@@ -303,7 +314,7 @@ pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
 }
 
 /// Pure black in [`Hsla`]
-pub fn black() -> Hsla {
+pub const fn black() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -313,7 +324,7 @@ pub fn black() -> Hsla {
 }
 
 /// Transparent black in [`Hsla`]
-pub fn transparent_black() -> Hsla {
+pub const fn transparent_black() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -323,7 +334,7 @@ pub fn transparent_black() -> Hsla {
 }
 
 /// Transparent black in [`Hsla`]
-pub fn transparent_white() -> Hsla {
+pub const fn transparent_white() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -343,7 +354,7 @@ pub fn opaque_grey(lightness: f32, opacity: f32) -> Hsla {
 }
 
 /// Pure white in [`Hsla`]
-pub fn white() -> Hsla {
+pub const fn white() -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -353,7 +364,7 @@ pub fn white() -> Hsla {
 }
 
 /// The color red in [`Hsla`]
-pub fn red() -> Hsla {
+pub const fn red() -> Hsla {
     Hsla {
         h: 0.,
         s: 1.,
@@ -363,9 +374,9 @@ pub fn red() -> Hsla {
 }
 
 /// The color blue in [`Hsla`]
-pub fn blue() -> Hsla {
+pub const fn blue() -> Hsla {
     Hsla {
-        h: 0.6,
+        h: 0.6666666667,
         s: 1.,
         l: 0.5,
         a: 1.,
@@ -373,19 +384,19 @@ pub fn blue() -> Hsla {
 }
 
 /// The color green in [`Hsla`]
-pub fn green() -> Hsla {
+pub const fn green() -> Hsla {
     Hsla {
-        h: 0.33,
+        h: 0.3333333333,
         s: 1.,
-        l: 0.5,
+        l: 0.25,
         a: 1.,
     }
 }
 
 /// The color yellow in [`Hsla`]
-pub fn yellow() -> Hsla {
+pub const fn yellow() -> Hsla {
     Hsla {
-        h: 0.16,
+        h: 0.1666666667,
         s: 1.,
         l: 0.5,
         a: 1.,
@@ -399,32 +410,32 @@ impl Hsla {
     }
 
     /// The color red
-    pub fn red() -> Self {
+    pub const fn red() -> Self {
         red()
     }
 
     /// The color green
-    pub fn green() -> Self {
+    pub const fn green() -> Self {
         green()
     }
 
     /// The color blue
-    pub fn blue() -> Self {
+    pub const fn blue() -> Self {
         blue()
     }
 
     /// The color black
-    pub fn black() -> Self {
+    pub const fn black() -> Self {
         black()
     }
 
     /// The color white
-    pub fn white() -> Self {
+    pub const fn white() -> Self {
         white()
     }
 
     /// The color transparent black
-    pub fn transparent_black() -> Self {
+    pub const fn transparent_black() -> Self {
         transparent_black()
     }
 
@@ -537,6 +548,164 @@ impl<'de> Deserialize<'de> for Hsla {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub(crate) enum BackgroundTag {
+    Solid = 0,
+    LinearGradient = 1,
+}
+
+/// A color space for color interpolation.
+///
+/// References:
+/// - https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
+/// - https://www.w3.org/TR/css-color-4/#typedef-color-space
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
+pub enum ColorSpace {
+    #[default]
+    /// The sRGB color space.
+    Srgb = 0,
+    /// The Oklab color space.
+    Oklab = 1,
+}
+
+impl Display for ColorSpace {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ColorSpace::Srgb => write!(f, "sRGB"),
+            ColorSpace::Oklab => write!(f, "Oklab"),
+        }
+    }
+}
+
+/// A background color, which can be either a solid color or a linear gradient.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct Background {
+    pub(crate) tag: BackgroundTag,
+    pub(crate) color_space: ColorSpace,
+    pub(crate) solid: Hsla,
+    pub(crate) angle: f32,
+    pub(crate) colors: [LinearColorStop; 2],
+    /// Padding for alignment for repr(C) layout.
+    pad: u32,
+}
+
+impl Eq for Background {}
+impl Default for Background {
+    fn default() -> Self {
+        Self {
+            tag: BackgroundTag::Solid,
+            solid: Hsla::default(),
+            color_space: ColorSpace::default(),
+            angle: 0.0,
+            colors: [LinearColorStop::default(), LinearColorStop::default()],
+            pad: 0,
+        }
+    }
+}
+
+/// Creates a LinearGradient background color.
+///
+/// The gradient line's angle of direction. A value of `0.` is equivalent to to top; increasing values rotate clockwise from there.
+///
+/// The `angle` is in degrees value in the range 0.0 to 360.0.
+///
+/// https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient
+pub fn linear_gradient(
+    angle: f32,
+    from: impl Into<LinearColorStop>,
+    to: impl Into<LinearColorStop>,
+) -> Background {
+    Background {
+        tag: BackgroundTag::LinearGradient,
+        angle,
+        colors: [from.into(), to.into()],
+        ..Default::default()
+    }
+}
+
+/// A color stop in a linear gradient.
+///
+/// https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[repr(C)]
+pub struct LinearColorStop {
+    /// The color of the color stop.
+    pub color: Hsla,
+    /// The percentage of the gradient, in the range 0.0 to 1.0.
+    pub percentage: f32,
+}
+
+/// Creates a new linear color stop.
+///
+/// The percentage of the gradient, in the range 0.0 to 1.0.
+pub fn linear_color_stop(color: impl Into<Hsla>, percentage: f32) -> LinearColorStop {
+    LinearColorStop {
+        color: color.into(),
+        percentage,
+    }
+}
+
+impl LinearColorStop {
+    /// Returns a new color stop with the same color, but with a modified alpha value.
+    pub fn opacity(&self, factor: f32) -> Self {
+        Self {
+            percentage: self.percentage,
+            color: self.color.opacity(factor),
+        }
+    }
+}
+
+impl Background {
+    /// Use specified color space for color interpolation.
+    ///
+    /// https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
+    pub fn color_space(mut self, color_space: ColorSpace) -> Self {
+        self.color_space = color_space;
+        self
+    }
+
+    /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
+    pub fn opacity(&self, factor: f32) -> Self {
+        let mut background = *self;
+        background.solid = background.solid.opacity(factor);
+        background.colors = [
+            self.colors[0].opacity(factor),
+            self.colors[1].opacity(factor),
+        ];
+        background
+    }
+
+    /// Returns whether the background color is transparent.
+    pub fn is_transparent(&self) -> bool {
+        match self.tag {
+            BackgroundTag::Solid => self.solid.is_transparent(),
+            BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
+        }
+    }
+}
+
+impl From<Hsla> for Background {
+    fn from(value: Hsla) -> Self {
+        Background {
+            tag: BackgroundTag::Solid,
+            solid: value,
+            ..Default::default()
+        }
+    }
+}
+impl From<Rgba> for Background {
+    fn from(value: Rgba) -> Self {
+        Background {
+            tag: BackgroundTag::Solid,
+            solid: Hsla::from(value),
+            ..Default::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -583,5 +752,33 @@ mod tests {
         let actual: Rgba = serde_json::from_value(json!("#DeAdbEeF")).unwrap();
 
         assert_eq!(actual, rgba(0xdeadbeef))
+    }
+
+    #[test]
+    fn test_background_solid() {
+        let color = Hsla::from(rgba(0xff0099ff));
+        let mut background = Background::from(color);
+        assert_eq!(background.tag, BackgroundTag::Solid);
+        assert_eq!(background.solid, color);
+
+        assert_eq!(background.opacity(0.5).solid, color.opacity(0.5));
+        assert_eq!(background.is_transparent(), false);
+        background.solid = hsla(0.0, 0.0, 0.0, 0.0);
+        assert_eq!(background.is_transparent(), true);
+    }
+
+    #[test]
+    fn test_background_linear_gradient() {
+        let from = linear_color_stop(rgba(0xff0099ff), 0.0);
+        let to = linear_color_stop(rgba(0x00ff99ff), 1.0);
+        let background = linear_gradient(90.0, from, to);
+        assert_eq!(background.tag, BackgroundTag::LinearGradient);
+        assert_eq!(background.colors[0], from);
+        assert_eq!(background.colors[1], to);
+
+        assert_eq!(background.opacity(0.5).colors[0], from.opacity(0.5));
+        assert_eq!(background.opacity(0.5).colors[1], to.opacity(0.5));
+        assert_eq!(background.is_transparent(), false);
+        assert_eq!(background.opacity(0.0).is_transparent(), true);
     }
 }

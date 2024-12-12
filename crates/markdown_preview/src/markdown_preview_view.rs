@@ -192,11 +192,16 @@ impl MarkdownPreviewView {
                                 .group("markdown-block")
                                 .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                                     if event.down.click_count == 2 {
-                                        if let Some(block) =
-                                            this.contents.as_ref().and_then(|c| c.children.get(ix))
+                                        if let Some(source_range) = this
+                                            .contents
+                                            .as_ref()
+                                            .and_then(|c| c.children.get(ix))
+                                            .and_then(|block| block.source_range())
                                         {
-                                            let start = block.source_range().start;
-                                            this.move_cursor_to_block(cx, start..start);
+                                            this.move_cursor_to_block(
+                                                cx,
+                                                source_range.start..source_range.start,
+                                            );
                                         }
                                     }
                                 }))
@@ -410,7 +415,9 @@ impl MarkdownPreviewView {
         let mut last_end = 0;
         if let Some(content) = &self.contents {
             for (i, block) in content.children.iter().enumerate() {
-                let Range { start, end } = block.source_range();
+                let Some(Range { start, end }) = block.source_range() else {
+                    continue;
+                };
 
                 // Check if the cursor is between the last block and the current block
                 if last_end <= cursor && cursor < start {

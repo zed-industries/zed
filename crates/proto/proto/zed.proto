@@ -276,6 +276,7 @@ message Envelope {
 
         LanguageServerPromptRequest language_server_prompt_request = 268;
         LanguageServerPromptResponse language_server_prompt_response = 269;
+
         GitBranches git_branches = 270;
         GitBranchesResponse git_branches_response = 271;
 
@@ -293,7 +294,19 @@ message Envelope {
         GetPanicFiles get_panic_files = 280;
         GetPanicFilesResponse get_panic_files_response = 281;
 
-        CancelLanguageServerWork cancel_language_server_work = 282; // current max
+        CancelLanguageServerWork cancel_language_server_work = 282;
+
+        LspExtOpenDocs lsp_ext_open_docs = 283;
+        LspExtOpenDocsResponse lsp_ext_open_docs_response = 284;
+
+        SyncExtensions sync_extensions = 285;
+        SyncExtensionsResponse sync_extensions_response = 286;
+        InstallExtension install_extension = 287;
+
+        GetStagedText get_staged_text = 288;
+        GetStagedTextResponse get_staged_text_response = 289;
+
+        RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
     }
 
     reserved 87 to 88;
@@ -421,7 +434,7 @@ message Room {
     repeated Participant participants = 2;
     repeated PendingParticipant pending_participants = 3;
     repeated Follower followers = 4;
-    string live_kit_room = 5;
+    string livekit_room = 5;
 }
 
 message Participant {
@@ -1780,11 +1793,12 @@ message BufferState {
     uint64 id = 1;
     optional File file = 2;
     string base_text = 3;
-    optional string diff_base = 4;
     LineEnding line_ending = 5;
     repeated VectorClockEntry saved_version = 6;
-    reserved 7;
     Timestamp saved_mtime = 8;
+
+    reserved 7;
+    reserved 4;
 }
 
 message BufferChunk {
@@ -1975,7 +1989,16 @@ message WorktreeMetadata {
 message UpdateDiffBase {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    optional string diff_base = 3;
+    optional string staged_text = 3;
+}
+
+message GetStagedText {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message GetStagedTextResponse {
+    optional string staged_text = 1;
 }
 
 message GetNotifications {
@@ -2022,6 +2045,17 @@ message LspExtExpandMacro {
 message LspExtExpandMacroResponse {
     string name = 1;
     string expansion = 2;
+}
+
+message LspExtOpenDocs {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message LspExtOpenDocsResponse {
+    optional string web = 1;
+    optional string local = 2;
 }
 
 message LspExtSwitchSourceHeader {
@@ -2454,6 +2488,7 @@ message ListToolchains {
 message Toolchain {
     string name = 1;
     string path = 2;
+    string raw_json = 3;
 }
 
 message ToolchainGroup {
@@ -2504,7 +2539,6 @@ message UpdateGitBranch {
     string branch_name = 2;
     ProjectPath repository = 3;
 }
-
 message GetPanicFiles {
 }
 
@@ -2528,4 +2562,29 @@ message CancelLanguageServerWork {
         uint64 language_server_id = 1;
         optional string token = 2;
     }
+}
+
+message Extension {
+    string id = 1;
+    string version = 2;
+    bool dev = 3;
+}
+
+message SyncExtensions {
+    repeated Extension extensions = 1;
+}
+
+message SyncExtensionsResponse {
+    string tmp_dir = 1;
+    repeated Extension missing_extensions = 2;
+}
+
+message InstallExtension {
+    Extension extension = 1;
+    string tmp_dir = 2;
+}
+
+message RegisterBufferWithLanguageServers{
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
 }

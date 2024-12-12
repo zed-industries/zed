@@ -71,8 +71,8 @@ impl Markdown {
         source: String,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &ViewContext<Self>,
         fallback_code_block_language: Option<String>,
+        cx: &ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
@@ -97,8 +97,8 @@ impl Markdown {
         source: String,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &ViewContext<Self>,
         fallback_code_block_language: Option<String>,
+        cx: &ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
@@ -475,7 +475,7 @@ impl MarkdownElement {
                     }
                 } else if markdown.selection.pending {
                     markdown.selection.pending = false;
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                     {
                         let text = rendered_text
                             .text_for_range(markdown.selection.start..markdown.selection.end);

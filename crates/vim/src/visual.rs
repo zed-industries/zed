@@ -308,7 +308,7 @@ impl Vim {
         if let Some(Operator::Object { around }) = self.active_operator() {
             self.pop_operator(cx);
             let current_mode = self.mode;
-            let target_mode = object.target_visual_mode(current_mode);
+            let target_mode = object.target_visual_mode(current_mode, around);
             if target_mode != current_mode {
                 self.switch_mode(target_mode, true, cx);
             }
@@ -538,9 +538,8 @@ impl Vim {
     }
 
     pub fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
-        let count = self
-            .take_count(cx)
-            .unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
+        let count =
+            Vim::take_count(cx).unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
         self.update_editor(cx, |_, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             for _ in 0..count {
@@ -556,9 +555,8 @@ impl Vim {
     }
 
     pub fn select_previous(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
-        let count = self
-            .take_count(cx)
-            .unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
+        let count =
+            Vim::take_count(cx).unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
         self.update_editor(cx, |_, editor, cx| {
             for _ in 0..count {
                 if editor
@@ -573,7 +571,7 @@ impl Vim {
     }
 
     pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
-        let count = self.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         let Some(pane) = self.pane(cx) else {
             return;
         };

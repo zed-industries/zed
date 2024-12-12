@@ -1,7 +1,7 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count, prompts::PromptBuilder,
     AssistantPanel, AssistantPanelEvent, CharOperation, CycleNextInlineAssist,
-    CyclePreviousInlineAssist, LineDiff, LineOperation, ModelSelector, RequestType, StreamingDiff,
+    CyclePreviousInlineAssist, LineDiff, LineOperation, RequestType, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
@@ -24,20 +24,22 @@ use futures::{
     join, SinkExt, Stream, StreamExt,
 };
 use gpui::{
-    anchored, deferred, point, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle,
-    FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
+    anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
+    FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
-    logging::report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelTextStream, Role,
+    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelTextStream, Role,
 };
+use language_model_selector::LanguageModelSelector;
+use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
 use rope::Rope;
-use settings::{Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use smol::future::FutureExt;
 use std::{
     cmp,
@@ -460,7 +462,7 @@ impl InlineAssistant {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Below(range.end),
                 height: 0,
-                render: Box::new(|cx| {
+                render: Arc::new(|cx| {
                     v_flex()
                         .h_full()
                         .w_full()
@@ -1197,8 +1199,9 @@ impl InlineAssistant {
                     placement: BlockPlacement::Above(new_row),
                     height,
                     style: BlockStyle::Flex,
-                    render: Box::new(move |cx| {
+                    render: Arc::new(move |cx| {
                         div()
+                            .block_mouse_down()
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.line_height())
@@ -1317,7 +1320,7 @@ impl InlineAssistGroup {
 
 fn build_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
     let editor = editor.clone();
-    Box::new(move |cx: &mut BlockContext| {
+    Arc::new(move |cx: &mut BlockContext| {
         *editor.read(cx).gutter_dimensions.lock() = *cx.gutter_dimensions;
         editor.clone().into_any_element()
     })
@@ -1480,6 +1483,8 @@ impl Render for PromptEditor {
         h_flex()
             .key_context("PromptEditor")
             .bg(cx.theme().colors().editor_background)
+            .block_mouse_down()
+            .cursor(CursorStyle::Arrow)
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
@@ -1496,8 +1501,17 @@ impl Render for PromptEditor {
                     .justify_center()
                     .gap_2()
                     .child(
-                        ModelSelector::new(
-                            self.fs.clone(),
+                        LanguageModelSelector::new(
+                            {
+                                let fs = self.fs.clone();
+                                move |model, cx| {
+                                    update_settings_file::<AssistantSettings>(
+                                        fs.clone(),
+                                        cx,
+                                        move |settings, _| settings.set_model(model.clone()),
+                                    );
+                                }
+                            },
                             IconButton::new("context", IconName::SettingsAlt)
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::Small)
@@ -1517,7 +1531,7 @@ impl Render for PromptEditor {
                                     )
                                 }),
                         )
-                        .with_info_text(
+                        .info_text(
                             "Inline edits use context\n\
                             from the currently selected\n\
                             assistant panel tab.",
@@ -2562,6 +2576,7 @@ pub struct CodegenAlternative {
     line_operations: Vec<LineOperation>,
     request: Option<LanguageModelRequest>,
     elapsed_time: Option<f64>,
+    completion: Option<String>,
     message_id: Option<String>,
 }
 
@@ -2637,6 +2652,7 @@ impl CodegenAlternative {
             range,
             request: None,
             elapsed_time: None,
+            completion: None,
         }
     }
 
@@ -2849,6 +2865,9 @@ impl CodegenAlternative {
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
         let mut edit_start = self.range.start.to_offset(&snapshot);
+        let completion = Arc::new(Mutex::new(String::new()));
+        let completion_clone = completion.clone();
+
         self.generation = cx.spawn(|codegen, mut cx| {
             async move {
                 let stream = stream.await;
@@ -2880,6 +2899,7 @@ impl CodegenAlternative {
                                         response_latency = Some(request_start.elapsed());
                                     }
                                     let chunk = chunk?;
+                                    completion_clone.lock().push_str(&chunk);
 
                                     let mut lines = chunk.split('\n').peekable();
                                     while let Some(line) = lines.next() {
@@ -3049,6 +3069,7 @@ impl CodegenAlternative {
                             this.status = CodegenStatus::Done;
                         }
                         this.elapsed_time = Some(elapsed_time);
+                        this.completion = Some(completion.lock().clone());
                         cx.emit(CodegenEvent::Finished);
                         cx.notify();
                     })

@@ -14,13 +14,15 @@ use crate::{
         SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
-    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    TreeSitterOptions,
 };
 use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::HashMap;
+use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
@@ -51,7 +53,7 @@ use std::{
     path::{Path, PathBuf},
     str,
     sync::{Arc, LazyLock},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
     vec,
 };
 use sum_tree::TreeMap;
@@ -88,26 +90,16 @@ pub enum Capability {
 
 pub type BufferRow = u32;
 
-#[derive(Clone)]
-enum BufferDiffBase {
-    Git(Rope),
-    PastBufferVersion {
-        buffer: Model<Buffer>,
-        rope: Rope,
-        merged_operations: Vec<Lamport>,
-    },
-}
-
 /// An in-memory representation of a source code file, including its text,
 /// syntax trees, git status, and diagnostics.
 pub struct Buffer {
     text: TextBuffer,
-    diff_base: Option<BufferDiffBase>,
-    git_diff: git::diff::BufferDiff,
+    branch_state: Option<BufferBranchState>,
+    /// Filesystem state, `None` when there is no path.
     file: Option<Arc<dyn File>>,
     /// The mtime of the file when this buffer was last loaded from
     /// or saved to disk.
-    saved_mtime: Option<SystemTime>,
+    saved_mtime: Option<MTime>,
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
@@ -132,7 +124,6 @@ pub struct Buffer {
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
     has_conflict: bool,
-    diff_base_version: usize,
     /// Memoize calls to has_changes_since(saved_version).
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
     has_unsaved_edits: Cell<(clock::Global, bool)>,
@@ -145,11 +136,15 @@ pub enum ParseStatus {
     Parsing,
 }
 
+struct BufferBranchState {
+    base_buffer: Model<Buffer>,
+    merged_operations: Vec<Lamport>,
+}
+
 /// An immutable, cheaply cloneable representation of a fixed
 /// state of a buffer.
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    git_diff: git::diff::BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -342,10 +337,6 @@ pub enum BufferEvent {
     Reloaded,
     /// The buffer is in need of a reload
     ReloadNeeded,
-    /// The buffer's diff_base changed.
-    DiffBaseChanged,
-    /// Buffer's excerpts for a certain diff base were recalculated.
-    DiffUpdated,
     /// The buffer's language was changed.
     LanguageChanged,
     /// The buffer's syntax trees were updated.
@@ -371,8 +362,9 @@ pub trait File: Send + Sync {
         self.as_local().is_some()
     }
 
-    /// Returns the file's mtime.
-    fn mtime(&self) -> Option<SystemTime>;
+    /// Returns whether the file is new, exists in storage, or has been deleted. Includes metadata
+    /// only available in some states, such as modification time.
+    fn disk_state(&self) -> DiskState;
 
     /// Returns the path of this file relative to the worktree's root directory.
     fn path(&self) -> &Arc<Path>;
@@ -390,14 +382,6 @@ pub trait File: Send + Sync {
     /// This is needed for looking up project-specific settings.
     fn worktree_id(&self, cx: &AppContext) -> WorktreeId;
 
-    /// Returns whether the file has been deleted.
-    fn is_deleted(&self) -> bool;
-
-    /// Returns whether the file existed on disk at one point
-    fn is_created(&self) -> bool {
-        self.mtime().is_some()
-    }
-
     /// Converts this file into an [`Any`] trait object.
     fn as_any(&self) -> &dyn Any;
 
@@ -406,6 +390,31 @@ pub trait File: Send + Sync {
 
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
+}
+
+/// The file's storage status - whether it's stored (`Present`), and if so when it was last
+/// modified. In the case where the file is not stored, it can be either `New` or `Deleted`. In the
+/// UI these two states are distinguished. For example, the buffer tab does not display a deletion
+/// indicator for new files.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum DiskState {
+    /// File created in Zed that has not been saved.
+    New,
+    /// File present on the filesystem.
+    Present { mtime: MTime },
+    /// Deleted file that was previously present.
+    Deleted,
+}
+
+impl DiskState {
+    /// Returns the file's last known modification time on disk.
+    pub fn mtime(self) -> Option<MTime> {
+        match self {
+            DiskState::New => None,
+            DiskState::Present { mtime } => Some(mtime),
+            DiskState::Deleted => None,
+        }
+    }
 }
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
@@ -418,11 +427,6 @@ pub trait LocalFile: File {
 
     /// Loads the file's contents from disk.
     fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>>;
-
-    /// Returns true if the file should not be shared with collaborators.
-    fn is_private(&self, _: &AppContext) -> bool {
-        false
-    }
 }
 
 /// The auto-indent behavior associated with an editing operation.
@@ -447,6 +451,7 @@ struct AutoindentRequest {
     before_edit: BufferSnapshot,
     entries: Vec<AutoindentRequestEntry>,
     is_block_mode: bool,
+    ignore_empty_lines: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -553,7 +558,7 @@ impl<'a, 'b> DerefMut for ChunkRendererContext<'a, 'b> {
 pub struct Diff {
     pub(crate) base_version: clock::Global,
     line_ending: LineEnding,
-    edits: Vec<(Range<usize>, Arc<str>)>,
+    pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -604,7 +609,6 @@ impl Buffer {
         Self::build(
             TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
             None,
-            None,
             Capability::ReadWrite,
         )
     }
@@ -623,7 +627,6 @@ impl Buffer {
                 base_text_normalized,
             ),
             None,
-            None,
             Capability::ReadWrite,
         )
     }
@@ -637,7 +640,6 @@ impl Buffer {
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, remote_id, base_text.into()),
-            None,
             None,
             capability,
         )
@@ -654,7 +656,7 @@ impl Buffer {
         let buffer_id = BufferId::new(message.id)
             .with_context(|| anyhow!("Could not deserialize buffer_id"))?;
         let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
-        let mut this = Self::build(buffer, message.diff_base, file, capability);
+        let mut this = Self::build(buffer, file, capability);
         this.text.set_line_ending(proto::deserialize_line_ending(
             rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
@@ -670,7 +672,6 @@ impl Buffer {
             id: self.remote_id().into(),
             file: self.file.as_ref().map(|f| f.to_proto(cx)),
             base_text: self.base_text().to_string(),
-            diff_base: self.diff_base().as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
             saved_mtime: self.saved_mtime.map(|time| time.into()),
@@ -744,15 +745,9 @@ impl Buffer {
     }
 
     /// Builds a [`Buffer`] with the given underlying [`TextBuffer`], diff base, [`File`] and [`Capability`].
-    pub fn build(
-        buffer: TextBuffer,
-        diff_base: Option<String>,
-        file: Option<Arc<dyn File>>,
-        capability: Capability,
-    ) -> Self {
-        let saved_mtime = file.as_ref().and_then(|file| file.mtime());
+    pub fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>, capability: Capability) -> Self {
+        let saved_mtime = file.as_ref().and_then(|file| file.disk_state().mtime());
         let snapshot = buffer.snapshot();
-        let git_diff = git::diff::BufferDiff::new(&snapshot);
         let syntax_map = Mutex::new(SyntaxMap::new(&snapshot));
         Self {
             saved_mtime,
@@ -763,12 +758,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             has_unsaved_edits: Cell::new((buffer.version(), false)),
             text: buffer,
-            diff_base: diff_base.map(|mut raw_diff_base| {
-                LineEnding::normalize(&mut raw_diff_base);
-                BufferDiffBase::Git(Rope::from(raw_diff_base))
-            }),
-            diff_base_version: 0,
-            git_diff,
+            branch_state: None,
             file,
             capability,
             syntax_map,
@@ -802,7 +792,6 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
-            git_diff: self.git_diff.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -815,21 +804,15 @@ impl Buffer {
         let this = cx.handle();
         cx.new_model(|cx| {
             let mut branch = Self {
-                diff_base: Some(BufferDiffBase::PastBufferVersion {
-                    buffer: this.clone(),
-                    rope: self.as_rope().clone(),
+                branch_state: Some(BufferBranchState {
+                    base_buffer: this.clone(),
                     merged_operations: Default::default(),
                 }),
                 language: self.language.clone(),
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
                 _subscriptions: vec![cx.subscribe(&this, Self::on_base_buffer_event)],
-                ..Self::build(
-                    self.text.branch(),
-                    None,
-                    self.file.clone(),
-                    self.capability(),
-                )
+                ..Self::build(self.text.branch(), self.file.clone(), self.capability())
             };
             if let Some(language_registry) = self.language_registry() {
                 branch.set_language_registry(language_registry);
@@ -848,7 +831,7 @@ impl Buffer {
     /// If `ranges` is empty, then all changes will be applied. This buffer must
     /// be a branch buffer to call this method.
     pub fn merge_into_base(&mut self, ranges: Vec<Range<usize>>, cx: &mut ModelContext<Self>) {
-        let Some(base_buffer) = self.diff_base_buffer() else {
+        let Some(base_buffer) = self.base_buffer() else {
             debug_panic!("not a branch buffer");
             return;
         };
@@ -884,14 +867,14 @@ impl Buffer {
         }
 
         let operation = base_buffer.update(cx, |base_buffer, cx| {
-            cx.emit(BufferEvent::DiffBaseChanged);
+            // cx.emit(BufferEvent::DiffBaseChanged);
             base_buffer.edit(edits, None, cx)
         });
 
         if let Some(operation) = operation {
-            if let Some(BufferDiffBase::PastBufferVersion {
+            if let Some(BufferBranchState {
                 merged_operations, ..
-            }) = &mut self.diff_base
+            }) = &mut self.branch_state
             {
                 merged_operations.push(operation);
             }
@@ -907,9 +890,9 @@ impl Buffer {
         let BufferEvent::Operation { operation, .. } = event else {
             return;
         };
-        let Some(BufferDiffBase::PastBufferVersion {
+        let Some(BufferBranchState {
             merged_operations, ..
-        }) = &mut self.diff_base
+        }) = &mut self.branch_state
         else {
             return;
         };
@@ -928,8 +911,6 @@ impl Buffer {
             let counts = [(timestamp, u32::MAX)].into_iter().collect();
             self.undo_operations(counts, cx);
         }
-
-        self.diff_base_version += 1;
     }
 
     #[cfg(test)]
@@ -954,7 +935,7 @@ impl Buffer {
     }
 
     /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
-    pub fn saved_mtime(&self) -> Option<SystemTime> {
+    pub fn saved_mtime(&self) -> Option<MTime> {
         self.saved_mtime
     }
 
@@ -989,7 +970,7 @@ impl Buffer {
     pub fn did_save(
         &mut self,
         version: clock::Global,
-        mtime: Option<SystemTime>,
+        mtime: Option<MTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
@@ -1014,7 +995,7 @@ impl Buffer {
         self.reload_task = Some(cx.spawn(|this, mut cx| async move {
             let Some((new_mtime, new_text)) = this.update(&mut cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
-                Some((file.mtime(), file.load(cx)))
+                Some((file.disk_state().mtime(), file.load(cx)))
             })?
             else {
                 return Ok(());
@@ -1055,7 +1036,7 @@ impl Buffer {
         &mut self,
         version: clock::Global,
         line_ending: LineEnding,
-        mtime: Option<SystemTime>,
+        mtime: Option<MTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
@@ -1070,6 +1051,7 @@ impl Buffer {
     /// Updates the [`File`] backing this buffer. This should be called when
     /// the file has changed or has been deleted.
     pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
+        let was_dirty = self.is_dirty();
         let mut file_changed = false;
 
         if let Some(old_file) = self.file.as_ref() {
@@ -1077,21 +1059,12 @@ impl Buffer {
                 file_changed = true;
             }
 
-            if new_file.is_deleted() {
-                if !old_file.is_deleted() {
-                    file_changed = true;
-                    if !self.is_dirty() {
-                        cx.emit(BufferEvent::DirtyChanged);
-                    }
-                }
-            } else {
-                let new_mtime = new_file.mtime();
-                if new_mtime != old_file.mtime() {
-                    file_changed = true;
-
-                    if !self.is_dirty() {
-                        cx.emit(BufferEvent::ReloadNeeded);
-                    }
+            let old_state = old_file.disk_state();
+            let new_state = new_file.disk_state();
+            if old_state != new_state {
+                file_changed = true;
+                if !was_dirty && matches!(new_state, DiskState::Present { .. }) {
+                    cx.emit(BufferEvent::ReloadNeeded)
                 }
             }
         } else {
@@ -1101,79 +1074,16 @@ impl Buffer {
         self.file = Some(new_file);
         if file_changed {
             self.non_text_state_update_count += 1;
+            if was_dirty != self.is_dirty() {
+                cx.emit(BufferEvent::DirtyChanged);
+            }
             cx.emit(BufferEvent::FileHandleChanged);
             cx.notify();
         }
     }
 
-    /// Returns the current diff base, see [`Buffer::set_diff_base`].
-    pub fn diff_base(&self) -> Option<&Rope> {
-        match self.diff_base.as_ref()? {
-            BufferDiffBase::Git(rope) | BufferDiffBase::PastBufferVersion { rope, .. } => {
-                Some(rope)
-            }
-        }
-    }
-
-    /// Sets the text that will be used to compute a Git diff
-    /// against the buffer text.
-    pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &ModelContext<Self>) {
-        self.diff_base = diff_base.map(|mut raw_diff_base| {
-            LineEnding::normalize(&mut raw_diff_base);
-            BufferDiffBase::Git(Rope::from(raw_diff_base))
-        });
-        self.diff_base_version += 1;
-        if let Some(recalc_task) = self.recalculate_diff(cx) {
-            cx.spawn(|buffer, mut cx| async move {
-                recalc_task.await;
-                buffer
-                    .update(&mut cx, |_, cx| {
-                        cx.emit(BufferEvent::DiffBaseChanged);
-                    })
-                    .ok();
-            })
-            .detach();
-        }
-    }
-
-    /// Returns a number, unique per diff base set to the buffer.
-    pub fn diff_base_version(&self) -> usize {
-        self.diff_base_version
-    }
-
-    pub fn diff_base_buffer(&self) -> Option<Model<Self>> {
-        match self.diff_base.as_ref()? {
-            BufferDiffBase::Git(_) => None,
-            BufferDiffBase::PastBufferVersion { buffer, .. } => Some(buffer.clone()),
-        }
-    }
-
-    /// Recomputes the diff.
-    pub fn recalculate_diff(&self, cx: &ModelContext<Self>) -> Option<Task<()>> {
-        let diff_base_rope = match self.diff_base.as_ref()? {
-            BufferDiffBase::Git(rope) => rope.clone(),
-            BufferDiffBase::PastBufferVersion { buffer, .. } => buffer.read(cx).as_rope().clone(),
-        };
-
-        let snapshot = self.snapshot();
-        let mut diff = self.git_diff.clone();
-        let diff = cx.background_executor().spawn(async move {
-            diff.update(&diff_base_rope, &snapshot).await;
-            (diff, diff_base_rope)
-        });
-
-        Some(cx.spawn(|this, mut cx| async move {
-            let (buffer_diff, diff_base_rope) = diff.await;
-            this.update(&mut cx, |this, cx| {
-                this.git_diff = buffer_diff;
-                this.non_text_state_update_count += 1;
-                if let Some(BufferDiffBase::PastBufferVersion { rope, .. }) = &mut this.diff_base {
-                    *rope = diff_base_rope;
-                }
-                cx.emit(BufferEvent::DiffUpdated);
-            })
-            .ok();
-        }))
+    pub fn base_buffer(&self) -> Option<Model<Self>> {
+        Some(self.branch_state.as_ref()?.base_buffer.clone())
     }
 
     /// Returns the primary [`Language`] assigned to this [`Buffer`].
@@ -1366,7 +1276,7 @@ impl Buffer {
 
         let autoindent_requests = self.autoindent_requests.clone();
         Some(async move {
-            let mut indent_sizes = BTreeMap::new();
+            let mut indent_sizes = BTreeMap::<u32, (IndentSize, bool)>::new();
             for request in autoindent_requests {
                 // Resolve each edited range to its row in the current buffer and in the
                 // buffer before this batch of edits.
@@ -1460,10 +1370,12 @@ impl Buffer {
                             let suggested_indent = indent_sizes
                                 .get(&suggestion.basis_row)
                                 .copied()
+                                .map(|e| e.0)
                                 .unwrap_or_else(|| {
                                     snapshot.indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
+
                             if old_suggestions.get(&new_row).map_or(
                                 true,
                                 |(old_indentation, was_within_error)| {
@@ -1471,7 +1383,10 @@ impl Buffer {
                                         && (!suggestion.within_error || *was_within_error)
                                 },
                             ) {
-                                indent_sizes.insert(new_row, suggested_indent);
+                                indent_sizes.insert(
+                                    new_row,
+                                    (suggested_indent, request.ignore_empty_lines),
+                                );
                             }
                         }
                     }
@@ -1479,10 +1394,12 @@ impl Buffer {
                     if let (true, Some(original_indent_column)) =
                         (request.is_block_mode, original_indent_column)
                     {
-                        let new_indent = indent_sizes
-                            .get(&row_range.start)
-                            .copied()
-                            .unwrap_or_else(|| snapshot.indent_size_for_line(row_range.start));
+                        let new_indent =
+                            if let Some((indent, _)) = indent_sizes.get(&row_range.start) {
+                                *indent
+                            } else {
+                                snapshot.indent_size_for_line(row_range.start)
+                            };
                         let delta = new_indent.len as i64 - original_indent_column as i64;
                         if delta != 0 {
                             for row in row_range.skip(1) {
@@ -1497,7 +1414,7 @@ impl Buffer {
                                             Ordering::Equal => {}
                                         }
                                     }
-                                    size
+                                    (size, request.ignore_empty_lines)
                                 });
                             }
                         }
@@ -1508,6 +1425,15 @@ impl Buffer {
             }
 
             indent_sizes
+                .into_iter()
+                .filter_map(|(row, (indent, ignore_empty_lines))| {
+                    if ignore_empty_lines && snapshot.line_len(row) == 0 {
+                        None
+                    } else {
+                        Some((row, indent))
+                    }
+                })
+                .collect()
         })
     }
 
@@ -1742,20 +1668,31 @@ impl Buffer {
     pub fn is_dirty(&self) -> bool {
         self.capability != Capability::ReadOnly
             && (self.has_conflict
-                || self.has_unsaved_edits()
-                || self
-                    .file
-                    .as_ref()
-                    .map_or(false, |file| file.is_deleted() || !file.is_created()))
+                || self.file.as_ref().map_or(false, |file| {
+                    matches!(file.disk_state(), DiskState::New | DiskState::Deleted)
+                })
+                || self.has_unsaved_edits())
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
     /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
-        self.has_conflict
-            || self.file.as_ref().map_or(false, |file| {
-                file.mtime() > self.saved_mtime && self.has_unsaved_edits()
-            })
+        if self.has_conflict {
+            return true;
+        }
+        let Some(file) = self.file.as_ref() else {
+            return false;
+        };
+        match file.disk_state() {
+            DiskState::New => false,
+            DiskState::Present { mtime } => match self.saved_mtime {
+                Some(saved_mtime) => {
+                    mtime.bad_is_greater_than(saved_mtime) && self.has_unsaved_edits()
+                }
+                None => true,
+            },
+            DiskState::Deleted => true,
+        }
     }
 
     /// Gets a [`Subscription`] that tracks all of the changes to the buffer's text.
@@ -2041,6 +1978,7 @@ impl Buffer {
                 before_edit,
                 entries,
                 is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
+                ignore_empty_lines: false,
             }));
         }
 
@@ -2066,6 +2004,30 @@ impl Buffer {
             cx.emit(BufferEvent::DirtyChanged);
         }
         cx.notify();
+    }
+
+    pub fn autoindent_ranges<I, T>(&mut self, ranges: I, cx: &mut ModelContext<Self>)
+    where
+        I: IntoIterator<Item = Range<T>>,
+        T: ToOffset + Copy,
+    {
+        let before_edit = self.snapshot();
+        let entries = ranges
+            .into_iter()
+            .map(|range| AutoindentRequestEntry {
+                range: before_edit.anchor_before(range.start)..before_edit.anchor_after(range.end),
+                first_line_is_new: true,
+                indent_size: before_edit.language_indent_size_at(range.start, cx),
+                original_indent_column: None,
+            })
+            .collect();
+        self.autoindent_requests.push(Arc::new(AutoindentRequest {
+            before_edit,
+            entries,
+            is_block_mode: false,
+            ignore_empty_lines: true,
+        }));
+        self.request_autoindent(cx);
     }
 
     // Inserts newlines at the given position to create an empty line, returning the start of the new line.
@@ -3286,6 +3248,14 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn function_body_fold_ranges<T: ToOffset>(
+        &self,
+        within: Range<T>,
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
+        self.text_object_ranges(within, TreeSitterOptions::default())
+            .filter_map(|(range, obj)| (obj == TextObject::InsideFunction).then_some(range))
+    }
+
     /// For each grammar in the language, runs the provided
     /// [`tree_sitter::Query`] against the given range.
     pub fn matches(
@@ -3341,6 +3311,72 @@ impl BufferSnapshot {
                 return Some((open, close));
             }
             None
+        })
+    }
+
+    pub fn text_object_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        options: TreeSitterOptions,
+    ) -> impl Iterator<Item = (Range<usize>, TextObject)> + '_ {
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
+
+        let mut matches =
+            self.syntax
+                .matches_with_options(range.clone(), &self.text, options, |grammar| {
+                    grammar.text_object_config.as_ref().map(|c| &c.query)
+                });
+
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.text_object_config.as_ref())
+            .collect::<Vec<_>>();
+
+        let mut captures = Vec::<(Range<usize>, TextObject)>::new();
+
+        iter::from_fn(move || loop {
+            while let Some(capture) = captures.pop() {
+                if capture.0.overlaps(&range) {
+                    return Some(capture);
+                }
+            }
+
+            let mat = matches.peek()?;
+
+            let Some(config) = configs[mat.grammar_index].as_ref() else {
+                matches.advance();
+                continue;
+            };
+
+            for capture in mat.captures {
+                let Some(ix) = config
+                    .text_objects_by_capture_ix
+                    .binary_search_by_key(&capture.index, |e| e.0)
+                    .ok()
+                else {
+                    continue;
+                };
+                let text_object = config.text_objects_by_capture_ix[ix].1;
+                let byte_range = capture.node.byte_range();
+
+                let mut found = false;
+                for (range, existing) in captures.iter_mut() {
+                    if existing == &text_object {
+                        range.start = range.start.min(byte_range.start);
+                        range.end = range.end.max(byte_range.end);
+                        found = true;
+                        break;
+                    }
+                }
+
+                if !found {
+                    captures.push((byte_range, text_object));
+                }
+            }
+
+            matches.advance();
         })
     }
 
@@ -3849,38 +3885,6 @@ impl BufferSnapshot {
             })
     }
 
-    /// Whether the buffer contains any Git changes.
-    pub fn has_git_diff(&self) -> bool {
-        !self.git_diff.is_empty()
-    }
-
-    /// Returns all the Git diff hunks intersecting the given row range.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn git_diff_hunks_in_row_range(
-        &self,
-        range: Range<BufferRow>,
-    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk> {
-        self.git_diff.hunks_in_row_range(range, self)
-    }
-
-    /// Returns all the Git diff hunks intersecting the given
-    /// range.
-    pub fn git_diff_hunks_intersecting_range(
-        &self,
-        range: Range<Anchor>,
-    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk> {
-        self.git_diff.hunks_intersecting_range(range, self)
-    }
-
-    /// Returns all the Git diff hunks intersecting the given
-    /// range, in reverse order.
-    pub fn git_diff_hunks_intersecting_range_rev(
-        &self,
-        range: Range<Anchor>,
-    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk> {
-        self.git_diff.hunks_intersecting_range_rev(range, self)
-    }
-
     /// Returns if the buffer contains any diagnostics.
     pub fn has_diagnostics(&self) -> bool {
         !self.diagnostics.is_empty()
@@ -4025,7 +4029,6 @@ impl Clone for BufferSnapshot {
     fn clone(&self) -> Self {
         Self {
             text: self.text.clone(),
-            git_diff: self.git_diff.clone(),
             syntax: self.syntax.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
@@ -4396,7 +4399,7 @@ impl File for TestFile {
         None
     }
 
-    fn mtime(&self) -> Option<SystemTime> {
+    fn disk_state(&self) -> DiskState {
         unimplemented!()
     }
 
@@ -4406,10 +4409,6 @@ impl File for TestFile {
 
     fn worktree_id(&self, _: &AppContext) -> WorktreeId {
         WorktreeId::from_usize(0)
-    }
-
-    fn is_deleted(&self) -> bool {
-        unimplemented!()
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -4493,7 +4492,7 @@ impl CharClassifier {
         self.kind(c) == CharKind::Punctuation
     }
 
-    pub fn kind(&self, c: char) -> CharKind {
+    pub fn kind_with(&self, c: char, ignore_punctuation: bool) -> CharKind {
         if c.is_whitespace() {
             return CharKind::Whitespace;
         } else if c.is_alphanumeric() || c == '_' {
@@ -4503,7 +4502,7 @@ impl CharClassifier {
         if let Some(scope) = &self.scope {
             if let Some(characters) = scope.word_characters() {
                 if characters.contains(&c) {
-                    if c == '-' && !self.for_completion && !self.ignore_punctuation {
+                    if c == '-' && !self.for_completion && !ignore_punctuation {
                         return CharKind::Punctuation;
                     }
                     return CharKind::Word;
@@ -4511,11 +4510,15 @@ impl CharClassifier {
             }
         }
 
-        if self.ignore_punctuation {
+        if ignore_punctuation {
             CharKind::Word
         } else {
             CharKind::Punctuation
         }
+    }
+
+    pub fn kind(&self, c: char) -> CharKind {
+        self.kind_with(c, self.ignore_punctuation)
     }
 }
 

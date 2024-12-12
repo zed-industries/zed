@@ -101,7 +101,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         let Some(workspace) = vim.workspace(cx) else {
             return;
         };
-        let count = vim.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         workspace.update(cx, |workspace, cx| {
             command_palette::CommandPalette::toggle(
                 workspace,
@@ -136,7 +136,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.update_editor(cx, |vim, editor, cx| {
             let snapshot = editor.snapshot(cx);
             if let Ok(range) = action.range.buffer_range(vim, editor, cx) {
-                let end = if range.end < snapshot.max_buffer_row() {
+                let end = if range.end < snapshot.buffer_snapshot.max_row() {
                     Point::new(range.end.0 + 1, 0)
                 } else {
                     snapshot.buffer_snapshot.max_point()
@@ -436,9 +436,11 @@ impl Position {
                     .row
                     .saturating_add_signed(*offset)
             }
-            Position::LastLine { offset } => {
-                snapshot.max_buffer_row().0.saturating_add_signed(*offset)
-            }
+            Position::LastLine { offset } => snapshot
+                .buffer_snapshot
+                .max_row()
+                .0
+                .saturating_add_signed(*offset),
             Position::CurrentLine { offset } => editor
                 .selections
                 .newest_anchor()
@@ -448,7 +450,7 @@ impl Position {
                 .saturating_add_signed(*offset),
         };
 
-        Ok(MultiBufferRow(target).min(snapshot.max_buffer_row()))
+        Ok(MultiBufferRow(target).min(snapshot.buffer_snapshot.max_row()))
     }
 }
 
@@ -690,6 +692,7 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("0", ""), StartOfDocument),
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
             .bang(editor::actions::ReloadFile),
+        VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
     ]
 }
 

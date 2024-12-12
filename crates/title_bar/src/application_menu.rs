@@ -18,7 +18,10 @@ impl Render for ApplicationMenu {
             .menu(move |cx| {
                 ContextMenu::build(cx, move |menu, cx| {
                     menu.header("Workspace")
-                        .action("Open Command Palette", Box::new(command_palette::Toggle))
+                        .action(
+                            "Open Command Palette",
+                            Box::new(zed_actions::command_palette::Toggle),
+                        )
                         .when_some(cx.focused(), |menu, focused| menu.context(focused))
                         .custom_row(move |cx| {
                             h_flex()
@@ -100,7 +103,7 @@ impl Render for ApplicationMenu {
                         .action("Open a new Project...", Box::new(workspace::Open))
                         .action(
                             "Open Recent Projects...",
-                            Box::new(recent_projects::OpenRecent {
+                            Box::new(zed_actions::OpenRecent {
                                 create_new_window: false,
                             }),
                         )
@@ -113,7 +116,10 @@ impl Render for ApplicationMenu {
                                 url: "https://zed.dev/docs".into(),
                             }),
                         )
-                        .action("Give Feedback", Box::new(feedback::GiveFeedback))
+                        .action(
+                            "Give Feedback",
+                            Box::new(zed_actions::feedback::GiveFeedback),
+                        )
                         .action("Check for Updates", Box::new(auto_update::Check))
                         .action("View Telemetry", Box::new(zed_actions::OpenTelemetryLog))
                         .action(

@@ -1,15 +1,6 @@
 mod components;
-mod extension_context_server;
-mod extension_indexed_docs_provider;
-mod extension_registration_hooks;
-mod extension_slash_command;
 mod extension_suggest;
 mod extension_version_selector;
-
-#[cfg(test)]
-mod extension_store_test;
-
-pub use extension_registration_hooks::ConcreteExtensionRegistrationHooks;
 
 use std::ops::DerefMut;
 use std::sync::OnceLock;
@@ -23,9 +14,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, InteractiveElement,
-    KeyContext, ParentElement, Render, Styled, Task, TextStyle, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    actions, uniform_list, Action, AppContext, ClipboardItem, EventEmitter, Flatten, FocusableView,
+    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -33,7 +24,7 @@ use release_channel::ReleaseChannel;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
-use vim::VimModeSetting;
+use vim_mode_setting::VimModeSetting;
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
@@ -44,12 +35,12 @@ use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
 
-actions!(zed, [Extensions, InstallDevExtension]);
+actions!(zed, [InstallDevExtension]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         workspace
-            .register_action(move |workspace, _: &Extensions, cx| {
+            .register_action(move |workspace, _: &zed_actions::Extensions, cx| {
                 let existing = workspace
                     .active_pane()
                     .read(cx)
@@ -260,14 +251,13 @@ impl ExtensionsPage {
             .collect::<Vec<_>>();
         if !themes.is_empty() {
             workspace
-                .update(cx, |workspace, cx| {
-                    theme_selector::toggle(
-                        workspace,
-                        &theme_selector::Toggle {
+                .update(cx, |_workspace, cx| {
+                    cx.dispatch_action(
+                        zed_actions::theme_selector::Toggle {
                             themes_filter: Some(themes),
-                        },
-                        cx,
-                    )
+                        }
+                        .boxed_clone(),
+                    );
                 })
                 .ok();
         }
@@ -647,13 +637,21 @@ impl ExtensionsPage {
         cx: &mut WindowContext,
     ) -> View<ContextMenu> {
         let context_menu = ContextMenu::build(cx, |context_menu, cx| {
-            context_menu.entry(
-                "Install Another Version...",
-                None,
-                cx.handler_for(this, move |this, cx| {
-                    this.show_extension_version_list(extension_id.clone(), cx)
-                }),
-            )
+            context_menu
+                .entry(
+                    "Install Another Version...",
+                    None,
+                    cx.handler_for(this, {
+                        let extension_id = extension_id.clone();
+                        move |this, cx| this.show_extension_version_list(extension_id.clone(), cx)
+                    }),
+                )
+                .entry("Copy Extension ID", None, {
+                    let extension_id = extension_id.clone();
+                    move |cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(extension_id.to_string()));
+                    }
+                })
         });
 
         context_menu

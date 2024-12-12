@@ -5,13 +5,12 @@ use anthropic::Model as AnthropicModel;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{AppContext, Pixels};
-use language_model::provider::open_ai;
-use language_model::settings::{
-    AnthropicSettingsContent, AnthropicSettingsContentV1, OllamaSettingsContent,
-    OpenAiSettingsContent, OpenAiSettingsContentV1, VersionedAnthropicSettingsContent,
-    VersionedOpenAiSettingsContent,
+use language_model::{CloudModel, LanguageModel};
+use language_models::{
+    provider::open_ai, AllLanguageModelSettings, AnthropicSettingsContent,
+    AnthropicSettingsContentV1, OllamaSettingsContent, OpenAiSettingsContent,
+    OpenAiSettingsContentV1, VersionedAnthropicSettingsContent, VersionedOpenAiSettingsContent,
 };
-use language_model::{settings::AllLanguageModelSettings, CloudModel, LanguageModel};
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
@@ -35,20 +34,17 @@ pub enum AssistantProviderContentV1 {
     OpenAi {
         default_model: Option<OpenAiModel>,
         api_url: Option<String>,
-        low_speed_timeout_in_seconds: Option<u64>,
         available_models: Option<Vec<OpenAiModel>>,
     },
     #[serde(rename = "anthropic")]
     Anthropic {
         default_model: Option<AnthropicModel>,
         api_url: Option<String>,
-        low_speed_timeout_in_seconds: Option<u64>,
     },
     #[serde(rename = "ollama")]
     Ollama {
         default_model: Option<OllamaModel>,
         api_url: Option<String>,
-        low_speed_timeout_in_seconds: Option<u64>,
     },
 }
 
@@ -115,47 +111,41 @@ impl AssistantSettingsContent {
             if let VersionedAssistantSettingsContent::V1(settings) = settings {
                 if let Some(provider) = settings.provider.clone() {
                     match provider {
-                        AssistantProviderContentV1::Anthropic {
-                            api_url,
-                            low_speed_timeout_in_seconds,
-                            ..
-                        } => update_settings_file::<AllLanguageModelSettings>(
-                            fs,
-                            cx,
-                            move |content, _| {
-                                if content.anthropic.is_none() {
-                                    content.anthropic = Some(AnthropicSettingsContent::Versioned(
-                                        VersionedAnthropicSettingsContent::V1(
-                                            AnthropicSettingsContentV1 {
-                                                api_url,
-                                                low_speed_timeout_in_seconds,
-                                                available_models: None,
-                                            },
-                                        ),
-                                    ));
-                                }
-                            },
-                        ),
-                        AssistantProviderContentV1::Ollama {
-                            api_url,
-                            low_speed_timeout_in_seconds,
-                            ..
-                        } => update_settings_file::<AllLanguageModelSettings>(
-                            fs,
-                            cx,
-                            move |content, _| {
-                                if content.ollama.is_none() {
-                                    content.ollama = Some(OllamaSettingsContent {
-                                        api_url,
-                                        low_speed_timeout_in_seconds,
-                                        available_models: None,
-                                    });
-                                }
-                            },
-                        ),
+                        AssistantProviderContentV1::Anthropic { api_url, .. } => {
+                            update_settings_file::<AllLanguageModelSettings>(
+                                fs,
+                                cx,
+                                move |content, _| {
+                                    if content.anthropic.is_none() {
+                                        content.anthropic =
+                                            Some(AnthropicSettingsContent::Versioned(
+                                                VersionedAnthropicSettingsContent::V1(
+                                                    AnthropicSettingsContentV1 {
+                                                        api_url,
+                                                        available_models: None,
+                                                    },
+                                                ),
+                                            ));
+                                    }
+                                },
+                            )
+                        }
+                        AssistantProviderContentV1::Ollama { api_url, .. } => {
+                            update_settings_file::<AllLanguageModelSettings>(
+                                fs,
+                                cx,
+                                move |content, _| {
+                                    if content.ollama.is_none() {
+                                        content.ollama = Some(OllamaSettingsContent {
+                                            api_url,
+                                            available_models: None,
+                                        });
+                                    }
+                                },
+                            )
+                        }
                         AssistantProviderContentV1::OpenAi {
                             api_url,
-                            low_speed_timeout_in_seconds,
                             available_models,
                             ..
                         } => update_settings_file::<AllLanguageModelSettings>(
@@ -188,7 +178,6 @@ impl AssistantSettingsContent {
                                         VersionedOpenAiSettingsContent::V1(
                                             OpenAiSettingsContentV1 {
                                                 api_url,
-                                                low_speed_timeout_in_seconds,
                                                 available_models,
                                             },
                                         ),
@@ -298,54 +287,41 @@ impl AssistantSettingsContent {
                         log::warn!("attempted to set zed.dev model on outdated settings");
                     }
                     "anthropic" => {
-                        let (api_url, low_speed_timeout_in_seconds) = match &settings.provider {
-                            Some(AssistantProviderContentV1::Anthropic {
-                                api_url,
-                                low_speed_timeout_in_seconds,
-                                ..
-                            }) => (api_url.clone(), *low_speed_timeout_in_seconds),
-                            _ => (None, None),
+                        let api_url = match &settings.provider {
+                            Some(AssistantProviderContentV1::Anthropic { api_url, .. }) => {
+                                api_url.clone()
+                            }
+                            _ => None,
                         };
                         settings.provider = Some(AssistantProviderContentV1::Anthropic {
                             default_model: AnthropicModel::from_id(&model).ok(),
                             api_url,
-                            low_speed_timeout_in_seconds,
                         });
                     }
                     "ollama" => {
-                        let (api_url, low_speed_timeout_in_seconds) = match &settings.provider {
-                            Some(AssistantProviderContentV1::Ollama {
-                                api_url,
-                                low_speed_timeout_in_seconds,
-                                ..
-                            }) => (api_url.clone(), *low_speed_timeout_in_seconds),
-                            _ => (None, None),
+                        let api_url = match &settings.provider {
+                            Some(AssistantProviderContentV1::Ollama { api_url, .. }) => {
+                                api_url.clone()
+                            }
+                            _ => None,
                         };
                         settings.provider = Some(AssistantProviderContentV1::Ollama {
                             default_model: Some(ollama::Model::new(&model, None, None)),
                             api_url,
-                            low_speed_timeout_in_seconds,
                         });
                     }
                     "openai" => {
-                        let (api_url, low_speed_timeout_in_seconds, available_models) =
-                            match &settings.provider {
-                                Some(AssistantProviderContentV1::OpenAi {
-                                    api_url,
-                                    low_speed_timeout_in_seconds,
-                                    available_models,
-                                    ..
-                                }) => (
-                                    api_url.clone(),
-                                    *low_speed_timeout_in_seconds,
-                                    available_models.clone(),
-                                ),
-                                _ => (None, None, None),
-                            };
+                        let (api_url, available_models) = match &settings.provider {
+                            Some(AssistantProviderContentV1::OpenAi {
+                                api_url,
+                                available_models,
+                                ..
+                            }) => (api_url.clone(), available_models.clone()),
+                            _ => (None, None),
+                        };
                         settings.provider = Some(AssistantProviderContentV1::OpenAi {
                             default_model: OpenAiModel::from_id(&model).ok(),
                             api_url,
-                            low_speed_timeout_in_seconds,
                             available_models,
                         });
                     }

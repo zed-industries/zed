@@ -37,7 +37,7 @@ where
         .find_map(|(trigger_anchor, language, buffer)| {
             project
                 .read(cx)
-                .language_servers_for_buffer(buffer.read(cx), cx)
+                .language_servers_for_local_buffer(buffer.read(cx), cx)
                 .find_map(|(adapter, server)| {
                     if adapter.name.0.as_ref() == language_server_name {
                         Some((

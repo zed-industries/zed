@@ -17,7 +17,8 @@ test-support = [
     "client/test-support",
     "collections/test-support",
     "gpui/test-support",
-    "live_kit_client/test-support",
+    "livekit_client/test-support",
+    "livekit_client_macos/test-support",
     "project/test-support",
     "util/test-support"
 ]
@@ -27,11 +28,11 @@ anyhow.workspace = true
 audio.workspace = true
 client.workspace = true
 collections.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
-live_kit_client.workspace = true
 log.workspace = true
 postage.workspace = true
 project.workspace = true
@@ -41,13 +42,24 @@ serde_derive.workspace = true
 settings.workspace = true
 util.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+livekit_client_macos = { workspace = true }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+livekit_client = { workspace = true }
+
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
-live_kit_client = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+livekit_client_macos = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(not(target_os = "macos"))'.dev-dependencies]
+livekit_client = { workspace = true, features = ["test-support"] }

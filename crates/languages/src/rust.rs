@@ -1,21 +1,21 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{io::BufReader, StreamExt};
-use gpui::{AppContext, AsyncAppContext};
+use gpui::{AppContext, AsyncAppContext, Task};
+use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::LanguageServerBinary;
+use lsp::{LanguageServerBinary, LanguageServerName};
 use regex::Regex;
-use smol::fs::{self, File};
+use smol::fs::{self};
+use std::fmt::Display;
 use std::{
     any::Any,
     borrow::Cow,
-    env::consts,
     path::{Path, PathBuf},
-    sync::Arc,
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{fs::remove_matching, maybe, ResultExt};
@@ -24,8 +24,48 @@ use crate::language_settings::language_settings;
 
 pub struct RustLspAdapter;
 
+#[cfg(target_os = "macos")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "apple-darwin";
+}
+
+#[cfg(target_os = "linux")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
+}
+
+#[cfg(target_os = "freebsd")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "unknown-freebsd";
+}
+
+#[cfg(target_os = "windows")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
+    const ARCH_SERVER_NAME: &str = "pc-windows-msvc";
+}
+
 impl RustLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
+
+    fn build_asset_name() -> String {
+        let extension = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz => "tar.gz",
+            AssetKind::Gz => "gz",
+            AssetKind::Zip => "zip",
+        };
+
+        format!(
+            "{}-{}-{}.{}",
+            Self::SERVER_NAME,
+            std::env::consts::ARCH,
+            Self::ARCH_SERVER_NAME,
+            extension
+        )
+    }
 }
 
 #[async_trait(?Send)]
@@ -37,6 +77,7 @@ impl LspAdapter for RustLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which("rust-analyzer".as_ref()).await?;
@@ -79,13 +120,8 @@ impl LspAdapter for RustLspAdapter {
             delegate.http_client(),
         )
         .await?;
-        let os = match consts::OS {
-            "macos" => "apple-darwin",
-            "linux" => "unknown-linux-gnu",
-            "windows" => "pc-windows-msvc",
-            other => bail!("Running on unsupported os: {other}"),
-        };
-        let asset_name = format!("rust-analyzer-{}-{os}.gz", consts::ARCH);
+        let asset_name = Self::build_asset_name();
+
         let asset = release
             .assets
             .iter()
@@ -105,31 +141,68 @@ impl LspAdapter for RustLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
+        let server_path = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+            AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+        };
 
-        if fs::metadata(&destination_path).await.is_err() {
+        if fs::metadata(&server_path).await.is_err() {
+            remove_matching(&container_dir, |entry| entry != destination_path).await;
+
             let mut response = delegate
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let mut file = File::create(&destination_path).await?;
-            futures::io::copy(decompressed_bytes, &mut file).await?;
+                .with_context(|| format!("downloading release from {}", version.url))?;
+            match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz => {
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let archive = async_tar::Archive::new(decompressed_bytes);
+                    archive.unpack(&destination_path).await.with_context(|| {
+                        format!("extracting {} to {:?}", version.url, destination_path)
+                    })?;
+                }
+                AssetKind::Gz => {
+                    let mut decompressed_bytes =
+                        GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let mut file =
+                        fs::File::create(&destination_path).await.with_context(|| {
+                            format!(
+                                "creating a file {:?} for a download from {}",
+                                destination_path, version.url,
+                            )
+                        })?;
+                    futures::io::copy(&mut decompressed_bytes, &mut file)
+                        .await
+                        .with_context(|| {
+                            format!("extracting {} to {:?}", version.url, destination_path)
+                        })?;
+                }
+                AssetKind::Zip => {
+                    node_runtime::extract_zip(
+                        &destination_path,
+                        BufReader::new(response.body_mut()),
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("unzipping {} to {:?}", version.url, destination_path)
+                    })?;
+                }
+            };
+
             // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(
-                    &destination_path,
+                    &server_path,
                     <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
                 )
                 .await?;
             }
-
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
 
         Ok(LanguageServerBinary {
-            path: destination_path,
+            path: server_path,
             env: None,
             arguments: Default::default(),
         })
@@ -372,6 +445,10 @@ const RUST_PACKAGE_TASK_VARIABLE: VariableName =
 const RUST_BIN_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_BIN_NAME"));
 
+/// The bin kind (bin/example) corresponding to the current file in Cargo.toml
+const RUST_BIN_KIND_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_BIN_KIND"));
+
 const RUST_MAIN_FUNCTION_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("_rust_main_function_end"));
 
@@ -380,9 +457,10 @@ impl ContextProvider for RustContextProvider {
         &self,
         task_variables: &TaskVariables,
         location: &Location,
-        project_env: Option<&HashMap<String, String>>,
+        project_env: Option<HashMap<String, String>>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::AppContext,
-    ) -> Result<TaskVariables> {
+    ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
             .read(cx)
@@ -396,27 +474,31 @@ impl ContextProvider for RustContextProvider {
             .is_some();
 
         if is_main_function {
-            if let Some((package_name, bin_name)) = local_abs_path
-                .and_then(|path| package_name_and_bin_name_from_abs_path(path, project_env))
-            {
-                return Ok(TaskVariables::from_iter([
-                    (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),
-                    (RUST_BIN_NAME_TASK_VARIABLE.clone(), bin_name),
-                ]));
+            if let Some(target) = local_abs_path.and_then(|path| {
+                package_name_and_bin_name_from_abs_path(path, project_env.as_ref())
+            }) {
+                return Task::ready(Ok(TaskVariables::from_iter([
+                    (RUST_PACKAGE_TASK_VARIABLE.clone(), target.package_name),
+                    (RUST_BIN_NAME_TASK_VARIABLE.clone(), target.target_name),
+                    (
+                        RUST_BIN_KIND_TASK_VARIABLE.clone(),
+                        target.target_kind.to_string(),
+                    ),
+                ])));
             }
         }
 
         if let Some(package_name) = local_abs_path
             .and_then(|local_abs_path| local_abs_path.parent())
-            .and_then(|path| human_readable_package_name(path, project_env))
+            .and_then(|path| human_readable_package_name(path, project_env.as_ref()))
         {
-            return Ok(TaskVariables::from_iter([(
+            return Task::ready(Ok(TaskVariables::from_iter([(
                 RUST_PACKAGE_TASK_VARIABLE.clone(),
                 package_name,
-            )]));
+            )])));
         }
 
-        Ok(TaskVariables::default())
+        Task::ready(Ok(TaskVariables::default()))
     }
 
     fn associated_tasks(
@@ -495,8 +577,9 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "cargo run -p {} --bin {}",
+                    "cargo run -p {} --{} {}",
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
@@ -504,7 +587,7 @@ impl ContextProvider for RustContextProvider {
                     "run".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    "--bin".into(),
+                    format!("--{}", RUST_BIN_KIND_TASK_VARIABLE.template_value()),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
                 ],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -562,11 +645,43 @@ struct CargoTarget {
     src_path: String,
 }
 
+#[derive(Debug, PartialEq)]
+enum TargetKind {
+    Bin,
+    Example,
+}
+
+impl Display for TargetKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TargetKind::Bin => write!(f, "bin"),
+            TargetKind::Example => write!(f, "example"),
+        }
+    }
+}
+
+impl TryFrom<&str> for TargetKind {
+    type Error = ();
+    fn try_from(value: &str) -> Result<Self, ()> {
+        match value {
+            "bin" => Ok(Self::Bin),
+            "example" => Ok(Self::Example),
+            _ => Err(()),
+        }
+    }
+}
+/// Which package and binary target are we in?
+struct TargetInfo {
+    package_name: String,
+    target_name: String,
+    target_kind: TargetKind,
+}
+
 fn package_name_and_bin_name_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
-) -> Option<(String, String)> {
-    let mut command = std::process::Command::new("cargo");
+) -> Option<TargetInfo> {
+    let mut command = util::command::new_std_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -583,10 +698,14 @@ fn package_name_and_bin_name_from_abs_path(
     let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
 
     retrieve_package_id_and_bin_name_from_metadata(metadata, abs_path).and_then(
-        |(package_id, bin_name)| {
+        |(package_id, bin_name, target_kind)| {
             let package_name = package_name_from_pkgid(&package_id);
 
-            package_name.map(|package_name| (package_name.to_owned(), bin_name))
+            package_name.map(|package_name| TargetInfo {
+                package_name: package_name.to_owned(),
+                target_name: bin_name,
+                target_kind,
+            })
         },
     )
 }
@@ -594,13 +713,19 @@ fn package_name_and_bin_name_from_abs_path(
 fn retrieve_package_id_and_bin_name_from_metadata(
     metadata: CargoMetadata,
     abs_path: &Path,
-) -> Option<(String, String)> {
+) -> Option<(String, String, TargetKind)> {
     for package in metadata.packages {
         for target in package.targets {
-            let is_bin = target.kind.iter().any(|kind| kind == "bin");
+            let Some(bin_kind) = target
+                .kind
+                .iter()
+                .find_map(|kind| TargetKind::try_from(kind.as_ref()).ok())
+            else {
+                continue;
+            };
             let target_path = PathBuf::from(target.src_path);
-            if target_path == abs_path && is_bin {
-                return Some((package.id, target.name));
+            if target_path == abs_path {
+                return Some((package.id, target.name, bin_kind));
             }
         }
     }
@@ -612,11 +737,10 @@ fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = std::process::Command::new("cargo");
+    let mut command = util::command::new_std_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
-
     let pkgid = String::from_utf8(
         command
             .current_dir(package_directory)
@@ -994,7 +1118,11 @@ mod tests {
             (
                 r#"{"packages":[{"id":"path+file:///path/to/zed/crates/zed#0.131.0","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
                 "/path/to/zed/src/main.rs",
-                Some(("path+file:///path/to/zed/crates/zed#0.131.0", "zed")),
+                Some((
+                    "path+file:///path/to/zed/crates/zed#0.131.0",
+                    "zed",
+                    TargetKind::Bin,
+                )),
             ),
             (
                 r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["bin"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
@@ -1002,6 +1130,16 @@ mod tests {
                 Some((
                     "path+file:///path/to/custom-package#my-custom-package@0.1.0",
                     "my-custom-bin",
+                    TargetKind::Bin,
+                )),
+            ),
+            (
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                "/path/to/custom-package/src/main.rs",
+                Some((
+                    "path+file:///path/to/custom-package#my-custom-package@0.1.0",
+                    "my-custom-bin",
+                    TargetKind::Example,
                 )),
             ),
             (
@@ -1016,7 +1154,7 @@ mod tests {
 
             assert_eq!(
                 retrieve_package_id_and_bin_name_from_metadata(metadata, absolute_path),
-                expected.map(|(pkgid, bin)| (pkgid.to_owned(), bin.to_owned()))
+                expected.map(|(pkgid, name, kind)| (pkgid.to_owned(), name.to_owned(), kind))
             );
         }
     }

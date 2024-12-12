@@ -4,11 +4,12 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{anyhow, Result};
 use auto_update::AutoUpdater;
 use editor::Editor;
+use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
     percentage, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
-    EventEmitter, FocusableView, ParentElement as _, PromptLevel, Render, SemanticVersion,
-    SharedString, Task, TextStyleRefinement, Transformation, View, WeakView,
+    EventEmitter, FocusableView, FontFeatures, ParentElement as _, PromptLevel, Render,
+    SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, View, WeakView,
 };
 use gpui::{AppContext, Model};
 
@@ -178,6 +179,7 @@ impl SshPrompt {
         let mut text_style = cx.text_style();
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
+            font_features: Some(FontFeatures::disable_ligatures()),
             font_size: Some(theme.buffer_font_size.into()),
             color: Some(cx.theme().colors().editor_foreground),
             background_color: Some(gpui::transparent_black()),
@@ -199,7 +201,7 @@ impl SshPrompt {
             selection_background_color: cx.theme().players().local().selection,
             ..Default::default()
         };
-        let markdown = cx.new_view(|cx| Markdown::new_text(prompt, markdown_style, None, cx, None));
+        let markdown = cx.new_view(|cx| Markdown::new_text(prompt, markdown_style, None, None, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         cx.focus_view(&self.editor);
@@ -320,9 +322,9 @@ impl RenderOnce for SshConnectionHeader {
         };
 
         h_flex()
-            .px(Spacing::XLarge.rems(cx))
-            .pt(Spacing::Large.rems(cx))
-            .pb(Spacing::Small.rems(cx))
+            .px(DynamicSpacing::Base12.rems(cx))
+            .pt(DynamicSpacing::Base08.rems(cx))
+            .pb(DynamicSpacing::Base04.rems(cx))
             .rounded_t_md()
             .w_full()
             .gap_1p5()
@@ -628,6 +630,15 @@ pub async fn open_ssh_project(
                 continue;
             }
         }
+
+        window
+            .update(cx, |workspace, cx| {
+                if let Some(client) = workspace.project().read(cx).ssh_client().clone() {
+                    ExtensionStore::global(cx)
+                        .update(cx, |store, cx| store.register_ssh_client(client, cx));
+                }
+            })
+            .ok();
 
         break;
     }

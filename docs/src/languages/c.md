@@ -13,3 +13,39 @@ Clangd out of the box assumes mixed C++/C projects. If you have a C-only project
 CompileFlags:
   Add: [-xc]
 ```
+
+By default clang and gcc by will recognize `*.C` and `*.H` (uppercase extensions) as C++ and not C and so Zed too follows this convention. If you are working with a C-only project (perhaps one with legacy uppercase pathing like `FILENAME.C`) you can override this behavior by adding this to your settings:
+
+```json
+{
+  "file_types": {
+    "C": ["C", "H"]
+  }
+}
+```
+
+## Formatting
+
+By default Zed will use the `clangd` language server for formatting C code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
+
+```yaml
+---
+BasedOnStyle: GNU
+IndentWidth: 2
+---
+```
+
+See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.
+
+You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your Zed settings:
+
+```json
+  "languages": {
+    "C" {
+      "format_on_save": "on",
+      "tab_size": 2
+    }
+  }
+```
+
+See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.

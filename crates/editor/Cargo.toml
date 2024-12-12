@@ -39,13 +39,16 @@ collections.workspace = true
 convert_case.workspace = true
 db.workspace = true
 emojis.workspace = true
+feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
+fs.workspace = true
 git.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 indoc.workspace = true
+inline_completion.workspace = true
 itertools.workspace = true
 language.workspace = true
 linkify.workspace = true
@@ -82,6 +85,7 @@ unindent = { workspace = true, optional = true }
 ui.workspace = true
 url.workspace = true
 util.workspace = true
+uuid.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
@@ -95,6 +99,7 @@ project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 text = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-html.workspace = true

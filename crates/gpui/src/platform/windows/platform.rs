@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use ::util::ResultExt;
+use ::util::{paths::SanitizedPath, ResultExt};
 use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
@@ -292,7 +292,7 @@ impl Platform for WindowsPlatform {
             pid,
             app_path.display(),
         );
-        let restart_process = std::process::Command::new("powershell.exe")
+        let restart_process = util::command::new_std_command("powershell.exe")
             .arg("-command")
             .arg(script)
             .spawn();
@@ -323,6 +323,14 @@ impl Platform for WindowsPlatform {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (mut tx, rx) = oneshot::channel();
+        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
+        rx
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -645,13 +653,11 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty() {
         if let Some(full_path) = directory.canonicalize().log_err() {
-            let full_path = full_path.to_string_lossy();
-            let full_path_str = full_path.trim_start_matches("\\\\?\\");
-            if !full_path_str.is_empty() {
-                let path_item: IShellItem =
-                    unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_str), None)? };
-                unsafe { dialog.SetFolder(&path_item).log_err() };
-            }
+            let full_path = SanitizedPath::from(full_path);
+            let full_path_string = full_path.to_string();
+            let path_item: IShellItem =
+                unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
+            unsafe { dialog.SetFolder(&path_item).log_err() };
         }
     }
     unsafe {

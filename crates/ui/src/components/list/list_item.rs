@@ -39,6 +39,7 @@ pub struct ListItem {
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
     overflow_x: bool,
+    focused: Option<bool>,
 }
 
 impl ListItem {
@@ -62,6 +63,7 @@ impl ListItem {
             children: SmallVec::new(),
             selectable: true,
             overflow_x: false,
+            focused: None,
         }
     }
 
@@ -140,6 +142,11 @@ impl ListItem {
         self.overflow_x = true;
         self
     }
+
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = Some(focused);
+        self
+    }
 }
 
 impl Disableable for ListItem {
@@ -171,15 +178,20 @@ impl RenderOnce for ListItem {
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
-                    .px(Spacing::Small.rems(cx))
+                    .px(DynamicSpacing::Base04.rems(cx))
             })
             .when(!self.inset && !self.disabled, |this| {
                 this
                     // TODO: Add focus state
                     // .when(self.state == InteractionState::Focused, |this| {
-                    //     this.border_1()
-                    //         .border_color(cx.theme().colors().border_focused)
-                    // })
+                    .when_some(self.focused, |this, focused| {
+                        if focused {
+                            this.border_1()
+                                .border_color(cx.theme().colors().border_focused)
+                        } else {
+                            this.border_1()
+                        }
+                    })
                     .when(self.selectable, |this| {
                         this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
@@ -195,7 +207,7 @@ impl RenderOnce for ListItem {
                     .relative()
                     .items_center()
                     .gap_1()
-                    .px(Spacing::Medium.rems(cx))
+                    .px(DynamicSpacing::Base06.rems(cx))
                     .map(|this| match self.spacing {
                         ListItemSpacing::Dense => this,
                         ListItemSpacing::Sparse => this.py_1(),
@@ -204,10 +216,15 @@ impl RenderOnce for ListItem {
                     .when(self.inset && !self.disabled, |this| {
                         this
                             // TODO: Add focus state
-                            // .when(self.state == InteractionState::Focused, |this| {
-                            //     this.border_1()
-                            //         .border_color(cx.theme().colors().border_focused)
-                            // })
+                            //.when(self.state == InteractionState::Focused, |this| {
+                            .when_some(self.focused, |this, focused| {
+                                if focused {
+                                    this.border_1()
+                                        .border_color(cx.theme().colors().border_focused)
+                                } else {
+                                    this.border_1()
+                                }
+                            })
                             .when(self.selectable, |this| {
                                 this.hover(|style| {
                                     style.bg(cx.theme().colors().ghost_element_hover)
@@ -248,7 +265,7 @@ impl RenderOnce for ListItem {
                             .flex_grow()
                             .flex_shrink_0()
                             .flex_basis(relative(0.25))
-                            .gap(Spacing::Medium.rems(cx))
+                            .gap(DynamicSpacing::Base06.rems(cx))
                             .map(|list_content| {
                                 if self.overflow_x {
                                     list_content
@@ -276,7 +293,7 @@ impl RenderOnce for ListItem {
                             h_flex()
                                 .h_full()
                                 .absolute()
-                                .right(Spacing::Medium.rems(cx))
+                                .right(DynamicSpacing::Base06.rems(cx))
                                 .top_0()
                                 .visible_on_hover("list_item")
                                 .child(end_hover_slot),

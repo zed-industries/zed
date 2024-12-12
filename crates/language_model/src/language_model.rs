@@ -1,23 +1,19 @@
-pub mod logging;
 mod model;
-pub mod provider;
 mod rate_limiter;
 mod registry;
 mod request;
 mod role;
-pub mod settings;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake_provider;
 
 use anyhow::Result;
-use client::{Client, UserStore};
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
-use gpui::{
-    AnyElement, AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext,
-};
+use gpui::{AnyElement, AnyView, AppContext, AsyncAppContext, SharedString, Task, WindowContext};
 pub use model::*;
-use project::Fs;
 use proto::Plan;
-pub(crate) use rate_limiter::*;
+pub use rate_limiter::*;
 pub use registry::*;
 pub use request::*;
 pub use role::*;
@@ -27,14 +23,10 @@ use std::fmt;
 use std::{future::Future, sync::Arc};
 use ui::IconName;
 
-pub fn init(
-    user_store: Model<UserStore>,
-    client: Arc<Client>,
-    fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-) {
-    settings::init(fs, cx);
-    registry::init(user_store, client, cx);
+pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
+
+pub fn init(cx: &mut AppContext) {
+    registry::init(cx);
 }
 
 /// The availability of a [`LanguageModel`].
@@ -63,7 +55,7 @@ pub enum LanguageModelCompletionEvent {
     StartMessage { message_id: String },
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
     EndTurn,
@@ -72,8 +64,26 @@ pub enum StopReason {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
+pub struct LanguageModelToolUseId(Arc<str>);
+
+impl fmt::Display for LanguageModelToolUseId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl<T> From<T> for LanguageModelToolUseId
+where
+    T: Into<Arc<str>>,
+{
+    fn from(value: T) -> Self {
+        Self(value.into())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct LanguageModelToolUse {
-    pub id: String,
+    pub id: LanguageModelToolUseId,
     pub name: String,
     pub input: serde_json::Value,
 }
@@ -137,7 +147,7 @@ pub trait LanguageModel: Send + Sync {
         let events = self.stream_completion(request, cx);
 
         async move {
-            let mut events = events.await?;
+            let mut events = events.await?.fuse();
             let mut message_id = None;
             let mut first_item_text = None;
 
@@ -184,7 +194,7 @@ pub trait LanguageModel: Send + Sync {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &provider::fake::FakeLanguageModel {
+    fn as_fake(&self) -> &fake_provider::FakeLanguageModel {
         unimplemented!()
     }
 }

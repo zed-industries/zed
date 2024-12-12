@@ -2,8 +2,8 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
-use language::{LanguageServerName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
-use lsp::{CodeActionKind, LanguageServerBinary};
+use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
@@ -77,6 +77,7 @@ impl LspAdapter for VtslsLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let env = delegate.shell_env().await;

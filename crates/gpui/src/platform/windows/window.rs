@@ -38,10 +38,12 @@ pub struct WindowsWindowState {
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
+    pub is_minimized: Option<bool>,
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
     pub system_key_handled: bool,
+    pub hovered: bool,
 
     pub renderer: BladeRenderer,
 
@@ -91,10 +93,12 @@ impl WindowsWindowState {
             size: logical_size,
         };
         let border_offset = WindowBorderOffset::default();
+        let is_minimized = None;
         let renderer = windows_renderer::windows_renderer(hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let system_key_handled = false;
+        let hovered = false;
         let click_state = ClickState::new();
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
@@ -107,9 +111,11 @@ impl WindowsWindowState {
             fullscreen_restore_bounds,
             border_offset,
             scale_factor,
+            is_minimized,
             callbacks,
             input_handler,
             system_key_handled,
+            hovered,
             renderer,
             click_state,
             system_settings,
@@ -323,9 +329,10 @@ impl WindowsWindowStatePtr {
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
-    pub(crate) request_frame: Option<Box<dyn FnMut()>>,
+    pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     pub(crate) input: Option<Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>>,
     pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
+    pub(crate) hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     pub(crate) moved: Option<Box<dyn FnMut()>>,
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -635,9 +642,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.hwnd == unsafe { GetActiveWindow() }
     }
 
-    // is_hovered is unused on Windows. See WindowContext::is_window_hovered.
     fn is_hovered(&self) -> bool {
-        false
+        self.0.state.borrow().hovered
     }
 
     fn set_title(&mut self, title: &str) {
@@ -647,11 +653,47 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        self.0
-            .state
-            .borrow_mut()
+        let mut window_state = self.0.state.borrow_mut();
+        window_state
             .renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+        let mut version = unsafe { std::mem::zeroed() };
+        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+        if status.is_ok() {
+            if background_appearance == WindowBackgroundAppearance::Blurred {
+                if version.dwBuildNumber >= 17763 {
+                    set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 10)), 4);
+                }
+            } else {
+                if version.dwBuildNumber >= 17763 {
+                    set_window_composition_attribute(window_state.hwnd, None, 0);
+                }
+            }
+            //Transparent effect might cause some flickering and performance issues due `WS_EX_COMPOSITED` is enabled
+            //if `WS_EX_COMPOSITED` is removed the window instance won't initiate
+            if background_appearance == WindowBackgroundAppearance::Transparent {
+                unsafe {
+                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(
+                        window_state.hwnd,
+                        GWL_EXSTYLE,
+                        current_style | WS_EX_LAYERED.0 as i32 | WS_EX_COMPOSITED.0 as i32,
+                    );
+                    SetLayeredWindowAttributes(window_state.hwnd, COLORREF(0), 225, LWA_ALPHA)
+                        .inspect_err(|e| log::error!("Unable to set window to transparent: {e}"))
+                        .ok();
+                };
+            } else {
+                unsafe {
+                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(
+                        window_state.hwnd,
+                        GWL_EXSTYLE,
+                        current_style & !WS_EX_LAYERED.0 as i32 & !WS_EX_COMPOSITED.0 as i32,
+                    );
+                }
+            }
+        }
     }
 
     fn minimize(&self) {
@@ -680,7 +722,7 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().is_fullscreen()
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.0.state.borrow_mut().callbacks.request_frame = Some(callback);
     }
 
@@ -692,7 +734,9 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().callbacks.active_status_change = Some(callback);
     }
 
-    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+    }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.state.borrow_mut().callbacks.resize = Some(callback);
@@ -932,6 +976,23 @@ struct StyleAndBounds {
     cy: i32,
 }
 
+#[repr(C)]
+struct WINDOWCOMPOSITIONATTRIBDATA {
+    attrib: u32,
+    pv_data: *mut std::ffi::c_void,
+    cb_data: usize,
+}
+
+#[repr(C)]
+struct AccentPolicy {
+    accent_state: u32,
+    accent_flags: u32,
+    gradient_color: u32,
+    animation_id: u32,
+}
+
+type Color = (u8, u8, u8, u8);
+
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct WindowBorderOffset {
     width_offset: i32,
@@ -1134,6 +1195,44 @@ fn retrieve_window_placement(
     let bounds = bounds.to_device_pixels(scale_factor);
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
+}
+
+fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32) {
+    unsafe {
+        type SetWindowCompositionAttributeType =
+            unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
+        let module_name = PCSTR::from_raw("user32.dll\0".as_ptr());
+        let user32 = GetModuleHandleA(module_name);
+        if user32.is_ok() {
+            let func_name = PCSTR::from_raw("SetWindowCompositionAttribute\0".as_ptr());
+            let set_window_composition_attribute: SetWindowCompositionAttributeType =
+                std::mem::transmute(GetProcAddress(user32.unwrap(), func_name));
+            let mut color = color.unwrap_or_default();
+            let is_acrylic = state == 4;
+            if is_acrylic && color.3 == 0 {
+                color.3 = 1;
+            }
+            let accent = AccentPolicy {
+                accent_state: state,
+                accent_flags: if is_acrylic { 0 } else { 2 },
+                gradient_color: (color.0 as u32)
+                    | ((color.1 as u32) << 8)
+                    | ((color.2 as u32) << 16)
+                    | (color.3 as u32) << 24,
+                animation_id: 0,
+            };
+            let mut data = WINDOWCOMPOSITIONATTRIBDATA {
+                attrib: 0x13,
+                pv_data: &accent as *const _ as *mut _,
+                cb_data: std::mem::size_of::<AccentPolicy>(),
+            };
+            let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
+        } else {
+            let _ = user32
+                .inspect_err(|e| log::error!("Error getting module: {e}"))
+                .ok();
+        }
+    }
 }
 
 mod windows_renderer {
