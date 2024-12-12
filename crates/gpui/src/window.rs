@@ -3874,7 +3874,7 @@ impl<T: 'static> WindowHandle<T> {
 
     /// Replace the root view of a window with a new view.
     pub fn replace_state(
-        &mut self,
+        &self,
         cx: &mut AppContext,
         build_view: impl FnOnce(&Model<T>, &mut Window, &mut AppContext) -> T,
     ) -> Result<Model<T>> {

@@ -4487,7 +4487,7 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Box<Model<TestItem>> {
         cx.update(|window, cx| {
-            pane.update(cx, |pane, model, window, cx| {
+            pane.update(cx, |pane, model, cx| {
                 let labeled_item = Box::new(cx.new_model(|model, cx| {
                     TestItem::new(model, window, cx)
                         .with_label(label)
@@ -4497,7 +4497,6 @@ mod tests {
                 labeled_item
             })
         })
-        .unwrap()
     }
 
     fn set_labeled_items<const COUNT: usize>(
@@ -4506,7 +4505,7 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> [Box<Model<TestItem>>; COUNT] {
         cx.update(|window, cx| {
-            pane.update_in_window(window, cx, |pane, model, window, cx| {
+            pane.update(cx, |pane, model, cx| {
                 pane.items.clear();
                 let mut active_item_index = 0;
 
@@ -4531,7 +4530,6 @@ mod tests {
                 items
             })
         })
-        .unwrap()
     }
 
     // Assert the item label, with the active item label suffixed with a '*'

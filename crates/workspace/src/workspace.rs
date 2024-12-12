@@ -33,7 +33,7 @@ use futures::{
 use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyModel, AnyWeakModel, AnyWindowHandle, AppContext,
-    AsyncAppContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
+    AsyncAppContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Empty, Entity as _, EntityId,
     EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, Model,
     MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful,
     Subscription, Task, Tiling, WeakModel, Window, WindowBounds, WindowHandle, WindowId,
@@ -1054,30 +1054,36 @@ impl Workspace {
                         if this.bounds_save_task_queued.is_some() {
                             return;
                         }
-                        this.bounds_save_task_queued =
+                        this.bounds_save_task_queued = {
+                            let window = window.handle();
                             Some(model.spawn(cx, |this, mut cx| async move {
                                 cx.background_executor()
                                     .timer(Duration::from_millis(100))
                                     .await;
-                                this.update(&mut cx, |this, model, cx| {
-                                    if let Some(display) = window.display(cx) {
-                                        if let Ok(display_uuid) = display.uuid() {
-                                            let window_bounds = window.window_bounds();
-                                            if let Some(database_id) = workspace_id {
-                                                cx.background_executor()
-                                                    .spawn(DB.set_window_open_status(
-                                                        database_id,
-                                                        SerializedWindowBounds(window_bounds),
-                                                        display_uuid,
-                                                    ))
-                                                    .detach_and_log_err(cx);
+                                this.update_in_window(
+                                    window,
+                                    &mut cx,
+                                    |this, model, window, cx| {
+                                        if let Some(display) = window.display(cx) {
+                                            if let Ok(display_uuid) = display.uuid() {
+                                                let window_bounds = window.window_bounds();
+                                                if let Some(database_id) = workspace_id {
+                                                    cx.background_executor()
+                                                        .spawn(DB.set_window_open_status(
+                                                            database_id,
+                                                            SerializedWindowBounds(window_bounds),
+                                                            display_uuid,
+                                                        ))
+                                                        .detach_and_log_err(cx);
+                                                }
                                             }
                                         }
-                                    }
-                                    this.bounds_save_task_queued.take();
-                                })
+                                        this.bounds_save_task_queued.take();
+                                    },
+                                )
                                 .ok();
-                            }));
+                            }))
+                        };
                         model.notify(cx);
                     })
                 }
@@ -1100,7 +1106,7 @@ impl Workspace {
                 model.notify(cx);
             }),
             model.on_release(cx, {
-                let window = window_handle.handle().downcast::<Self>().unwrap();
+                let window = window_handle.downcast::<Self>().unwrap();
                 move |this, cx| {
                     this.app_state
                         .workspace_store
@@ -1217,7 +1223,7 @@ impl Workspace {
 
                 if order.iter().enumerate().any(|(i, &j)| i != j) {
                     project_handle
-                        .update(&mut cx, |project, cx| {
+                        .update(&mut cx, |project, model, cx| {
                             project.set_worktrees_reordered(true, cx);
                         })
                         .log_err();
@@ -1304,8 +1310,8 @@ impl Workspace {
                     move |model, window, cx| {
                         let mut workspace = Workspace::new(
                             Some(workspace_id),
-                            project_handle,
-                            app_state,
+                            project_handle.clone(),
+                            app_state.clone(),
                             model,
                             window,
                             cx,
@@ -1319,13 +1325,13 @@ impl Workspace {
             notify_if_database_failed(window, &mut cx);
             let opened_items = window
                 .update(&mut cx, |_workspace, model, window, cx| {
-                    open_items(serialized_workspace, project_paths, model, cx)
+                    open_items(serialized_workspace, project_paths, model, window, cx)
                 })?
                 .await
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |_, _, window, cx| window.activate())
+                .update(&mut cx, |_, _, window, cx| window.activate_window())
                 .log_err();
             Ok((window, opened_items))
         })
@@ -1498,6 +1504,7 @@ impl Workspace {
             // If the item was no longer present, then load it again from its previous path, first try the local path
             let open_by_project_path = self.load_path(project_path.clone(), window, cx);
 
+            let window = window.handle();
             model.spawn(cx, |workspace, mut cx| async move {
                 let open_by_project_path = open_by_project_path.await;
                 let mut navigated = false;
@@ -1510,7 +1517,7 @@ impl Workspace {
                             pane.active_item().map(|p| p.item_id())
                         })?;
 
-                        pane.update(&mut cx, |pane, model, cx| {
+                        pane.update_in_window(window, &mut cx, |pane, model, window, cx| {
                             let item = pane.open_item(
                                 project_entry_id,
                                 true,
@@ -1536,7 +1543,7 @@ impl Workspace {
                                 pane.nav_history_mut().set_mode(mode);
                                 pane.active_item().map(|p| p.item_id())
                             })?;
-                            let open_by_abs_path = workspace.update(&mut cx, |workspace, model, cx| {
+                            let open_by_abs_path = workspace.update_in_window(window, &mut cx, |workspace, model, window, cx| {
                                 workspace.open_abs_path(abs_path.clone(), false, model, window, cx)
                             })?;
                             match open_by_abs_path
@@ -1562,7 +1569,7 @@ impl Workspace {
 
                 if !navigated {
                     workspace
-                        .update(&mut cx, |workspace, model, cx| {
+                        .update_in_window(window, &mut cx, |workspace, model, window, cx| {
                             Self::navigate_history(workspace, pane, mode, model, window, cx)
                         })?
                         .await?;
@@ -1714,7 +1721,7 @@ impl Workspace {
                                 this.show_portal_error(err.to_string(), model, cx);
 
                                 let prompt = this.on_prompt_for_new_path.take().unwrap();
-                                let rx = prompt(this, cx);
+                                let rx = prompt(this, model, cx);
                                 this.on_prompt_for_new_path = Some(prompt);
                                 rx
                             })?;
@@ -1773,13 +1780,15 @@ impl Workspace {
         F: 'static + FnOnce(&mut Workspace, &Model<Workspace>, &mut AppContext) -> T,
     {
         if self.project.read(cx).is_local() {
-            Task::Ready(Some(Ok(callback(self, cx))))
+            Task::Ready(Some(Ok(callback(self, model, cx))))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
             let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, cx);
-            cx.spawn(|_vh, mut cx| async move {
+            cx.spawn(|mut cx| async move {
                 let (workspace, _) = task.await?;
-                workspace.update(&mut cx, callback)
+                workspace.update(&mut cx, |workspace, model, _window, cx| {
+                    callback(workspace, model, cx)
+                })
             })
         }
     }
@@ -1812,11 +1821,11 @@ impl Workspace {
         cx.defer(|cx| {
             cx.windows().iter().find(|window| {
                 window
-                    .update(cx, |_, model, window| {
-                        if window.is_window_active() {
+                    .update(cx, |window, _| {
+                        if window.is_active() {
                             //This can only get called when the window's project connection has been lost
                             //so we don't need to prompt the user for anything and instead just close the window
-                            window.remove_window();
+                            window.remove();
                             true
                         } else {
                             false
@@ -1827,13 +1836,19 @@ impl Workspace {
         });
     }
 
-    pub fn close_window(&mut self, _: &CloseWindow, model: &Model<Self>, cx: &mut AppContext) {
-        let prepare = self.prepare_to_close(CloseIntent::CloseWindow, model, cx);
-        let window = cx.window_handle();
+    pub fn close_window(
+        &mut self,
+        _: &CloseWindow,
+        model: &Model<Self>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
+        let prepare = self.prepare_to_close(CloseIntent::CloseWindow, model, window, cx);
+        let window = window.handle();
         cx.spawn(|mut cx| async move {
             if prepare.await? {
-                window.update(&mut cx, |_, cx| {
-                    cx.remove_window();
+                window.update(&mut cx, |window, _| {
+                    window.remove();
                 })?;
             }
             anyhow::Ok(())
@@ -1845,10 +1860,11 @@ impl Workspace {
         &mut self,
         close_intent: CloseIntent,
         model: &Model<Self>,
+        window: &Window,
         cx: &mut AppContext,
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
-        let window = cx.window_handle();
+        let window = window.handle();
 
         // On Linux and Windows, closing the last window should restore the last workspace.
         let save_last_workspace = cfg!(not(target_os = "macos"))
@@ -1856,7 +1872,7 @@ impl Workspace {
             && cx.windows().len() == 1;
 
         model.spawn(cx, |this, mut cx| async move {
-            let workspace_count = (*cx).update(|cx| {
+            let workspace_count = cx.update(|cx| {
                 cx.windows()
                     .iter()
                     .filter(|window| window.downcast::<Workspace>().is_some())
@@ -1866,14 +1882,15 @@ impl Workspace {
             if let Some(active_call) = active_call {
                 if close_intent != CloseIntent::Quit
                     && workspace_count == 1
-                    && active_call.read_with(&cx, |call, _| call.room().is_some())?
+                    && active_call.read_with(&cx, |call, _, _| call.room().is_some())?
                 {
-                    let answer = window.update(&mut cx, |_, cx| {
-                        cx.prompt(
+                    let answer = window.update(&mut cx, |window, cx| {
+                        window.prompt(
                             PromptLevel::Warning,
                             "Do you want to leave the current call?",
                             None,
                             &["Close window and hang up", "Cancel"],
+                            cx,
                         )
                     })?;
 
@@ -1881,7 +1898,7 @@ impl Workspace {
                         return anyhow::Ok(false);
                     } else {
                         active_call
-                            .update(&mut cx, |call, cx| call.hang_up(cx))?
+                            .update(&mut cx, |call, model, cx| call.hang_up(model, cx))?
                             .await
                             .log_err();
                     }
@@ -1889,8 +1906,8 @@ impl Workspace {
             }
 
             let save_result = this
-                .update(&mut cx, |this, model, cx| {
-                    this.save_all_internal(SaveIntent::Close, model, cx)
+                .update_in_window(window, &mut cx, |this, model, window, cx| {
+                    this.save_all_internal(SaveIntent::Close, model, window, cx)
                 })?
                 .await;
 
@@ -1900,7 +1917,7 @@ impl Workspace {
                 && !save_last_workspace
                 && save_result.as_ref().map_or(false, |&res| res)
             {
-                this.update(&mut cx, |this, model, cx| {
+                this.update_in_window(window, &mut cx, |this, model, window, cx| {
                     this.remove_from_session(model, window, cx)
                 })?
                 .await;
@@ -1910,15 +1927,27 @@ impl Workspace {
         })
     }
 
-    fn save_all(&mut self, action: &SaveAll, model: &Model<Self>, cx: &mut AppContext) {
-        self.save_all_internal(action.save_intent.unwrap_or(SaveIntent::SaveAll), model, cx)
-            .detach_and_log_err(cx);
+    fn save_all(
+        &mut self,
+        action: &SaveAll,
+        model: &Model<Self>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
+        self.save_all_internal(
+            action.save_intent.unwrap_or(SaveIntent::SaveAll),
+            model,
+            window,
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     fn send_keystrokes(
         &mut self,
         action: &SendKeystrokes,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         let mut state = self.dispatching_keystrokes.borrow_mut();
@@ -1937,39 +1966,40 @@ impl Workspace {
         drop(state);
 
         let keystrokes = self.dispatching_keystrokes.clone();
-        cx.window_context()
-            .spawn(|mut cx| async move {
-                // limit to 100 keystrokes to avoid infinite recursion.
-                for _ in 0..100 {
-                    let Some(keystroke) = keystrokes.borrow_mut().1.pop() else {
-                        keystrokes.borrow_mut().0.clear();
-                        return Ok(());
-                    };
-                    cx.update(|cx| {
-                        let focused = cx.focused();
-                        cx.dispatch_keystroke(keystroke.clone());
-                        if cx.focused() != focused {
-                            // dispatch_keystroke may cause the focus to change.
-                            // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
-                            // And we need that to happen before the next keystroke to keep vim mode happy...
-                            // (Note that the tests always do this implicitly, so you must manually test with something like:
-                            //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
-                            // )
-                            cx.draw();
-                        }
-                    })?;
-                }
+        let window = window.handle();
+        cx.spawn(|mut cx| async move {
+            // limit to 100 keystrokes to avoid infinite recursion.
+            for _ in 0..100 {
+                let Some(keystroke) = keystrokes.borrow_mut().1.pop() else {
+                    keystrokes.borrow_mut().0.clear();
+                    return Ok(());
+                };
+                cx.update_window(window, |window, cx| {
+                    let focused = window.focused();
+                    window.dispatch_keystroke(keystroke.clone(), cx);
+                    if window.focused() != focused {
+                        // dispatch_keystroke may cause the focus to change.
+                        // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
+                        // And we need that to happen before the next keystroke to keep vim mode happy...
+                        // (Note that the tests always do this implicitly, so you must manually test with something like:
+                        //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
+                        // )
+                        window.draw(cx);
+                    }
+                })?;
+            }
 
-                *keystrokes.borrow_mut() = Default::default();
-                Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
-            })
-            .detach_and_log_err(cx);
+            *keystrokes.borrow_mut() = Default::default();
+            Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
+        })
+        .detach_and_log_err(cx);
     }
 
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<bool>> {
         if self.project.read(cx).is_disconnected(cx) {
@@ -1991,6 +2021,7 @@ impl Workspace {
             .collect::<Vec<_>>();
 
         let project = self.project.clone();
+        let window = window.handle();
         model.spawn(cx, |workspace, mut cx| async move {
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
                 let (serialize_tasks, remaining_dirty_items) =
@@ -2013,19 +2044,21 @@ impl Workspace {
                 futures::future::try_join_all(serialize_tasks).await?;
 
                 if remaining_dirty_items.len() > 1 {
-                    let answer = workspace.update(&mut cx, |_, cx| {
-                        let (prompt, detail) = Pane::file_names_for_prompt(
-                            &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
-                            remaining_dirty_items.len(),
-                            cx,
-                        );
-                        cx.prompt(
-                            PromptLevel::Warning,
-                            &prompt,
-                            Some(&detail),
-                            &["Save all", "Discard all", "Cancel"],
-                        )
-                    })?;
+                    let answer =
+                        workspace.update_in_window(window, &mut cx, |_, _model, window, cx| {
+                            let (prompt, detail) = Pane::file_names_for_prompt(
+                                &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
+                                remaining_dirty_items.len(),
+                                cx,
+                            );
+                            window.prompt(
+                                PromptLevel::Warning,
+                                &prompt,
+                                Some(&detail),
+                                &["Save all", "Discard all", "Cancel"],
+                                cx,
+                            )
+                        })?;
                     match answer.await.log_err() {
                         Some(0) => save_intent = SaveIntent::SaveAll,
                         Some(1) => save_intent = SaveIntent::Skip,
@@ -2051,7 +2084,7 @@ impl Workspace {
                             ix,
                             &*item,
                             save_intent,
-                            &mut model,
+                            window,
                             &mut cx,
                         )
                         .await?
@@ -3359,7 +3392,7 @@ impl Workspace {
                 self.remove_pane(pane, focus_on_pane.clone(), model, window, cx)
             }
             pane::Event::ActivateItem { local } => {
-                cx.on_next_frame(|_, cx| {
+                cx.on_next_frame(|_, model, cx| {
                     cx.invalidate_character_coordinates();
                 });
 
@@ -3399,7 +3432,7 @@ impl Workspace {
                 }
             }
             pane::Event::Focus => {
-                cx.on_next_frame(|_, cx| {
+                cx.on_next_frame(|_, model, cx| {
                     cx.invalidate_character_coordinates();
                 });
                 self.handle_pane_focused(pane.clone(), model, window, cx);
@@ -3960,13 +3993,7 @@ impl Workspace {
         }
     }
 
-    fn handle_update_followers(
-        &mut self,
-        leader_id: PeerId,
-        message: proto::UpdateFollowers,
-        model: &Model<Self>,
-        _cx: &mut AppContext,
-    ) {
+    fn handle_update_followers(&mut self, leader_id: PeerId, message: proto::UpdateFollowers) {
         self.leader_updates_tx
             .unbounded_send((leader_id, message))
             .ok();
@@ -4473,8 +4500,8 @@ impl Workspace {
 
     fn remove_from_session(
         &mut self,
-        window: &mut Window,
         model: &Model<Workspace>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<()> {
         self.session_id.take();
@@ -4657,7 +4684,7 @@ impl Workspace {
                 docks,
                 centered_layout: self.centered_layout,
                 session_id: self.session_id.clone(),
-                window_id: Some(cx.window_handle().window_id().as_u64()),
+                window_id: Some(window.handle().window_id().as_u64()),
             };
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }
@@ -4714,10 +4741,13 @@ impl Workspace {
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
         model: &Model<Workspace>,
+        window: &Window,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
+        let window = window.handle();
         model.spawn(cx, |workspace, mut cx| async move {
-            let project = workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
+            let project =
+                workspace.update(&mut cx, |workspace, _, _| workspace.project().clone())?;
 
             let mut center_group = None;
             let mut center_items = None;
@@ -4729,7 +4759,7 @@ impl Workspace {
                     &project,
                     serialized_workspace.id,
                     workspace.clone(),
-                    model,
+                    window,
                     &mut cx,
                 )
                 .await
@@ -4766,17 +4796,17 @@ impl Workspace {
                 .collect::<Vec<_>>();
 
             // Remove old panes from workspace panes list
-            workspace.update(&mut cx, |workspace, model, cx| {
+            workspace.update_in_window(window, &mut cx, |workspace, model, window, cx| {
                 if let Some((center_group, active_pane)) = center_group {
-                    workspace.remove_panes(workspace.center.root.clone(), cx);
+                    workspace.remove_panes(workspace.center.root.clone(), model, window, cx);
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
                     if let Some(active_pane) = active_pane {
-                        workspace.set_active_pane(&active_pane, cx);
-                        cx.focus_self();
+                        workspace.set_active_pane(&active_pane, model, cx);
+                        workspace.focus_handle(cx).focus(window);
                     } else {
-                        workspace.set_active_pane(&workspace.center.first_pane(), cx);
+                        workspace.set_active_pane(&workspace.center.first_pane(), model, cx);
                     }
                 }
 
@@ -4789,9 +4819,9 @@ impl Workspace {
                 ]
                 .iter_mut()
                 {
-                    dock.update(|dock, model, cx| {
+                    dock.update(cx, |dock, model, cx| {
                         dock.serialized_dock = Some(serialized_dock.clone());
-                        dock.restore_state(model, cx);
+                        dock.restore_state(model, window, cx);
                     });
                 }
 
@@ -4803,7 +4833,7 @@ impl Workspace {
             // the database filling up, we delete items that haven't been loaded now.
             //
             // The items that have been loaded, have been saved after they've been added to the workspace.
-            let clean_up_tasks = workspace.update(&mut cx, |_, cx| {
+            let clean_up_tasks = workspace.update(&mut cx, |_, model, cx| {
                 item_ids_by_kind
                     .into_iter()
                     .map(|(item_kind, loaded_items)| {
@@ -4822,12 +4852,12 @@ impl Workspace {
             futures::future::join_all(clean_up_tasks).await;
 
             workspace
-                .update(&mut cx, |workspace, model, cx| {
+                .update_in_window(window, &mut cx, |workspace, model, window, cx| {
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-                    workspace.serialize_workspace_internal(cx).detach();
+                    workspace.serialize_workspace_internal(window, cx).detach();
 
                     // Ensure that we mark the window as edited if we did load dirty items
-                    workspace.update_window_edited(cx);
+                    workspace.update_window_edited(window, cx);
                 })
                 .ok();
 
@@ -5059,7 +5089,7 @@ impl Workspace {
     }
 
     pub fn for_window(window: &mut Window, cx: &mut AppContext) -> Option<Model<Workspace>> {
-        let window = cx.window_handle().downcast::<Workspace>()?;
+        let window = window.handle().downcast::<Workspace>()?;
         cx.read_window(&window, |workspace, _| workspace).ok()
     }
 
@@ -5115,6 +5145,7 @@ fn open_items(
     serialized_workspace: Option<SerializedWorkspace>,
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     model: &Model<Workspace>,
+    window: &mut Window,
     cx: &mut AppContext,
 ) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> {
     let restored_items = serialized_workspace.map(|serialized_workspace| {
@@ -5126,11 +5157,13 @@ fn open_items(
                 .cloned()
                 .collect(),
             model,
+            window,
             cx,
         )
     });
 
-    model.spawn(cx, |workspace, mut cx| async move {
+    let window = window.handle();
+    model.spawn(cx, |workspace, cx| async move {
         let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 
         if let Some(restored_items) = restored_items {
@@ -5171,6 +5204,7 @@ fn open_items(
                 .enumerate()
                 .map(|(ix, (abs_path, project_path))| {
                     let workspace = workspace.clone();
+                    let window = window.clone();
                     cx.spawn(|mut cx| async move {
                         let file_project_path = project_path?;
                         let abs_path_task = workspace.update(&mut cx, |workspace, model, cx| {
@@ -5187,9 +5221,19 @@ fn open_items(
                                 return Some((
                                     ix,
                                     workspace
-                                        .update(&mut cx, |workspace, model, cx| {
-                                            workspace.open_path(file_project_path, None, true, cx)
-                                        })
+                                        .update_in_window(
+                                            window,
+                                            &mut cx,
+                                            |workspace, model, window, cx| {
+                                                workspace.open_path(
+                                                    file_project_path,
+                                                    None,
+                                                    true,
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        )
                                         .log_err()?
                                         .await,
                                 ));
@@ -5231,7 +5275,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                         cx.new_model(|_, _| {
                             MessageNotification::new("Failed to load the database file.")
                                 .with_click_message("File an issue")
-                                .on_click(|cx| cx.open_url(REPORT_ISSUE_URL))
+                                .on_click(|_, cx| cx.open_url(REPORT_ISSUE_URL))
                         })
                     },
                 );
@@ -5246,8 +5290,20 @@ impl FocusableView for Workspace {
     }
 }
 
-#[derive(Clone, Render)]
+#[derive(Clone)]
 struct DraggedDock(DockPosition);
+
+impl Render for DraggedDock {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut Window,
+        app: &mut AppContext,
+    ) -> impl IntoElement {
+        todo!();
+        Empty
+    }
+}
 
 impl Render for Workspace {
     fn render(
@@ -5493,7 +5549,7 @@ impl Render for Workspace {
 fn resize_bottom_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
-    model: &Model<Self>,
+    model: &Model<Workspace>,
     cx: &mut AppContext,
 ) {
     let size = new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE);
@@ -5505,7 +5561,7 @@ fn resize_bottom_dock(
 fn resize_right_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
-    model: &Model<Self>,
+    model: &Model<Wor>,
     cx: &mut AppContext,
 ) {
     let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
@@ -5517,7 +5573,7 @@ fn resize_right_dock(
 fn resize_left_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
-    model: &Model<Self>,
+    model: &Model<Workspace>,
     cx: &mut AppContext,
 ) {
     let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
@@ -5570,8 +5626,9 @@ impl WorkspaceStore {
             let mut response = proto::FollowResponse::default();
             this.workspaces.retain(|workspace| {
                 workspace
-                    .update(cx, |workspace, model, cx| {
-                        let handler_response = workspace.handle_follow(follower.project_id, cx);
+                    .update(cx, |workspace, model, window, cx| {
+                        let handler_response =
+                            workspace.handle_follow(follower.project_id, model, cx);
                         if let Some(active_view) = handler_response.active_view.clone() {
                             if workspace.project.read(cx).remote_id() == follower.project_id {
                                 response.active_view = Some(active_view)
@@ -5601,7 +5658,7 @@ impl WorkspaceStore {
                         if update.project_id != project_id && update.project_id.is_some() {
                             return;
                         }
-                        workspace.handle_update_followers(leader_id, update.clone(), window, cx);
+                        workspace.handle_update_followers(leader_id, update.clone());
                     })
                     .is_ok()
             });
@@ -5894,7 +5951,7 @@ pub fn join_channel(
             log::error!("failed to join channel: {}", err);
             if let Some(active_window) = active_window {
                 active_window
-                    .update(&mut cx, |_, cx| {
+                    .update(&mut cx, |_, model, cx| {
                         let detail: SharedString = match err.error_code() {
                             ErrorCode::SignedOut => {
                                 "Please sign in to continue.".into()
@@ -6207,7 +6264,7 @@ pub fn open_ssh_project(
         })?;
 
         window
-            .update(&mut cx, |_, cx| {
+            .update(&mut cx, |_, model, cx| {
                 cx.activate_window();
 
                 open_items(serialized_workspace, project_paths_to_open, model, cx)
