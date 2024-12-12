@@ -4377,7 +4377,7 @@ fn inline_completion_popover_text(
         offset = end_offset;
     }
 
-    let mut point = edits
+    let mut end = edits
         .last()
         .unwrap()
         .0
@@ -4385,8 +4385,8 @@ fn inline_completion_popover_text(
         .bias_left(&editor_snapshot.buffer_snapshot)
         .text_anchor
         .to_point(&snapshot);
-    point.column = snapshot.line_len(point.row);
-    let end = text::ToOffset::to_offset(&point, &snapshot);
+    end.column = snapshot.line_len(end.row);
+    let end = text::ToOffset::to_offset(&end, &snapshot);
 
     for chunk in snapshot.chunks(offset..end, true) {
         let start = text.len();
