@@ -41,7 +41,6 @@ pub struct GitPanel {
     project: Model<Project>,
     width: Option<Pixels>,
 
-    init_modifiers: Option<Modifiers>,
     current_modifiers: Modifiers,
 }
 
@@ -68,7 +67,6 @@ impl GitPanel {
             fs,
             pending_serialization: Task::ready(None),
             project,
-            init_modifiers: cx.modifiers().modified().then_some(cx.modifiers()),
 
             current_modifiers: cx.modifiers(),
 
@@ -141,11 +139,6 @@ impl GitPanel {
     fn all_staged(&self) -> bool {
         // todo!(): Implement all_staged
         true
-    }
-
-    fn all_unstaged(&self) -> bool {
-        // todo!(): Implement all_unstaged
-        false
     }
 }
 
