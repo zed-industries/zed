@@ -147,7 +147,7 @@ pub trait LanguageModel: Send + Sync {
         let events = self.stream_completion(request, cx);
 
         async move {
-            let mut events = events.await?;
+            let mut events = events.await?.fuse();
             let mut message_id = None;
             let mut first_item_text = None;
 
