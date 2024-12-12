@@ -1587,12 +1587,31 @@ impl BlockSnapshot {
                 let input_end = Point::new(input_end_row.0, 0);
 
                 match transform.block.as_ref() {
-                    Some(Block::Custom(block))
-                        if matches!(block.placement, BlockPlacement::Replace(_)) =>
-                    {
-                        if ((bias == Bias::Left || search_left) && output_start <= point.0)
-                            || (!search_left && output_start >= point.0)
-                        {
+                    Some(block) => {
+                        let within_fold = if is_within_folded_buffer(&self.folded_buffers, block) {
+                            true
+                        } else {
+                            match block {
+                                Block::ExcerptBoundary {
+                                    kind: ExcerptBoundaryKind::FoldedBufferBoundary,
+                                    ..
+                                } => true,
+                                Block::Custom(block)
+                                    if matches!(block.placement, BlockPlacement::Replace(_)) =>
+                                {
+                                    if ((bias == Bias::Left || search_left)
+                                        && output_start <= point.0)
+                                        || (!search_left && output_start >= point.0)
+                                    {
+                                        return BlockPoint(output_start);
+                                    }
+                                    false
+                                }
+                                _ => false,
+                            }
+                        };
+
+                        if within_fold {
                             return BlockPoint(output_start);
                         }
                     }
@@ -1612,7 +1631,6 @@ impl BlockSnapshot {
                             return BlockPoint(output_start + input_overshoot);
                         }
                     }
-                    _ => {}
                 }
 
                 if search_left {
