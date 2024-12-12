@@ -1007,9 +1007,14 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         // Right now we don't support cycling.
     }
 
-    fn accept(&mut self, _cx: &mut ModelContext<Self>) {}
+    fn accept(&mut self, _cx: &mut ModelContext<Self>) {
+        self.first_pending_completion.take();
+        self.last_pending_completion.take();
+    }
 
     fn discard(&mut self, _cx: &mut ModelContext<Self>) {
+        self.first_pending_completion.take();
+        self.last_pending_completion.take();
         self.current_completion.take();
     }
 
