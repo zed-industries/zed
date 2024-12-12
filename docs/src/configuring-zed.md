@@ -133,6 +133,38 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Restore on Startup
+
+- Description: Controls session restoration on startup.
+- Setting: `restore_on_startup`
+- Default: `last_session`
+
+**Options**
+
+1. Restore all workspaces that were open when quitting Zed:
+
+```json
+{
+  "restore_on_startup": "last_session"
+}
+```
+
+2. Restore the workspace that was closed last:
+
+```json
+{
+  "restore_on_startup": "last_workspace"
+}
+```
+
+3. Always start with an empty editor:
+
+```json
+{
+  "restore_on_startup": "none"
+}
+```
+
 ## Autoscroll on Clicks
 
 - Description: Whether to scroll when clicking near the edge of the visible text area.
