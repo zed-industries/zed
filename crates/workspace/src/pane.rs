@@ -502,6 +502,7 @@ impl Pane {
                                     &ToggleZoom,
                                     model,
                                     cx,
+                                    model,
                                 )
                             })
                     })

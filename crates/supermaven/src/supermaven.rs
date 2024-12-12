@@ -297,30 +297,32 @@ impl SupermavenAgent {
 
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
 
-        cx.spawn({
-            let client = client.clone();
-            let outgoing_tx = outgoing_tx.clone();
-            move |this, mut cx| async move {
-                let mut status = client.status();
-                while let Some(status) = status.next().await {
-                    if status.is_connected() {
-                        let api_key = client.request(proto::GetSupermavenApiKey {}).await?.api_key;
-                        outgoing_tx
-                            .unbounded_send(OutboundMessage::SetApiKey(SetApiKey { api_key }))
-                            .ok();
-                        this.update(&mut cx, |this, model, cx| {
-                            if let Supermaven::Spawned(this) = this {
-                                this.account_status = AccountStatus::Ready;
-                                model.notify(cx);
-                            }
-                        })?;
-                        break;
+        model
+            .spawn(cx, {
+                let client = client.clone();
+                let outgoing_tx = outgoing_tx.clone();
+                move |this, mut cx| async move {
+                    let mut status = client.status();
+                    while let Some(status) = status.next().await {
+                        if status.is_connected() {
+                            let api_key =
+                                client.request(proto::GetSupermavenApiKey {}).await?.api_key;
+                            outgoing_tx
+                                .unbounded_send(OutboundMessage::SetApiKey(SetApiKey { api_key }))
+                                .ok();
+                            this.update(&mut cx, |this, model, cx| {
+                                if let Supermaven::Spawned(this) = this {
+                                    this.account_status = AccountStatus::Ready;
+                                    model.notify(cx);
+                                }
+                            })?;
+                            break;
+                        }
                     }
+                    anyhow::Ok(())
                 }
-                anyhow::Ok(())
-            }
-        })
-        .detach();
+            })
+            .detach();
 
         Ok(Self {
             _process: process,
@@ -328,9 +330,10 @@ impl SupermavenAgent {
             states: BTreeMap::default(),
             outgoing_tx,
             _handle_outgoing_messages: cx
-                .spawn(|_, _cx| Self::handle_outgoing_messages(outgoing_rx, stdin)),
-            _handle_incoming_messages: cx
-                .spawn(|this, cx| Self::handle_incoming_messages(this, stdout, cx)),
+                .spawn(|_| Self::handle_outgoing_messages(outgoing_rx, stdin)),
+            _handle_incoming_messages: model.spawn(cx, |this, cx| {
+                Self::handle_incoming_messages(this, stdout, cx)
+            }),
             account_status: AccountStatus::Unknown,
             service_tier: None,
             client,
@@ -372,7 +375,7 @@ impl SupermavenAgent {
                 continue;
             };
 
-            this.update(&mut cx, |this, _cx| {
+            this.update(&mut cx, |this, model, _cx| {
                 if let Supermaven::Spawned(this) = this {
                     this.handle_message(message);
                 }

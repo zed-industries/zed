@@ -67,7 +67,7 @@ impl ReplStore {
             kernel_specifications_for_worktree: HashMap::default(),
             selected_kernel_for_worktree: HashMap::default(),
         };
-        this.on_enabled_changed(cx);
+        this.on_enabled_changed(model, cx);
         this
     }
 
@@ -108,7 +108,7 @@ impl ReplStore {
         }
 
         self.enabled = enabled;
-        self.on_enabled_changed(cx);
+        self.on_enabled_changed(model, cx);
     }
 
     fn on_enabled_changed(&self, model: &Model<Self>, cx: &mut AppContext) {
@@ -180,7 +180,7 @@ impl ReplStore {
     ) -> Task<Result<()>> {
         let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
 
-        let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
+        let remote_kernel_specifications = self.get_remote_kernel_specifications(model, cx);
 
         model.spawn(cx, |this, mut cx| async move {
             let mut all_specs = local_kernel_specifications

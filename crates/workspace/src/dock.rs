@@ -5,8 +5,8 @@ use client::proto;
 use gpui::{
     deferred, div, px, Action, AnchorCorner, AnyView, AppAxis, AppContext, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, MouseDownEvent,
-    MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, View,
-    VisualContext, WeakView,
+    MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription,
+    WeakView,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -838,7 +838,7 @@ impl Render for PanelButtons {
                                     move |_, cx| cx.dispatch_action(action.boxed_clone())
                                 })
                                 .tooltip(move |window, cx| {
-                                    Tooltip::for_action(tooltip.clone(), &*action, cx)
+                                    Tooltip::for_action(tooltip.clone(), &*action, model, cx)
                                 }),
                         ),
                 )
