@@ -2403,8 +2403,7 @@ impl Pane {
                                             save_intent: None,
                                             close_pinned: false,
                                         },
-                                        model,
-                                        cx,
+                                        model, cx,
                                     ) {
                                         task.detach_and_log_err(cx)
                                     }
@@ -3100,7 +3099,7 @@ impl Render for Pane {
                     }
                 }),
             )
-            .on_action(cx.listener(|pane: &mut Self, action: &CloseAllItems, cx| {
+            model, .on_action(cx.listener(|pane: &mut Self, action: &CloseAllItems, cx| {
                 if let Some(task) = pane.close_all_items(action, cx) {
                     task.detach_and_log_err(cx)
                 }
@@ -4037,13 +4036,13 @@ mod tests {
 
         pane.update(cx, |pane, model, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
-            pane.pin_tab_at(ix, cx);
+            pane.pin_tab_at(ix, model, cx);
             pane.close_all_items(
                 &CloseAllItems {
                     save_intent: None,
                     close_pinned: false,
                 },
-                cx,
+                model, cx,
             )
         })
         .unwrap()
@@ -4053,13 +4052,13 @@ mod tests {
 
         pane.update(cx, |pane, model, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
-            pane.unpin_tab_at(ix, cx);
+            pane.unpin_tab_at(ix, model, cx);
             pane.close_all_items(
                 &CloseAllItems {
                     save_intent: None,
                     close_pinned: false,
                 },
-                cx,
+                model, cx,
             )
         })
         .unwrap()
@@ -4089,7 +4088,7 @@ mod tests {
                         save_intent: None,
                         close_pinned: false,
                     },
-                    cx,
+                    model, cx,
                 )
             })
             .unwrap();
@@ -4110,7 +4109,7 @@ mod tests {
                         save_intent: None,
                         close_pinned: false,
                     },
-                    cx,
+                    model, cx,
                 )
             })
             .unwrap();
@@ -4141,13 +4140,13 @@ mod tests {
 
         pane.update(cx, |pane, model, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
-            pane.pin_tab_at(ix, cx);
+            pane.pin_tab_at(ix, model, cx);
             pane.close_all_items(
                 &CloseAllItems {
                     save_intent: None,
                     close_pinned: true,
                 },
-                cx,
+                model, cx,
             )
         })
         .unwrap()

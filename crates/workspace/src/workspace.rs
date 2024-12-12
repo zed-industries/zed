@@ -2434,14 +2434,14 @@ impl Workspace {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Option<Model<T>> {
-        let panel = self.focus_or_unfocus_panel::<T>(cx, |_, _, _| true)?;
+        let panel = self.focus_or_unfocus_panel::<T>(model, cx, |_, _, _| true)?;
         panel.model().downcast().ok()
     }
 
     /// Focus the panel of the given type if it isn't already focused. If it is
     /// already focused, then transfer focus back to the workspace center.
     pub fn toggle_panel_focus<T: Panel>(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        self.focus_or_unfocus_panel::<T>(cx, |panel, model, cx| {
+        self.focus_or_unfocus_panel::<T>(model, window, cx, |panel, model, cx| {
             !panel.focus_handle(cx).contains_focused(cx)
         });
     }
@@ -2450,13 +2450,14 @@ impl Workspace {
         &mut self,
         panel_id: PanelId,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut panel = None;
         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
             if let Some(panel_index) = dock.read(cx).panel_index_for_proto_id(panel_id) {
                 panel = dock.update(cx, |dock, model, cx| {
-                    dock.activate_panel(panel_index, model, cx);
+                    dock.activate_panel(panel_index, model, window, cx);
                     dock.set_open(true, model, cx);
                     dock.active_panel().cloned()
                 });
@@ -2476,6 +2477,7 @@ impl Workspace {
     fn focus_or_unfocus_panel<T: Panel>(
         &mut self,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
         should_focus: impl Fn(&dyn PanelHandle, &Model<Dock>, &mut AppContext) -> bool,
     ) -> Option<Arc<dyn PanelHandle>> {
@@ -2485,7 +2487,7 @@ impl Workspace {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let mut focus_center = false;
                 let panel = dock.update(cx, |dock, model, cx| {
-                    dock.activate_panel(panel_index, model, cx);
+                    dock.activate_panel(panel_index, model, window, cx);
 
                     let panel = dock.active_panel().cloned();
                     if let Some(panel) = panel.as_ref() {
@@ -2519,11 +2521,16 @@ impl Workspace {
     }
 
     /// Open the panel of the given type
-    pub fn open_panel<T: Panel>(&mut self, model: &Model<Self>, cx: &mut AppContext) {
+    pub fn open_panel<T: Panel>(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 dock.update(cx, |dock, model, cx| {
-                    dock.activate_panel(panel_index, cx);
+                    dock.activate_panel(panel_index, model, window, cx);
                     dock.set_open(true, model, cx);
                 });
             }
@@ -2555,7 +2562,7 @@ impl Workspace {
             dock.update(cx, |dock, model, cx| {
                 if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
-                        if panel.is_zoomed(window, cx) {
+                        if panel.is_zoomed(cx) {
                             focus_center |= panel.focus_handle(cx).contains_focused(cx);
                             dock.set_open(false, model, cx);
                         }
@@ -2578,7 +2585,12 @@ impl Workspace {
         model.notify(cx);
     }
 
-    fn add_pane(&mut self, model: &Model<Self>, cx: &mut AppContext) -> Model<Pane> {
+    fn add_pane(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Model<Pane> {
         let pane = cx.new_model(|model, cx| {
             let mut pane = Pane::new(
                 self.weak_handle(),
@@ -2587,6 +2599,7 @@ impl Workspace {
                 None,
                 NewFile.boxed_clone(),
                 model,
+                window,
                 cx,
             );
             pane.set_can_split(Some(Arc::new(|_, _, _| true)));
@@ -2603,12 +2616,13 @@ impl Workspace {
         &mut self,
         item: Box<dyn ItemHandle>,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> bool {
         if let Some(center_pane) = self.last_active_center_pane.clone() {
             if let Some(center_pane) = center_pane.upgrade() {
                 center_pane.update(cx, |pane, model, cx| {
-                    pane.add_item(item, true, true, None, cx)
+                    pane.add_item(item, true, true, None, window, cx)
                 });
                 true
             } else {
@@ -2634,7 +2648,6 @@ impl Workspace {
             false,
             focus_item,
             model,
-            model,
             cx,
         )
     }
@@ -2656,7 +2669,14 @@ impl Workspace {
         }
 
         pane.update(cx, |pane, model, cx| {
-            pane.add_item(item, activate_pane, focus_item, destination_index, cx)
+            pane.add_item(
+                item,
+                activate_pane,
+                focus_item,
+                destination_index,
+                window,
+                cx,
+            )
         });
     }
 
@@ -2667,7 +2687,7 @@ impl Workspace {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
+        let new_pane = self.split_pane(self.active_pane.clone(), split_direction, window, cx);
         self.add_item(new_pane, item, None, true, true, model, cx);
     }
 
@@ -2722,7 +2742,7 @@ impl Workspace {
             Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
         model.spawn(cx, |this, mut cx| async move {
             let (_, path) = project_path_task.await?;
-            this.update(&mut cx, |this, model, cx| this.split_path(path, cx))?
+            this.update(&mut cx, |this, model, cx| this.split_path(path, window, cx))?
                 .await
         })
     }
@@ -2756,7 +2776,7 @@ impl Workspace {
             })
         });
 
-        let task = self.load_path(path.into(), cx);
+        let task = self.load_path(path.into(), window, cx);
         cx.spawn(move |mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
             pane.update(&mut cx, |pane, cx| {
@@ -2802,7 +2822,7 @@ impl Workspace {
             }
         }
 
-        let task = self.load_path(path.into(), cx);
+        let task = self.load_path(path.into(), window, cx);
         model.spawn(cx, |this, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
             this.update(&mut cx, move |this, cx| -> Option<_> {
@@ -2835,7 +2855,7 @@ impl Workspace {
         let Some(open_project_item) = project_item_builders
             .iter()
             .rev()
-            .find_map(|open_project_item| open_project_item(&project, &path, cx))
+            .find_map(|open_project_item| open_project_item(&project, &path, window, cx))
         else {
             return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
         };
@@ -2908,7 +2928,7 @@ impl Workspace {
             if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
                 if let Some(preview_item_id) = pane.preview_item_id() {
                     if preview_item_id != item_id {
-                        destination_index = pane.close_current_preview_item(model, cx);
+                        destination_index = pane.close_current_preview_item(model, window, cx);
                     }
                 }
             }
@@ -2921,7 +2941,6 @@ impl Workspace {
             destination_index,
             activate_pane,
             focus_item,
-            model,
             model,
             cx,
         );
@@ -2958,7 +2977,7 @@ impl Workspace {
         });
         if let Some((pane, ix)) = result {
             pane.update(cx, |pane, model, cx| {
-                pane.activate_item(ix, activate_pane, focus_item, model, window, cx)
+                pane.activate_item(ix, activate_pane, focus_item, model, cx)
             });
             true
         } else {
@@ -2976,7 +2995,7 @@ impl Workspace {
         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
             cx.focus_view(&pane);
         } else {
-            self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, cx);
+            self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, window, cx);
         }
     }
 
@@ -3048,7 +3067,7 @@ impl Workspace {
             // We're in the center, so we first try to go to a different pane,
             // otherwise try to go to a dock.
             (Origin::Center, direction) => {
-                if let Some(pane) = self.find_pane_in_direction(direction, cx) {
+                if let Some(pane) = self.find_pane_in_direction(direction, window, cx) {
                     Some(Target::Pane(pane))
                 } else {
                     match direction {
@@ -3110,7 +3129,7 @@ impl Workspace {
         cx: &AppContext,
     ) -> Option<Model<Pane>> {
         self.center
-            .find_pane_in_direction(&self.active_pane, direction, cx)
+            .find_pane_in_direction(&self.active_pane, direction, window, cx)
             .cloned()
     }
 
@@ -3120,9 +3139,9 @@ impl Workspace {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) {
-        if let Some(to) = self.find_pane_in_direction(direction, cx) {
+        if let Some(to) = self.find_pane_in_direction(direction, window, cx) {
             self.center.swap(&self.active_pane.clone(), &to);
-            model.notify(model, cx);
+            model.notify(model, window, cx);
         }
     }
 
@@ -7168,8 +7187,8 @@ mod tests {
             cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
 
         let panel = workspace.update(cx, |workspace, model, cx| {
-            let panel = cx.new_model(|model, cx| TestPanel::new(DockPosition::Right, cx));
-            workspace.add_panel(panel.clone(), cx);
+            let panel = cx.new_model(|model, cx| TestPanel::new(DockPosition::Right, model, cx));
+            workspace.add_panel(panel.clone(), model, cx);
 
             workspace
                 .right_dock()
@@ -7569,13 +7588,13 @@ mod tests {
             cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
 
         let (panel_1, panel_2) = workspace.update(cx, |workspace, model, cx| {
-            let panel_1 = cx.new_model(|model, cx| TestPanel::new(DockPosition::Left, cx));
-            workspace.add_panel(panel_1.clone(), cx);
+            let panel_1 = cx.new_model(|model, cx| TestPanel::new(DockPosition::Left, model, cx));
+            workspace.add_panel(panel_1.clone(), model, cx);
             workspace.left_dock().update(cx, |left_dock, model, cx| {
                 left_dock.set_open(true, model, cx)
             });
-            let panel_2 = cx.new_model(|model, cx| TestPanel::new(DockPosition::Right, cx));
-            workspace.add_panel(panel_2.clone(), cx);
+            let panel_2 = cx.new_model(|model, cx| TestPanel::new(DockPosition::Right, model, cx));
+            workspace.add_panel(panel_2.clone(), model, cx);
             workspace
                 .right_dock()
                 .update(cx, |right_dock, model, cx| right_dock.set_open(true, cx));
