@@ -4320,8 +4320,7 @@ fn inline_completion_popover_text(
     applied_edits_buffer: Model<Buffer>,
     cx: &WindowContext,
 ) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
-    use text::ToOffset as _;
-    use text::ToPoint as _;
+    use text::{ToOffset as _, ToPoint as _};
 
     let mut text = String::new();
     let mut highlights = Vec::new();

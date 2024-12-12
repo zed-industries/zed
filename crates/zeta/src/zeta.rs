@@ -287,7 +287,7 @@ impl Zeta {
 
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
-        let buffer = buffer.downgrade();
+
         cx.spawn(|this, mut cx| async move {
             let request_sent_at = Instant::now();
 
@@ -558,52 +558,34 @@ and then another
         cx: &AsyncAppContext,
     ) -> Task<Result<InlineCompletion>> {
         let snapshot = snapshot.clone();
-        cx.spawn(|mut cx| async move {
-            let input_events: Arc<str> = input_events.into();
-            let input_excerpt: Arc<str> = input_excerpt.into();
-            let output_excerpt: Arc<str> = output_excerpt.into();
-            let edits = cx
-                .background_executor()
-                .spawn({
-                    let snapshot = snapshot.clone();
-                    let output_excerpt = output_excerpt.clone();
-                    let excerpt_range = excerpt_range.clone();
-                    async move {
-                        let content = output_excerpt.replace(CURSOR_MARKER, "");
+        cx.background_executor().spawn(async move {
+            let content = output_excerpt.replace(CURSOR_MARKER, "");
 
-                        let codefence_start = content
-                            .find(EDITABLE_REGION_START_MARKER)
-                            .context("could not find start marker")?;
-                        let content = &content[codefence_start..];
+            let codefence_start = content
+                .find(EDITABLE_REGION_START_MARKER)
+                .context("could not find start marker")?;
+            let content = &content[codefence_start..];
 
-                        let newline_ix = content.find('\n').context("could not find newline")?;
-                        let content = &content[newline_ix + 1..];
+            let newline_ix = content.find('\n').context("could not find newline")?;
+            let content = &content[newline_ix + 1..];
 
-                        let codefence_end = content
-                            .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
-                            .context("could not find end marker")?;
-                        let new_text = &content[..codefence_end];
+            let codefence_end = content
+                .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
+                .context("could not find end marker")?;
+            let new_text = &content[..codefence_end];
 
-                        let old_text = snapshot
-                            .text_for_range(excerpt_range.clone())
-                            .collect::<String>();
+            let old_text = snapshot
+                .text_for_range(excerpt_range.clone())
+                .collect::<String>();
 
-                        anyhow::Ok(Self::compute_edits(
-                            old_text,
-                            new_text,
-                            excerpt_range.start,
-                            &snapshot,
-                        ))
-                    }
-                })
-                .await?;
+            let edits = Self::compute_edits(old_text, new_text, excerpt_range.start, &snapshot);
 
             Ok(InlineCompletion {
                 id: InlineCompletionId::new(),
                 path,
                 excerpt_range,
                 edits: edits.into(),
-                snapshot,
+                snapshot: snapshot.clone(),
                 input_events: input_events.into(),
                 input_excerpt: input_excerpt.into(),
                 output_excerpt: output_excerpt.into(),
