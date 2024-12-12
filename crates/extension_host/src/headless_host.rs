@@ -92,7 +92,7 @@ impl HeadlessExtensionStore {
             for extension_id in to_remove {
                 log::info!("removing extension: {}", extension_id);
                 this.update(&mut cx, |this, model, cx| {
-                    this.uninstall_extension(&extension_id, cx)
+                    this.uninstall_extension(&extension_id, model, cx)
                 })?
                 .await?;
             }
@@ -246,7 +246,7 @@ impl HeadlessExtensionStore {
         model.spawn(cx, |this, mut cx| async move {
             if fs.is_dir(&path).await {
                 this.update(&mut cx, |this, model, cx| {
-                    this.uninstall_extension(&extension.id.clone().into(), cx)
+                    this.uninstall_extension(&extension.id.clone().into(), model, cx)
                 })?
                 .await?;
             }

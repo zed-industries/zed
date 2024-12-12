@@ -277,12 +277,13 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             http_client.clone(),
             None,
             node_runtime.clone(),
+            model,
             cx,
         )
     });
 
     cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
-    store.read_with(cx, |store, _| {
+    store.read_with(cx, |store, model, _| {
         let index = &store.extension_index;
         assert_eq!(index.extensions, expected_index.extensions);
         assert_eq!(index.languages, expected_index.languages);
@@ -368,7 +369,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let _ = store.update(cx, |store, model, cx| store.reload(None, model, cx));
 
     cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
-    store.read_with(cx, |store, _| {
+    store.read_with(cx, |store, model, _| {
         let index = &store.extension_index;
         assert_eq!(index.extensions, expected_index.extensions);
         assert_eq!(index.languages, expected_index.languages);
@@ -407,7 +408,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 
     cx.executor().run_until_parked();
-    store.read_with(cx, |store, _| {
+    store.read_with(cx, |store, model, _| {
         assert_eq!(store.extension_index, expected_index);
         assert_eq!(
             language_registry.language_names(),
@@ -436,7 +437,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 
     store.update(cx, |store, model, cx| {
-        store.uninstall_extension("zed-ruby".into(), cx)
+        store.uninstall_extension("zed-ruby".into(), model, cx)
     });
 
     cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
@@ -444,7 +445,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     expected_index.languages.remove("Ruby");
     expected_index.languages.remove("ERB");
 
-    store.read_with(cx, |store, _| {
+    store.read_with(cx, |store, model, _| {
         assert_eq!(store.extension_index, expected_index);
         assert_eq!(language_registry.language_names(), ["Plain Text"]);
         assert_eq!(language_registry.grammar_names(), []);
@@ -609,7 +610,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     extension_store
         .update(cx, |store, model, cx| {
-            store.install_dev_extension(test_extension_dir.clone(), cx)
+            store.install_dev_extension(test_extension_dir.clone(), model, cx)
         })
         .await
         .unwrap();
@@ -625,7 +626,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     let buffer = project
         .update(cx, |project, model, cx| {
-            project.open_local_buffer(project_dir.join("test.gleam"), cx)
+            project.open_local_buffer(project_dir.join("test.gleam"), model, cx)
         })
         .await
         .unwrap();
@@ -696,7 +697,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     let completion_labels = project
         .update(cx, |project, model, cx| {
-            project.completions(&buffer, 0, DEFAULT_COMPLETION_CONTEXT, cx)
+            project.completions(&buffer, 0, DEFAULT_COMPLETION_CONTEXT, model, cx)
         })
         .await
         .unwrap()
@@ -720,7 +721,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // Start a new instance of the language server.
     project.update(cx, |project, model, cx| {
-        project.restart_language_servers_for_buffers([buffer.clone()], cx)
+        project.restart_language_servers_for_buffers([buffer.clone()], model, cx)
     });
 
     // The extension has cached the binary path, and does not attempt
@@ -737,13 +738,13 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     // Start a new instance of the language server.
     extension_store
         .update(cx, |store, model, cx| {
-            store.reload(Some("gleam".into()), cx)
+            store.reload(Some("gleam".into()), model, cx)
         })
         .await;
 
     cx.executor().run_until_parked();
     project.update(cx, |project, model, cx| {
-        project.restart_language_servers_for_buffers([buffer.clone()], cx)
+        project.restart_language_servers_for_buffers([buffer.clone()], model, cx)
     });
 
     // The extension re-fetches the latest version of the language server.

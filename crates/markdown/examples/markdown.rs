@@ -1,5 +1,6 @@
 use assets::Assets;
-use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, View, WindowOptions};
+use gpui::Model;
+use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
@@ -158,6 +159,7 @@ pub fn main() {
                     MARKDOWN_EXAMPLE.to_string(),
                     markdown_style,
                     language_registry,
+                    model,
                     cx,
                 )
             })
@@ -178,14 +180,28 @@ impl MarkdownExample {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Self {
-        let markdown =
-            cx.new_model(|model, cx| Markdown::new(text, style, Some(language_registry), None, cx));
+        let markdown = cx.new_model(|model, cx| {
+            Markdown::new(
+                text,
+                style,
+                Some(language_registry),
+                None,
+                model,
+                window,
+                cx,
+            )
+        });
         Self { markdown }
     }
 }
 
 impl Render for MarkdownExample {
-    fn render(&mut self, model: &Model<Self>, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _model: &Model<Self>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> impl IntoElement {
         div()
             .id("markdown-example")
             .debug_selector(|| "foo".into())

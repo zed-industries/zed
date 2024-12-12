@@ -125,12 +125,12 @@ impl ActiveCall {
             room_id: envelope.payload.room_id,
             participants: user_store
                 .update(&mut cx, |user_store, model, cx| {
-                    user_store.get_users(envelope.payload.participant_user_ids, cx)
+                    user_store.get_users(envelope.payload.participant_user_ids, model, cx)
                 })?
                 .await?,
             calling_user: user_store
                 .update(&mut cx, |user_store, model, cx| {
-                    user_store.get_user(envelope.payload.calling_user_id, cx)
+                    user_store.get_user(envelope.payload.calling_user_id, model, cx)
                 })?
                 .await?,
             initial_project: envelope.payload.initial_project,
@@ -196,15 +196,17 @@ impl ActiveCall {
 
                 let initial_project_id = if let Some(initial_project) = initial_project {
                     Some(
-                        room.update(&mut cx, |room, cx| room.share_project(initial_project, cx))?
-                            .await?,
+                        room.update(&mut cx, |room, model, cx| {
+                            room.share_project(initial_project, model, cx)
+                        })?
+                        .await?,
                     )
                 } else {
                     None
                 };
 
-                room.update(&mut cx, move |room, cx| {
-                    room.call(called_user_id, initial_project_id, cx)
+                room.update(&mut cx, move |room, model, cx| {
+                    room.call(called_user_id, initial_project_id, model, cx)
                 })?
                 .await?;
 
@@ -213,8 +215,8 @@ impl ActiveCall {
         } else {
             let client = self.client.clone();
             let user_store = self.user_store.clone();
-            let room = cx
-                .spawn(move |this, mut cx| async move {
+            let room = model
+                .spawn(cx, move |this, mut cx| async move {
                     let create_room = async {
                         let room = cx
                             .update(|cx| {
@@ -229,7 +231,7 @@ impl ActiveCall {
                             .await?;
 
                         this.update(&mut cx, |this, model, cx| {
-                            this.set_room(Some(room.clone()), cx)
+                            this.set_room(Some(room.clone()), model, cx)
                         })?
                         .await?;
 
@@ -248,7 +250,7 @@ impl ActiveCall {
             })
         };
 
-        cx.spawn(move |this, mut cx| async move {
+        model.spawn(cx, move |this, mut cx| async move {
             let result = invite.await;
             if result.is_ok() {
                 this.update(&mut cx, |this, model, cx| {
@@ -465,14 +467,16 @@ impl ActiveCall {
                     Task::ready(Ok(()))
                 } else {
                     let subscriptions = vec![
-                        cx.observe(&room, |this, room, cx| {
+                        model.observe(&room, cx, |this, room, model, cx| {
                             if room.read(cx).status().is_offline() {
-                                this.set_room(None, cx).detach_and_log_err(cx);
+                                this.set_room(None, model, cx).detach_and_log_err(cx);
                             }
 
                             model.notify(cx);
                         }),
-                        cx.subscribe(&room, |_, _, event, cx| model.emit(event.clone(), cx)),
+                        model.subscribe(&room, cx, |_, _, event, model, cx| {
+                            model.emit(event.clone(), cx)
+                        }),
                     ];
                     self.room = Some((room.clone(), subscriptions));
                     let location = self
