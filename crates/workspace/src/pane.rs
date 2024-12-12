@@ -494,8 +494,8 @@ impl Pane {
                             .icon_size(IconSize::Small)
                             .selected(zoomed)
                             .selected_icon(IconName::Minimize)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                pane.toggle_zoom(&crate::ToggleZoom, cx);
+                            .on_click(model.listener(|pane, _, model, window, cx| {
+                                pane.toggle_zoom(&crate::ToggleZoom, model, cx);
                             }))
                             .tooltip(move |window, cx| {
                                 Tooltip::for_action(
@@ -1923,10 +1923,9 @@ impl Pane {
         cx.focus(&self.focus_handle);
     }
 
-    pub fn focus_active_item(&mut self, model: &Model<Self>, cx: &mut AppContext) {
+    pub fn focus_active_item(&mut self, window: &mut Window, cx: &mut AppContext) {
         if let Some(active_item) = self.active_item() {
-            let focus_handle = active_item.focus_handle(cx);
-            cx.focus(&focus_handle);
+            active_item.focus_handle(cx).focus(window);
         }
     }
 
@@ -2403,7 +2402,8 @@ impl Pane {
                                             save_intent: None,
                                             close_pinned: false,
                                         },
-                                        model, cx,
+                                        model,
+                                        cx,
                                     ) {
                                         task.detach_and_log_err(cx)
                                     }
@@ -2740,50 +2740,48 @@ impl Pane {
         }
 
         let from_pane = dragged_tab.pane.clone();
+        // todo! Why do i need the type on cx
         self.workspace
-            .update(cx, |_, model, cx| {
-                model.defer(move |workspace, model, cx| {
-                    if let Some(split_direction) = split_direction {
-                        to_pane = workspace.split_pane(to_pane, split_direction, cx);
-                    }
-                    let old_ix = from_pane.read(cx).index_for_item_id(item_id);
-                    let old_len = to_pane.read(cx).items.len();
-                    move_item(&from_pane, &to_pane, item_id, ix, window, cx);
-                    if to_pane == from_pane {
-                        if let Some(old_index) = old_ix {
-                            to_pane.update(cx, |this, model, _| {
-                                if old_index < this.pinned_tab_count
-                                    && (ix == this.items.len() || ix > this.pinned_tab_count)
-                                {
-                                    this.pinned_tab_count -= 1;
-                                } else if this.has_pinned_tabs()
-                                    && old_index >= this.pinned_tab_count
-                                    && ix < this.pinned_tab_count
-                                {
-                                    this.pinned_tab_count += 1;
-                                }
-                            });
-                        }
-                    } else {
+            .defer(move |workspace, model, cx: &mut AppContext| {
+                if let Some(split_direction) = split_direction {
+                    to_pane = workspace.split_pane(to_pane, split_direction, cx);
+                }
+                let old_ix = from_pane.read(cx).index_for_item_id(item_id);
+                let old_len = to_pane.read(cx).items.len();
+                move_item(&from_pane, &to_pane, item_id, ix, window, cx);
+                if to_pane == from_pane {
+                    if let Some(old_index) = old_ix {
                         to_pane.update(cx, |this, model, _| {
-                            if this.items.len() > old_len // Did we not deduplicate on drag?
-                                && this.has_pinned_tabs()
+                            if old_index < this.pinned_tab_count
+                                && (ix == this.items.len() || ix > this.pinned_tab_count)
+                            {
+                                this.pinned_tab_count -= 1;
+                            } else if this.has_pinned_tabs()
+                                && old_index >= this.pinned_tab_count
                                 && ix < this.pinned_tab_count
                             {
                                 this.pinned_tab_count += 1;
                             }
                         });
-                        from_pane.update(cx, |this, model, _| {
-                            if let Some(index) = old_ix {
-                                if this.pinned_tab_count > index {
-                                    this.pinned_tab_count -= 1;
-                                }
-                            }
-                        })
                     }
-                });
-            })
-            .log_err();
+                } else {
+                    to_pane.update(cx, |this, model, _| {
+                        if this.items.len() > old_len // Did we not deduplicate on drag?
+                                && this.has_pinned_tabs()
+                                && ix < this.pinned_tab_count
+                        {
+                            this.pinned_tab_count += 1;
+                        }
+                    });
+                    from_pane.update(cx, |this, model, _| {
+                        if let Some(index) = old_ix {
+                            if this.pinned_tab_count > index {
+                                this.pinned_tab_count -= 1;
+                            }
+                        }
+                    })
+                }
+            });
     }
 
     fn handle_dragged_selection_drop(
@@ -2847,6 +2845,8 @@ impl Pane {
                                                     true,
                                                     false,
                                                     target,
+                                                    model,
+                                                    window,
                                                     cx,
                                                     build_item,
                                                 )
@@ -3016,103 +3016,143 @@ impl Render for Pane {
             .size_full()
             .flex_none()
             .overflow_hidden()
-            .on_action(cx.listener(|pane, _: &AlternateFile, cx| {
-                pane.alternate_file(cx);
+            .on_action(
+                model.listener(|pane, _: &AlternateFile, model, window, cx| {
+                    pane.alternate_file(model, cx);
+                }),
+            )
+            .on_action(model.listener(|pane, _: &SplitLeft, model, window, cx| {
+                pane.split(SplitDirection::Left, model, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
-            .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
-            .on_action(cx.listener(|pane, _: &SplitHorizontal, cx| {
-                pane.split(SplitDirection::horizontal(model, cx), cx)
-            }))
-            .on_action(cx.listener(|pane, _: &SplitVertical, cx| {
-                pane.split(SplitDirection::vertical(model, cx), cx)
+            .on_action(model.listener(|pane, _: &SplitUp, model, window, cx| {
+                pane.split(SplitDirection::Up, model, cx)
             }))
             .on_action(
-                cx.listener(|pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx)),
+                model.listener(|pane, _: &SplitHorizontal, model, window, cx| {
+                    pane.split(SplitDirection::horizontal(cx), model, cx)
+                }),
             )
-            .on_action(cx.listener(|pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx)))
-            .on_action(cx.listener(|pane, _: &GoBack, cx| pane.navigate_backward(cx)))
-            .on_action(cx.listener(|pane, _: &GoForward, cx| pane.navigate_forward(cx)))
-            .on_action(cx.listener(|pane, _: &JoinIntoNext, cx| pane.join_into_next(cx)))
-            .on_action(cx.listener(|pane, _: &JoinAll, cx| pane.join_all(cx)))
-            .on_action(cx.listener(Pane::toggle_zoom))
-            .on_action(cx.listener(|pane: &mut Pane, action: &ActivateItem, cx| {
-                pane.activate_item(action.0, true, true, model, cx);
+            .on_action(
+                model.listener(|pane, _: &SplitVertical, model, window, cx| {
+                    pane.split(SplitDirection::vertical(cx), model, cx)
+                }),
+            )
+            .on_action(model.listener(|pane, _: &SplitRight, model, window, cx| {
+                pane.split(SplitDirection::Right, model, cx)
             }))
-            .on_action(cx.listener(|pane: &mut Pane, _: &ActivateLastItem, cx| {
-                pane.activate_item(pane.items.len() - 1, true, true, model, cx);
+            .on_action(model.listener(|pane, _: &SplitDown, model, window, cx| {
+                pane.split(SplitDirection::Down, model, cx)
             }))
-            .on_action(cx.listener(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
-                pane.activate_prev_item(true, model, cx);
+            .on_action(
+                model.listener(|pane, _: &GoBack, model, window, cx| {
+                    pane.navigate_backward(model, cx)
+                }),
+            )
+            .on_action(model.listener(|pane, _: &GoForward, model, window, cx| {
+                pane.navigate_forward(model, cx)
             }))
-            .on_action(cx.listener(|pane: &mut Pane, _: &ActivateNextItem, cx| {
-                pane.activate_next_item(true, model, cx);
+            .on_action(model.listener(|pane, _: &JoinIntoNext, model, window, cx| {
+                pane.join_into_next(model, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SwapItemLeft, cx| pane.swap_item_left(cx)))
-            .on_action(cx.listener(|pane, _: &SwapItemRight, cx| pane.swap_item_right(cx)))
-            .on_action(cx.listener(|pane, action, cx| {
-                pane.toggle_pin_tab(action, cx);
+            .on_action(
+                model.listener(|pane, _: &JoinAll, model, window, cx| pane.join_all(model, cx)),
+            )
+            .on_action(model.listener(Pane::toggle_zoom))
+            .on_action(model.listener(
+                |pane: &mut Pane, action: &ActivateItem, model, window, cx| {
+                    pane.activate_item(action.0, true, true, model, cx);
+                },
+            ))
+            .on_action(model.listener(
+                |pane: &mut Pane, _: &ActivateLastItem, model, window, cx| {
+                    pane.activate_item(pane.items.len() - 1, true, true, model, cx);
+                },
+            ))
+            .on_action(model.listener(
+                |pane: &mut Pane, _: &ActivatePrevItem, model, window, cx| {
+                    pane.activate_prev_item(true, model, cx);
+                },
+            ))
+            .on_action(model.listener(
+                |pane: &mut Pane, _: &ActivateNextItem, model, window, cx| {
+                    pane.activate_next_item(true, model, cx);
+                },
+            ))
+            .on_action(model.listener(|pane, _: &SwapItemLeft, model, window, cx| {
+                pane.swap_item_left(model, cx)
+            }))
+            .on_action(
+                model.listener(|pane, _: &SwapItemRight, model, window, cx| {
+                    pane.swap_item_right(model, cx)
+                }),
+            )
+            .on_action(model.listener(|pane, action, model, window, cx| {
+                pane.toggle_pin_tab(action, model, cx);
             }))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
-                this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, cx| {
-                    if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
-                        if pane.is_active_preview_item(active_item_id) {
-                            pane.set_preview_item_id(None, cx);
-                        } else {
-                            pane.set_preview_item_id(Some(active_item_id), cx);
+                this.on_action(model.listener(
+                    |pane: &mut Pane, _: &TogglePreviewTab, model, window, cx| {
+                        if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
+                            if pane.is_active_preview_item(active_item_id) {
+                                pane.set_preview_item_id(None, cx);
+                            } else {
+                                pane.set_preview_item_id(Some(active_item_id), cx);
+                            }
                         }
-                    }
-                }))
+                    },
+                ))
             })
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
-                    if let Some(task) = pane.close_active_item(action, cx) {
+            .on_action(model.listener(
+                |pane: &mut Self, action: &CloseActiveItem, model, window, cx| {
+                    if let Some(task) = pane.close_active_item(action, model, cx) {
                         task.detach_and_log_err(cx)
                     }
-                }),
-            )
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &CloseInactiveItems, cx| {
-                    if let Some(task) = pane.close_inactive_items(action, cx) {
+                },
+            ))
+            .on_action(model.listener(
+                |pane: &mut Self, action: &CloseInactiveItems, model, window, cx| {
+                    if let Some(task) = pane.close_inactive_items(action, model, cx) {
                         task.detach_and_log_err(cx)
                     }
-                }),
-            )
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &CloseCleanItems, cx| {
-                    if let Some(task) = pane.close_clean_items(action, cx) {
+                },
+            ))
+            .on_action(model.listener(
+                |pane: &mut Self, action: &CloseCleanItems, model, window, cx| {
+                    if let Some(task) = pane.close_clean_items(action, model, cx) {
                         task.detach_and_log_err(cx)
                     }
-                }),
-            )
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &CloseItemsToTheLeft, cx| {
-                    if let Some(task) = pane.close_items_to_the_left(action, cx) {
+                },
+            ))
+            .on_action(model.listener(
+                |pane: &mut Self, action: &CloseItemsToTheLeft, model, window, cx| {
+                    if let Some(task) = pane.close_items_to_the_left(action, model, cx) {
                         task.detach_and_log_err(cx)
                     }
-                }),
-            )
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &CloseItemsToTheRight, cx| {
-                    if let Some(task) = pane.close_items_to_the_right(action, cx) {
+                },
+            ))
+            .on_action(model.listener(
+                |pane: &mut Self, action: &CloseItemsToTheRight, model, window, cx| {
+                    if let Some(task) = pane.close_items_to_the_right(action, model, cx) {
                         task.detach_and_log_err(cx)
                     }
-                }),
-            )
-            model, .on_action(cx.listener(|pane: &mut Self, action: &CloseAllItems, cx| {
-                if let Some(task) = pane.close_all_items(action, cx) {
-                    task.detach_and_log_err(cx)
-                }
-            }))
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
-                    if let Some(task) = pane.close_active_item(action, cx) {
+                },
+            ))
+            .on_action(model.listener(
+                |pane: &mut Self, action: &CloseAllItems, model, window, cx| {
+                    if let Some(task) = pane.close_all_items(action, model, cx) {
                         task.detach_and_log_err(cx)
                     }
-                }),
-            )
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, cx| {
+                },
+            ))
+            .on_action(model.listener(
+                |pane: &mut Self, action: &CloseActiveItem, model, window, cx| {
+                    if let Some(task) = pane.close_active_item(action, model, cx) {
+                        task.detach_and_log_err(cx)
+                    }
+                },
+            ))
+            .on_action(model.listener(
+                |pane: &mut Self, action: &RevealInProjectPanel, model, window, cx| {
                     let entry_id = action
                         .entry_id
                         .map(ProjectEntryId::from_proto)
@@ -3122,10 +3162,10 @@ impl Render for Pane {
                             model.emit(project::Event::RevealInProjectPanel(entry_id), cx)
                         });
                     }
-                }),
-            )
+                },
+            ))
             .when(self.active_item().is_some() && display_tab_bar, |pane| {
-                pane.child(self.render_tab_bar(cx))
+                pane.child(self.render_tab_bar(model, cx))
             })
             .child({
                 let has_worktrees = self.project.read(cx).worktrees(cx).next().is_some();
@@ -3135,10 +3175,10 @@ impl Render for Pane {
                     .relative()
                     .group("")
                     .overflow_hidden()
-                    .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
-                    .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
+                    .on_drag_move::<DraggedTab>(model.listener(Self::handle_drag_move))
+                    .on_drag_move::<DraggedSelection>(model.listener(Self::handle_drag_move))
                     .when(is_local, |div| {
-                        div.on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
+                        div.on_drag_move::<ExternalPaths>(model.listener(Self::handle_drag_move))
                     })
                     .map(|div| {
                         if let Some(item) = self.active_item() {
@@ -3177,7 +3217,6 @@ impl Render for Pane {
                                 this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
                             }))
                             .on_drop(model.listener(
-                                cx,
                                 move |this, selection: &DraggedSelection, cx| {
                                     this.handle_dragged_selection_drop(selection, None, model, cx)
                                 },
@@ -3207,12 +3246,12 @@ impl Render for Pane {
             })
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
-                cx.listener(|pane, _, cx| {
+                model.listener(|pane, _, model, window, cx| {
                     if let Some(workspace) = pane.workspace.upgrade() {
                         let pane = model.downgrade();
                         cx.window_context().defer(move |cx| {
                             workspace.update(cx, |workspace, model, cx| {
-                                workspace.go_back(pane, cx).detach_and_log_err(cx)
+                                workspace.go_back(pane, model, cx).detach_and_log_err(cx)
                             })
                         })
                     }
@@ -3220,12 +3259,12 @@ impl Render for Pane {
             )
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Forward),
-                cx.listener(|pane, _, cx| {
+                model.listener(|pane, _, model, window, cx| {
                     if let Some(workspace) = pane.workspace.upgrade() {
                         let pane = model.downgrade();
                         cx.window_context().defer(move |cx| {
                             workspace.update(cx, |workspace, model, cx| {
-                                workspace.go_forward(pane, cx).detach_and_log_err(cx)
+                                workspace.go_forward(pane, model, cx).detach_and_log_err(cx)
                             })
                         })
                     }
@@ -3250,7 +3289,7 @@ impl ItemNavHistory {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingBack, cx)
+        self.history.pop(NavigationMode::GoingBack, window, cx)
     }
 
     pub fn pop_forward(
@@ -3258,7 +3297,7 @@ impl ItemNavHistory {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingForward, cx)
+        self.history.pop(NavigationMode::GoingForward, window, cx)
     }
 }
 
@@ -3408,7 +3447,7 @@ impl NavHistoryState {
     pub fn did_update(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
         if let Some(pane) = self.pane.upgrade() {
             cx.defer(move |cx| {
-                pane.update(cx, |pane, model, cx| pane.history_updated(cx));
+                pane.update(cx, |pane, model, cx| pane.history_updated(model, cx));
             });
         }
     }
@@ -3499,7 +3538,7 @@ impl Render for DraggedTab {
         Tab::new("")
             .selected(self.is_active)
             .child(label)
-            .render(model, window, cx)
+            .render(model, cx)
             .font(ui_font)
     }
 }
@@ -3525,7 +3564,7 @@ mod tests {
 
         pane.update(cx, |pane, model, cx| {
             assert!(pane
-                .close_active_item(&CloseActiveItem { save_intent: None }, cx)
+                .close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
                 .is_none())
         });
     }
@@ -3545,10 +3584,13 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update(cx, |pane, model, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|model, cx| TestItem::new(cx).with_label("D"))),
+                Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label("D")),
+                ),
                 false,
                 false,
                 Some(0),
+                model,
                 cx,
             );
         });
@@ -3558,10 +3600,13 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update(cx, |pane, model, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|model, cx| TestItem::new(cx).with_label("D"))),
+                Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label("D")),
+                ),
                 false,
                 false,
                 Some(2),
+                model,
                 cx,
             );
         });
@@ -3571,10 +3616,13 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update(cx, |pane, model, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|model, cx| TestItem::new(cx).with_label("D"))),
+                Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label("D")),
+                ),
                 false,
                 false,
                 Some(5),
+                model,
                 cx,
             );
         });
@@ -3585,10 +3633,13 @@ mod tests {
         set_labeled_items(&pane, ["A*", "B", "C"], cx);
         pane.update(cx, |pane, model, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|model, cx| TestItem::new(cx).with_label("D"))),
+                Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label("D")),
+                ),
                 false,
                 false,
                 None,
+                model,
                 cx,
             );
         });
@@ -3598,10 +3649,13 @@ mod tests {
         set_labeled_items(&pane, ["A", "B", "C*"], cx);
         pane.update(cx, |pane, model, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|model, cx| TestItem::new(cx).with_label("D"))),
+                Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label("D")),
+                ),
                 false,
                 false,
                 None,
+                model,
                 cx,
             );
         });
@@ -3622,14 +3676,14 @@ mod tests {
         //   1a. Add before the active item
         let [_, _, _, d] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
         pane.update(cx, |pane, model, cx| {
-            pane.add_item(d, false, false, Some(0), cx);
+            pane.add_item(d, false, false, Some(0), model, cx);
         });
         assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
 
         //   1b. Add after the active item
         let [_, _, _, d] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
         pane.update(cx, |pane, model, cx| {
-            pane.add_item(d, false, false, Some(2), cx);
+            pane.add_item(d, false, false, Some(2), model, cx);
         });
         assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
 
@@ -3643,14 +3697,14 @@ mod tests {
         //   1d. Add same item to active index
         let [_, b, _] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update(cx, |pane, model, cx| {
-            pane.add_item(b, false, false, Some(1), cx);
+            pane.add_item(b, false, false, Some(1), model, cx);
         });
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         //   1e. Add item to index after same item in last position
         let [_, _, c] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update(cx, |pane, model, cx| {
-            pane.add_item(c, false, false, Some(2), cx);
+            pane.add_item(c, false, false, Some(2), model, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
@@ -3698,7 +3752,7 @@ mod tests {
         pane.update(cx, |pane, model, cx| {
             pane.add_item(
                 Box::new(cx.new_model(|model, cx| {
-                    TestItem::new(cx)
+                    TestItem::new(model, window, cx)
                         .with_singleton(true)
                         .with_label("buffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
@@ -3706,6 +3760,7 @@ mod tests {
                 false,
                 false,
                 None,
+                model,
                 cx,
             );
         });
@@ -3715,7 +3770,7 @@ mod tests {
         pane.update(cx, |pane, model, cx| {
             pane.add_item(
                 Box::new(cx.new_model(|model, cx| {
-                    TestItem::new(cx)
+                    TestItem::new(model, window, cx)
                         .with_singleton(true)
                         .with_label("buffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -3723,6 +3778,7 @@ mod tests {
                 false,
                 false,
                 None,
+                model,
                 cx,
             );
         });
@@ -3732,7 +3788,7 @@ mod tests {
         pane.update(cx, |pane, model, cx| {
             pane.add_item(
                 Box::new(cx.new_model(|model, cx| {
-                    TestItem::new(cx)
+                    TestItem::new(model, window, cx)
                         .with_singleton(true)
                         .with_label("buffer 2")
                         .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
@@ -3740,6 +3796,7 @@ mod tests {
                 false,
                 false,
                 None,
+                model,
                 cx,
             );
         });
@@ -3749,7 +3806,7 @@ mod tests {
         pane.update(cx, |pane, model, cx| {
             pane.add_item(
                 Box::new(cx.new_model(|model, cx| {
-                    TestItem::new(cx)
+                    TestItem::new(model, window, cx)
                         .with_singleton(false)
                         .with_label("multibuffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -3757,6 +3814,7 @@ mod tests {
                 false,
                 false,
                 None,
+                model,
                 cx,
             );
         });
@@ -3766,7 +3824,7 @@ mod tests {
         pane.update(cx, |pane, model, cx| {
             pane.add_item(
                 Box::new(cx.new_model(|model, cx| {
-                    TestItem::new(cx)
+                    TestItem::new(model, window, cx)
                         .with_singleton(false)
                         .with_label("multibuffer 1b")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -3774,6 +3832,7 @@ mod tests {
                 false,
                 false,
                 None,
+                model,
                 cx,
             );
         });
@@ -3803,11 +3862,11 @@ mod tests {
         pane.update(cx, |pane, model, cx| {
             pane.activate_item(1, false, false, model, cx)
         });
-        add_labeled_item(&pane, "1", false, model, cx);
+        add_labeled_item(&pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
         })
         .unwrap()
         .await
@@ -3820,7 +3879,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
         })
         .unwrap()
         .await
@@ -3828,7 +3887,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
         })
         .unwrap()
         .await
@@ -3836,7 +3895,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "C*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
         })
         .unwrap()
         .await
@@ -3868,11 +3927,11 @@ mod tests {
         pane.update(cx, |pane, model, cx| {
             pane.activate_item(1, false, false, model, cx)
         });
-        add_labeled_item(&pane, "1", false, model, cx);
+        add_labeled_item(&pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
         })
         .unwrap()
         .await
@@ -3885,7 +3944,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
         })
         .unwrap()
         .await
@@ -3893,7 +3952,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
         })
         .unwrap()
         .await
@@ -3901,7 +3960,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
         })
         .unwrap()
         .await
@@ -3927,6 +3986,7 @@ mod tests {
                     save_intent: None,
                     close_pinned: false,
                 },
+                model,
                 cx,
             )
         })
@@ -3958,6 +4018,7 @@ mod tests {
                 &CloseCleanItems {
                     close_pinned: false,
                 },
+                model,
                 cx,
             )
         })
@@ -3984,6 +4045,7 @@ mod tests {
                 &CloseItemsToTheLeft {
                     close_pinned: false,
                 },
+                model,
                 cx,
             )
         })
@@ -4010,6 +4072,7 @@ mod tests {
                 &CloseItemsToTheRight {
                     close_pinned: false,
                 },
+                model,
                 cx,
             )
         })
@@ -4042,7 +4105,8 @@ mod tests {
                     save_intent: None,
                     close_pinned: false,
                 },
-                model, cx,
+                model,
+                cx,
             )
         })
         .unwrap()
@@ -4058,7 +4122,8 @@ mod tests {
                     save_intent: None,
                     close_pinned: false,
                 },
-                model, cx,
+                model,
+                cx,
             )
         })
         .unwrap()
@@ -4088,7 +4153,8 @@ mod tests {
                         save_intent: None,
                         close_pinned: false,
                     },
-                    model, cx,
+                    model,
+                    cx,
                 )
             })
             .unwrap();
@@ -4109,7 +4175,8 @@ mod tests {
                         save_intent: None,
                         close_pinned: false,
                     },
-                    model, cx,
+                    model,
+                    cx,
                 )
             })
             .unwrap();
@@ -4146,7 +4213,8 @@ mod tests {
                     save_intent: None,
                     close_pinned: true,
                 },
-                model, cx,
+                model,
+                cx,
             )
         })
         .unwrap()
@@ -4173,7 +4241,7 @@ mod tests {
     ) -> Box<Model<TestItem>> {
         pane.update(cx, |pane, model, cx| {
             let labeled_item = Box::new(cx.new_model(|model, cx| {
-                TestItem::new(model, cx)
+                TestItem::new(model, window, cx)
                     .with_label(label)
                     .with_dirty(is_dirty)
             }));
@@ -4198,8 +4266,9 @@ mod tests {
                     active_item_index = index;
                 }
 
-                let labeled_item =
-                    Box::new(cx.new_model(|model, cx| TestItem::new(cx).with_label(label)));
+                let labeled_item = Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label(label)),
+                );
                 pane.add_item(labeled_item.clone(), false, false, None, model, cx);
                 index += 1;
                 labeled_item

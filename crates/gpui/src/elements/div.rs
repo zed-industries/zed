@@ -515,13 +515,11 @@ impl Interactivity {
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The imperative API equivalent to [`InteractiveElement::tooltip`]
-    pub fn tooltip<F, E>(
+    pub fn tooltip(
         &mut self,
-        build_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F,
+        build_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> AnyView,
     ) where
         Self: Sized,
-        F: 'static + Fn(&mut Window, &mut AppContext) -> E,
-        E: IntoElement,
     {
         debug_assert!(
             self.tooltip_builder.is_none(),

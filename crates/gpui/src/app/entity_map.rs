@@ -423,6 +423,18 @@ impl<T: 'static> Model<T> {
         cx.update_model(self, update)
     }
 
+    /// Schedules an update to be performed on this model at the end of the current effect cycle.
+    pub fn defer<R>(
+        &self,
+        cx: &mut AppContext,
+        f: impl FnOnce(&mut T, &Model<T>, &mut AppContext) -> R + 'static,
+    ) {
+        let model = self.clone();
+        cx.defer(move |cx| {
+            model.update(cx, |this, model, cx| f(this, model, cx));
+        });
+    }
+
     /// Creates a listener function that updates this model when an event is received.
     ///
     /// This method takes a callback function that will be called with the model, the event, and a mutable
@@ -881,6 +893,21 @@ impl<T: 'static> WeakModel<T> {
                 .ok_or_else(|| anyhow!("entity release"))
                 .map(|this| cx.update_model(&this, update)),
         )
+    }
+
+    /// Schedules an update to be performed on this model at the end of the current effect cycle.
+    pub fn defer(
+        &self,
+        cx: &mut AppContext,
+        deferred: impl FnOnce(&mut T, &Model<T>, &mut AppContext) + 'static,
+    ) -> Result<()> {
+        let model = self.clone();
+        cx.defer(move |cx| {
+            if let Some(model) = model.upgrade() {
+                model.update(cx, deferred);
+            }
+        });
+        Ok(())
     }
 
     /// Reads the entity referenced by this model with the given function if

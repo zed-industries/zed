@@ -819,13 +819,13 @@ mod element {
     use gpui::{
         px, relative, size, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
         MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WeakModel,
+        WeakModel, Window,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
     use settings::Settings;
     use smallvec::SmallVec;
-    use ui::prelude::*;
+    use ui::prelude::{AppContext, *};
     use util::ResultExt;
 
     use crate::Workspace;
@@ -895,7 +895,7 @@ mod element {
             child_start: Point<Pixels>,
             container_size: Size<Pixels>,
             workspace: WeakModel<Workspace>,
-            window: &mut gpui::Window,
+            window: &mut Window,
             cx: &mut gpui::AppContext,
         ) {
             let min_size = match axis {
@@ -980,7 +980,7 @@ mod element {
         fn layout_handle(
             axis: Axis,
             pane_bounds: Bounds<Pixels>,
-            window: &mut gpui::Window,
+            window: &mut Window,
             cx: &mut gpui::AppContext,
         ) -> PaneAxisHandleLayout {
             let handle_bounds = Bounds {
@@ -1024,7 +1024,8 @@ mod element {
         fn request_layout(
             &mut self,
             _global_id: Option<&GlobalElementId>,
-            cx: &mut ui::prelude::
+            window: &mut Window,
+            cx: &mut AppContext,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let style = Style {
                 flex_grow: 1.,
@@ -1041,7 +1042,7 @@ mod element {
             global_id: Option<&GlobalElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
-            window: &mut gpui::Window,
+            window: &mut Window,
             cx: &mut gpui::AppContext,
         ) -> PaneAxisLayout {
             let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
@@ -1129,7 +1130,7 @@ mod element {
             cx: &mut ui::prelude::
         ) {
             for child in &mut layout.children {
-                child.element.paint(cx);
+                child.element.paint(window, cx);
             }
 
             let overlay_opacity = WorkspaceSettings::get(None, cx)
@@ -1203,7 +1204,7 @@ mod element {
                                     let mut borrow = flexes.lock();
                                     *borrow = vec![1.; borrow.len()];
                                     workspace
-                                        .update(cx, |this, model, cx| this.serialize_workspace(cx))
+                                        .update(cx, |this, model, cx| this.serialize_workspace(model, cx))
                                         .log_err();
 
                                     cx.refresh();
@@ -1218,7 +1219,7 @@ mod element {
                         let flexes = self.flexes.clone();
                         let child_bounds = child.bounds;
                         let axis = self.axis;
-                        move |e: &MouseMoveEvent, phase, cx| {
+                        move |e: &MouseMoveEvent, phase, window, cx| {
                             let dragged_handle = dragged_handle.borrow();
                             if phase.bubble() && *dragged_handle == Some(ix) {
                                 Self::compute_resize(
@@ -1229,6 +1230,7 @@ mod element {
                                     child_bounds.origin,
                                     bounds.size,
                                     workspace.clone(),
+                                    window,
                                     cx,
                                 )
                             }
