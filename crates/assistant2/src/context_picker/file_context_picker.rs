@@ -83,19 +83,17 @@ impl FileContextPickerDelegate {
 
             let entries = entries
                 .into_iter()
-                .map(|entries| (entries.0, false))
+                .map(|entries| entries.0)
                 .chain(project.worktrees(cx).flat_map(|worktree| {
                     let worktree = worktree.read(cx);
                     let id = worktree.id();
-                    worktree.child_entries(Path::new("")).map(move |entry| {
-                        (
-                            project::ProjectPath {
-                                worktree_id: id,
-                                path: entry.path.clone(),
-                            },
-                            entry.kind.is_dir(),
-                        )
-                    })
+                    worktree
+                        .child_entries(Path::new(""))
+                        .filter(|entry| entry.kind.is_file())
+                        .map(move |entry| project::ProjectPath {
+                            worktree_id: id,
+                            path: entry.path.clone(),
+                        })
                 }))
                 .collect::<Vec<_>>();
 
@@ -103,7 +101,7 @@ impl FileContextPickerDelegate {
             Task::ready(
                 entries
                     .into_iter()
-                    .filter_map(|(entry, is_dir)| {
+                    .filter_map(|entry| {
                         let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
                         let mut full_path = PathBuf::from(worktree.read(cx).root_name());
                         full_path.push(&entry.path);
@@ -114,7 +112,7 @@ impl FileContextPickerDelegate {
                             path: full_path.into(),
                             path_prefix: path_prefix.clone(),
                             distance_to_relative_ancestor: 0,
-                            is_dir,
+                            is_dir: false,
                         })
                     })
                     .collect(),
