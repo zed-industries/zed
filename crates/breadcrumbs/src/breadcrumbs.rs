@@ -69,7 +69,7 @@ impl Render for Breadcrumbs {
         }
 
         let highlighted_segments = segments.into_iter().map(|segment| {
-            let mut text_style = cx.text_style();
+            let mut text_style = window.text_style();
             if let Some(font) = segment.font {
                 text_style.font_family = font.family;
                 text_style.font_features = font.features;

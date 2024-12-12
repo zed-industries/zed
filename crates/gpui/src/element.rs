@@ -146,6 +146,58 @@ impl<T: Render> Into<AnyView> for Model<T> {
     }
 }
 
+impl Element for AnyView {
+    type RequestLayoutState = AnyElement;
+
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut element = (self)(window, cx);
+        let layout_id = element.request_layout(window, cx);
+        (layout_id, element)
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Self::PrepaintState {
+        request_layout.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
+        request_layout.paint(window, cx);
+    }
+}
+
+impl IntoElement for AnyView {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
 impl<T: Render> Element for Model<T> {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();

@@ -418,7 +418,7 @@ impl Render for ContextMenu {
                 v_flex()
                     .id("context-menu")
                     .min_w(px(200.))
-                    .max_h(vh(0.75, window, cx))
+                    .max_h(vh(0.75, window))
                     .overflow_y_scroll()
                     .track_focus(&self.focus_handle(cx))
                     .on_mouse_down_out(model.listener(|this, _, model, window, cx| {

@@ -321,7 +321,12 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
             const LABEL: &str = "Authorized.";
             h_flex()
@@ -332,7 +337,7 @@ impl Render for ConfigurationView {
             let loading_icon = svg()
                 .size_8()
                 .path(IconName::ArrowCircle.path())
-                .text_color(cx.text_style().color)
+                .text_color(window.text_style().color)
                 .with_animation(
                     "icon_circle_arrow",
                     Animation::new(Duration::from_secs(2)).repeat(),

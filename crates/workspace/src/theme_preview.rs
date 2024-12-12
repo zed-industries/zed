@@ -46,7 +46,7 @@ struct ThemePreview {
 }
 
 impl ThemePreview {
-    pub fn new(model: &Model<Self>, cx: &mut AppContext) -> Self {
+    pub fn new(model: &Model<Self>, window: &mut Window, cx: &mut AppContext) -> Self {
         Self {
             current_page: ThemePreviewPage::Overview,
             focus_handle: window.focus_handle(),
@@ -60,9 +60,13 @@ impl ThemePreview {
         cx: &mut AppContext,
     ) -> impl IntoElement {
         match page {
-            ThemePreviewPage::Overview => self.render_overview_page(cx).into_any_element(),
-            ThemePreviewPage::Typography => self.render_typography_page(cx).into_any_element(),
-            ThemePreviewPage::Components => self.render_components_page(cx).into_any_element(),
+            ThemePreviewPage::Overview => self.render_overview_page(model, cx).into_any_element(),
+            ThemePreviewPage::Typography => {
+                self.render_typography_page(model, cx).into_any_element()
+            }
+            ThemePreviewPage::Components => {
+                self.render_components_page(model, cx).into_any_element()
+            }
         }
     }
 }
@@ -106,7 +110,7 @@ impl Item for ThemePreview {
 const AVATAR_URL: &str = "https://avatars.githubusercontent.com/u/1714999?v=4";
 
 impl ThemePreview {
-    fn preview_bg(window: &Window, cx: &AppContext) -> Hsla {
+    fn preview_bg(cx: &AppContext) -> Hsla {
         cx.theme().colors().editor_background
     }
 
@@ -478,8 +482,8 @@ impl ThemePreview {
             .text_color(cx.theme().colors().text)
             .gap_2()
             .child(Headline::new(layer.clone().to_string()).size(HeadlineSize::Medium))
-            .child(self.render_text(layer, cx))
-            .child(self.render_colors(layer, cx))
+            .child(self.render_text(layer, model, cx))
+            .child(self.render_colors(layer, model, cx))
     }
 
     fn render_overview_page(&self, model: &Model<Self>, cx: &AppContext) -> impl IntoElement {
@@ -492,10 +496,10 @@ impl ThemePreview {
                     .child(Headline::new("Theme Preview").size(HeadlineSize::Large))
                     .child(div().w_full().text_color(cx.theme().colors().text_muted).child("This view lets you preview a range of UI elements across a theme. Use it for testing out changes to the theme."))
                     )
-            .child(self.render_theme_layer(ElevationIndex::Background, cx))
-            .child(self.render_theme_layer(ElevationIndex::Surface, cx))
-            .child(self.render_theme_layer(ElevationIndex::EditorSurface, cx))
-            .child(self.render_theme_layer(ElevationIndex::ElevatedSurface, cx))
+            .child(self.render_theme_layer(ElevationIndex::Background, model, cx))
+            .child(self.render_theme_layer(ElevationIndex::Surface, model, cx))
+            .child(self.render_theme_layer(ElevationIndex::EditorSurface, model, cx))
+            .child(self.render_theme_layer(ElevationIndex::ElevatedSurface, model, cx))
     }
 
     fn render_typography_page(&self, model: &Model<Self>, cx: &AppContext) -> impl IntoElement {
@@ -528,17 +532,17 @@ impl ThemePreview {
             .overflow_scroll()
             .size_full()
             .gap_2()
-            .child(ContentGroup::render_component_previews(cx))
-            .child(IconDecoration::render_component_previews(cx))
-            .child(DecoratedIcon::render_component_previews(cx))
-            .child(Checkbox::render_component_previews(cx))
-            .child(CheckboxWithLabel::render_component_previews(cx))
-            .child(Facepile::render_component_previews(cx))
-            .child(Button::render_component_previews(cx))
-            .child(Indicator::render_component_previews(cx))
-            .child(Icon::render_component_previews(cx))
-            .child(Table::render_component_previews(cx))
-            .child(self.render_avatars(cx))
+            .child(ContentGroup::render_component_previews(model, cx))
+            .child(IconDecoration::render_component_previews(model, cx))
+            .child(DecoratedIcon::render_component_previews(model, cx))
+            .child(Checkbox::render_component_previews(model, cx))
+            .child(CheckboxWithLabel::render_component_previews(model, cx))
+            .child(Facepile::render_component_previews(model, cx))
+            .child(Button::render_component_previews(model, cx))
+            .child(Indicator::render_component_previews(model, cx))
+            .child(Icon::render_component_previews(model, cx))
+            .child(Table::render_component_previews(model, cx))
+            .child(self.render_avatars(model, cx))
             .child(self.render_buttons(layer, cx))
     }
 
@@ -578,7 +582,7 @@ impl Render for ThemePreview {
             .track_focus(&self.focus_handle)
             .px_2()
             .bg(Self::preview_bg(cx))
-            .child(self.render_page_nav(cx))
-            .child(self.view(self.current_page, cx))
+            .child(self.render_page_nav(model, cx))
+            .child(self.view(self.current_page, model, cx))
     }
 }

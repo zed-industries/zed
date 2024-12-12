@@ -252,7 +252,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         .child(
                             LabelLike::new().child(
                                 StyledText::new(label)
-                                    .with_highlights(&cx.text_style().clone(), highlights),
+                                    .with_highlights(&window.text_style().clone(), highlights),
                             ),
                         )
                         .child(Label::new(path).color(Color::Muted)),

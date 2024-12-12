@@ -98,7 +98,7 @@ impl ActiveThread {
         let ui_font_size = TextSize::Default.rems(cx);
         let buffer_font_size = theme_settings.buffer_font_size;
 
-        let mut text_style = cx.text_style();
+        let mut text_style = window.text_style();
         text_style.refine(&TextStyleRefinement {
             font_family: Some(theme_settings.ui_font.family.clone()),
             font_size: Some(ui_font_size.into()),
@@ -133,6 +133,8 @@ impl ActiveThread {
                 markdown_style,
                 Some(self.language_registry.clone()),
                 None,
+                model,
+                window,
                 cx,
             )
         });
@@ -182,7 +184,7 @@ impl ActiveThread {
                     .collect::<Vec<_>>();
 
                 for tool_use in pending_tool_uses {
-                    if let Some(tool) = self.tools.tool(&tool_use.name, model, cx) {
+                    if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
                         let task = tool.run(tool_use.input, self.workspace.clone(), model, cx);
 
                         self.thread.update(cx, |thread, model, cx| {

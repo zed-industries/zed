@@ -178,7 +178,7 @@ impl SshPrompt {
     ) {
         let theme = ThemeSettings::get_global(cx);
 
-        let mut text_style = cx.text_style();
+        let mut text_style = window.text_style();
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
             font_features: Some(FontFeatures::disable_ligatures()),

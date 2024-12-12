@@ -156,7 +156,8 @@ pub fn hover_at_inlay(
 
                 let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
+                let parsed_content =
+                    parse_blocks(&blocks, &language_registry, None, model, &mut cx).await;
 
                 let scroll_handle = ScrollHandle::new();
                 let hover_popover = InfoPopover {
@@ -371,7 +372,7 @@ fn show_hover(
                             }
                         };
                         let settings = ThemeSettings::get_global(cx);
-                        let mut base_text_style = cx.text_style();
+                        let mut base_text_style = window.text_style();
                         base_text_style.refine(&TextStyleRefinement {
                             font_family: Some(settings.ui_font.family.clone()),
                             font_size: Some(settings.ui_font_size.into()),
@@ -565,7 +566,7 @@ async fn parse_blocks(
             let ui_font_family = settings.ui_font.family.clone();
             let buffer_font_family = settings.buffer_font.family.clone();
 
-            let mut base_text_style = cx.text_style();
+            let mut base_text_style = window.text_style();
             base_text_style.refine(&TextStyleRefinement {
                 font_family: Some(ui_font_family.clone()),
                 color: Some(cx.theme().colors().editor_foreground),

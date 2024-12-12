@@ -84,7 +84,7 @@ impl ElevationIndex {
     }
 
     /// Returns the background color for the given elevation index.
-    pub fn bg(&self, window: &gpui::Window, cx: &gpui::AppContext) -> Hsla {
+    pub fn bg(&self, cx: &gpui::AppContext) -> Hsla {
         match self {
             ElevationIndex::Background => cx.theme().colors().background,
             ElevationIndex::Surface => cx.theme().colors().surface_background,

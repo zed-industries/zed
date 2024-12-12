@@ -17,13 +17,13 @@ pub fn rems_from_px(px: f32) -> Rems {
 /// Returns a [`Length`] corresponding to the specified percentage of the viewport's width.
 ///
 /// `percent` should be a value between `0.0` and `1.0`.
-pub fn vw(percent: f32, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Length {
+pub fn vw(percent: f32, window: &mut gpui::Window) -> Length {
     Length::from(window.viewport_size().width * percent)
 }
 
 /// Returns a [`Length`] corresponding to the specified percentage of the viewport's height.
 ///
 /// `percent` should be a value between `0.0` and `1.0`.
-pub fn vh(percent: f32, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> Length {
+pub fn vh(percent: f32, window: &mut gpui::Window) -> Length {
     Length::from(window.viewport_size().height * percent)
 }

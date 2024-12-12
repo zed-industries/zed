@@ -8,7 +8,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncA, View, WeakView};
+use gpui::{AnyWindowHandle, AsyncAppContext, Model, WeakModel};
 use project::Project;
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
@@ -333,9 +333,13 @@ impl SerializedPaneGroup {
         project: &Model<Project>,
         workspace_id: WorkspaceId,
         workspace: WeakModel<Workspace>,
-        window_handle: AnyWindowHandle,
+        window: AnyWindowHandle,
         cx: &mut AsyncAppContext,
-    ) -> Option<(Member, Option<Model<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
+    ) -> Option<(
+        Member,
+        Option<Model<Pane>>,
+        Vec<Option<Box<dyn ItemHandle>>>,
+    )> {
         match self {
             SerializedPaneGroup::Group {
                 axis,
@@ -347,7 +351,7 @@ impl SerializedPaneGroup {
                 let mut items = Vec::new();
                 for child in children {
                     if let Some((new_member, active_pane, new_items)) = child
-                        .deserialize(project, workspace_id, workspace.clone(), cx)
+                        .deserialize(project, workspace_id, workspace.clone(), window, cx)
                         .await
                     {
                         members.push(new_member);
@@ -462,14 +466,14 @@ impl SerializedPane {
 
             if let Some(item_handle) = item_handle {
                 pane.update(cx, |pane, model, cx| {
-                    pane.add_item(item_handle.clone(), true, true, None, cx);
+                    pane.add_item(item_handle.clone(), true, true, None, model, cx);
                 })?;
             }
         }
 
         if let Some(active_item_index) = active_item_index {
             pane.update(cx, |pane, model, cx| {
-                pane.activate_item(active_item_index, false, false, cx);
+                pane.activate_item(active_item_index, false, false, model, cx);
             })?;
         }
 

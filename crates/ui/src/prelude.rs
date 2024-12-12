@@ -3,7 +3,8 @@
 pub use gpui::prelude::*;
 pub use gpui::{
     div, px, relative, rems, AbsoluteLength, AppContext, DefiniteLength, Div, Element, ElementId,
-    InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString, Styled, Window,
+    InteractiveElement, Model, ParentElement, Pixels, Rems, RenderOnce, SharedString, Styled,
+    Window,
 };
 
 pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle, StyledTypography, TextSize};

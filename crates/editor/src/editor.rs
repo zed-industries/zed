@@ -1960,7 +1960,7 @@ impl Editor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Self {
-        let style = cx.text_style();
+        let style = window.text_style();
         let font_size = style.font_size.to_pixels(cx.rem_size());
         let editor = model.downgrade();
         let fold_placeholder = FoldPlaceholder {
@@ -15886,7 +15886,7 @@ pub fn diagnostic_block_renderer(
     Arc::new(move |cx: &mut BlockContext| {
         let group_id: SharedString = cx.block_id.to_string().into();
 
-        let mut text_style = cx.text_style().clone();
+        let mut text_style = window.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
         let theme_settings = ThemeSettings::get_global(cx);
         text_style.font_family = theme_settings.buffer_font.family.clone();

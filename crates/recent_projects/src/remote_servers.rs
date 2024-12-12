@@ -337,7 +337,7 @@ impl RemoteServerProjects {
     pub fn new(model: &Model<Self>, cx: &mut AppContext, workspace: WeakModel<Workspace>) -> Self {
         let focus_handle = window.focus_handle();
 
-        let mut base_style = cx.text_style();
+        let mut base_style = window.text_style();
         base_style.refine(&gpui::TextStyleRefinement {
             color: Some(cx.theme().colors().editor_foreground),
             ..Default::default()

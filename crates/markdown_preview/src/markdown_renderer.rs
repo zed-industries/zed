@@ -55,7 +55,7 @@ impl RenderContext {
 
         let settings = ThemeSettings::get_global(cx);
         let buffer_font_family = settings.buffer_font.family.clone();
-        let mut buffer_text_style = cx.text_style();
+        let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
 
         RenderContext {
@@ -64,7 +64,7 @@ impl RenderContext {
             indent: 0,
             buffer_font_family,
             buffer_text_style,
-            text_style: cx.text_style(),
+            text_style: window.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
             text_color: theme.colors().text,

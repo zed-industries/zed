@@ -95,7 +95,7 @@ impl TableView {
         let mut widths = Vec::with_capacity(table.schema.fields.len());
 
         let text_system = cx.text_system();
-        let text_style = cx.text_style();
+        let text_style = window.text_style();
         let text_font = ThemeSettings::get_global(cx).buffer_font.clone();
         let font_size = ThemeSettings::get_global(cx).buffer_font_size;
         let mut runs = [TextRun {
@@ -263,7 +263,12 @@ impl TableView {
 }
 
 impl Render for TableView {
-    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         let data = match &self.table.data {
             Some(data) => data,
             None => return div().into_any_element(),

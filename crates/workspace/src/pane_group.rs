@@ -8,7 +8,7 @@ use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
-    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton,
+    point, size, Along, AnyModel, AnyWeakModel, Axis, Bounds, IntoElement, Model, MouseButton,
     Pixels, Point, StyleRefinement, Model,
 };
 use parking_lot::Mutex;
@@ -321,7 +321,7 @@ impl Member {
                     .flex_1()
                     .size_full()
                     .child(
-                        AnyView::from(pane.clone())
+                        AnyModel::from(pane.clone())
                             .cached(StyleRefinement::default().v_flex().size_full()),
                     )
                     .when_some(leader_border, |this, color| {
@@ -819,7 +819,7 @@ mod element {
     use gpui::{
         px, relative, size, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
         MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WeakView,
+        WeakModel,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;

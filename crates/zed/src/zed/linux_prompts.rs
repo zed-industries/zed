@@ -36,7 +36,7 @@ pub fn fallback_prompt_renderer(
             detail: detail.filter(|text| !text.is_empty()).map(|text| {
                 cx.new_model(|model, cx| {
                     let settings = ThemeSettings::get_global(cx);
-                    let mut base_text_style = cx.text_style();
+                    let mut base_text_style = window.text_style();
                     base_text_style.refine(&TextStyleRefinement {
                         font_family: Some(settings.ui_font.family.clone()),
                         font_size: Some(settings.ui_font_size.into()),

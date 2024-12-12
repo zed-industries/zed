@@ -87,7 +87,7 @@ impl Render for TextStory {
                             InteractiveText::new(
                                 "interactive",
                                 StyledText::new("Hello world, how is it going?").with_highlights(
-                                    &cx.text_style(),
+                                    &window.text_style(),
                                     [
                                         (
                                             6..11,
@@ -106,7 +106,7 @@ impl Render for TextStory {
                         .usage(indoc! {r##"
                             InteractiveText::new(
                                 "interactive",
-                                StyledText::new("Hello world, how is it going?").with_highlights(&cx.text_style(), [
+                                StyledText::new("Hello world, how is it going?").with_highlights(&window.text_style(), [
                                     (6..11, HighlightStyle {
                                         background_color: Some(green()),
                                         ..Default::default()

@@ -1,6 +1,6 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
-    AnyView, Decorations, IntoElement, Model, ParentElement, Render, Styled, Subscription, View,
+    AnyModel, Decorations, IntoElement, Model, ParentElement, Render, Styled, Subscription,
 };
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
@@ -17,7 +17,7 @@ pub trait StatusItemView: Render {
 }
 
 trait StatusItemViewHandle: Send {
-    fn to_any(&self) -> AnyView;
+    fn to_any(&self) -> AnyModel;
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
@@ -35,7 +35,12 @@ pub struct StatusBar {
 }
 
 impl Render for StatusBar {
-    fn render(&mut self, model: &Model<Self>, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut gpui::Window,
+        cx: &mut AppContext,
+    ) -> impl IntoElement {
         h_flex()
             .w_full()
             .justify_between()
@@ -92,7 +97,7 @@ impl StatusBar {
 
     pub fn add_left_item<T>(&mut self, item: Model<T>, model: &Model<Self>, cx: &mut AppContext)
     where
-        T: 'static + StatusItemView,
+        T: 'static + StatusItemModel,
     {
         let active_pane_item = self.active_pane.read(cx).active_item();
         item.set_active_pane_item(active_pane_item.as_deref(), cx);
@@ -132,7 +137,7 @@ impl StatusBar {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) where
-        T: 'static + StatusItemView,
+        T: 'static + StatusItemModel,
     {
         let active_pane_item = self.active_pane.read(cx).active_item();
         item.set_active_pane_item(active_pane_item.as_deref(), cx);
@@ -157,7 +162,7 @@ impl StatusBar {
 
     pub fn add_right_item<T>(&mut self, item: Model<T>, model: &Model<Self>, cx: &mut AppContext)
     where
-        T: 'static + StatusItemView,
+        T: 'static + StatusItemModel,
     {
         let active_pane_item = self.active_pane.read(cx).active_item();
         item.set_active_pane_item(active_pane_item.as_deref(), cx);
@@ -187,7 +192,7 @@ impl StatusBar {
 }
 
 impl<T: StatusItemView> StatusItemViewHandle for Model<T> {
-    fn to_any(&self) -> AnyView {
+    fn to_any(&self) -> AnyModel {
         self.clone().into()
     }
 
@@ -207,7 +212,7 @@ impl<T: StatusItemView> StatusItemViewHandle for Model<T> {
     }
 }
 
-impl From<&dyn StatusItemViewHandle> for AnyView {
+impl From<&dyn StatusItemViewHandle> for AnyModel {
     fn from(val: &dyn StatusItemViewHandle) -> Self {
         val.to_any().clone()
     }

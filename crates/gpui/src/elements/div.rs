@@ -1064,12 +1064,10 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// The fluent API equivalent to [`Interactivity::tooltip`]
     fn tooltip<F, E>(
         mut self,
-        build_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> F,
+        build_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> AnyView,
     ) -> Self
     where
         Self: Sized,
-        F: 'static + Fn(&mut Window, &mut AppContext) -> E,
-        E: IntoElement,
     {
         self.interactivity().tooltip(build_tooltip);
         self

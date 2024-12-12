@@ -3551,6 +3551,22 @@ impl Window {
         subscription
     }
 
+    /// Register a callback to be invoked when the window is resized.
+    pub fn on_resize(
+        &self,
+        mut callback: impl FnMut(&mut Self, &mut AppContext) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.bounds_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
     /// Your view will be re-drawn once the asset has finished loading.
     ///

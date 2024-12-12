@@ -8,7 +8,7 @@ use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
     div, surface, AppContext, AppContext, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, ParentElement, Render, SharedString, Styled, Task, View, VisualContext,
+    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Task, VisualContext,
 };
 use std::sync::{Arc, Weak};
 use ui::{prelude::*, Icon, IconName};

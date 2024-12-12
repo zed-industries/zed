@@ -827,7 +827,7 @@ impl Item for ProjectDiagnosticsEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
-        self.editor.save(format, project, model, cx)
+        self.editor.save(format, project, cx)
     }
 
     fn save_as(
@@ -846,7 +846,7 @@ impl Item for ProjectDiagnosticsEditor {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
-        self.editor.reload(project, model, cx)
+        self.editor.reload(project, cx)
     }
 
     fn act_as_type<'a>(
@@ -904,27 +904,24 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 h_flex()
                     .gap_3()
                     .map(|stack| {
-                        stack.child(
-                            svg()
-                                .size(cx.text_style().font_size)
-                                .flex_none()
-                                .map(|icon| {
-                                    if diagnostic.severity == DiagnosticSeverity::ERROR {
-                                        icon.path(IconName::XCircle.path())
-                                            .text_color(Color::Error.color(cx))
-                                    } else {
-                                        icon.path(IconName::Warning.path())
-                                            .text_color(Color::Warning.color(cx))
-                                    }
-                                }),
-                        )
+                        stack.child(svg().size(window.text_style().font_size).flex_none().map(
+                            |icon| {
+                                if diagnostic.severity == DiagnosticSeverity::ERROR {
+                                    icon.path(IconName::XCircle.path())
+                                        .text_color(Color::Error.color(cx))
+                                } else {
+                                    icon.path(IconName::Warning.path())
+                                        .text_color(Color::Warning.color(cx))
+                                }
+                            },
+                        ))
                     })
                     .child(
                         h_flex()
                             .gap_1()
                             .child(
                                 StyledText::new(message.clone()).with_highlights(
-                                    &cx.text_style(),
+                                    &window.text_style(),
                                     code_ranges
                                         .iter()
                                         .map(|range| (range.clone(), highlight_style)),

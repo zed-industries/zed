@@ -192,7 +192,7 @@ impl Match {
             }
         }
 
-        StyledText::new(text).with_highlights(&cx.text_style().clone(), highlights)
+        StyledText::new(text).with_highlights(&window.text_style().clone(), highlights)
     }
 }
 
@@ -338,7 +338,7 @@ impl PickerDelegate for NewPathDelegate {
         model: &Model<Picker>,
         cx: &mut AppContext,
     ) -> Option<String> {
-        self.confirm_update_query(cx)
+        self.confirm_update_query(model, cx)
     }
 
     fn confirm_update_query(
@@ -376,7 +376,7 @@ impl PickerDelegate for NewPathDelegate {
             cx.spawn(|picker, mut cx| async move {
                 let answer = answer.await.ok();
                 picker
-                    .update(&mut cx, |picker, cx| {
+                    .update(&mut cx, |picker, model, cx| {
                         picker.delegate.should_dismiss = true;
                         if answer != Some(0) {
                             return;
