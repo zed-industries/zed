@@ -159,3 +159,23 @@ impl ApplicationMenu {
         self.entries.iter().any(|entry| entry.handle.is_deployed())
     }
 }
+
+impl Render for ApplicationMenu {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let is_any_deployed = self.is_any_deployed();
+        div()
+            .flex()
+            .flex_row()
+            .gap_x_1()
+            .when(!is_any_deployed && !self.entries.is_empty(), |this| {
+                this.child(self.render_application_menu(&self.entries[0]))
+            })
+            .when(is_any_deployed, |this| {
+                this.children(
+                    self.entries
+                        .iter()
+                        .map(|entry| self.render_standard_menu(entry)),
+                )
+            })
+    }
+}
