@@ -8,7 +8,7 @@ use language::{language_settings, OffsetRangeExt};
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, TintColor, Tooltip};
+use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
 use workspace::{ModalView, Workspace};
 
 actions!(
