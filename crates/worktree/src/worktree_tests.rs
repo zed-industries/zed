@@ -2713,10 +2713,11 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_privacy(cx: &mut TestAppContext) {
+async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
-    fs.insert_tree("/", json!({".env": "PRIVATE=secret"})).await;
+    fs.insert_tree("/", json!({".env": "PRIVATE=secret\n"}))
+        .await;
     let tree = Worktree::local(
         Path::new("/.env"),
         true,
