@@ -21,7 +21,8 @@ use gpui::{
     WeakView, WindowContext,
 };
 use language::{
-    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+    Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
+    OffsetRangeExt, Point, Selection, SelectionGoal,
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -31,14 +32,14 @@ use std::{
     any::{Any, TypeId},
     cmp::Ordering,
     mem,
-    ops::Range,
+    ops::{Range, RangeInclusive},
     sync::Arc,
     time::Duration,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
-use util::ResultExt;
+use util::{RangeExt, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     ItemNavHistory, ToolbarItemLocation, Workspace,
@@ -428,7 +429,8 @@ impl ProjectDiagnosticsEditor {
                         if let Some((range, start_ix)) = &mut pending_range {
                             if let Some(entry) = resolved_entry.as_ref() {
                                 if entry.range.start.row <= range.end.row + 1 + self.context * 2 {
-                                    range.end = range.end.max(entry.range.end);
+                                    let expanded_range = expand_entry_range(entry, &snapshot);
+                                    range.end = range.end.max(expanded_range.end);
                                     continue;
                                 }
                             }
@@ -502,8 +504,9 @@ impl ProjectDiagnosticsEditor {
                             pending_range.take();
                         }
 
-                        if let Some(entry) = resolved_entry {
-                            pending_range = Some((entry.range.clone(), ix));
+                        if let Some(entry) = resolved_entry.as_ref() {
+                            let expanded_range = expand_entry_range(entry, &snapshot);
+                            pending_range = Some((expanded_range, ix));
                         }
                     }
 
@@ -917,4 +920,64 @@ fn compare_diagnostics(
                 .cmp(&new.range.end.to_offset(snapshot))
         })
         .then_with(|| old.diagnostic.message.cmp(&new.diagnostic.message))
+}
+
+const DIAGNOSTIC_EXPANSION_ROW_LIMIT: u32 = 16;
+
+fn expand_entry_range(entry: &DiagnosticEntry<Point>, snapshot: &BufferSnapshot) -> Range<Point> {
+    if !entry.diagnostic.is_primary {
+        return entry.range.clone();
+    }
+    let (start_row, end_row) = expand_row_range_to_ancestor_with_limit(
+        entry.range.clone(),
+        DIAGNOSTIC_EXPANSION_ROW_LIMIT,
+        snapshot,
+    )
+    .into_inner();
+    Range {
+        start: Point::new(start_row, 0),
+        end: snapshot.clip_point(Point::new(end_row, u32::MAX), Bias::Left),
+    }
+}
+
+/// When the parent TreeSitter node spans more rows than the input range, returns an expanded row
+/// range. This expansion will be limited to the specified `row_count_limit`. When this limit is
+/// exceeded by the ancestor node row range, extra lines after the input range are reduced first.
+fn expand_row_range_to_ancestor_with_limit(
+    input_range: Range<Point>,
+    row_count_limit: u32,
+    snapshot: &BufferSnapshot,
+) -> RangeInclusive<BufferRow> {
+    let input_row_range = input_range.start.row..=input_range.end.row;
+    let input_row_count = input_range.end.row - input_range.start.row;
+    if input_row_count > row_count_limit {
+        return input_row_range;
+    }
+    // Query with a slightly larger range than the diagnostic input range to get the parent node.
+    let query_range = input_range.start.saturating_sub(Point::new(0, 1))
+        ..snapshot.clip_point(input_range.end + Point::new(0, 1), Bias::Left);
+    let Some(ancestor_range) = snapshot.range_for_syntax_ancestor(query_range) else {
+        return input_row_range;
+    };
+    let ancestor_range = ancestor_range.to_point(&snapshot);
+    if !ancestor_range.contains_inclusive(&input_range) {
+        log::error!("AST ancestor range ({:?}) expected to include the query range ({:?}), but it does not.", ancestor_range, input_range);
+        return input_row_range;
+    }
+    let ancestor_row_count = ancestor_range.end.row - ancestor_range.start.row;
+    if ancestor_row_count > row_count_limit {
+        let count_with_no_extra_rows_after = input_range.end.row - ancestor_range.start.row;
+        if count_with_no_extra_rows_after > row_count_limit {
+            return RangeInclusive::new(
+                input_range.start.row.saturating_sub(row_count_limit),
+                input_range.end.row,
+            );
+        } else {
+            return RangeInclusive::new(
+                ancestor_range.start.row,
+                ancestor_range.start.row + row_count_limit,
+            );
+        }
+    }
+    return ancestor_range.start.row..=ancestor_range.end.row;
 }
