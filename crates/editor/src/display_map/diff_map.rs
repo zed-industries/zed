@@ -329,209 +329,206 @@ impl DiffMap {
         let mut new_transforms = SumTree::default();
         let mut edits = Patch::default();
 
-        for (mut edit, is_inlay_edit, multibuffer_range) in changes {
+        let mut changes = changes.into_iter().peekable();
+        while let Some((mut edit, mut is_inlay_edit, mut multibuffer_range)) = changes.next() {
             new_transforms.append(cursor.slice(&edit.old.start, Bias::Left, &()), &());
 
-            let edit_start_overshoot = (edit.old.start - cursor.start().0).0;
-            edit.new.start.0 -= edit_start_overshoot;
-            edit.old.start = cursor.start().0;
+            loop {
+                let old_overshoot = (edit.old.start - cursor.start().0).0;
+                let new_overshoot = edit.new.start.0 - new_transforms.summary().inlay_map.len;
+                let diff_edit_old_start = cursor.start().1 + DiffOffset(old_overshoot);
+                let diff_edit_new_start =
+                    DiffOffset(new_transforms.summary().diff_map.len + new_overshoot);
 
-            let diff_edit_old_start = cursor.start().1 + DiffOffset(edit_start_overshoot);
-            let diff_edit_new_start =
-                DiffOffset(new_transforms.summary().diff_map.len + edit_start_overshoot);
+                for (buffer, buffer_range, excerpt_id) in
+                    multibuffer.range_to_buffer_ranges(multibuffer_range.clone(), cx)
+                {
+                    let excerpt_range = multibuffer_snapshot
+                        .range_for_excerpt::<usize>(excerpt_id)
+                        .unwrap();
+                    let excerpt_buffer_range = multibuffer_snapshot
+                        .buffer_range_for_excerpt(excerpt_id)
+                        .unwrap();
+                    let buffer_id = buffer.read(cx).remote_id();
+                    let diff_state = self.snapshot.diffs.get(&buffer_id);
 
-            for (buffer, buffer_range, excerpt_id) in
-                multibuffer.range_to_buffer_ranges(multibuffer_range.clone(), cx)
-            {
-                let excerpt_range = multibuffer_snapshot
-                    .range_for_excerpt::<usize>(excerpt_id)
-                    .unwrap();
-                let excerpt_buffer_range = multibuffer_snapshot
-                    .buffer_range_for_excerpt(excerpt_id)
-                    .unwrap();
-                let buffer_id = buffer.read(cx).remote_id();
-                let diff_state = self.snapshot.diffs.get(&buffer_id);
+                    let buffer = buffer.read(cx);
+                    let buffer_anchor_range = buffer.anchor_after(buffer_range.start)
+                        ..buffer.anchor_before(buffer_range.end);
+                    let change_start_buffer_offset = buffer_range.start;
+                    if let Some(diff_state) = diff_state {
+                        let diff = &diff_state.diff;
+                        let base_text = &diff_state.base_text;
 
-                let buffer = buffer.read(cx);
-                let buffer_anchor_range =
-                    buffer.anchor_after(buffer_range.start)..buffer.anchor_before(buffer_range.end);
-                let change_start_buffer_offset = buffer_range.start;
-                if let Some(diff_state) = diff_state {
-                    let diff = &diff_state.diff;
-                    let base_text = &diff_state.base_text;
-
-                    for hunk in diff.hunks_intersecting_range(buffer_anchor_range, buffer) {
-                        let hunk_anchor_range = {
-                            let start = multi_buffer::Anchor {
-                                excerpt_id,
-                                buffer_id: Some(buffer_id),
-                                text_anchor: hunk.buffer_range.start,
-                            };
-                            let end = multi_buffer::Anchor {
-                                excerpt_id,
-                                buffer_id: Some(buffer_id),
-                                text_anchor: hunk.buffer_range.end,
-                            };
-                            start..end
-                        };
-
-                        let hunk_start_buffer_offset = hunk.buffer_range.start.to_offset(buffer);
-                        if hunk_start_buffer_offset < change_start_buffer_offset {
-                            continue;
-                        }
-
-                        let hunk_start_multibuffer_offset = excerpt_range.start
-                            + hunk_start_buffer_offset
-                            - excerpt_buffer_range.start.to_offset(buffer);
-                        let hunk_start_inlay_offset = self
-                            .snapshot
-                            .inlay_snapshot
-                            .to_inlay_offset(hunk_start_multibuffer_offset);
-
-                        self.push_buffer_content_transform(
-                            &mut new_transforms,
-                            hunk_start_inlay_offset,
-                        );
-
-                        let mut prev_old_transform_start = cursor.start().1;
-                        while cursor.start().0 < hunk_start_inlay_offset {
-                            let Some(item) = cursor.item() else {
-                                break;
-                            };
-                            if let DiffTransform::DeletedHunk {
-                                base_text_byte_range,
-                                ..
-                            } = item
-                            {
-                                let old_range = prev_old_transform_start
-                                    ..prev_old_transform_start
-                                        + DiffOffset(base_text_byte_range.len());
-                                let new_offset = DiffOffset(new_transforms.summary().diff_map.len);
-                                let edit = Edit {
-                                    old: old_range,
-                                    new: new_offset..new_offset,
+                        for hunk in diff.hunks_intersecting_range(buffer_anchor_range, buffer) {
+                            let hunk_anchor_range = {
+                                let start = multi_buffer::Anchor {
+                                    excerpt_id,
+                                    buffer_id: Some(buffer_id),
+                                    text_anchor: hunk.buffer_range.start,
                                 };
-                                dbg!(&edit);
-                                edits.push(edit);
-                            }
-                            prev_old_transform_start = cursor.start().1;
-                            cursor.next(&());
-                        }
+                                let end = multi_buffer::Anchor {
+                                    excerpt_id,
+                                    buffer_id: Some(buffer_id),
+                                    text_anchor: hunk.buffer_range.end,
+                                };
+                                start..end
+                            };
 
-                        let mut was_previously_expanded = false;
-                        if let Some(item) = cursor.item() {
-                            if let DiffTransform::DeletedHunk {
-                                base_text_byte_range,
-                                ..
-                            } = item
-                            {
-                                if cursor.start().0 == hunk_start_inlay_offset
-                                    && *base_text_byte_range == hunk.diff_base_byte_range
+                            let hunk_start_buffer_offset =
+                                hunk.buffer_range.start.to_offset(buffer);
+                            if hunk_start_buffer_offset < change_start_buffer_offset {
+                                continue;
+                            }
+
+                            let hunk_start_multibuffer_offset = excerpt_range.start
+                                + hunk_start_buffer_offset
+                                - excerpt_buffer_range.start.to_offset(buffer);
+                            let hunk_start_inlay_offset = self
+                                .snapshot
+                                .inlay_snapshot
+                                .to_inlay_offset(hunk_start_multibuffer_offset);
+
+                            self.push_buffer_content_transform(
+                                &mut new_transforms,
+                                hunk_start_inlay_offset,
+                            );
+
+                            while cursor.end(&()).0 <= hunk_start_inlay_offset {
+                                let Some(item) = cursor.item() else {
+                                    break;
+                                };
+                                if let DiffTransform::DeletedHunk { .. } = item {
+                                    let new_offset =
+                                        DiffOffset(new_transforms.summary().diff_map.len);
+                                    let edit = Edit {
+                                        old: cursor.start().1..cursor.end(&()).1,
+                                        new: new_offset..new_offset,
+                                    };
+                                    edits.push(edit);
+                                }
+                                cursor.next(&());
+                            }
+
+                            let mut was_previously_expanded = false;
+                            if let Some(item) = cursor.item() {
+                                if let DiffTransform::DeletedHunk {
+                                    base_text_byte_range,
+                                    ..
+                                } = item
                                 {
-                                    was_previously_expanded = true;
+                                    if cursor.start().0 == hunk_start_inlay_offset
+                                        && *base_text_byte_range == hunk.diff_base_byte_range
+                                    {
+                                        was_previously_expanded = true;
+                                    }
                                 }
                             }
-                        }
 
-                        let mut should_expand_hunk =
-                            was_previously_expanded || self.all_hunks_expanded;
-                        match &operation {
-                            DiffMapOperation::ExpandHunks { ranges } => {
-                                should_expand_hunk |= ranges.iter().any(|range| {
-                                    range.overlaps(&hunk_anchor_range, &multibuffer_snapshot)
-                                })
-                            }
-                            DiffMapOperation::CollapseHunks { ranges } => {
-                                should_expand_hunk &= !ranges.iter().any(|range| {
-                                    range.overlaps(&hunk_anchor_range, &multibuffer_snapshot)
-                                })
-                            }
-                            _ => {}
-                        };
-                        if hunk.diff_base_byte_range.len() == 0 {
-                            should_expand_hunk = false;
-                        }
-
-                        if should_expand_hunk {
-                            let mut text_cursor = base_text.as_rope().cursor(0);
-                            let base_text_start =
-                                text_cursor.summary::<Point>(hunk.diff_base_byte_range.start);
-                            let base_text_summary =
-                                text_cursor.summary::<TextSummary>(hunk.diff_base_byte_range.end);
-
-                            if !was_previously_expanded {
-                                let old_offset = prev_old_transform_start;
-                                let new_start = DiffOffset(new_transforms.summary().diff_map.len);
-                                let edit = Edit {
-                                    old: old_offset..old_offset,
-                                    new: new_start
-                                        ..new_start + DiffOffset(hunk.diff_base_byte_range.len()),
-                                };
-                                dbg!(&edit);
-                                edits.push(edit);
-                            }
-
-                            new_transforms.push(
-                                DiffTransform::DeletedHunk {
-                                    base_text_byte_range: hunk.diff_base_byte_range.clone(),
-                                    summary: base_text_summary,
-                                    buffer_id,
-                                    base_text_start,
-                                },
-                                &(),
-                            );
-                        } else if was_previously_expanded {
-                            let old_start = cursor.start().1;
-                            let new_offset = DiffOffset(new_transforms.summary().diff_map.len);
-                            let edit = Edit {
-                                old: old_start
-                                    ..old_start + DiffOffset(hunk.diff_base_byte_range.len()),
-                                new: new_offset..new_offset,
+                            let mut should_expand_hunk =
+                                was_previously_expanded || self.all_hunks_expanded;
+                            match &operation {
+                                DiffMapOperation::ExpandHunks { ranges } => {
+                                    should_expand_hunk |= ranges.iter().any(|range| {
+                                        range.overlaps(&hunk_anchor_range, &multibuffer_snapshot)
+                                    })
+                                }
+                                DiffMapOperation::CollapseHunks { ranges } => {
+                                    should_expand_hunk &= !ranges.iter().any(|range| {
+                                        range.overlaps(&hunk_anchor_range, &multibuffer_snapshot)
+                                    })
+                                }
+                                _ => {}
                             };
-                            dbg!(&edit);
-                            edits.push(edit);
-                            cursor.next(&());
+                            if hunk.diff_base_byte_range.len() == 0 {
+                                should_expand_hunk = false;
+                            }
+
+                            if should_expand_hunk {
+                                let mut text_cursor = base_text.as_rope().cursor(0);
+                                let base_text_start =
+                                    text_cursor.summary::<Point>(hunk.diff_base_byte_range.start);
+                                let base_text_summary = text_cursor
+                                    .summary::<TextSummary>(hunk.diff_base_byte_range.end);
+
+                                if !was_previously_expanded {
+                                    let hunk_overshoot =
+                                        (hunk_start_inlay_offset - cursor.start().0).0;
+                                    let old_offset = cursor.start().1 + DiffOffset(hunk_overshoot);
+                                    let new_start =
+                                        DiffOffset(new_transforms.summary().diff_map.len);
+                                    let new_end =
+                                        new_start + DiffOffset(hunk.diff_base_byte_range.len());
+                                    let edit = Edit {
+                                        old: old_offset..old_offset,
+                                        new: new_start..new_end,
+                                    };
+                                    edits.push(edit);
+                                }
+
+                                new_transforms.push(
+                                    DiffTransform::DeletedHunk {
+                                        base_text_byte_range: hunk.diff_base_byte_range.clone(),
+                                        summary: base_text_summary,
+                                        buffer_id,
+                                        base_text_start,
+                                    },
+                                    &(),
+                                );
+                            } else if was_previously_expanded {
+                                let old_start = cursor.start().1;
+                                let new_offset = DiffOffset(new_transforms.summary().diff_map.len);
+                                let edit = Edit {
+                                    old: old_start
+                                        ..old_start + DiffOffset(hunk.diff_base_byte_range.len()),
+                                    new: new_offset..new_offset,
+                                };
+                                edits.push(edit);
+                                cursor.next(&());
+                            }
                         }
                     }
                 }
 
-                while cursor.start().0 < edit.old.end {
+                while cursor.end(&()).0 <= edit.old.end {
                     let Some(item) = cursor.item() else {
                         break;
                     };
-                    if let DiffTransform::DeletedHunk {
-                        base_text_byte_range,
-                        ..
-                    } = item
-                    {
-                        let old_start = cursor.start().1;
+                    if let DiffTransform::DeletedHunk { .. } = item {
                         let new_offset = DiffOffset(new_transforms.summary().diff_map.len);
                         let edit = Edit {
-                            old: old_start..old_start + DiffOffset(base_text_byte_range.len()),
+                            old: cursor.start().1..cursor.end(&()).1,
                             new: new_offset..new_offset,
                         };
-                        dbg!(&edit);
                         edits.push(edit);
                     }
                     cursor.next(&());
                 }
-            }
 
-            let edit_undershoot = (cursor.start().0 - edit.old.end).0;
-            edit.new.end.0 += edit_undershoot;
-            edit.old.end = cursor.start().0;
+                let old_overshoot = (edit.old.end - cursor.start().0).0;
+                self.push_buffer_content_transform(&mut new_transforms, edit.new.end);
+                let diff_edit_old_end = cursor.start().1 + DiffOffset(old_overshoot);
+                let diff_edit_new_end = DiffOffset(new_transforms.summary().diff_map.len);
 
-            self.push_buffer_content_transform(&mut new_transforms, edit.new.end);
+                if is_inlay_edit {
+                    edits.push(DiffEdit {
+                        old: diff_edit_old_start..diff_edit_old_end,
+                        new: diff_edit_new_start..diff_edit_new_end,
+                    })
+                }
 
-            let diff_edit_old_end = cursor.start().1 - DiffOffset(edit_undershoot);
-            let diff_edit_new_end =
-                DiffOffset(new_transforms.summary().diff_map.len - edit_undershoot);
+                if let Some((next_edit, _, _)) = changes.peek() {
+                    if next_edit.old.start < cursor.end(&()).0 {
+                        (edit, is_inlay_edit, multibuffer_range) = changes.next().unwrap();
+                        continue;
+                    }
+                }
 
-            if is_inlay_edit {
-                edits.push(DiffEdit {
-                    old: diff_edit_old_start..diff_edit_old_end,
-                    new: diff_edit_new_start..diff_edit_new_end,
-                })
+                let suffix = (cursor.end(&()).0 - edit.old.end).0;
+                let transform_end = InlayOffset(new_transforms.summary().inlay_map.len + suffix);
+                self.push_buffer_content_transform(&mut new_transforms, transform_end);
+                cursor.next(&());
+                break;
             }
         }
 
@@ -1475,6 +1472,38 @@ mod tests {
                 "
             ),
         );
+    }
+
+    #[gpui::test]
+    fn test_diff_map_multiple_buffer_edits(cx: &mut TestAppContext) {
+        cx.update(init_test);
+
+        let text = "hello world";
+        let buffer = cx.new_model(|cx| language::Buffer::local(text, cx));
+
+        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let (multibuffer_snapshot, multibuffer_edits) =
+            multibuffer.update(cx, |buffer, cx| (buffer.snapshot(cx), buffer.subscribe()));
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
+        let (diff_map, _) =
+            cx.update(|cx| DiffMap::new(inlay_snapshot.clone(), multibuffer.clone(), cx));
+
+        let (mut snapshot, _) = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(inlay_snapshot.clone(), vec![], cx)
+        });
+        assert_eq!(snapshot.text(), "hello world");
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(4..5, "a"), (9..11, "k")], None, cx);
+        });
+        let multibuffer_snapshot = multibuffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let (inlay_snapshot, edits) = inlay_map.sync(
+            multibuffer_snapshot,
+            multibuffer_edits.consume().into_inner(),
+        );
+        let sync = diff_map.update(cx, |diff_map, cx| diff_map.sync(inlay_snapshot, edits, cx));
+
+        assert_new_snapshot(&mut snapshot, sync, indoc!("hella work"));
     }
 
     #[gpui::test]
