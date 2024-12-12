@@ -1,7 +1,18 @@
+use std::sync::Arc;
+use util::TryFutureExt;
+
+use db::kvp::KEY_VALUE_STORE;
 use gpui::*;
+use project::Fs;
+use serde::{Deserialize, Serialize};
+use settings::Settings as _;
 use ui::{prelude::*, Checkbox, Divider, DividerColor, ElevationIndex};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
+
+use crate::settings::GitPanelSettings;
+
+const GIT_PANEL_KEY: &str = "GitPanel";
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -14,11 +25,17 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+#[derive(Serialize, Deserialize)]
+struct SerializedGitPanel {
+    width: Option<Pixels>,
+}
+
 actions!(git_panel, [Deploy, ToggleFocus]);
 
-#[derive(Clone)]
 pub struct GitPanel {
     _workspace: WeakView<Workspace>,
+    pending_serialization: Task<Option<()>>,
+    fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     width: Option<Pixels>,
 }
@@ -29,20 +46,39 @@ impl GitPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
-            workspace.update(&mut cx, |workspace, cx| {
-                let workspace_handle = workspace.weak_handle();
-
-                cx.new_view(|cx| Self::new(workspace_handle, cx))
-            })
+            // Clippy incorrectly classifies this as a redundant closure
+            #[allow(clippy::redundant_closure)]
+            workspace.update(&mut cx, |workspace, cx| Self::new(workspace, cx))
         })
     }
 
-    pub fn new(workspace: WeakView<Workspace>, cx: &mut ViewContext<Self>) -> Self {
-        Self {
-            _workspace: workspace,
+    pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+        let fs = workspace.app_state().fs.clone();
+        let weak_workspace = workspace.weak_handle();
+
+        cx.new_view(|cx| Self {
+            fs,
+            _workspace: weak_workspace,
+            pending_serialization: Task::ready(None),
             focus_handle: cx.focus_handle(),
             width: Some(px(360.)),
-        }
+        })
+    }
+
+    fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+        let width = self.width;
+        self.pending_serialization = cx.background_executor().spawn(
+            async move {
+                KEY_VALUE_STORE
+                    .write_kvp(
+                        GIT_PANEL_KEY.into(),
+                        serde_json::to_string(&SerializedGitPanel { width })?,
+                    )
+                    .await?;
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
     }
 
     pub fn render_panel_header(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -53,14 +89,14 @@ impl GitPanel {
             .bg(ElevationIndex::Surface.bg(cx))
             .child(
                 h_flex()
-                    .gap_1()
+                    .gap_2()
                     .child(Checkbox::new("all-changes", true.into()).disabled(true))
                     .child(div().text_buffer(cx).text_ui_sm(cx).child("0 changes")),
             )
             .child(div().flex_grow())
             .child(
                 h_flex()
-                    .gap_1()
+                    .gap_2()
                     .child(
                         IconButton::new("discard-changes", IconName::Undo)
                             .icon_size(IconSize::Small)
@@ -104,6 +140,22 @@ impl GitPanel {
                 .opacity(0.5),
         )
     }
+
+    fn render_empty_state(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .h_full()
+            .flex_1()
+            .justify_center()
+            .items_center()
+            .child(
+                v_flex()
+                    .gap_3()
+                    .child("No changes to commit")
+                    .text_ui_sm(cx)
+                    .mx_auto()
+                    .text_color(Color::Placeholder.color(cx)),
+            )
+    }
 }
 
 impl Render for GitPanel {
@@ -124,7 +176,7 @@ impl Render for GitPanel {
                     .h(px(8.))
                     .child(Divider::horizontal_dashed().color(DividerColor::Border)),
             )
-            .child(div().flex_1())
+            .child(self.render_empty_state(cx))
             .child(
                 h_flex()
                     .items_center()
@@ -148,27 +200,35 @@ impl Panel for GitPanel {
         "GitPanel"
     }
 
-    fn position(&self, _cx: &gpui::WindowContext) -> DockPosition {
-        DockPosition::Left
+    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+        GitPanelSettings::get_global(cx).dock
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
         matches!(position, DockPosition::Left | DockPosition::Right)
     }
 
-    fn set_position(&mut self, _position: DockPosition, _cx: &mut ViewContext<Self>) {}
+    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+        settings::update_settings_file::<GitPanelSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| settings.dock = Some(position),
+        );
+    }
 
-    fn size(&self, _cx: &gpui::WindowContext) -> Pixels {
-        self.width.unwrap_or(px(360.))
+    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+        self.width
+            .unwrap_or_else(|| GitPanelSettings::get_global(cx).default_width)
     }
 
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         self.width = size;
+        self.serialize(cx);
         cx.notify();
     }
 
-    fn icon(&self, _cx: &gpui::WindowContext) -> Option<ui::IconName> {
-        Some(ui::IconName::GitBranch)
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
+        Some(ui::IconName::GitBranch).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
