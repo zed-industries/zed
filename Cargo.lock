@@ -469,6 +469,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.31",
+ "fuzzy",
  "gpui",
  "handlebars 4.5.0",
  "indoc",

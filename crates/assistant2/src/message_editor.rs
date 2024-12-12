@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{AppContext, FocusableView, Model, TextStyle, View};
+use gpui::{AppContext, FocusableView, Model, TextStyle, View, WeakView};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use picker::Picker;
@@ -11,6 +11,7 @@ use ui::{
     prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, IconButtonShape, KeyBinding,
     PopoverMenuHandle, Tooltip,
 };
+use workspace::Workspace;
 
 use crate::context::{Context, ContextId, ContextKind};
 use crate::context_picker::{ContextPicker, ContextPickerDelegate};
@@ -19,17 +20,25 @@ use crate::ui::ContextPill;
 use crate::{Chat, ToggleModelSelector};
 
 pub struct MessageEditor {
+    workspace: WeakView<Workspace>,
     thread: Model<Thread>,
     editor: View<Editor>,
     context: Vec<Context>,
     next_context_id: ContextId,
+    context_picker: View<ContextPicker>,
     pub(crate) context_picker_handle: PopoverMenuHandle<Picker<ContextPickerDelegate>>,
     use_tools: bool,
 }
 
 impl MessageEditor {
-    pub fn new(thread: Model<Thread>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        workspace: WeakView<Workspace>,
+        thread: Model<Thread>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let weak_self = cx.view().downgrade();
         let mut this = Self {
+            workspace: workspace.clone(),
             thread,
             editor: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(80, cx);
@@ -39,6 +48,7 @@ impl MessageEditor {
             }),
             context: Vec::new(),
             next_context_id: ContextId(0),
+            context_picker: cx.new_view(|cx| ContextPicker::new(workspace.clone(), weak_self, cx)),
             context_picker_handle: PopoverMenuHandle::default(),
             use_tools: false,
         };
@@ -51,6 +61,20 @@ impl MessageEditor {
         });
 
         this
+    }
+
+    pub fn insert_context(
+        &mut self,
+        kind: ContextKind,
+        name: impl Into<SharedString>,
+        text: impl Into<SharedString>,
+    ) {
+        self.context.push(Context {
+            id: self.next_context_id.post_inc(),
+            name: name.into(),
+            kind,
+            text: text.into(),
+        });
     }
 
     fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
@@ -179,12 +203,7 @@ impl Render for MessageEditor {
                 h_flex()
                     .flex_wrap()
                     .gap_2()
-                    .child(ContextPicker::new(
-                        cx.view().downgrade(),
-                        IconButton::new("add-context", IconName::Plus)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small),
-                    ))
+                    .child(self.context_picker.clone())
                     .children(self.context.iter().map(|context| {
                         ContextPill::new(context.clone()).on_remove({
                             let context = context.clone();
