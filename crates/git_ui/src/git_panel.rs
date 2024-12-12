@@ -87,14 +87,14 @@ impl GitPanel {
             .bg(ElevationIndex::Surface.bg(cx))
             .child(
                 h_flex()
-                    .gap_1()
+                    .gap_2()
                     .child(Checkbox::new("all-changes", true.into()).disabled(true))
                     .child(div().text_buffer(cx).text_ui_sm(cx).child("0 changes")),
             )
             .child(div().flex_grow())
             .child(
                 h_flex()
-                    .gap_1()
+                    .gap_2()
                     .child(
                         IconButton::new("discard-changes", IconName::Undo)
                             .icon_size(IconSize::Small)
