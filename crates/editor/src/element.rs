@@ -6701,7 +6701,7 @@ mod tests {
         editor_tests::{init_test, update_test_language_settings},
         Editor, MultiBuffer,
     };
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{AppContext, TestAppContext, VisualTestContext};
     use language::language_settings;
     use log::info;
     use std::num::NonZeroU32;
@@ -7171,8 +7171,12 @@ mod tests {
                         ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
                     let edits = vec![(edit_range, " beautiful".to_string())];
 
-                    let (text, highlights) =
-                        inline_completion_popover_text(&snapshot, &edits, None, cx);
+                    let (text, highlights) = inline_completion_popover_text(
+                        &snapshot,
+                        &edits,
+                        create_applied_edits_buffer(editor, edits.clone(), cx),
+                        cx,
+                    );
 
                     assert_eq!(text, "Hello, beautiful world!");
                     assert_eq!(highlights.len(), 1);
@@ -7202,8 +7206,12 @@ mod tests {
                         "That".to_string(),
                     )];
 
-                    let (text, highlights) =
-                        inline_completion_popover_text(&snapshot, &edits, None, cx);
+                    let (text, highlights) = inline_completion_popover_text(
+                        &snapshot,
+                        &edits,
+                        create_applied_edits_buffer(editor, edits.clone(), cx),
+                        cx,
+                    );
 
                     assert_eq!(text, "That is a test.");
                     assert_eq!(highlights.len(), 1);
@@ -7240,8 +7248,12 @@ mod tests {
                         ),
                     ];
 
-                    let (text, highlights) =
-                        inline_completion_popover_text(&snapshot, &edits, None, cx);
+                    let (text, highlights) = inline_completion_popover_text(
+                        &snapshot,
+                        &edits,
+                        create_applied_edits_buffer(editor, edits.clone(), cx),
+                        cx,
+                    );
 
                     assert_eq!(text, "Greetings, world and universe!");
                     assert_eq!(highlights.len(), 2);
@@ -7291,8 +7303,12 @@ mod tests {
                         ),
                     ];
 
-                    let (text, highlights) =
-                        inline_completion_popover_text(None, &snapshot, &edits, cx);
+                    let (text, highlights) = inline_completion_popover_text(
+                        &snapshot,
+                        &edits,
+                        create_applied_edits_buffer(editor, edits.clone(), cx),
+                        cx,
+                    );
 
                     assert_eq!(text, "Second modified\nNew third line\nFourth updated line");
                     assert_eq!(highlights.len(), 3);
@@ -7309,6 +7325,29 @@ mod tests {
                 })
                 .unwrap();
         }
+    }
+
+    fn create_applied_edits_buffer(
+        editor: &Editor,
+        edits: Vec<(Range<Anchor>, String)>,
+        cx: &mut AppContext,
+    ) -> Model<Buffer> {
+        let buffer = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| buffer.branch(cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                edits
+                    .into_iter()
+                    .map(|(range, text)| (range.start.text_anchor..range.end.text_anchor, text)),
+                None,
+                cx,
+            )
+        });
+        buffer
     }
 
     fn collect_invisibles_from_new_editor(
