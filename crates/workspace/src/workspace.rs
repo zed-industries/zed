@@ -2153,6 +2153,7 @@ impl Workspace {
 
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
+        let window = window.handle();
         model.spawn(cx, move |this, mut cx| async move {
             let mut tasks = Vec::with_capacity(abs_paths.len());
 
@@ -2193,8 +2194,8 @@ impl Workspace {
                 let abs_path: Arc<Path> = SanitizedPath::from(abs_path.clone()).into();
                 let fs = fs.clone();
                 let pane = pane.clone();
-                let window = window.handle();
-                let task = window.spawn(cx, move |window, mut cx| async move {
+                let window = window.clone();
+                let task = cx.spawn(move |mut cx| async move {
                     let (worktree, project_path) = project_path?;
                     if fs.is_dir(&abs_path).await {
                         this.update(&mut cx, |workspace, model, cx| {
@@ -2224,7 +2225,7 @@ impl Workspace {
                         None
                     } else {
                         Some(
-                            this.update(&mut cx, |this, model, cx| {
+                            this.update_in_window(window, &mut cx, |this, model, window, cx| {
                                 this.open_path(project_path, pane, true, window, cx)
                             })
                             .log_err()?
@@ -2509,7 +2510,7 @@ impl Workspace {
                     }
                 } else {
                     let focus_handle = &active_panel.panel_focus_handle(cx);
-                    cx.focus(focus_handle);
+                    window.focus(focus_handle);
                     reveal_dock = true;
                 }
             }
@@ -2528,7 +2529,12 @@ impl Workspace {
         self.serialize_workspace(model, cx);
     }
 
-    pub fn close_all_docks(&mut self, model: &Model<Self>, cx: &mut AppContext) {
+    pub fn close_all_docks(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
         let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
 
         for dock in docks {
@@ -2537,7 +2543,7 @@ impl Workspace {
             });
         }
 
-        cx.focus_self();
+        self.focus_handle(cx).focus(window);
         model.notify(cx);
         self.serialize_workspace(model, cx);
     }
@@ -2561,7 +2567,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.focus_or_unfocus_panel::<T>(model, window, cx, |panel, model, cx| {
+        self.focus_or_unfocus_panel::<T>(model, window, cx, |panel, model, window, cx| {
             !panel.panel_focus_handle(cx).contains_focused(window)
         });
     }
@@ -2599,7 +2605,7 @@ impl Workspace {
         model: &Model<Self>,
         window: &mut Window,
         cx: &mut AppContext,
-        should_focus: impl Fn(&dyn PanelHandle, &Model<Dock>, &mut AppContext) -> bool,
+        should_focus: impl Fn(&dyn PanelHandle, &Model<Dock>, &mut Window, &mut AppContext) -> bool,
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut result_panel = None;
         let mut serialize = false;
@@ -2611,7 +2617,7 @@ impl Workspace {
 
                     let panel = dock.active_panel().cloned();
                     if let Some(panel) = panel.as_ref() {
-                        if should_focus(&**panel, cx) {
+                        if should_focus(&**panel, model, window, cx) {
                             dock.set_open(true, model, cx);
                             panel.panel_focus_handle(cx).focus(window);
                         } else {
@@ -2723,12 +2729,14 @@ impl Workspace {
                 window,
                 cx,
             );
-            pane.set_can_split(Some(Arc::new(|_, _, _| true)));
+            pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             pane
         });
-        cx.subscribe(&pane, Self::handle_pane_event).detach();
+        model
+            .subscribe_in_window(&pane, window, cx, Self::handle_pane_event)
+            .detach();
         self.panes.push(pane.clone());
-        cx.focus_view(&pane);
+        window.focus_view(&pane, cx);
         model.emit(Event::PaneAdded(pane.clone()), cx);
         pane
     }
@@ -2812,7 +2820,7 @@ impl Workspace {
     ) {
         let new_pane =
             self.split_pane(self.active_pane.clone(), split_direction, model, window, cx);
-        self.add_item(new_pane, item, None, true, true, model, cx);
+        self.add_item(new_pane, item, None, true, true, window, cx);
     }
 
     pub fn open_abs_path(
@@ -2952,28 +2960,37 @@ impl Workspace {
 
         if let Member::Pane(center_pane) = &self.center.root {
             if center_pane.read(cx).items_len() == 0 {
-                return self.open_path(path, Some(pane), true, model, cx);
+                return self.open_path(path, Some(pane), true, window, cx);
             }
         }
 
         let task = self.load_path(path.into(), window, cx);
+        let window = window.handle();
         model.spawn(cx, |this, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
-            this.update(&mut cx, move |this, cx| -> Option<_> {
-                let pane = pane.upgrade()?;
-                let new_pane =
-                    this.split_pane(pane, split_direction.unwrap_or(SplitDirection::Right), cx);
-                new_pane.update(cx, |new_pane, model, cx| {
-                    Some(new_pane.open_item(
-                        project_entry_id,
-                        true,
-                        allow_preview,
-                        None,
+            this.update_window(
+                window,
+                &mut cx,
+                move |this, model, window, cx| -> Option<_> {
+                    let pane = pane.upgrade()?;
+                    let new_pane = this.split_pane(
+                        pane,
+                        split_direction.unwrap_or(SplitDirection::Right),
+                        window,
                         cx,
-                        build_item,
-                    ))
-                })
-            })
+                    );
+                    new_pane.update(cx, |new_pane, model, cx| {
+                        Some(new_pane.open_item(
+                            project_entry_id,
+                            true,
+                            allow_preview,
+                            None,
+                            cx,
+                            build_item,
+                        ))
+                    })
+                },
+            )
             .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
         })
     }
@@ -4941,7 +4958,7 @@ impl Workspace {
             ))
             .on_action(model.listener(
                 |workspace: &mut Workspace, _: &CloseAllDocks, model, window, cx| {
-                    workspace.close_all_docks(model, cx);
+                    workspace.close_all_docks(model, window, cx);
                 },
             ))
             .on_action(model.listener(
