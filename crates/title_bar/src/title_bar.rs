@@ -37,8 +37,6 @@ pub use stories::*;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
-
 actions!(
     collab,
     [
@@ -585,13 +583,6 @@ impl TitleBar {
                         )
                         .action("Extensions", zed_actions::Extensions.boxed_clone())
                         .separator()
-                        .link(
-                            "Book Onboarding",
-                            OpenBrowser {
-                                url: BOOK_ONBOARDING.to_string(),
-                            }
-                            .boxed_clone(),
-                        )
                         .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -627,14 +618,6 @@ impl TitleBar {
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),
                             )
                             .action("Extensions", zed_actions::Extensions.boxed_clone())
-                            .separator()
-                            .link(
-                                "Book Onboarding",
-                                OpenBrowser {
-                                    url: BOOK_ONBOARDING.to_string(),
-                                }
-                                .boxed_clone(),
-                            )
                     })
                     .into()
                 })

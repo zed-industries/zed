@@ -26,7 +26,6 @@ actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
 pub const DOCS_URL: &str = "https://zed.dev/docs/";
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
 
 pub fn init(cx: &mut AppContext) {
     BaseKeymap::register(cx);
@@ -95,11 +94,11 @@ impl Render for WelcomePage {
                                 h_flex()
                                     .w_full()
                                     .justify_center()
-                                    .child(Headline::new("Welcome to Zed")),
+                                    .child(Headline::new("Welcome to Editor")),
                             )
                             .child(
                                 h_flex().w_full().justify_center().child(
-                                    Label::new("The editor for what's next")
+                                    Label::new("The world's best code editor")
                                         .color(Color::Muted)
                                         .italic(true),
                                 ),
@@ -159,24 +158,6 @@ impl Render for WelcomePage {
                                                     })
                                                     .ok();
                                             })),
-                                    )
-                                    .child(
-                                        Button::new(
-                                            "sign-in-to-copilot",
-                                            "Sign in to GitHub Copilot",
-                                        )
-                                        .icon(IconName::Copilot)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(
-                                            cx.listener(|this, _, cx| {
-                                                this.telemetry.report_app_event(
-                                                    "welcome page: sign in to copilot".to_string(),
-                                                );
-                                                copilot::initiate_sign_in(cx);
-                                            }),
-                                        ),
                                     )
                                     .child(
                                         Button::new("edit settings", "Edit Settings")
@@ -251,16 +232,6 @@ impl Render for WelcomePage {
                                                 ));
                                             })),
                                     )
-                                    .child(
-                                        Button::new("book-onboarding", "Book Onboarding")
-                                            .icon(IconName::PhoneIncoming)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, cx| {
-                                                cx.open_url(BOOK_ONBOARDING);
-                                            })),
-                                    ),
                             ),
                     )
                     .child(

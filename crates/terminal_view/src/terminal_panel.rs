@@ -128,7 +128,6 @@ impl TerminalPanel {
     }
 
     fn apply_tab_bar_buttons(&self, terminal_pane: &View<Pane>, cx: &mut ViewContext<Self>) {
-        let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let split_context = pane
@@ -138,39 +137,16 @@ impl TerminalPanel {
                 if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
                     return (None, None);
                 }
-                let focus_handle = pane.focus_handle(cx);
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
-                        PopoverMenu::new("terminal-tab-bar-popover-menu")
-                            .trigger(
-                                IconButton::new("plus", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(|cx| Tooltip::text("New…", cx)),
-                            )
-                            .anchor(AnchorCorner::TopRight)
-                            .with_handle(pane.new_item_context_menu_handle.clone())
-                            .menu(move |cx| {
-                                let focus_handle = focus_handle.clone();
-                                let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.context(focus_handle.clone())
-                                        .action(
-                                            "New Terminal",
-                                            workspace::NewTerminal.boxed_clone(),
-                                        )
-                                        // We want the focus to go back to terminal panel once task modal is dismissed,
-                                        // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                        // context menu will be gone the moment we spawn the modal.
-                                        .action(
-                                            "Spawn task",
-                                            zed_actions::Spawn::modal().boxed_clone(),
-                                        )
-                                });
-
-                                Some(menu)
-                            }),
+                        IconButton::new("New Terminal", IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .tooltip(|cx| Tooltip::for_action("New Terminal", &NewTerminal, cx))
+                            .on_click(cx.listener(move |_, _, cx| {
+                                cx.dispatch_action(workspace::NewTerminal.boxed_clone());
+                            }))
                     )
-                    .children(assistant_tab_bar_button.clone())
                     .child(
                         PopoverMenu::new("terminal-pane-tab-bar-split")
                             .trigger(

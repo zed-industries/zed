@@ -196,10 +196,6 @@ pub fn initialize_workspace(
             }
         }
 
-        let inline_completion_button = cx.new_view(|cx| {
-            inline_completion_button::InlineCompletionButton::new(workspace.weak_handle(), app_state.fs.clone(), cx)
-        });
-
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
@@ -214,7 +210,6 @@ pub fn initialize_workspace(
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
-            status_bar.add_right_item(inline_completion_button, cx);
             status_bar.add_right_item(active_buffer_language, cx);
                         status_bar.add_right_item(active_toolchain_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
