@@ -63,7 +63,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
+use sum_tree::{Bias, Edit, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
     paths::{home_dir, PathMatcher, SanitizedPath},
@@ -171,6 +171,7 @@ pub struct Snapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositoryEntry {
+    pub(crate) git_entries_by_path: SumTree<GitEntry>,
     pub(crate) work_directory: WorkDirectoryEntry,
     pub(crate) branch: Option<Arc<str>>,
 
@@ -2202,16 +2203,21 @@ impl Snapshot {
         Some(removed_entry.path)
     }
 
-    pub fn git_status(&self, path: impl Into<PathBuf>) -> impl Iterator<Item = Entry> {
-        todo!()
+    // TODO: revisit the vec
+    pub fn git_status<'a>(&'a self, work_dir: &'a impl AsRef<Path>) -> Option<Vec<GitEntry>> {
+        let path = work_dir.as_ref();
+        self.repository_for_path(&path)
+            .map(|repo| repo.git_entries_by_path.iter().cloned().collect())
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn status_for_file(&self, path: impl Into<PathBuf>) -> Option<GitFileStatus> {
         let path = path.into();
-        self.entries_by_path
-            .get(&PathKey(Arc::from(path)), &())
-            .and_then(|entry| entry.git_status)
+        self.repository_for_path(&path).and_then(|repo| {
+            repo.git_entries_by_path
+                .get(&PathKey(Arc::from(path)), &())
+                .map(|entry| entry.git_status)
+        })
     }
 
     fn update_abs_path(&mut self, abs_path: SanitizedPath, root_name: String) {
@@ -2294,6 +2300,7 @@ impl Snapshot {
                         RepositoryEntry {
                             work_directory: work_directory_entry,
                             branch: repository.branch.map(Into::into),
+                            git_entries_by_path: Default::default(),
                             // When syncing repository entries from a peer, we don't need
                             // the location_in_repo field, since git operations don't happen locally
                             // anyway.
@@ -2455,15 +2462,13 @@ impl Snapshot {
     /// Updates the `git_status` of the given entries such that files'
     /// statuses bubble up to their ancestor directories.
     pub fn propagate_git_statuses(&self, result: &mut [Entry]) {
-        let mut cursor = self
-            .entries_by_path
-            .cursor::<(TraversalProgress, GitStatuses)>(&());
-        let mut entry_stack = Vec::<(usize, GitStatuses)>::new();
+        let mut cursor = self.entries_by_path.cursor::<TraversalProgress>(&());
+        let mut entry_stack = Vec::<usize>::new();
 
         let mut result_ix = 0;
         loop {
             let next_entry = result.get(result_ix);
-            let containing_entry = entry_stack.last().map(|(ix, _)| &result[*ix]);
+            let containing_entry = entry_stack.last().map(|ix| &result[*ix]);
 
             let entry_to_finish = match (containing_entry, next_entry) {
                 (Some(_), None) => entry_stack.pop(),
@@ -2478,24 +2483,25 @@ impl Snapshot {
                 (None, None) => break,
             };
 
-            if let Some((entry_ix, prev_statuses)) = entry_to_finish {
+            if let Some(entry_ix) = entry_to_finish {
                 cursor.seek_forward(
                     &TraversalTarget::PathSuccessor(&result[entry_ix].path),
                     Bias::Left,
                     &(),
                 );
 
-                let statuses = cursor.start().1 - prev_statuses;
+                // let statuses = cursor.start().1 - prev_statuses;
 
-                result[entry_ix].git_status = if statuses.conflict > 0 {
-                    Some(GitFileStatus::Conflict)
-                } else if statuses.modified > 0 {
-                    Some(GitFileStatus::Modified)
-                } else if statuses.added > 0 {
-                    Some(GitFileStatus::Added)
-                } else {
-                    None
-                };
+                // TODO: recreate this behavior, using the GitEntrySummary and the PathSuccessor target
+                // result[entry_ix].git_status = if statuses.conflict > 0 {
+                //     Some(GitFileStatus::Conflict)
+                // } else if statuses.modified > 0 {
+                //     Some(GitFileStatus::Modified)
+                // } else if statuses.added > 0 {
+                //     Some(GitFileStatus::Added)
+                // } else {
+                //     None
+                // };
             } else {
                 if result[result_ix].is_dir() {
                     cursor.seek_forward(
@@ -2503,7 +2509,7 @@ impl Snapshot {
                         Bias::Left,
                         &(),
                     );
-                    entry_stack.push((result_ix, cursor.start().1));
+                    // entry_stack.push((result_ix, cursor.start().1));
                 }
                 result_ix += 1;
             }
@@ -3153,6 +3159,8 @@ impl BackgroundScannerState {
             RepositoryEntry {
                 work_directory: work_dir_id.into(),
                 branch: repository.branch_name().map(Into::into),
+                // TODO: Fill in this data structure
+                git_entries_by_path: Default::default(),
                 location_in_repo,
             },
         );
@@ -3471,19 +3479,13 @@ pub struct Entry {
     /// directory is expanded. External entries are treated like gitignored
     /// entries in that they are not included in searches.
     pub is_external: bool,
-    pub git_status: Option<GitFileStatus>,
+
     /// Whether this entry is considered to be a `.env` file.
     pub is_private: bool,
     /// The entry's size on disk, in bytes.
     pub size: u64,
     pub char_bag: CharBag,
     pub is_fifo: bool,
-}
-
-pub struct GitEntry {
-    pub path: Arc<Path>,
-    entry_id: Option<ProjectEntryId>,
-    git_status: GitFileStatus,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3518,6 +3520,60 @@ pub struct GitRepositoryChange {
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
 pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitEntry {
+    pub path: Arc<Path>,
+    entry_id: Option<ProjectEntryId>,
+    git_status: GitFileStatus,
+}
+
+#[derive(Clone, Debug)]
+pub struct GitEntrySummary {
+    max_path: Arc<Path>,
+}
+
+impl sum_tree::Summary for GitEntrySummary {
+    type Context = ();
+
+    fn zero(_cx: &Self::Context) -> Self {
+        GitEntrySummary {
+            max_path: Arc::from(Path::new("")),
+        }
+    }
+
+    fn add_summary(&mut self, rhs: &Self, _: &Self::Context) {
+        self.max_path = rhs.max_path.clone();
+    }
+}
+
+impl sum_tree::Item for GitEntry {
+    type Summary = GitEntrySummary;
+
+    fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
+        GitEntrySummary {
+            max_path: self.path.clone(),
+        }
+    }
+}
+
+impl sum_tree::KeyedItem for GitEntry {
+    type Key = PathKey;
+
+    fn key(&self) -> Self::Key {
+        PathKey(self.path.clone())
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, GitEntrySummary> for PathKey {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a GitEntrySummary, _: &()) {
+        self.0 = summary.max_path.clone();
+    }
+}
+
 impl Entry {
     fn new(
         path: Arc<Path>,
@@ -3543,7 +3599,6 @@ impl Entry {
             is_always_included: false,
             is_external: false,
             is_private: false,
-            git_status: None,
             char_bag,
             is_fifo: metadata.is_fifo,
         }
@@ -3559,10 +3614,6 @@ impl Entry {
 
     pub fn is_file(&self) -> bool {
         self.kind.is_file()
-    }
-
-    pub fn git_status(&self) -> Option<GitFileStatus> {
-        self.git_status
     }
 }
 
@@ -3603,22 +3654,12 @@ impl sum_tree::Item for Entry {
             non_ignored_file_count = 0;
         }
 
-        let mut statuses = GitStatuses::default();
-        if let Some(status) = self.git_status {
-            match status {
-                GitFileStatus::Added => statuses.added = 1,
-                GitFileStatus::Modified => statuses.modified = 1,
-                GitFileStatus::Conflict => statuses.conflict = 1,
-            }
-        }
-
         EntrySummary {
             max_path: self.path.clone(),
             count: 1,
             non_ignored_count,
             file_count,
             non_ignored_file_count,
-            statuses,
         }
     }
 }
@@ -3638,7 +3679,6 @@ pub struct EntrySummary {
     non_ignored_count: usize,
     file_count: usize,
     non_ignored_file_count: usize,
-    statuses: GitStatuses,
 }
 
 impl Default for EntrySummary {
@@ -3649,7 +3689,6 @@ impl Default for EntrySummary {
             non_ignored_count: 0,
             file_count: 0,
             non_ignored_file_count: 0,
-            statuses: Default::default(),
         }
     }
 }
@@ -3667,7 +3706,6 @@ impl sum_tree::Summary for EntrySummary {
         self.non_ignored_count += rhs.non_ignored_count;
         self.file_count += rhs.file_count;
         self.non_ignored_file_count += rhs.non_ignored_file_count;
-        self.statuses += rhs.statuses;
     }
 }
 
@@ -4391,7 +4429,8 @@ impl BackgroundScanner {
                     if let Some(repo) = &containing_repository {
                         if let Ok(repo_path) = child_entry.path.strip_prefix(&repo.work_directory) {
                             let repo_path = RepoPath(repo_path.into());
-                            child_entry.git_status = repo.statuses.get(&repo_path);
+                            // TODO: Figure out what to do here
+                            // child_entry.git_status = repo.statuses.get(&repo_path);
                         }
                     }
                 }
@@ -4496,30 +4535,31 @@ impl BackgroundScanner {
         }
 
         // Group all relative paths by their git repository.
-        let mut paths_by_git_repo = HashMap::default();
-        for relative_path in relative_paths.iter() {
-            if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(relative_path) {
-                if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, relative_path) {
-                    paths_by_git_repo
-                        .entry(repo.dot_git_dir_abs_path.clone())
-                        .or_insert_with(|| RepoPaths {
-                            repo: repo.repo_ptr.clone(),
-                            repo_paths: Vec::new(),
-                            relative_paths: Vec::new(),
-                        })
-                        .add_paths(relative_path, repo_path);
-                }
-            }
-        }
+        // let mut paths_by_git_repo = HashMap::default();
+        // for relative_path in relative_paths.iter() {
+        //     if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(relative_path) {
+        //         if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, relative_path) {
+        //             paths_by_git_repo
+        //                 .entry(repo.dot_git_dir_abs_path.clone())
+        //                 .or_insert_with(|| RepoPaths {
+        //                     repo: repo.repo_ptr.clone(),
+        //                     repo_paths: Vec::new(),
+        //                     relative_paths: Vec::new(),
+        //                 })
+        //                 .add_paths(relative_path, repo_path);
+        //         }
+        //     }
+        // }
 
+        // TODO: Move this to where it should be for the new data structure
         // Now call `git status` once per repository and collect each file's git status.
-        let mut git_statuses_by_relative_path =
-            paths_by_git_repo
-                .into_values()
-                .fold(HashMap::default(), |mut map, repo_paths| {
-                    map.extend(repo_paths.into_git_file_statuses());
-                    map
-                });
+        // let mut git_statuses_by_relative_path =
+        //     paths_by_git_repo
+        //         .into_values()
+        //         .fold(HashMap::default(), |mut map, repo_paths| {
+        //             map.extend(repo_paths.into_git_file_statuses());
+        //             map
+        //         });
 
         for (path, metadata) in relative_paths.iter().zip(metadata.into_iter()) {
             let abs_path: Arc<Path> = root_abs_path.join(path).into();
@@ -4558,9 +4598,10 @@ impl BackgroundScanner {
                         }
                     }
 
-                    if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
-                        fs_entry.git_status = git_statuses_by_relative_path.remove(path);
-                    }
+                    // Old usage of git_statuses_by_relative_path
+                    // if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
+                    //     fs_entry.git_status = git_statuses_by_relative_path.remove(path);
+                    // }
 
                     state.insert_entry(fs_entry.clone(), self.fs.as_ref(), self.watcher.as_ref());
                 }
@@ -4739,7 +4780,8 @@ impl BackgroundScanner {
                                 .status(&[repo_path.0.clone()])
                                 .ok()
                                 .and_then(|status| status.get(&repo_path));
-                            entry.git_status = status;
+                            // TODO: figure out what to do here
+                            // entry.git_status = status;
                         }
                     }
                 }
@@ -4872,7 +4914,8 @@ impl BackgroundScanner {
             .scoped(|scope| {
                 scope.spawn(async {
                     for repo_update in repo_updates {
-                        self.update_git_statuses(repo_update);
+                        // TODO: Switch this to calling the right API
+                        // self.update_git_statuses(repo_update);
                     }
                     updates_done_tx.blocking_send(()).ok();
                 });
@@ -4894,65 +4937,6 @@ impl BackgroundScanner {
                 });
             })
             .await;
-    }
-
-    /// Update the git statuses for a given batch of entries.
-    fn update_git_statuses(&self, job: UpdateGitStatusesJob) {
-        log::trace!("updating git statuses for repo {:?}", job.work_directory.0);
-        let t0 = Instant::now();
-        let Some(statuses) = job.repository.status(&[PathBuf::from("")]).log_err() else {
-            return;
-        };
-        log::trace!(
-            "computed git statuses for repo {:?} in {:?}",
-            job.work_directory.0,
-            t0.elapsed()
-        );
-
-        let t0 = Instant::now();
-        let mut changes = Vec::new();
-        let snapshot = self.state.lock().snapshot.snapshot.clone();
-        for file in snapshot.traverse_from_path(true, false, false, job.work_directory.0.as_ref()) {
-            let Ok(repo_path) = file.path.strip_prefix(&job.work_directory.0) else {
-                break;
-            };
-            let git_status = if let Some(location) = &job.location_in_repo {
-                statuses.get(&location.join(repo_path))
-            } else {
-                statuses.get(repo_path)
-            };
-            if file.git_status != git_status {
-                let mut entry = file.clone();
-                entry.git_status = git_status;
-                changes.push((entry.path, git_status));
-            }
-        }
-
-        let mut state = self.state.lock();
-        let edits = changes
-            .iter()
-            .filter_map(|(path, git_status)| {
-                let entry = state.snapshot.entry_for_path(path)?.clone();
-                Some(Edit::Insert(Entry {
-                    git_status: *git_status,
-                    ..entry.clone()
-                }))
-            })
-            .collect();
-
-        // Apply the git status changes.
-        util::extend_sorted(
-            &mut state.changed_paths,
-            changes.iter().map(|p| p.0.clone()),
-            usize::MAX,
-            Ord::cmp,
-        );
-        state.snapshot.entries_by_path.edit(edits, &());
-        log::trace!(
-            "applied git status updates for repo {:?} in {:?}",
-            job.work_directory.0,
-            t0.elapsed(),
-        );
     }
 
     fn build_change_set(
@@ -5344,43 +5328,6 @@ impl<'a> Default for TraversalProgress<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default, Copy)]
-struct GitStatuses {
-    added: usize,
-    modified: usize,
-    conflict: usize,
-}
-
-impl AddAssign for GitStatuses {
-    fn add_assign(&mut self, rhs: Self) {
-        self.added += rhs.added;
-        self.modified += rhs.modified;
-        self.conflict += rhs.conflict;
-    }
-}
-
-impl Sub for GitStatuses {
-    type Output = GitStatuses;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        GitStatuses {
-            added: self.added - rhs.added,
-            modified: self.modified - rhs.modified,
-            conflict: self.conflict - rhs.conflict,
-        }
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for GitStatuses {
-    fn zero(_cx: &()) -> Self {
-        Default::default()
-    }
-
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
-        *self += summary.statuses
-    }
-}
-
 pub struct Traversal<'a> {
     cursor: sum_tree::Cursor<'a, Entry, TraversalProgress<'a>>,
     include_ignored: bool,
@@ -5519,14 +5466,6 @@ impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTa
     }
 }
 
-impl<'a, 'b> SeekTarget<'a, EntrySummary, (TraversalProgress<'a>, GitStatuses)>
-    for TraversalTarget<'b>
-{
-    fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitStatuses), _: &()) -> Ordering {
-        self.cmp(&cursor_location.0, &())
-    }
-}
-
 pub struct ChildEntriesIter<'a> {
     parent_path: &'a Path,
     traversal: Traversal<'a>,
@@ -5556,7 +5495,6 @@ impl<'a> From<&'a Entry> for proto::Entry {
             mtime: entry.mtime.map(|time| time.into()),
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
-            git_status: entry.git_status.map(git_status_to_proto),
             is_fifo: entry.is_fifo,
             size: Some(entry.size),
             canonical_path: entry
@@ -5593,7 +5531,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             is_ignored: entry.is_ignored,
             is_always_included: always_included.is_match(path.as_ref()),
             is_external: entry.is_external,
-            git_status: git_status_from_proto(entry.git_status),
+            // git_status: git_status_from_proto(entry.git_status),
             is_private: false,
             char_bag,
             is_fifo: entry.is_fifo,
@@ -5607,6 +5545,7 @@ fn git_status_from_proto(git_status: Option<i32>) -> Option<GitFileStatus> {
             proto::GitStatus::Added => GitFileStatus::Added,
             proto::GitStatus::Modified => GitFileStatus::Modified,
             proto::GitStatus::Conflict => GitFileStatus::Conflict,
+            proto::GitStatus::Deleted => GitFileStatus::Deleted,
         })
     })
 }
@@ -5616,6 +5555,7 @@ fn git_status_to_proto(status: GitFileStatus) -> i32 {
         GitFileStatus::Added => proto::GitStatus::Added as i32,
         GitFileStatus::Modified => proto::GitStatus::Modified as i32,
         GitFileStatus::Conflict => proto::GitStatus::Conflict as i32,
+        GitFileStatus::Deleted => proto::GitStatus::Deleted as i32,
     }
 }
 

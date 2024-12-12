@@ -97,9 +97,8 @@ pub use task_inventory::{
     BasicContextProvider, ContextProviderWithTasks, Inventory, TaskSourceKind,
 };
 pub use worktree::{
-    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, RepositoryEntry,
-    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
-    FS_WATCH_LATENCY,
+    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, UpdatedEntriesSet,
+    UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings, FS_WATCH_LATENCY,
 };
 
 pub use buffer_store::ProjectTransaction;

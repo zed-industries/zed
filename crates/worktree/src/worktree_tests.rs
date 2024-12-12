@@ -2571,7 +2571,7 @@ async fn test_git_status_git_panel(cx: &mut TestAppContext) {
         let (dir, _) = snapshot.repositories().next().unwrap();
 
         // Takes a work directory, and returns all file entries with a git status.
-        let entries = snapshot.git_status(dir).collect::<Vec<_>>();
+        let entries = snapshot.git_status(dir).unwrap();
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
@@ -2582,7 +2582,7 @@ async fn test_git_status_git_panel(cx: &mut TestAppContext) {
         assert!(entries[1].entry_id.is_some());
         assert_eq!(entries[2].path.as_ref(), Path::new("d.txt"));
         assert_eq!(entries[2].git_status, GitFileStatus::Deleted);
-        assert!(entries[2].entry_id.is());
+        assert!(entries[2].entry_id.is_none());
     });
 }
 
@@ -2811,7 +2811,7 @@ fn check_propagated_statuses(
     assert_eq!(
         entries
             .iter()
-            .map(|e| (e.path.as_ref(), e.git_status))
+            .map(|e| (e.path.as_ref(), snapshot.status_for_file(e.path.as_ref())))
             .collect::<Vec<_>>(),
         expected_statuses
     );
@@ -2963,7 +2963,8 @@ fn assert_entry_git_state(
 ) {
     let entry = tree.entry_for_path(path).expect("entry {path} not found");
     assert_eq!(
-        entry.git_status, git_status,
+        tree.status_for_file(Path::new(path)),
+        git_status,
         "expected {path} to have git status: {git_status:?}"
     );
     assert_eq!(
