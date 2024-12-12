@@ -436,7 +436,7 @@ impl RateCompletionModal {
                                             .size(IconSize::Small)
                                             .color(Color::Warning),
                                     )
-                                    .child(Label::new("Completion wasn't shown because another valid completion was already on screen").color(Color::Warning)),
+                                    .child(Label::new("Completion wasn't shown because another valid one was already on screen.")),
                             )
                         } else {
                             Some(label_container())
@@ -458,7 +458,7 @@ impl RateCompletionModal {
                                         .disabled(rated || feedback_empty)
                                         .when(feedback_empty, |this| {
                                             this.tooltip(|cx| {
-                                                Tooltip::text("Explain why this completion is bad before reporting it", cx)
+                                                Tooltip::text("Explain what's bad about it before reporting it", cx)
                                             })
                                         })
                                         .on_click(cx.listener(move |this, _, cx| {
