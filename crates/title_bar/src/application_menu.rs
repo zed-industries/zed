@@ -1,9 +1,8 @@
 use gpui::View;
-use smallvec::SmallVec;
-use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
-
 use install_cli;
+use smallvec::SmallVec;
 use terminal_view::terminal_panel;
+use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace;
 
 #[derive(Copy, Clone)]
@@ -81,8 +80,9 @@ impl ApplicationMenu {
     }
 
     fn build_zed_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, _cx| {
-            menu.action("About Zed", Box::new(zed_actions::About))
+        ContextMenu::build(cx, |menu, cx| {
+            menu.when_some(cx.focused(), |menu, focused| menu.context(focused))
+                .action("About Zed", Box::new(zed_actions::About))
                 .action("Check for Updates", Box::new(auto_update::Check))
                 .separator()
                 .action("Open Settings", Box::new(zed_actions::OpenSettings))
@@ -112,8 +112,9 @@ impl ApplicationMenu {
     }
 
     fn build_file_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, _cx| {
-            menu.action("New", Box::new(workspace::NewFile))
+        ContextMenu::build(cx, |menu, cx| {
+            menu.when_some(cx.focused(), |menu, focused| menu.context(focused))
+                .action("New", Box::new(workspace::NewFile))
                 .action("New Window", Box::new(workspace::NewWindow))
                 .separator()
                 .action("Open...", Box::new(workspace::Open))
@@ -144,8 +145,9 @@ impl ApplicationMenu {
     }
 
     fn build_edit_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, _cx| {
-            menu.action("Undo", Box::new(editor::actions::Undo))
+        ContextMenu::build(cx, |menu, cx| {
+            menu.when_some(cx.focused(), |menu, focused| menu.context(focused))
+                .action("Undo", Box::new(editor::actions::Undo))
                 .action("Redo", Box::new(editor::actions::Redo))
                 .separator()
                 .action("Cut", Box::new(editor::actions::Cut))
@@ -163,8 +165,9 @@ impl ApplicationMenu {
     }
 
     fn build_selection_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, _cx| {
-            menu.action("Select All", Box::new(editor::actions::SelectAll))
+        ContextMenu::build(cx, |menu, cx| {
+            menu.when_some(cx.focused(), |menu, focused| menu.context(focused))
+                .action("Select All", Box::new(editor::actions::SelectAll))
                 .action(
                     "Expand Selection",
                     Box::new(editor::actions::SelectLargerSyntaxNode),
@@ -192,8 +195,9 @@ impl ApplicationMenu {
     }
 
     fn build_view_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, _cx| {
-            menu.action("Zoom In", Box::new(zed_actions::IncreaseBufferFontSize))
+        ContextMenu::build(cx, |menu, cx| {
+            menu.when_some(cx.focused(), |menu, focused| menu.context(focused))
+                .action("Zoom In", Box::new(zed_actions::IncreaseBufferFontSize))
                 .action("Zoom Out", Box::new(zed_actions::DecreaseBufferFontSize))
                 .action("Reset Zoom", Box::new(zed_actions::ResetBufferFontSize))
                 .separator()
@@ -208,8 +212,9 @@ impl ApplicationMenu {
     }
 
     fn build_go_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, _cx| {
-            menu.action("Back", Box::new(workspace::GoBack))
+        ContextMenu::build(cx, |menu, cx| {
+            menu.when_some(cx.focused(), |menu, focused| menu.context(focused))
+                .action("Back", Box::new(workspace::GoBack))
                 .action("Forward", Box::new(workspace::GoForward))
                 .separator()
                 .action(
@@ -233,15 +238,17 @@ impl ApplicationMenu {
     }
 
     fn build_window_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, _cx| {
-            menu.action("Minimize", Box::new(zed_actions::Minimize))
+        ContextMenu::build(cx, |menu, cx| {
+            menu.when_some(cx.focused(), |menu, focused| menu.context(focused))
+                .action("Minimize", Box::new(zed_actions::Minimize))
                 .action("Zoom", Box::new(zed_actions::Zoom))
         })
     }
 
     fn build_help_menu(cx: &mut WindowContext<'_>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, _cx| {
-            menu.action("View Telemetry", Box::new(zed_actions::OpenTelemetryLog))
+        ContextMenu::build(cx, |menu, cx| {
+            menu.when_some(cx.focused(), |menu, focused| menu.context(focused))
+                .action("View Telemetry", Box::new(zed_actions::OpenTelemetryLog))
                 .action(
                     "View Dependency Licenses",
                     Box::new(zed_actions::OpenLicenses),
@@ -265,7 +272,7 @@ impl ApplicationMenu {
         let item_handle = item.handle.clone();
         div().id(item.id()).occlude().child(
             PopoverMenu::new(SharedString::from(format!("menu-{}", item.id())))
-                .menu(move |cx| Some(Self::build_zed_menu(cx)))
+                .menu(move |cx| Self::build_zed_menu(cx).into())
                 .trigger(
                     IconButton::new("application-menu", ui::IconName::Menu)
                         .style(ButtonStyle::Subtle)
@@ -294,7 +301,7 @@ impl ApplicationMenu {
             .child(
                 PopoverMenu::new(SharedString::from(format!("menu-{}", item.id())))
                     .menu(move |cx| {
-                        Some(match menu_type {
+                        match menu_type {
                             MenuType::File => Self::build_file_menu(cx),
                             MenuType::Edit => Self::build_edit_menu(cx),
                             MenuType::Selection => Self::build_selection_menu(cx),
@@ -303,7 +310,8 @@ impl ApplicationMenu {
                             MenuType::Window => Self::build_window_menu(cx),
                             MenuType::Help => Self::build_help_menu(cx),
                             MenuType::Zed => Self::build_zed_menu(cx),
-                        })
+                        }
+                        .into()
                     })
                     .trigger(
                         Button::new(
@@ -315,9 +323,15 @@ impl ApplicationMenu {
                     )
                     .with_handle(item_handle.clone()),
             )
-            .on_hover(move |_, cx| {
-                other_handles.iter().for_each(|handle| handle.hide(cx));
-                item_handle.show(cx);
+            .on_hover(move |hover_enter, cx| {
+                // Skip if menu is already open to avoid focus issues
+                if *hover_enter && !item_handle.is_deployed() {
+                    other_handles.iter().for_each(|handle| handle.hide(cx));
+
+                    // Defer to prevent focus race condition with the previously open menu
+                    let item_handle = item_handle.clone();
+                    cx.defer(move |w| item_handle.show(w));
+                }
             })
     }
 
@@ -337,13 +351,11 @@ impl Render for ApplicationMenu {
                 this.child(self.render_application_menu(&self.menu_items[0]))
             })
             .when(is_any_deployed, |this| {
-                this.child(self.render_standard_menu(&self.menu_items[0]))
-                    .children(
-                        self.menu_items
-                            .iter()
-                            .skip(1)
-                            .map(|item| self.render_standard_menu(item)),
-                    )
+                this.children(
+                    self.menu_items
+                        .iter()
+                        .map(|item| self.render_standard_menu(item)),
+                )
             })
     }
 }
