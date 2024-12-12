@@ -41,7 +41,7 @@ impl<M: FocusableView + EventEmitter<DismissEvent>> PopoverMenuHandle<M> {
         }
     }
 
-    pub fn hide(&self, window: &mut Window, cx: &mut AppContext) {
+    pub fn hide(&self, cx: &mut AppContext) {
         if let Some(state) = self.0.borrow().as_ref() {
             if let Some(menu) = state.menu.borrow().as_ref() {
                 menu.update(cx, |_, model, cx| model.emit(DismissEvent, cx));
@@ -52,7 +52,7 @@ impl<M: FocusableView + EventEmitter<DismissEvent>> PopoverMenuHandle<M> {
     pub fn toggle(&self, window: &mut Window, cx: &mut AppContext) {
         if let Some(state) = self.0.borrow().as_ref() {
             if state.menu.borrow().is_some() {
-                self.hide(window, cx);
+                self.hide(cx);
             } else {
                 self.show(window, cx);
             }

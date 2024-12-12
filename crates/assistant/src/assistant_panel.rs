@@ -97,7 +97,7 @@ use zed_actions::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
-    cx.observe_new_views(
+    cx.observe_new_models(
         |workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext| {
             workspace
                 .register_action(cx, |workspace, _: &ToggleFocus, cx| {
@@ -120,7 +120,7 @@ pub fn init(cx: &mut AppContext) {
     )
     .detach();
 
-    cx.observe_new_views(
+    cx.observe_new_models(
         |terminal_panel: &mut TerminalPanel, model: &Model<TerminalPanel>, cx: &mut AppContext| {
             let settings = AssistantSettings::get_global(cx);
             terminal_panel.asssistant_enabled(settings.enabled, model, cx);
@@ -1987,6 +1987,7 @@ impl ContextEditor {
                         editor.set_scroll_position(
                             point(scroll_position.offset_before_cursor.x, scroll_top),
                             model,
+                            window,
                             cx,
                         );
                     }
@@ -2627,7 +2628,7 @@ impl ContextEditor {
                     pane.update(cx, |pane, model, cx| {
                         let item_id = editor.entity_id();
                         if !editor.read(cx).focus_handle(cx).is_focused(window) {
-                            pane.close_item_by_id(item_id, SaveIntent::Skip, model, cx)
+                            pane.close_item_by_id(item_id, SaveIntent::Skip, model, window, cx)
                                 .detach_and_log_err(cx);
                         }
                     });

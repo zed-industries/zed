@@ -1,5 +1,7 @@
 use crate::ItemHandle;
-use gpui::{AnyView, Entity, EntityId, EventEmitter, Model, ParentElement as _, Render, Styled};
+use gpui::{
+    AnyModel, AnyView, Entity, EntityId, EventEmitter, Model, ParentElement as _, Render, Styled,
+};
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
 
@@ -12,6 +14,7 @@ pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> ToolbarItemLocation;
 
@@ -19,6 +22,7 @@ pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
         &mut self,
         _pane_focused: bool,
         model: &Model<Self>,
+        window: &mut Window,
         _cx: &mut AppContext,
     ) {
     }
@@ -26,7 +30,8 @@ pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
 
 trait ToolbarItemViewHandle: Send {
     fn id(&self) -> EntityId;
-    fn to_any(&self) -> AnyView;
+    fn model(&self) -> AnyModel;
+    fn view(&self) -> AnyView;
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
@@ -105,8 +110,7 @@ impl Render for Toolbar {
             return div();
         }
 
-        let secondary_item = self.secondary_items().next().map(|item| item.to_any());
-
+        let secondary_item = self.secondary_items().next().map(|item| item.view());
         let has_left_items = self.left_items().count() > 0;
         let has_right_items = self.right_items().count() > 0;
 
@@ -131,7 +135,7 @@ impl Render for Toolbar {
                                     .flex_auto()
                                     .justify_start()
                                     .overflow_x_hidden()
-                                    .children(self.left_items().map(|item| item.to_any())),
+                                    .children(self.left_items().map(|item| item.view())),
                             )
                         })
                         .when(has_right_items, |this| {
@@ -147,7 +151,7 @@ impl Render for Toolbar {
                                         }
                                     })
                                     .justify_end()
-                                    .children(self.right_items().map(|item| item.to_any())),
+                                    .children(self.right_items().map(|item| item.view())),
                             )
                         }),
                 )
@@ -182,28 +186,34 @@ impl Toolbar {
         model.notify(cx);
     }
 
-    pub fn add_item<T>(&mut self, item: Model<T>, model: &Model<Self>, cx: &mut AppContext)
-    where
+    pub fn add_item<T>(
+        &mut self,
+        item: Model<T>,
+        model: &Model<Self>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) where
         T: 'static + ToolbarItemView,
     {
-        let location = item.set_active_pane_item(self.active_item.as_deref(), cx);
-        cx.subscribe(&item, |this, item, event, cx| {
-            if let Some((_, current_location)) = this
-                .items
-                .iter_mut()
-                .find(|(i, _)| i.id() == item.entity_id())
-            {
-                match event {
-                    ToolbarItemEvent::ChangeLocation(new_location) => {
-                        if new_location != current_location {
-                            *current_location = *new_location;
-                            model.notify(cx);
+        let location = item.set_active_pane_item(self.active_item.as_deref(), window, cx);
+        model
+            .subscribe(&item, cx, |this, item, event, model, cx| {
+                if let Some((_, current_location)) = this
+                    .items
+                    .iter_mut()
+                    .find(|(i, _)| i.id() == item.entity_id())
+                {
+                    match event {
+                        ToolbarItemEvent::ChangeLocation(new_location) => {
+                            if new_location != current_location {
+                                *current_location = *new_location;
+                                model.notify(cx);
+                            }
                         }
                     }
                 }
-            }
-        })
-        .detach();
+            })
+            .detach();
         self.items.push((Box::new(item), location));
         model.notify(cx);
     }
@@ -212,6 +222,7 @@ impl Toolbar {
         &mut self,
         item: Option<&dyn ItemHandle>,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         self.active_item = item.map(|item| item.boxed_clone());
@@ -222,7 +233,7 @@ impl Toolbar {
             .unwrap_or(false);
 
         for (toolbar_item, current_location) in self.items.iter_mut() {
-            let new_location = toolbar_item.set_active_pane_item(item, cx);
+            let new_location = toolbar_item.set_active_pane_item(item, window, cx);
             if new_location != *current_location {
                 *current_location = new_location;
                 model.notify(cx);
@@ -230,16 +241,16 @@ impl Toolbar {
         }
     }
 
-    pub fn focus_changed(&mut self, focused: bool, model: &Model<Self>, cx: &mut AppContext) {
+    pub fn focus_changed(&mut self, focused: bool, window: &mut Window, cx: &mut AppContext) {
         for (toolbar_item, _) in self.items.iter_mut() {
-            toolbar_item.focus_changed(focused, cx);
+            toolbar_item.focus_changed(focused, window, cx);
         }
     }
 
     pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<Model<T>> {
         self.items
             .iter()
-            .find_map(|(item, _)| item.to_any().downcast().ok())
+            .find_map(|(item, _)| item.model().downcast().ok())
     }
 
     pub fn hidden(&self) -> bool {
@@ -252,7 +263,11 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for Model<T> {
         self.entity_id()
     }
 
-    fn to_any(&self) -> AnyView {
+    fn model(&self) -> AnyModel {
+        self.clone().into()
+    }
+
+    fn view(&self) -> AnyView {
         self.clone().into()
     }
 
@@ -263,7 +278,7 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for Model<T> {
         cx: &mut gpui::AppContext,
     ) -> ToolbarItemLocation {
         self.update(cx, |this, model, cx| {
-            this.set_active_pane_item(active_pane_item, cx)
+            this.set_active_pane_item(active_pane_item, model, window, cx)
         })
     }
 
@@ -274,7 +289,7 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for Model<T> {
         cx: &mut gpui::AppContext,
     ) {
         self.update(cx, |this, model, cx| {
-            this.pane_focus_update(pane_focused, cx);
+            this.pane_focus_update(pane_focused, model, window, cx);
             model.notify(cx);
         });
     }

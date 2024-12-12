@@ -14,11 +14,14 @@ use crate::{Item, Workspace};
 actions!(debug, [OpenThemePreview]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, model| {
-        workspace.register_action(model, |workspace, _: &OpenThemePreview, cx| {
-            let theme_preview = cx.new_model(ThemePreview::new);
-            workspace.add_item_to_active_pane(Box::new(theme_preview), None, true, cx)
-        });
+    cx.observe_new_models(|workspace: &mut Workspace, model, cx| {
+        workspace.register_action(
+            model,
+            |workspace, _: &OpenThemePreview, model, window, cx| {
+                let theme_preview = cx.new_model(|model, cx| ThemePreview::new(model, window, cx));
+                workspace.add_item_to_active_pane(Box::new(theme_preview), None, true, window, cx)
+            },
+        );
     })
     .detach();
 }
@@ -105,7 +108,7 @@ impl Item for ThemePreview {
     where
         Self: Sized,
     {
-        Some(cx.new_model(Self::new))
+        Some(cx.new_model(|model, cx| ThemePreview::new(model, window, cx)))
     }
 }
 

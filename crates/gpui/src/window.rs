@@ -675,7 +675,7 @@ impl Window {
         platform_window.on_close(Box::new({
             let mut cx = cx.to_async();
             move || {
-                let _ = handle.update(&mut cx, |window, _cx| window.remove_window());
+                let _ = handle.update(&mut cx, |window, _cx| window.remove());
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -862,7 +862,7 @@ impl Window {
     }
 
     /// Close this window.
-    pub fn remove_window(&mut self) {
+    pub fn remove(&mut self) {
         self.removed = true;
     }
 
@@ -3590,6 +3590,22 @@ impl Window {
         subscription
     }
 
+    /// Register a callback to be invoked when the window is activated or deactivated.
+    pub fn on_activate(
+        &self,
+        mut callback: impl FnMut(&mut Self, &mut AppContext) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.activation_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
     /// Your view will be re-drawn once the asset has finished loading.
     ///
@@ -3724,13 +3740,27 @@ impl From<u64> for WindowId {
 
 /// A handle to a window with a specific root view type.
 /// Note that this does not keep the window alive on its own.
-#[derive(Deref, DerefMut, Hash, Eq, PartialEq)]
+#[derive(Deref, DerefMut)]
 pub struct WindowHandle<T> {
     #[deref]
     #[deref_mut]
     pub(crate) any_handle: AnyWindowHandle,
     state_type: PhantomData<T>,
 }
+
+impl<T> std::hash::Hash for WindowHandle<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.any_handle.hash(state);
+    }
+}
+
+impl<T> PartialEq for WindowHandle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.any_handle == other.any_handle
+    }
+}
+
+impl<T> Eq for WindowHandle<T> {}
 
 impl<T: 'static> From<WindowHandle<T>> for AnyWindowHandle {
     fn from(typed_handle: WindowHandle<T>) -> Self {

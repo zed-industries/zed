@@ -877,7 +877,7 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
 
     let path = project
         .update(cx, |project, model, cx| {
-            project.resolve_abs_path("/code/project1/README.md", model, cx)
+            project.resolve_abs_path("/code/project1/README.md", cx)
         })
         .await
         .unwrap();
@@ -890,7 +890,7 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
 
     let path = project
         .update(cx, |project, model, cx| {
-            project.resolve_abs_path("/code/project1/src", model, cx)
+            project.resolve_abs_path("/code/project1/src", cx)
         })
         .await
         .unwrap();
@@ -903,7 +903,7 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
 
     let path = project
         .update(cx, |project, model, cx| {
-            project.resolve_abs_path("/code/project1/DOESNOTEXIST", model, cx)
+            project.resolve_abs_path("/code/project1/DOESNOTEXIST", cx)
         })
         .await;
     assert!(path.is_none());

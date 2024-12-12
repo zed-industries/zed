@@ -577,7 +577,7 @@ impl Pane {
         }
 
         self.toolbar.update(cx, |toolbar, model, cx| {
-            toolbar.focus_changed(true, model, cx);
+            toolbar.focus_changed(true, window, cx);
         });
 
         if let Some(active_item) = self.active_item() {
@@ -617,7 +617,7 @@ impl Pane {
     ) {
         self.was_focused = false;
         self.toolbar.update(cx, |toolbar, model, cx| {
-            toolbar.focus_changed(false, model, cx);
+            toolbar.focus_changed(false, window, cx);
         });
         model.notify(cx);
     }
@@ -1179,7 +1179,7 @@ impl Pane {
                 });
             }
 
-            self.update_toolbar(model, cx);
+            self.update_toolbar(model, window, cx);
             self.update_status_bar(model, window, cx);
 
             if focus_item {
@@ -1721,7 +1721,7 @@ impl Pane {
         if self.items.is_empty() {
             item.deactivated(window, cx);
             if close_pane_if_empty {
-                self.update_toolbar(model, cx);
+                self.update_toolbar(model, window, cx);
                 model.emit(
                     Event::Remove {
                         focus_on_pane: focus_on_pane_if_closed,
@@ -1916,7 +1916,7 @@ impl Pane {
                             Ok(0) => {}
                             Ok(1) => {
                                 // Don't save this file
-                                pane.update_in_window(window, cx, |pane, model, window, cx| {
+                                pane.update(cx, |pane, model, cx| {
                                     if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
                                         pane.pinned_tab_count -= 1;
                                     }
@@ -2034,13 +2034,13 @@ impl Pane {
         Some(())
     }
 
-    fn update_toolbar(&mut self, model: &Model<Self>, cx: &mut AppContext) {
+    fn update_toolbar(&mut self, model: &Model<Self>, window: &mut Window, cx: &mut AppContext) {
         let active_item = self
             .items
             .get(self.active_item_index)
             .map(|item| item.as_ref());
         self.toolbar.update(cx, |toolbar, model, cx| {
-            toolbar.set_active_item(active_item, model, cx);
+            toolbar.set_active_item(active_item, model, window, cx);
         });
     }
 
@@ -3116,6 +3116,7 @@ impl Pane {
                                     OpenVisible::OnlyDirectories,
                                     Some(to_pane.downgrade()),
                                     model,
+                                    window,
                                     cx,
                                 )
                             },

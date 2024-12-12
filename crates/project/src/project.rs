@@ -3495,7 +3495,7 @@ impl Project {
     ) -> Task<Option<ResolvedPath>> {
         let path_buf = PathBuf::from(path);
         if path_buf.is_absolute() || path.starts_with("~") {
-            self.resolve_abs_path(path, model, cx)
+            self.resolve_abs_path(path, cx)
         } else {
             self.resolve_path_in_worktrees(path_buf, buffer, model, cx)
         }
@@ -3507,19 +3507,14 @@ impl Project {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<Option<ResolvedPath>> {
-        let resolve_task = self.resolve_abs_path(path, model, cx);
+        let resolve_task = self.resolve_abs_path(path, cx);
         cx.background_executor().spawn(async move {
             let resolved_path = resolve_task.await;
             resolved_path.filter(|path| path.is_file())
         })
     }
 
-    pub fn resolve_abs_path(
-        &self,
-        path: &str,
-        model: &Model<Self>,
-        cx: &mut AppContext,
-    ) -> Task<Option<ResolvedPath>> {
+    pub fn resolve_abs_path(&self, path: &str, cx: &mut AppContext) -> Task<Option<ResolvedPath>> {
         if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
             let fs = self.fs.clone();

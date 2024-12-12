@@ -1,6 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
-    AnyModel, AnyView, Decorations, IntoElement, Model, ParentElement, Render, Styled, Subscription,
+    AnyModel, AnyView, AppContext, Decorations, IntoElement, Model, ParentElement, Render, Styled,
+    Subscription,
 };
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
@@ -19,12 +20,7 @@ pub trait StatusItemView: Render {
 trait StatusItemViewHandle: Send {
     fn model(&self) -> AnyModel;
     fn view(&self) -> AnyView;
-    fn set_active_pane_item(
-        &self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    );
+    fn set_active_pane_item(&self, active_pane_item: Option<&dyn ItemHandle>, cx: &mut AppContext);
     fn item_type(&self) -> TypeId;
 }
 
@@ -89,10 +85,11 @@ impl StatusBar {
             left_items: Default::default(),
             right_items: Default::default(),
             active_pane: active_pane.clone(),
-            _observe_active_pane: cx
-                .observe(active_pane, |this, _, cx| this.update_active_pane_item(cx)),
+            _observe_active_pane: model.observe(active_pane, cx, |this, _, model, cx| {
+                this.update_active_pane_item(cx)
+            }),
         };
-        this.update_active_pane_item(model, cx);
+        this.update_active_pane_item(cx);
         this
     }
 
@@ -101,7 +98,7 @@ impl StatusBar {
         T: 'static + StatusItemView,
     {
         let active_pane_item = self.active_pane.read(cx).active_item();
-        item.set_active_pane_item(active_pane_item.as_deref(), model, cx);
+        item.set_active_pane_item(active_pane_item.as_deref(), cx);
 
         self.left_items.push(Box::new(item));
         model.notify(cx);
@@ -141,7 +138,7 @@ impl StatusBar {
         T: 'static + StatusItemView,
     {
         let active_pane_item = self.active_pane.read(cx).active_item();
-        item.set_active_pane_item(active_pane_item.as_deref(), model, cx);
+        item.set_active_pane_item(active_pane_item.as_deref(), cx);
 
         if position < self.left_items.len() {
             self.left_items.insert(position + 1, Box::new(item))
@@ -166,7 +163,7 @@ impl StatusBar {
         T: 'static + StatusItemView,
     {
         let active_pane_item = self.active_pane.read(cx).active_item();
-        item.set_active_pane_item(active_pane_item.as_deref(), model, cx);
+        item.set_active_pane_item(active_pane_item.as_deref(), cx);
 
         self.right_items.push(Box::new(item));
         model.notify(cx);
@@ -179,15 +176,16 @@ impl StatusBar {
         cx: &mut AppContext,
     ) {
         self.active_pane = active_pane.clone();
-        self._observe_active_pane =
-            cx.observe(active_pane, |this, _, cx| this.update_active_pane_item(cx));
-        self.update_active_pane_item(model, cx);
+        self._observe_active_pane = model.observe(active_pane, cx, |this, _, model, cx| {
+            this.update_active_pane_item(cx)
+        });
+        self.update_active_pane_item(cx);
     }
 
-    fn update_active_pane_item(&mut self, model: &Model<Self>, cx: &mut AppContext) {
+    fn update_active_pane_item(&mut self, cx: &mut AppContext) {
         let active_pane_item = self.active_pane.read(cx).active_item();
         for item in self.left_items.iter().chain(&self.right_items) {
-            item.set_active_pane_item(active_pane_item.as_deref(), model, cx);
+            item.set_active_pane_item(active_pane_item.as_deref(), cx);
         }
     }
 }
@@ -201,12 +199,7 @@ impl<T: StatusItemView> StatusItemViewHandle for Model<T> {
         self.clone().into()
     }
 
-    fn set_active_pane_item(
-        &self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    ) {
+    fn set_active_pane_item(&self, active_pane_item: Option<&dyn ItemHandle>, cx: &mut AppContext) {
         self.update(cx, |this, model, cx| {
             this.set_active_pane_item(active_pane_item, model, cx)
         });

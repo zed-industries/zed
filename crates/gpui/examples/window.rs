@@ -61,7 +61,7 @@ impl Render for SubWindow {
                     .gap_2()
                     .child("SubWindow")
                     .child(button("Close", |window, _cx| {
-                        window.remove_window();
+                        window.remove();
                     })),
             )
     }

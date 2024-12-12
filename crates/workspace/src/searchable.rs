@@ -142,43 +142,24 @@ pub trait SearchableItemHandle: ItemHandle {
     fn supported_options(&self) -> SearchOptions;
     fn subscribe_to_search_events(
         &self,
-        window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
-        handler: Box<dyn Fn(&SearchEvent, &mut gpui::Window, &mut gpui::AppContext) + Send>,
+        handler: Box<dyn Fn(&SearchEvent, &mut gpui::AppContext) + Send>,
     ) -> Subscription;
-    fn clear_matches(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext);
-    fn update_matches(
-        &self,
-        matches: &AnyVec<dyn Send>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    );
-    fn query_suggestion(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> String;
-    fn activate_match(
-        &self,
-        index: usize,
-        matches: &AnyVec<dyn Send>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    );
-    fn select_matches(
-        &self,
-        matches: &AnyVec<dyn Send>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    );
+    fn clear_matches(&self, cx: &mut gpui::AppContext);
+    fn update_matches(&self, matches: &AnyVec<dyn Send>, cx: &mut gpui::AppContext);
+    fn query_suggestion(&self, cx: &mut gpui::AppContext) -> String;
+    fn activate_match(&self, index: usize, matches: &AnyVec<dyn Send>, cx: &mut gpui::AppContext);
+    fn select_matches(&self, matches: &AnyVec<dyn Send>, cx: &mut gpui::AppContext);
     fn replace(
         &self,
         _: any_vec::element::ElementRef<'_, dyn Send>,
         _: &SearchQuery,
-        _: &mut gpui::Window,
         _: &mut gpui::AppContext,
     );
     fn replace_all(
         &self,
         matches: &mut dyn Iterator<Item = any_vec::element::ElementRef<'_, dyn Send>>,
         query: &SearchQuery,
-        window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     );
     fn match_index_for_direction(
@@ -187,34 +168,21 @@ pub trait SearchableItemHandle: ItemHandle {
         current_index: usize,
         direction: Direction,
         count: usize,
-        window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> usize;
     fn find_matches(
         &self,
         query: Arc<SearchQuery>,
-        window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Task<AnyVec<dyn Send>>;
     fn active_match_index(
         &self,
         matches: &AnyVec<dyn Send>,
-        window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Option<usize>;
-    fn search_bar_visibility_changed(
-        &self,
-        visible: bool,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    );
+    fn search_bar_visibility_changed(&self, visible: bool, cx: &mut gpui::AppContext);
 
-    fn toggle_filtered_search_ranges(
-        &mut self,
-        enabled: bool,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    );
+    fn toggle_filtered_search_ranges(&mut self, enabled: bool, cx: &mut gpui::AppContext);
 }
 
 impl<T: SearchableItem> SearchableItemHandle for Model<T> {
@@ -232,54 +200,38 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
 
     fn subscribe_to_search_events(
         &self,
-        window: &mut gpui::Window,
+
         cx: &mut gpui::AppContext,
-        handler: Box<dyn Fn(&SearchEvent, &mut gpui::Window, &mut gpui::AppContext) + Send>,
+        handler: Box<dyn Fn(&SearchEvent, &mut gpui::AppContext) + Send>,
     ) -> Subscription {
-        cx.subscribe(self, move |_, event: &SearchEvent, cx| {
-            handler(event, window, cx)
+        self.subscribe(self, cx, move |_, _, event: &SearchEvent, model, cx| {
+            handler(event, cx)
         })
     }
 
-    fn clear_matches(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {
+    fn clear_matches(&self, cx: &mut gpui::AppContext) {
         self.update(cx, |this, model, cx| this.clear_matches(model, cx));
     }
-    fn update_matches(
-        &self,
-        matches: &AnyVec<dyn Send>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    ) {
+    fn update_matches(&self, matches: &AnyVec<dyn Send>, cx: &mut gpui::AppContext) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, model, cx| {
-            this.update_matches(matches.as_slice(), window, cx)
+            this.update_matches(matches.as_slice(), model, cx)
         });
     }
-    fn query_suggestion(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> String {
+    fn query_suggestion(&self, cx: &mut gpui::AppContext) -> String {
         self.update(cx, |this, model, cx| this.query_suggestion(model, cx))
     }
-    fn activate_match(
-        &self,
-        index: usize,
-        matches: &AnyVec<dyn Send>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    ) {
+    fn activate_match(&self, index: usize, matches: &AnyVec<dyn Send>, cx: &mut gpui::AppContext) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, model, cx| {
             this.activate_match(index, matches.as_slice(), model, cx)
         });
     }
 
-    fn select_matches(
-        &self,
-        matches: &AnyVec<dyn Send>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    ) {
+    fn select_matches(&self, matches: &AnyVec<dyn Send>, cx: &mut gpui::AppContext) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, model, cx| {
-            this.select_matches(matches.as_slice(), window, cx)
+            this.select_matches(matches.as_slice(), model, cx)
         });
     }
 
@@ -289,7 +241,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         current_index: usize,
         direction: Direction,
         count: usize,
-        window: &mut gpui::Window,
+
         cx: &mut gpui::AppContext,
     ) -> usize {
         let matches = matches.downcast_ref().unwrap();
@@ -307,7 +259,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
     fn find_matches(
         &self,
         query: Arc<SearchQuery>,
-        window: &mut gpui::Window,
+
         cx: &mut gpui::AppContext,
     ) -> Task<AnyVec<dyn Send>> {
         let matches = self.update(cx, |this, model, cx| this.find_matches(query, model, cx));
@@ -326,7 +278,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
     fn active_match_index(
         &self,
         matches: &AnyVec<dyn Send>,
-        window: &mut gpui::Window,
+
         cx: &mut gpui::AppContext,
     ) -> Option<usize> {
         let matches = matches.downcast_ref()?;
@@ -339,7 +291,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         &self,
         mat: any_vec::element::ElementRef<'_, dyn Send>,
         query: &SearchQuery,
-        window: &mut gpui::Window,
+
         cx: &mut gpui::AppContext,
     ) {
         let mat = mat.downcast_ref().unwrap();
@@ -350,7 +302,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         &self,
         matches: &mut dyn Iterator<Item = any_vec::element::ElementRef<'_, dyn Send>>,
         query: &SearchQuery,
-        window: &mut gpui::Window,
+
         cx: &mut gpui::AppContext,
     ) {
         self.update(cx, |this, model, cx| {
@@ -363,25 +315,15 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         })
     }
 
-    fn search_bar_visibility_changed(
-        &self,
-        visible: bool,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    ) {
+    fn search_bar_visibility_changed(&self, visible: bool, cx: &mut gpui::AppContext) {
         self.update(cx, |this, model, cx| {
             this.search_bar_visibility_changed(visible, model, cx)
         });
     }
 
-    fn toggle_filtered_search_ranges(
-        &mut self,
-        enabled: bool,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    ) {
+    fn toggle_filtered_search_ranges(&mut self, enabled: bool, cx: &mut gpui::AppContext) {
         self.update(cx, |this, model, cx| {
-            this.toggle_filtered_search_ranges(enabled, window, cx)
+            this.toggle_filtered_search_ranges(enabled, model, cx)
         });
     }
 }

@@ -558,6 +558,7 @@ impl Render for ActivityIndicator {
                                                 project.cancel_language_server_work(
                                                     language_server_id,
                                                     Some(token.clone()),
+                                                    model,
                                                     cx,
                                                 );
                                             });
