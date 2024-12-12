@@ -639,10 +639,10 @@ impl DiffMapSnapshot {
 
         match cursor.item() {
             Some(DiffTransform::BufferContent { .. }) => {
-                let end_inlay_offset = start_transform.inlay_offset() + InlayOffset(overshoot.0);
-                let end_inlay_point = self.inlay_snapshot.to_point(end_inlay_offset);
+                let inlay_offset = start_transform.inlay_offset() + InlayOffset(overshoot.0);
+                let inlay_point = self.inlay_snapshot.to_point(inlay_offset);
                 start_transform.diff_point()
-                    + DiffPoint((end_inlay_point - start_transform.inlay_point()).0)
+                    + DiffPoint((inlay_point - start_transform.inlay_point()).0)
             }
             Some(DiffTransform::DeletedHunk {
                 buffer_id,
@@ -653,9 +653,9 @@ impl DiffMapSnapshot {
                 let Some(buffer_diff) = self.diffs.get(buffer_id) else {
                     panic!("{:?} is in non-extant deleted hunk", offset)
                 };
-                let end_buffer_offset = base_text_byte_range.start + overshoot.0;
-                let end_buffer_point = buffer_diff.base_text.offset_to_point(end_buffer_offset);
-                start_transform.diff_point() + DiffPoint(end_buffer_point - base_text_start)
+                let buffer_offset = base_text_byte_range.start + overshoot.0;
+                let buffer_point = buffer_diff.base_text.offset_to_point(buffer_offset);
+                start_transform.diff_point() + DiffPoint(buffer_point - base_text_start)
             }
             None => {
                 panic!("{:?} is past end of buffer", offset)
@@ -664,7 +664,35 @@ impl DiffMapSnapshot {
     }
 
     pub fn clip_point(&self, point: DiffPoint, bias: Bias) -> DiffPoint {
-        todo!()
+        let mut cursor = self.transforms.cursor::<DiffTransformSummary>(&());
+        cursor.seek(&point, Bias::Right, &());
+        let start_transform = cursor.start();
+        let overshoot = point - start_transform.diff_point();
+        if overshoot.0.is_zero() {
+            return start_transform.diff_point();
+        }
+
+        match cursor.item() {
+            Some(DiffTransform::BufferContent { .. }) => {
+                let inlay_point = start_transform.inlay_point() + InlayPoint(overshoot.0);
+                let clipped = self.inlay_snapshot.clip_point(inlay_point, bias);
+                start_transform.diff_point()
+                    + DiffPoint((clipped - start_transform.inlay_point()).0)
+            }
+            Some(DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_start,
+                ..
+            }) => {
+                let Some(buffer_diff) = self.diffs.get(buffer_id) else {
+                    panic!("{:?} is in non-extant deleted hunk", point)
+                };
+                let buffer_point = *base_text_start + overshoot.0;
+                let clipped = buffer_diff.base_text.clip_point(buffer_point, bias);
+                start_transform.diff_point() + DiffPoint(clipped - base_text_start)
+            }
+            None => cursor.end(&()).diff_point(),
+        }
     }
 
     pub fn to_offset(&self, point: DiffPoint) -> DiffOffset {
@@ -678,10 +706,10 @@ impl DiffMapSnapshot {
 
         match cursor.item() {
             Some(DiffTransform::BufferContent { .. }) => {
-                let end_inlay_point = start_transform.inlay_point() + InlayPoint(overshoot.0);
-                let end_inlay_offset = self.inlay_snapshot.to_offset(end_inlay_point);
+                let inlay_point = start_transform.inlay_point() + InlayPoint(overshoot.0);
+                let inlay_offset = self.inlay_snapshot.to_offset(inlay_point);
                 start_transform.diff_offset()
-                    + DiffOffset((end_inlay_offset - start_transform.inlay_offset()).0)
+                    + DiffOffset((inlay_offset - start_transform.inlay_offset()).0)
             }
             Some(DiffTransform::DeletedHunk {
                 buffer_id,
@@ -692,10 +720,10 @@ impl DiffMapSnapshot {
                 let Some(buffer_diff) = self.diffs.get(buffer_id) else {
                     panic!("{:?} is in non-extant deleted hunk", point)
                 };
-                let end_buffer_point = *base_text_start + overshoot.0;
-                let end_buffer_offset = buffer_diff.base_text.point_to_offset(end_buffer_point);
+                let buffer_point = *base_text_start + overshoot.0;
+                let buffer_offset = buffer_diff.base_text.point_to_offset(buffer_point);
                 start_transform.diff_offset()
-                    + DiffOffset(end_buffer_offset - base_text_byte_range.start)
+                    + DiffOffset(buffer_offset - base_text_byte_range.start)
             }
             None => {
                 panic!("{:?} is past end of buffer", point)
@@ -1287,6 +1315,92 @@ mod tests {
                 "
             ),
         );
+    }
+
+    #[gpui::test]
+    fn test_diff_map_clipping(cx: &mut TestAppContext) {
+        cx.update(init_test);
+
+        let text = indoc!(
+            "₀
+             ₃
+             ₄
+             ₅
+             "
+        );
+        let base_text = indoc!(
+            "₀
+             ₁
+             ₂
+             ₃
+             ₄
+             "
+        );
+
+        let buffer = cx.new_model(|cx| language::Buffer::local(text, cx));
+        let change_set = cx.new_model(|cx| {
+            BufferChangeSet::new_with_base_text(
+                base_text.to_string(),
+                buffer.read(cx).text_snapshot(),
+                cx,
+            )
+        });
+
+        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let (multibuffer_snapshot, multibuffer_edits) =
+            multibuffer.update(cx, |buffer, cx| (buffer.snapshot(cx), buffer.subscribe()));
+        let (_, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
+        let (diff_map, _) =
+            cx.update(|cx| DiffMap::new(inlay_snapshot.clone(), multibuffer.clone(), cx));
+        diff_map.update(cx, |diff_map, cx| {
+            diff_map.set_all_hunks_expanded(cx);
+            diff_map.add_change_set(change_set, cx);
+        });
+        cx.run_until_parked();
+        let (diff_snapshot, _) =
+            diff_map.update(cx, |diff_map, cx| diff_map.sync(inlay_snapshot, vec![], cx));
+
+        assert_eq!(
+            diff_snapshot.text(),
+            indoc! {"
+            ₀
+            ₁
+            ₂
+            ₃
+            ₄
+            ₅
+        "}
+        );
+
+        for (point, (left, right)) in [
+            (
+                DiffPoint::new(0, 0), // start
+                (DiffPoint::new(0, 0), DiffPoint::new(0, 0)),
+            ),
+            (
+                DiffPoint::new(1, 1), // deleted
+                (DiffPoint::new(1, 0), DiffPoint::new(1, 3)),
+            ),
+            (
+                DiffPoint::new(3, 1), // unchanged
+                (DiffPoint::new(3, 0), DiffPoint::new(3, 3)),
+            ),
+            (
+                DiffPoint::new(5, 2), // inserted
+                (DiffPoint::new(5, 0), DiffPoint::new(5, 3)),
+            ),
+            (
+                DiffPoint::new(6, 0), // end
+                (DiffPoint::new(6, 0), DiffPoint::new(6, 0)),
+            ),
+            (
+                DiffPoint::new(7, 7), // beyond
+                (DiffPoint::new(6, 0), DiffPoint::new(6, 0)),
+            ),
+        ] {
+            assert_eq!(left, diff_snapshot.clip_point(point, Bias::Left));
+            assert_eq!(right, diff_snapshot.clip_point(point, Bias::Right));
+        }
     }
 
     #[track_caller]
