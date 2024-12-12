@@ -37,7 +37,6 @@ similar.workspace = true
 telemetry_events.workspace = true
 theme.workspace = true
 ui.workspace = true
-util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 
@@ -58,7 +57,6 @@ settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-go.workspace = true
 tree-sitter-rust.workspace = true
-util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 call = { workspace = true, features = ["test-support"] }

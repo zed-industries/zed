@@ -344,6 +344,7 @@ impl RateCompletionModal {
         };
 
         let rated = self.zeta.read(cx).is_completion_rated(completion_id);
+        let was_shown = self.zeta.read(cx).was_completion_shown(completion_id);
         let feedback_empty = active_completion
             .feedback_editor
             .read(cx)
@@ -425,6 +426,16 @@ impl RateCompletionModal {
                                             .color(Color::Warning),
                                     )
                                     .child(Label::new("No edits produced.").color(Color::Muted)),
+                            )
+                        } else if !was_shown {
+                            Some(
+                                label_container()
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::Small)
+                                            .color(Color::Warning),
+                                    )
+                                    .child(Label::new("Completion wasn't shown because another valid completion was already on screen").color(Color::Warning)),
                             )
                         } else {
                             Some(label_container())
