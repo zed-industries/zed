@@ -447,6 +447,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
+        git_ui::git_panel::init(cx);
         outline_panel::init(Assets, cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);

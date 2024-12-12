@@ -216,7 +216,7 @@ pub fn initialize_workspace(
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(inline_completion_button, cx);
             status_bar.add_right_item(active_buffer_language, cx);
-                        status_bar.add_right_item(active_toolchain_language, cx);
+            status_bar.add_right_item(active_toolchain_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);
         });
@@ -237,8 +237,11 @@ pub fn initialize_workspace(
 
         let release_channel = ReleaseChannel::global(cx);
         let assistant2_feature_flag = cx.wait_for_flag::<feature_flags::Assistant2FeatureFlag>();
+        let git_ui_feature_flag = cx.wait_for_flag::<feature_flags::GitUiFeatureFlag>();
 
         let prompt_builder = prompt_builder.clone();
+        let is_staff = cx.is_staff();
+
         cx.spawn(|workspace_handle, mut cx| async move {
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
@@ -276,13 +279,26 @@ pub fn initialize_workspace(
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
             })?;
+            let git_ui_enabled = git_ui_feature_flag.await || is_staff;
+
+            let git_panel = if git_ui_enabled {
+                Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
+            } else {
+                None
+            };
+
+            workspace_handle.update(&mut cx, |workspace, cx| {
+                if let Some(git_panel) = git_panel {
+                    workspace.add_panel(git_panel, cx);
+                }
+            })?;
+
             let is_assistant2_enabled =
                 if cfg!(test) || release_channel != ReleaseChannel::Dev {
                     false
                 } else {
                     assistant2_feature_flag.await
-                }
-            ;
+                };
 
             let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
                 let assistant2_panel =
@@ -303,6 +319,7 @@ pub fn initialize_workspace(
                 if let Some(assistant2_panel) = assistant2_panel {
                     workspace.add_panel(assistant2_panel, cx);
                 }
+
             })
         })
         .detach();
