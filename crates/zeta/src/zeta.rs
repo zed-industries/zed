@@ -907,7 +907,7 @@ pub struct ZetaInlineCompletionProvider {
 }
 
 impl ZetaInlineCompletionProvider {
-    pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(16);
+    pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(8);
 
     pub fn new(zeta: Model<Zeta>) -> Self {
         Self {
