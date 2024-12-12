@@ -1013,28 +1013,32 @@ impl<'a> Iterator for DiffMapChunks<'a> {
                 base_text_byte_range,
                 ..
             } => {
-                let base_buffer = &self.snapshot.diffs.get(&buffer_id)?.base_text;
-
-                let diff_base_start_offset = base_text_byte_range.start;
-                let diff_base_end_offset = base_text_byte_range.end;
-                let diff_base_offset =
-                    diff_base_start_offset + self.offset.0 - self.cursor.start().0 .0;
+                let hunk_start_offset = self.cursor.start().0;
+                let base_text_start_offset = base_text_byte_range.start;
+                let base_text_end_offset = base_text_byte_range.end;
+                let diff_base_end_offset = base_text_end_offset
+                    .min(base_text_start_offset + self.end_offset.0 - hunk_start_offset.0);
+                let diff_base_start_offset =
+                    base_text_start_offset + self.offset.0 - hunk_start_offset.0;
 
                 let mut chunks = if let Some((_, mut chunks)) = self
                     .diff_base_chunks
                     .take()
                     .filter(|(id, _)| id == buffer_id)
                 {
-                    if chunks.offset() != diff_base_offset {
-                        chunks.seek(diff_base_offset..diff_base_end_offset);
+                    if chunks.offset() != diff_base_start_offset {
+                        chunks.seek(diff_base_start_offset..diff_base_end_offset);
                     }
                     chunks
                 } else {
-                    base_buffer.chunks(diff_base_offset..diff_base_end_offset, self.language_aware)
+                    let base_buffer = &self.snapshot.diffs.get(&buffer_id)?.base_text;
+                    base_buffer.chunks(
+                        diff_base_start_offset..diff_base_end_offset,
+                        self.language_aware,
+                    )
                 };
 
                 let chunk = chunks.next()?;
-
                 self.offset.0 += chunk.text.len();
                 self.diff_base_chunks = Some((*buffer_id, chunks));
                 Some(chunk)
@@ -1655,19 +1659,19 @@ mod tests {
                 snapshot.chunks(DiffOffset(0)..snapshot.len(), false, Default::default());
             chunks.seek(offset..snapshot.len());
             let tail = chunks.map(|chunk| chunk.text).collect::<String>();
-            assert_eq!(tail, &full_text[ix..]);
+            assert_eq!(tail, &full_text[ix..], "seek to range: {:?}", ix..);
 
             let tail = snapshot
                 .chunks(offset..snapshot.len(), false, Default::default())
                 .map(|chunk| chunk.text)
                 .collect::<String>();
-            assert_eq!(tail, &full_text[ix..]);
+            assert_eq!(tail, &full_text[ix..], "start from range: {:?}", ix..);
 
             let head = snapshot
                 .chunks(DiffOffset(0)..offset, false, Default::default())
                 .map(|chunk| chunk.text)
                 .collect::<String>();
-            assert_eq!(head, &full_text[..ix]);
+            assert_eq!(head, &full_text[..ix], "start with range: {:?}", ..ix);
         }
     }
 
