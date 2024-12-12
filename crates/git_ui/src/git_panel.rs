@@ -158,7 +158,21 @@ impl Render for GitPanel {
                     .h(px(8.))
                     .child(Divider::horizontal_dashed().color(DividerColor::Border)),
             )
-            .child(div().flex_1())
+            .child(
+                h_flex()
+                    .h_full()
+                    .flex_1()
+                    .justify_center()
+                    .items_center()
+                    .child(
+                        div()
+                            .child("No changes to commit")
+                            .text_ui_sm(cx)
+                            .max_w(px(144.))
+                            .mx_auto()
+                            .text_color(Color::Placeholder.color(cx)),
+                    ),
+            )
             .child(
                 h_flex()
                     .items_center()
