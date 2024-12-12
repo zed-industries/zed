@@ -597,7 +597,7 @@ impl DiffMap {
                         panic!("multiple adjacent buffer content transforms");
                     }
                     prev_transform_is_buffer_content = true;
-                    if summary.len == 0 {
+                    if summary.len == 0 && !snapshot.buffer().is_empty() {
                         panic!("empty buffer content transform");
                     }
                 }
@@ -874,7 +874,7 @@ impl DiffMapSnapshot {
             .to_buffer_point(self.to_inlay_point(diff_point))
     }
 
-    pub fn chunks<'a>(
+    pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<DiffOffset>,
         language_aware: bool,
@@ -1069,9 +1069,10 @@ impl<'a> Iterator for DiffMapBufferRows<'a> {
     type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = match self.cursor.item()? {
-            DiffTransform::DeletedHunk { .. } => Some(None),
-            DiffTransform::BufferContent { .. } => self.input_buffer_rows.next(),
+        let result = if let Some(DiffTransform::DeletedHunk { .. }) = self.cursor.item() {
+            Some(None)
+        } else {
+            self.input_buffer_rows.next()
         };
         self.diff_point.0 += Point::new(1, 0);
         if self.diff_point >= self.cursor.end(&()).0 {
@@ -1338,21 +1339,22 @@ mod tests {
                 Some(3),
                 None,
                 None,
-                Some(4)
+                Some(4),
+                Some(5)
             ]
         );
 
         assert_eq!(
             snapshot.buffer_rows(4).collect::<Vec<_>>(),
-            vec![Some(3), None, None, Some(4)]
+            vec![Some(3), None, None, Some(4), Some(5)]
         );
         assert_eq!(
             snapshot.buffer_rows(5).collect::<Vec<_>>(),
-            vec![None, None, Some(4)]
+            vec![None, None, Some(4), Some(5)]
         );
         assert_eq!(
             snapshot.buffer_rows(6).collect::<Vec<_>>(),
-            vec![None, Some(4)]
+            vec![None, Some(4), Some(5)]
         );
 
         let mut buffer_rows = snapshot.buffer_rows(0);
@@ -1608,6 +1610,24 @@ mod tests {
             diff_snapshot.text_summary_for_range(four..diff_snapshot.len()),
             partial_summary
         );
+    }
+
+    #[gpui::test]
+    fn test_empty_diff_map(cx: &mut TestAppContext) {
+        cx.update(init_test);
+
+        let text = "";
+
+        let buffer = cx.new_model(|cx| language::Buffer::local(text, cx));
+        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let (multibuffer_snapshot, _multibuffer_edits) =
+            multibuffer.update(cx, |buffer, cx| (buffer.snapshot(cx), buffer.subscribe()));
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
+
+        let (_diff_map, diff_snapshot) =
+            cx.update(|cx| DiffMap::new(inlay_snapshot.clone(), multibuffer.clone(), cx));
+
+        assert_eq!(diff_snapshot.buffer_rows(0).collect::<Vec<_>>(), [Some(0)]);
     }
 
     #[track_caller]
