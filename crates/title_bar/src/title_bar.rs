@@ -29,7 +29,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
-use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
+use zed_actions::{OpenRecent, OpenRemote};
 
 #[cfg(feature = "stories")]
 pub use stories::*;
