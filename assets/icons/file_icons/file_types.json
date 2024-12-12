@@ -113,6 +113,7 @@
     "mdf": "storage",
     "mdx": "document",
     "metadata": "code",
+    "metal": "metal",
     "mjs": "javascript",
     "mka": "audio",
     "mkv": "video",
@@ -321,6 +322,9 @@
     },
     "lua": {
       "icon": "icons/file_icons/lua.svg"
+    },
+    "metal": {
+      "icon": "icons/file_icons/metal.svg"
     },
     "nim": {
       "icon": "icons/file_icons/nim.svg"
