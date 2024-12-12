@@ -619,7 +619,83 @@ impl DiffMapSnapshot {
     }
 
     pub fn text_summary_for_range(&self, range: Range<DiffOffset>) -> TextSummary {
-        todo!()
+        let mut cursor = self.transforms.cursor::<(DiffOffset, InlayOffset)>(&());
+        cursor.seek(&range.start, Bias::Right, &());
+
+        let Some(first_transform) = cursor.item() else {
+            return TextSummary::default();
+        };
+
+        let (diff_transform_start, inlay_transform_start) = cursor.start().clone();
+        let (diff_transform_end, _) = cursor.end(&());
+        let diff_start = range.start;
+        let diff_end = std::cmp::min(range.end, diff_transform_end);
+
+        let mut result = match first_transform {
+            DiffTransform::BufferContent { .. } => {
+                let inlay_start =
+                    inlay_transform_start + InlayOffset((diff_start - diff_transform_start).0);
+                let inlay_end =
+                    inlay_transform_start + InlayOffset((diff_end - diff_transform_start).0);
+
+                self.inlay_snapshot
+                    .text_summary_for_range(inlay_start..inlay_end)
+            }
+            DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_byte_range,
+                ..
+            } => {
+                let buffer_start =
+                    base_text_byte_range.start + (diff_start - diff_transform_start).0;
+                let buffer_end = base_text_byte_range.start + (diff_end - diff_transform_start).0;
+                let Some(buffer_diff) = self.diffs.get(buffer_id) else {
+                    panic!("{:?} is in non-extant deleted hunk", range.start)
+                };
+
+                buffer_diff
+                    .base_text
+                    .text_summary_for_range(buffer_start..buffer_end)
+            }
+        };
+        if range.end < diff_transform_end {
+            return result;
+        }
+
+        cursor.next(&());
+        result = result + cursor.summary(&range.end, Bias::Right, &());
+
+        let Some(last_transform) = cursor.item() else {
+            return result;
+        };
+
+        let (diff_transform_start, inlay_transform_start) = cursor.start().clone();
+
+        result += match last_transform {
+            DiffTransform::BufferContent { .. } => {
+                let inlay_end =
+                    inlay_transform_start + InlayOffset((range.end - diff_transform_start).0);
+
+                self.inlay_snapshot
+                    .text_summary_for_range(inlay_transform_start..inlay_end)
+            }
+            DiffTransform::DeletedHunk {
+                base_text_byte_range,
+                buffer_id,
+                ..
+            } => {
+                let buffer_end = base_text_byte_range.start + (range.end - diff_transform_start).0;
+                let Some(buffer_diff) = self.diffs.get(buffer_id) else {
+                    panic!("{:?} is in non-extant deleted hunk", range.end)
+                };
+
+                buffer_diff
+                    .base_text
+                    .text_summary_for_range(base_text_byte_range.start..buffer_end)
+            }
+        };
+
+        result
     }
 
     pub fn buffer(&self) -> &MultiBufferSnapshot {
@@ -1032,6 +1108,16 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for DiffPoint {
     }
 }
 
+impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for TextSummary {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
+        *self += &summary.diff_map;
+    }
+}
+
 impl<'a> sum_tree::SeekTarget<'a, DiffTransformSummary, DiffTransformSummary> for DiffPoint {
     fn cmp(
         &self,
@@ -1111,6 +1197,7 @@ mod tests {
     use multi_buffer::{Anchor, MultiBuffer};
     use project::Project;
     use settings::SettingsStore;
+    use text::OffsetUtf16;
 
     #[gpui::test]
     fn test_basic_diff(cx: &mut TestAppContext) {
@@ -1345,7 +1432,7 @@ mod tests {
         });
 
         let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
-        let (multibuffer_snapshot, multibuffer_edits) =
+        let (multibuffer_snapshot, _) =
             multibuffer.update(cx, |buffer, cx| (buffer.snapshot(cx), buffer.subscribe()));
         let (_, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
         let (diff_map, _) =
@@ -1399,6 +1486,55 @@ mod tests {
             assert_eq!(left, diff_snapshot.clip_point(point, Bias::Left));
             assert_eq!(right, diff_snapshot.clip_point(point, Bias::Right));
         }
+
+        assert_eq!(
+            diff_snapshot.text_summary_for_range(DiffOffset(0)..DiffOffset(0)),
+            TextSummary::default()
+        );
+        assert_eq!(
+            diff_snapshot.text_summary_for_range(diff_snapshot.len()..diff_snapshot.len()),
+            TextSummary::default()
+        );
+        let full_summary = TextSummary {
+            len: 24,
+            len_utf16: OffsetUtf16(12),
+            lines: Point { row: 6, column: 0 },
+            first_line_chars: 1,
+            last_line_chars: 0,
+            last_line_len_utf16: 0,
+            longest_row: 0,
+            longest_row_chars: 1,
+        };
+        let partial_summary = TextSummary {
+            len: 8,
+            len_utf16: OffsetUtf16(4),
+            lines: Point { row: 2, column: 0 },
+            first_line_chars: 1,
+            last_line_chars: 0,
+            last_line_len_utf16: 0,
+            longest_row: 0,
+            longest_row_chars: 1,
+        };
+
+        let two = DiffOffset(diff_snapshot.text().find("₂").unwrap());
+        let four = DiffOffset(diff_snapshot.text().find("₄").unwrap());
+
+        assert_eq!(
+            diff_snapshot.text_summary_for_range(DiffOffset(0)..diff_snapshot.len()),
+            full_summary
+        );
+        assert_eq!(
+            diff_snapshot.text_summary_for_range(DiffOffset(0)..two),
+            partial_summary
+        );
+        assert_eq!(
+            diff_snapshot.text_summary_for_range(two..four),
+            partial_summary
+        );
+        assert_eq!(
+            diff_snapshot.text_summary_for_range(four..diff_snapshot.len()),
+            partial_summary
+        );
     }
 
     #[track_caller]
