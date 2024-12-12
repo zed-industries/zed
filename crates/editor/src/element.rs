@@ -2818,7 +2818,10 @@ impl EditorElement {
                     Some(element)
                 }
             }
-            InlineCompletion::Edit((edits, buffer_with_edits)) => {
+            InlineCompletion::Edit {
+                edits,
+                applied_edits_buffer,
+            } => {
                 let edit_start = edits
                     .first()
                     .unwrap()
@@ -2845,7 +2848,7 @@ impl EditorElement {
                 let (text, highlights) = inline_completion_popover_text(
                     editor_snapshot,
                     edits,
-                    buffer_with_edits.clone(),
+                    applied_edits_buffer.clone(),
                     cx,
                 );
 
@@ -4314,7 +4317,7 @@ impl EditorElement {
 fn inline_completion_popover_text(
     editor_snapshot: &EditorSnapshot,
     edits: &Vec<(Range<Anchor>, String)>,
-    buffer_with_edits: Option<Model<Buffer>>,
+    applied_edits_buffer: Model<Buffer>,
     cx: &WindowContext,
 ) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
     use text::ToOffset as _;
@@ -4322,72 +4325,25 @@ fn inline_completion_popover_text(
 
     let mut text = String::new();
     let mut highlights = Vec::new();
-    if let Some(buffer) = buffer_with_edits {
-        let snapshot = buffer.read(cx).snapshot();
+    let snapshot = applied_edits_buffer.read(cx).snapshot();
 
-        let mut start = edits
-            .first()
-            .unwrap()
-            .0
+    let mut start = edits
+        .first()
+        .unwrap()
+        .0
+        .start
+        .bias_left(&editor_snapshot.buffer_snapshot)
+        .text_anchor
+        .to_point(&snapshot);
+    start.column = 0;
+    let mut offset = text::ToOffset::to_offset(&start, &snapshot);
+    for (old_range, new_text) in edits {
+        let edit_new_start = old_range
             .start
             .bias_left(&editor_snapshot.buffer_snapshot)
             .text_anchor
-            .to_point(&snapshot);
-        start.column = 0;
-        let mut offset = text::ToOffset::to_offset(&start, &snapshot);
-        for (old_range, new_text) in edits {
-            let edit_new_start = old_range
-                .start
-                .bias_left(&editor_snapshot.buffer_snapshot)
-                .text_anchor
-                .to_offset(&snapshot);
-            for chunk in snapshot.chunks(offset..edit_new_start, true) {
-                let start = text.len();
-                text.push_str(chunk.text);
-                let end = text.len();
-
-                if let Some(highlight_style) = chunk
-                    .syntax_highlight_id
-                    .and_then(|id| id.style(cx.theme().syntax()))
-                {
-                    highlights.push((start..end, highlight_style));
-                }
-            }
-
-            let end_offset = edit_new_start + new_text.len();
-            for chunk in snapshot.chunks(edit_new_start..end_offset, true) {
-                let start = text.len();
-                text.push_str(chunk.text);
-                let end = text.len();
-
-                let mut highlight_style = HighlightStyle {
-                    background_color: Some(cx.theme().status().created_background),
-                    ..Default::default()
-                };
-                if let Some(syntax_highlight_style) = chunk
-                    .syntax_highlight_id
-                    .and_then(|id| id.style(cx.theme().syntax()))
-                {
-                    highlight_style.highlight(syntax_highlight_style);
-                }
-                highlights.push((start..end, highlight_style));
-            }
-
-            offset = end_offset;
-        }
-
-        let mut point = edits
-            .last()
-            .unwrap()
-            .0
-            .end
-            .bias_left(&editor_snapshot.buffer_snapshot)
-            .text_anchor
-            .to_point(&snapshot);
-        point.column = snapshot.line_len(point.row);
-        let end = text::ToOffset::to_offset(&point, &snapshot);
-
-        for chunk in snapshot.chunks(offset..end, true) {
+            .to_offset(&snapshot);
+        for chunk in snapshot.chunks(offset..edit_new_start, true) {
             let start = text.len();
             text.push_str(chunk.text);
             let end = text.len();
@@ -4398,6 +4354,51 @@ fn inline_completion_popover_text(
             {
                 highlights.push((start..end, highlight_style));
             }
+        }
+
+        let end_offset = edit_new_start + new_text.len();
+        for chunk in snapshot.chunks(edit_new_start..end_offset, true) {
+            let start = text.len();
+            text.push_str(chunk.text);
+            let end = text.len();
+
+            let mut highlight_style = HighlightStyle {
+                background_color: Some(cx.theme().status().created_background),
+                ..Default::default()
+            };
+            if let Some(syntax_highlight_style) = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(cx.theme().syntax()))
+            {
+                highlight_style.highlight(syntax_highlight_style);
+            }
+            highlights.push((start..end, highlight_style));
+        }
+
+        offset = end_offset;
+    }
+
+    let mut point = edits
+        .last()
+        .unwrap()
+        .0
+        .end
+        .bias_left(&editor_snapshot.buffer_snapshot)
+        .text_anchor
+        .to_point(&snapshot);
+    point.column = snapshot.line_len(point.row);
+    let end = text::ToOffset::to_offset(&point, &snapshot);
+
+    for chunk in snapshot.chunks(offset..end, true) {
+        let start = text.len();
+        text.push_str(chunk.text);
+        let end = text.len();
+
+        if let Some(highlight_style) = chunk
+            .syntax_highlight_id
+            .and_then(|id| id.style(cx.theme().syntax()))
+        {
+            highlights.push((start..end, highlight_style));
         }
     }
 

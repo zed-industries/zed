@@ -445,7 +445,10 @@ pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
 type CompletionId = usize;
 
 enum InlineCompletion {
-    Edit((Vec<(Range<Anchor>, String)>, Option<Model<Buffer>>)),
+    Edit {
+        edits: Vec<(Range<Anchor>, String)>,
+        applied_edits_buffer: Model<Buffer>,
+    },
     Move(Anchor),
 }
 
@@ -4488,7 +4491,7 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit((edits, _)) => {
+            InlineCompletion::Edit { edits, .. } => {
                 if let Some(provider) = self.inline_completion_provider() {
                     provider.accept(cx);
                 }
@@ -4535,7 +4538,7 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit((edits, _)) => {
+            InlineCompletion::Edit { edits, .. } => {
                 if edits.len() == 1 && edits[0].0.start == edits[0].0.end {
                     let text = edits[0].1.as_str();
                     let mut partial_completion = text
@@ -4652,6 +4655,7 @@ impl Editor {
         let completion = provider.suggest(&buffer, cursor_buffer_position, cx)?;
         let edits = completion
             .edits
+            .clone()
             .into_iter()
             .map(|(range, new_text)| {
                 (
@@ -4722,8 +4726,15 @@ impl Editor {
             }
 
             invalidation_row_range = edit_start_row..edit_end_row;
-            editor_completion =
-                InlineCompletion::Edit((edits, completion.buffer_with_edits.clone()));
+
+            let applied_edits_buffer = buffer.update(cx, |buffer, cx| buffer.branch(cx));
+            applied_edits_buffer.update(cx, |buffer, cx| {
+                buffer.edit(completion.edits, None, cx);
+            });
+            editor_completion = InlineCompletion::Edit {
+                edits,
+                applied_edits_buffer,
+            };
         };
 
         let invalidation_range = multibuffer

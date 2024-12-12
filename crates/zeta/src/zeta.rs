@@ -76,7 +76,6 @@ pub struct InlineCompletion {
     input_events: Arc<str>,
     input_excerpt: Arc<str>,
     output_excerpt: Arc<str>,
-    buffer_with_edits: Model<Buffer>,
 }
 
 impl InlineCompletion {
@@ -303,14 +302,12 @@ impl Zeta {
             };
 
             let response = perform_predict_edits(client, llm_token, body).await?;
-            let branch_buffer = buffer.update(&mut cx, |buffer, cx| buffer.branch(cx))?;
 
             let output_excerpt = response.output_excerpt;
             log::debug!("prediction took: {:?}", start.elapsed());
             log::debug!("completion response: {}", output_excerpt);
 
             let inline_completion = Self::process_completion_response(
-                branch_buffer,
                 output_excerpt,
                 &snapshot,
                 excerpt_range,
@@ -543,7 +540,6 @@ and then another
     }
 
     fn process_completion_response(
-        buffer_with_edits: Model<Buffer>,
         output_excerpt: String,
         snapshot: &BufferSnapshot,
         excerpt_range: Range<usize>,
@@ -593,14 +589,11 @@ and then another
                 })
                 .await?;
 
-            buffer_with_edits.update(&mut cx, |buffer, cx| buffer.edit(edits.clone(), None, cx))?;
-
             Ok(InlineCompletion {
                 id: InlineCompletionId::new(),
                 path,
                 excerpt_range,
                 edits: edits.into(),
-                buffer_with_edits,
                 snapshot,
                 input_events,
                 input_excerpt,
@@ -1018,7 +1011,6 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         Some(inline_completion::InlineCompletion {
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
-            buffer_with_edits: Some(completion.buffer_with_edits.clone()),
         })
     }
 }
