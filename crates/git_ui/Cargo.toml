@@ -14,7 +14,6 @@ path = "src/git_ui.rs"
 
 [dependencies]
 gpui.workspace = true
-menu.workspace = true
 serde.workspace = true
 workspace.workspace = true
 ui.workspace = true

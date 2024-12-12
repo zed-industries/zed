@@ -1,5 +1,5 @@
 use gpui::*;
-use ui::{prelude::*, Divider, DividerColor, ElevationIndex};
+use ui::{prelude::*, Checkbox, Divider, DividerColor, ElevationIndex};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
@@ -44,6 +44,64 @@ impl GitPanel {
             width: Some(px(360.)),
         }
     }
+
+    pub fn render_panel_header(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .h(px(32.))
+            .items_center()
+            .px_3()
+            .bg(ElevationIndex::Surface.bg(cx))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(Checkbox::new("all-changes", true.into()).disabled(true))
+                    .child(div().text_buffer(cx).text_ui_sm(cx).child("0 changes")),
+            )
+            .child(div().flex_grow())
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new("discard-changes", IconName::Undo)
+                            .icon_size(IconSize::Small)
+                            .disabled(true),
+                    )
+                    .child(
+                        Button::new("stage-all", "Stage All")
+                            .label_size(LabelSize::Small)
+                            .layer(ElevationIndex::ElevatedSurface)
+                            .size(ButtonSize::Compact)
+                            .style(ButtonStyle::Filled)
+                            .disabled(true),
+                    ),
+            )
+    }
+
+    pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        div().w_full().h(px(140.)).px_2().pt_1().pb_2().child(
+            v_flex()
+                .h_full()
+                .py_2p5()
+                .px_3()
+                .bg(cx.theme().colors().editor_background)
+                .font_buffer(cx)
+                .text_ui_sm(cx)
+                .text_color(cx.theme().colors().text_muted)
+                .child("Add a message")
+                .gap_1()
+                .child(div().flex_grow())
+                .child(
+                    h_flex().child(div().gap_1().flex_grow()).child(
+                        Button::new("commit", "Commit")
+                            .label_size(LabelSize::Small)
+                            .layer(ElevationIndex::ElevatedSurface)
+                            .size(ButtonSize::Compact)
+                            .style(ButtonStyle::Filled)
+                            .disabled(true),
+                    ),
+                ),
+        )
+    }
 }
 
 impl Render for GitPanel {
@@ -57,6 +115,7 @@ impl Render for GitPanel {
             .size_full()
             .overflow_hidden()
             .bg(ElevationIndex::Surface.bg(cx))
+            .child(self.render_panel_header(cx))
             .child(
                 h_flex()
                     .items_center()
@@ -70,6 +129,7 @@ impl Render for GitPanel {
                     .h(px(8.))
                     .child(Divider::horizontal_dashed().color(DividerColor::Border)),
             )
+            .child(self.render_commit_editor(cx))
     }
 }
 
