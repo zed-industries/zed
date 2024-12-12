@@ -119,11 +119,13 @@ impl GitPanel {
                 .h_full()
                 .py_2p5()
                 .px_3()
+                .gap_3()
                 .bg(cx.theme().colors().editor_background)
                 .font_buffer(cx)
                 .text_ui_sm(cx)
                 .text_color(cx.theme().colors().text_muted)
                 .child("Add a message")
+                .child("Staff-only alpha. Expect non-functioal elements.")
                 .gap_1()
                 .child(div().flex_grow())
                 .child(
