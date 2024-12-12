@@ -292,6 +292,7 @@ impl TitleBar {
         let is_local = project.is_local() || project.is_via_ssh();
         let is_shared = is_local && project.is_shared();
         let is_muted = room.is_muted();
+        let muted_by_user = room.muted_by_user();
         let is_deafened = room.is_deafened().unwrap_or(false);
         let is_screen_sharing = room.is_screen_sharing();
         let can_use_microphone = room.can_use_microphone(cx);
@@ -365,16 +366,16 @@ impl TitleBar {
                     if is_muted {
                         if is_deafened {
                             Tooltip::with_meta(
-                                "Unmute microphone",
+                                "Unmute Microphone",
                                 None,
                                 "Audio will be unmuted",
                                 cx,
                             )
                         } else {
-                            Tooltip::text("Unmute microphone", cx)
+                            Tooltip::text("Unmute Microphone", cx)
                         }
                     } else {
-                        Tooltip::text("Mute microphone", cx)
+                        Tooltip::text("Mute Microphone", cx)
                     }
                 })
                 .style(ButtonStyle::Subtle)
@@ -401,12 +402,23 @@ impl TitleBar {
                 .icon_size(IconSize::Small)
                 .selected(is_deafened)
                 .tooltip(move |cx| {
-                    let (label, details) = if is_deafened {
-                        ("Unmute Audio", "Mic will be unmuted")
+                    if is_deafened {
+                        let label = "Unmute Audio";
+
+                        if !muted_by_user {
+                            Tooltip::with_meta(label, None, "Microphone will be unmuted", cx)
+                        } else {
+                            Tooltip::text(label, cx)
+                        }
                     } else {
-                        ("Mute Audio", "Mic will be muted")
-                    };
-                    Tooltip::with_meta(label, None, details, cx)
+                        let label = "Mute Audio";
+
+                        if !muted_by_user {
+                            Tooltip::with_meta(label, None, "Microphone will be muted", cx)
+                        } else {
+                            Tooltip::text(label, cx)
+                        }
+                    }
                 })
                 .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
                 .into_any_element(),
