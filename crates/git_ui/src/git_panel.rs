@@ -1,11 +1,15 @@
+use collections::HashMap;
 use std::{
     cell::OnceCell,
     collections::HashSet,
+    ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
+
+use git::repository::GitFileStatus;
 
 use util::{ResultExt, TryFutureExt};
 
@@ -48,6 +52,7 @@ struct EntryDetails {
     filename: String,
     path: Arc<Path>,
     depth: usize,
+    status: Option<GitFileStatus>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -67,6 +72,8 @@ pub struct GitPanel {
     scrollbar_state: ScrollbarState,
     selected_item: Option<usize>,
     show_scrollbar: bool,
+    expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
+
     // The entries that are currently shown in the panel, aka
     // not hidden by folding or such
     visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
@@ -86,9 +93,9 @@ impl GitPanel {
     }
 
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
-        let project = workspace.project().clone();
         let fs = workspace.app_state().fs.clone();
         let weak_workspace = workspace.weak_handle();
+        let project = workspace.project().clone();
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
@@ -97,10 +104,25 @@ impl GitPanel {
                 this.hide_scrollbar(cx);
             })
             .detach();
+            cx.subscribe(&project, |this, project, event, cx| match event {
+                project::Event::WorktreeRemoved(id) => {
+                    this.expanded_dir_ids.remove(id);
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+                project::Event::WorktreeUpdatedEntries(_, _)
+                | project::Event::WorktreeAdded(_)
+                | project::Event::WorktreeOrderChanged => {
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+                _ => {}
+            })
+            .detach();
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            Self {
+            let mut this = Self {
                 _workspace: weak_workspace,
                 focus_handle: cx.focus_handle(),
                 fs,
@@ -108,6 +130,7 @@ impl GitPanel {
                 project,
                 visible_entries: Vec::new(),
                 current_modifiers: cx.modifiers(),
+                expanded_dir_ids: Default::default(),
 
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
@@ -115,7 +138,9 @@ impl GitPanel {
                 selected_item: None,
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
-            }
+            };
+            this.update_visible_entries(None, cx);
+            this
         });
 
         git_panel
@@ -182,6 +207,34 @@ impl GitPanel {
         self.current_modifiers = event.modifiers;
         cx.notify();
     }
+
+    fn calculate_depth_and_difference(
+        entry: &Entry,
+        visible_worktree_entries: &HashSet<Arc<Path>>,
+    ) -> (usize, usize) {
+        let (depth, difference) = entry
+            .path
+            .ancestors()
+            .skip(1) // Skip the entry itself
+            .find_map(|ancestor| {
+                if let Some(parent_entry) = visible_worktree_entries.get(ancestor) {
+                    let entry_path_components_count = entry.path.components().count();
+                    let parent_path_components_count = parent_entry.components().count();
+                    let difference = entry_path_components_count - parent_path_components_count;
+                    let depth = parent_entry
+                        .ancestors()
+                        .skip(1)
+                        .filter(|ancestor| visible_worktree_entries.contains(*ancestor))
+                        .count();
+                    Some((depth + 1, difference))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or((0, 0));
+
+        (depth, difference)
+    }
 }
 
 impl GitPanel {
@@ -218,8 +271,7 @@ impl GitPanel {
     }
 
     fn no_entries(&self) -> bool {
-        // todo!(): Implement no entries
-        false
+        self.visible_entries.is_empty()
     }
 
     fn for_each_visible_entry(
@@ -228,6 +280,104 @@ impl GitPanel {
         cx: &mut ViewContext<Self>,
         mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<Self>),
     ) {
+        let mut ix = 0;
+        for (worktree_id, visible_worktree_entries, entries_paths) in &self.visible_entries {
+            if ix >= range.end {
+                return;
+            }
+
+            if ix + visible_worktree_entries.len() <= range.start {
+                ix += visible_worktree_entries.len();
+                continue;
+            }
+
+            let end_ix = range.end.min(ix + visible_worktree_entries.len());
+            // let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
+            if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
+                let snapshot = worktree.read(cx).snapshot();
+                let root_name = OsStr::new(snapshot.root_name());
+                let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
+                let entries = entries_paths.get_or_init(|| {
+                    visible_worktree_entries
+                        .iter()
+                        .map(|e| (e.path.clone()))
+                        .collect()
+                });
+
+                for entry in visible_worktree_entries[entry_range].iter() {
+                    let status = entry.git_status;
+
+                    let (depth, difference) = Self::calculate_depth_and_difference(entry, entries);
+
+                    let filename = match difference {
+                        diff if diff > 1 => entry
+                            .path
+                            .iter()
+                            .skip(entry.path.components().count() - diff)
+                            .collect::<PathBuf>()
+                            .to_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                        _ => entry
+                            .path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
+                    };
+
+                    let details = EntryDetails {
+                        filename,
+                        path: entry.path.clone(),
+                        status,
+                        depth,
+                    };
+                    callback(entry.id, details, cx);
+                }
+            }
+            ix = end_ix;
+        }
+    }
+
+    fn update_visible_entries(
+        &mut self,
+        new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let project = self.project.read(cx);
+        self.visible_entries.clear();
+        for worktree in project.visible_worktrees(cx) {
+            let snapshot = worktree.read(cx).snapshot();
+            let worktree_id = snapshot.id();
+
+            let mut visible_worktree_entries = Vec::new();
+            let mut entry_iter = snapshot.entries(true, 0);
+            while let Some(entry) = entry_iter.entry() {
+                visible_worktree_entries.push(entry.clone());
+                entry_iter.advance();
+            }
+
+            snapshot.propagate_git_statuses(&mut visible_worktree_entries);
+            project::sort_worktree_entries(&mut visible_worktree_entries);
+            self.visible_entries
+                .push((worktree_id, visible_worktree_entries, OnceCell::new()));
+        }
+
+        if let Some((worktree_id, entry_id)) = new_selected_entry {
+            self.selected_item = self.visible_entries.iter().enumerate().find_map(
+                |(worktree_index, (id, entries, _))| {
+                    if *id == worktree_id {
+                        entries
+                            .iter()
+                            .position(|entry| entry.id == entry_id)
+                            .map(|entry_index| worktree_index * entries.len() + entry_index)
+                    } else {
+                        None
+                    }
+                },
+            );
+        }
+
+        cx.notify();
     }
 }
 
@@ -357,24 +507,6 @@ impl GitPanel {
         )
     }
 
-    fn render_entries(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        let item_count = self
-            .visible_entries
-            .iter()
-            .map(|(_, worktree_entries, _)| worktree_entries.len())
-            .sum();
-
-        uniform_list(cx.view().clone(), "entries", item_count, {
-            |this, range, cx| {
-                let mut items = Vec::with_capacity(range.end - range.start);
-                this.for_each_visible_entry(range, cx, |id, details, cx| {
-                    items.push(this.render_entry(id, details, cx));
-                });
-                items
-            }
-        })
-    }
-
     fn render_empty_state(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .h_full()
@@ -389,6 +521,43 @@ impl GitPanel {
                     .mx_auto()
                     .text_color(Color::Placeholder.color(cx)),
             )
+    }
+
+    fn render_entries(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let item_count = self
+            .visible_entries
+            .iter()
+            .map(|(_, worktree_entries, _)| worktree_entries.len())
+            .sum();
+        h_flex().size_full().overflow_hidden().child(
+            uniform_list(cx.view().clone(), "entries", item_count, {
+                |this, range, cx| {
+                    let mut items = Vec::with_capacity(range.end - range.start);
+                    this.for_each_visible_entry(range, cx, |id, details, cx| {
+                        items.push(this.render_entry(id, details, cx));
+                    });
+                    items
+                }
+            })
+            .size_full()
+            .with_sizing_behavior(ListSizingBehavior::Infer)
+            .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+            // .with_width_from_item(self.max_width_item_index)
+            .track_scroll(self.scroll_handle.clone()),
+        )
+    }
+
+    fn render_entry(
+        &self,
+        id: ProjectEntryId,
+        details: EntryDetails,
+        _cx: &ViewContext<Self>,
+    ) -> impl IntoElement {
+        h_flex()
+            .id(id.to_proto() as usize)
+            .h(px(28.))
+            .w_full()
+            .child(details.filename.clone())
     }
 }
 
@@ -416,6 +585,15 @@ impl Render for GitPanel {
                         this.commit_all_changes(&CommitAllChanges, cx)
                     }))
             })
+            .on_hover(cx.listener(|this, hovered, cx| {
+                if *hovered {
+                    this.show_scrollbar = true;
+                    this.hide_scrollbar_task.take();
+                    cx.notify();
+                } else if !this.focus_handle.contains_focused(cx) {
+                    this.hide_scrollbar(cx);
+                }
+            }))
             .size_full()
             .overflow_hidden()
             .font_buffer(cx)
