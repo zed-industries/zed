@@ -1,6 +1,6 @@
 use crate::{
     seal::Sealed, Action, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity,
-    EventEmitter, Flatten, Subscription, Task, Window,
+    EventEmitter, Flatten, FocusHandle, FocusOutEvent, Subscription, Task, Window,
 };
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
@@ -447,6 +447,25 @@ impl<T: 'static> Model<T> {
         });
     }
 
+    /// Schedules an update to be performed on this model at the end of the current effect cycle,
+    /// providing access to the given window.
+    pub fn defer_in_window<R>(
+        &self,
+        window: impl Into<AnyWindowHandle>,
+        cx: &mut AppContext,
+        f: impl FnOnce(&mut T, &Model<T>, &mut Window, &mut AppContext) -> R + 'static,
+    ) {
+        let model = self.clone();
+        let window = window.into();
+        cx.defer(move |cx| {
+            window
+                .update(cx, |window, cx| {
+                    model.update(cx, |this, model, cx| f(this, model, window, cx));
+                })
+                .ok();
+        });
+    }
+
     /// Creates a listener function that updates this model when an event is received.
     ///
     /// This method takes a callback function that will be called with the model, the event, and a mutable
@@ -600,7 +619,7 @@ impl<T: 'static> Model<T> {
     pub fn subscribe_in_window<U, E>(
         &self,
         entity: &Model<U>,
-        window: impl Into<AnyWindowHandle>,
+        window: &Window,
         cx: &mut AppContext,
         mut on_event: impl FnMut(&mut T, Model<U>, &E, &Model<T>, &mut Window, &mut AppContext)
             + 'static,
@@ -611,7 +630,7 @@ impl<T: 'static> Model<T> {
         E: 'static,
     {
         let this = self.downgrade();
-        let window = window.into();
+        let window = window.handle();
         cx.subscribe_internal(entity, move |emitter, event, cx| {
             if let Some(this) = this.upgrade() {
                 window
@@ -752,6 +771,103 @@ impl<T: 'static> Model<T> {
                 .update(cx, |this, model, cx| listener(this, action, model, cx))
                 .ok();
         });
+    }
+
+    /// Register a listener to be called when the given focus handle receives focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus(
+        &self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut AppContext,
+        mut listener: impl FnMut(&mut T, &Model<T>, &mut Window, &mut AppContext) + 'static,
+    ) -> Subscription {
+        let model = self.downgrade();
+        window.on_focus(handle, cx, move |window, cx| {
+            if let Some(model) = model.upgrade() {
+                model.update(cx, |this, model, cx| {
+                    listener(this, model, window, cx);
+                });
+            }
+        })
+    }
+
+    /// Register a listener to be called when the given focus handle loses focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_blur(
+        &self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut AppContext,
+        mut listener: impl FnMut(&mut T, &Model<T>, &mut Window, &mut AppContext) + 'static,
+    ) -> Subscription {
+        let model = self.downgrade();
+        window.on_blur(handle, cx, move |window, cx| {
+            if let Some(model) = model.upgrade() {
+                model.update(cx, |this, model, cx| {
+                    listener(this, model, window, cx);
+                });
+            }
+        })
+    }
+
+    /// Register a listener to be called when nothing in the window has focus.
+    /// This typically happens when the node that was focused is removed from the tree,
+    /// and this callback lets you chose a default place to restore the users focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_lost(
+        &self,
+        window: &mut Window,
+        mut listener: impl FnMut(&mut T, &Model<T>, &mut Window, &mut AppContext) + 'static,
+    ) -> Subscription {
+        let model = self.downgrade();
+        window.on_focus_lost(move |window, cx| {
+            if let Some(model) = model.upgrade() {
+                model.update(cx, |this, model, cx| {
+                    listener(this, model, window, cx);
+                });
+            }
+        })
+    }
+
+    /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_in(
+        &self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut AppContext,
+        mut listener: impl FnMut(&mut T, &Model<T>, &mut Window, &mut AppContext) + 'static,
+    ) -> Subscription {
+        let model = self.downgrade();
+        window.on_focus_in(handle, cx, move |window, cx| {
+            if let Some(model) = model.upgrade() {
+                model.update(cx, |this, model, cx| {
+                    listener(this, model, window, cx);
+                });
+            }
+        })
+    }
+
+    /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_out(
+        &self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut AppContext,
+        mut listener: impl FnMut(&mut T, &FocusOutEvent, &Model<T>, &mut Window, &mut AppContext)
+            + 'static,
+    ) -> Subscription {
+        let model = self.downgrade();
+        window.on_focus_out(handle, cx, move |event, window, cx| {
+            if let Some(model) = model.upgrade() {
+                model.update(cx, |this, model, cx| {
+                    listener(this, event, model, window, cx);
+                });
+            }
+        })
     }
 }
 

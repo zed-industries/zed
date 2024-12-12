@@ -21,7 +21,8 @@ use gpui::{
     VisualContext, WeakView,
 };
 use language::{
-    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, Point,
+    Selection, SelectionGoal,
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -119,8 +120,8 @@ impl Render for ProjectDiagnosticsEditor {
 }
 
 impl ProjectDiagnosticsEditor {
-    fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
-        workspace.register_action(Self::deploy);
+    fn register(workspace: &mut Workspace, model: &Model<Workspace>, _: &mut AppContext) {
+        workspace.register_action(model, Self::deploy);
     }
 
     fn new_with_context(
@@ -317,12 +318,12 @@ impl ProjectDiagnosticsEditor {
 
     fn focus_in(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if self.focus_handle.is_focused(window) && !self.path_states.is_empty() {
-            self.editor.focus_handle(cx).focus(window)
+            self.editor.item_focus_handle(cx).focus(window)
         }
     }
 
     fn focus_out(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window)
+        if !self.focus_handle.is_focused(window) && !self.editor.item_focus_handle(cx).is_focused(window)
         {
             self.update_stale_excerpts(model, cx);
         }
@@ -462,12 +463,19 @@ impl ProjectDiagnosticsEditor {
                                 }
                             }
 
-                            let excerpt_start =
+                            let mut excerpt_start =
                                 Point::new(range.start.row.saturating_sub(self.context), 0);
-                            let excerpt_end = snapshot.clip_point(
+                            let mut excerpt_end = snapshot.clip_point(
                                 Point::new(range.end.row + self.context, u32::MAX),
                                 Bias::Left,
                             );
+
+                            if let Some(ancestor_range) = snapshot.range_for_syntax_ancestor(range)
+                            {
+                                let ancestor_range = ancestor_range.to_point(&snapshot);
+                                excerpt_start = excerpt_start.min(ancestor_range.start);
+                                excerpt_end = excerpt_end.max(ancestor_range.end);
+                            }
 
                             let excerpt_id = excerpts
                                 .insert_excerpts_after(
@@ -648,11 +656,11 @@ impl ProjectDiagnosticsEditor {
         });
 
         if self.path_states.is_empty() {
-            if self.editor.focus_handle(cx).is_focused(window) {
+            if self.editor.item_focus_handle(cx).is_focused(window) {
                 cx.focus(&self.focus_handle);
             }
         } else if self.focus_handle.is_focused(window) {
-            let focus_handle = self.editor.focus_handle(cx);
+            let focus_handle = self.editor.item_focus_handle(cx);
             cx.focus(&focus_handle);
         }
 

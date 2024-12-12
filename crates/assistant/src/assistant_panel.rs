@@ -100,7 +100,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext| {
             workspace
-                .register_action(|workspace, _: &ToggleFocus, cx| {
+                .register_action(cx, |workspace, _: &ToggleFocus, cx| {
                     let settings = AssistantSettings::get_global(cx);
                     if !settings.enabled {
                         return;
@@ -108,14 +108,14 @@ pub fn init(cx: &mut AppContext) {
 
                     workspace.toggle_panel_focus::<AssistantPanel>(cx);
                 })
-                .register_action(AssistantPanel::inline_assist)
-                .register_action(ContextEditor::quote_selection)
-                .register_action(ContextEditor::insert_selection)
-                .register_action(ContextEditor::copy_code)
-                .register_action(ContextEditor::insert_dragged_files)
-                .register_action(AssistantPanel::show_configuration)
-                .register_action(AssistantPanel::create_new_context)
-                .register_action(AssistantPanel::restart_context_servers);
+                .register_action(model, AssistantPanel::inline_assist)
+                .register_action(model, ContextEditor::quote_selection)
+                .register_action(model, ContextEditor::insert_selection)
+                .register_action(model, ContextEditor::copy_code)
+                .register_action(model, ContextEditor::insert_dragged_files)
+                .register_action(model, AssistantPanel::show_configuration)
+                .register_action(model, AssistantPanel::create_new_context)
+                .register_action(model, AssistantPanel::restart_context_servers);
         },
     )
     .detach();
@@ -365,6 +365,7 @@ impl AssistantPanel {
                 None,
                 NewContext.boxed_clone(),
                 model,
+                window,
                 cx,
             );
 
@@ -611,7 +612,7 @@ impl AssistantPanel {
             pane::Event::AddItem { item } => {
                 self.workspace
                     .update(cx, |workspace, model, cx| {
-                        item.added_to_pane(workspace, self.pane.clone(), model, cx)
+                        item.added_to_pane(workspace, self.pane.clone(), model, window, cx)
                     })
                     .ok();
                 true
@@ -1099,6 +1100,7 @@ impl AssistantPanel {
                 focus,
                 None,
                 model,
+                window,
                 cx,
             )
         });
@@ -1173,7 +1175,7 @@ impl AssistantPanel {
         };
 
         if !panel.focus_handle(cx).contains_focused(cx) {
-            workspace.toggle_panel_focus::<AssistantPanel>(model, cx);
+            workspace.toggle_panel_focus::<AssistantPanel>(model, window, cx);
         }
 
         panel.update(cx, |this, model, cx| {
@@ -1190,7 +1192,7 @@ impl AssistantPanel {
 
         if let Some(configuration_item_ix) = configuration_item_ix {
             self.pane.update(cx, |pane, model, cx| {
-                pane.activate_item(configuration_item_ix, true, true, model, cx);
+                pane.activate_item(configuration_item_ix, true, true, model, window, cx);
             });
         } else {
             let configuration = cx.new_model(ConfigurationView::new);
@@ -1216,7 +1218,7 @@ impl AssistantPanel {
                 },
             ));
             self.pane.update(cx, |pane, model, cx| {
-                pane.add_item(Box::new(configuration), true, true, None, model, cx);
+                pane.add_item(Box::new(configuration), true, true, None, model, window, cx);
             });
         }
     }
@@ -1230,7 +1232,7 @@ impl AssistantPanel {
 
         if let Some(history_item_ix) = history_item_ix {
             self.pane.update(cx, |pane, model, cx| {
-                pane.activate_item(history_item_ix, true, true, model, cx);
+                pane.activate_item(history_item_ix, true, true, model, window, cx);
             });
         } else {
             let assistant_panel = model.downgrade();
@@ -1244,7 +1246,7 @@ impl AssistantPanel {
                 )
             });
             self.pane.update(cx, |pane, model, cx| {
-                pane.add_item(Box::new(history), true, true, None, model, cx);
+                pane.add_item(Box::new(history), true, true, None, model, window, cx);
             });
         }
     }
@@ -1488,7 +1490,7 @@ impl Panel for AssistantPanel {
 
     fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         let settings = AssistantSettings::get_global(cx);
-        match self.position(model, cx) {
+        match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
                 self.width.unwrap_or(settings.default_width)
             }
@@ -1497,7 +1499,7 @@ impl Panel for AssistantPanel {
     }
 
     fn set_size(&mut self, size: Option<Pixels>, model: &Model<Self>, cx: &mut AppContext) {
-        match self.position(model, cx) {
+        match self.position(cx) {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
@@ -2106,6 +2108,7 @@ impl ContextEditor {
                                                 &command.arguments,
                                                 false,
                                                 workspace.clone(),
+                                                model,
                                                 cx,
                                             );
                                         })
@@ -3245,7 +3248,7 @@ impl ContextEditor {
         }
         // Activate the panel
         if !panel.focus_handle(cx).contains_focused(cx) {
-            workspace.toggle_panel_focus::<AssistantPanel>(model, cx);
+            workspace.toggle_panel_focus::<AssistantPanel>(model, window, cx);
         }
 
         panel.update(cx, |_, model, cx| {
@@ -4414,7 +4417,7 @@ impl Render for ContextEditor {
 
 impl FocusableView for ContextEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.editor.focus_handle(cx)
+        self.editor.item_focus_handle(cx)
     }
 }
 
@@ -4581,7 +4584,7 @@ impl FollowableItem for ContextEditor {
             proto::view::ContextEditor {
                 context_id: context.id().to_proto(),
                 editor: if let Some(proto::view::Variant::Editor(proto)) =
-                    self.editor.read(cx).to_state_proto(model, cx)
+                    self.editor.read(cx).to_state_proto(cx)
                 {
                     Some(proto)
                 } else {
@@ -4657,7 +4660,7 @@ impl FollowableItem for ContextEditor {
     ) -> bool {
         self.editor
             .read(cx)
-            .add_event_to_update_proto(event, update, model, cx)
+            .add_event_to_update_proto(event, update, cx)
     }
 
     fn apply_update_proto(

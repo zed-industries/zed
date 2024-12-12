@@ -113,7 +113,7 @@ impl TerminalPanel {
                 .active_pane
                 .read(cx)
                 .active_item()
-                .map(|item| item.focus_handle(window, cx))
+                .map(|item| item.item_focus_handle(window, cx))
                 .unwrap_or(self.focus_handle(cx));
             self.assistant_tab_bar_button = Some(
                 cx.new_model(move |_| InlineAssistTabBarButton { focus_handle })

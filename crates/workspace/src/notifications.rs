@@ -139,13 +139,14 @@ impl Workspace {
         self.dismiss_notification_internal(&id, model, cx);
 
         let notification = build_notification(model, cx);
-        cx.subscribe(&notification, {
-            let id = id.clone();
-            move |this, _, _: &DismissEvent, cx| {
-                this.dismiss_notification_internal(&id, cx);
-            }
-        })
-        .detach();
+        model
+            .subscribe(&notification, cx, {
+                let id = id.clone();
+                move |this, _, _: &DismissEvent, model, cx| {
+                    this.dismiss_notification_internal(&id, model, cx);
+                }
+            })
+            .detach();
         self.notifications.push((id, Box::new(notification)));
         model.notify(cx);
     }
@@ -160,21 +161,28 @@ impl Workspace {
             NotificationId::unique::<WorkspaceErrorNotification>(),
             model,
             cx,
-            |cx| cx.new_model(|_model, _cx| ErrorMessagePrompt::new(format!("Error: {err:#}"))),
+            |model, cx| {
+                cx.new_model(|_model, _cx| ErrorMessagePrompt::new(format!("Error: {err:#}")))
+            },
         );
     }
 
     pub fn show_portal_error(&mut self, err: String, model: &Model<Self>, cx: &mut AppContext) {
         struct PortalError;
 
-        self.show_notification(NotificationId::unique::<PortalError>(), model, cx, |cx| {
-            cx.new_model(|_model, _cx| {
-                ErrorMessagePrompt::new(err.to_string()).with_link_button(
-                    "See docs",
-                    "https://zed.dev/docs/linux#i-cant-open-any-files",
-                )
-            })
-        });
+        self.show_notification(
+            NotificationId::unique::<PortalError>(),
+            model,
+            cx,
+            |model, cx| {
+                cx.new_model(|_model, _cx| {
+                    ErrorMessagePrompt::new(err.to_string()).with_link_button(
+                        "See docs",
+                        "https://zed.dev/docs/linux#i-cant-open-any-files",
+                    )
+                })
+            },
+        );
     }
 
     pub fn dismiss_notification(
@@ -188,29 +196,30 @@ impl Workspace {
 
     pub fn show_toast(&mut self, toast: Toast, model: &Model<Self>, cx: &mut AppContext) {
         self.dismiss_notification(&toast.id, model, cx);
-        self.show_notification(toast.id.clone(), model, cx, |cx| {
+        self.show_notification(toast.id.clone(), model, cx, |model, cx| {
             cx.new_model(|_model, _cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
                     let on_click = on_click.clone();
                     simple_message_notification::MessageNotification::new(toast.msg.clone())
                         .with_click_message(click_msg.clone())
-                        .on_click(move |cx| on_click(cx))
+                        .on_click(move |window, cx| on_click(window, cx))
                 }
                 None => simple_message_notification::MessageNotification::new(toast.msg.clone()),
             })
         });
         if toast.autohide {
-            cx.spawn(|workspace, mut cx| async move {
-                cx.background_executor()
-                    .timer(Duration::from_millis(5000))
-                    .await;
-                workspace
-                    .update(&mut cx, |workspace, cx| {
-                        workspace.dismiss_toast(&toast.id, cx)
-                    })
-                    .ok();
-            })
-            .detach();
+            model
+                .spawn(cx, |workspace, mut cx| async move {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(5000))
+                        .await;
+                    workspace
+                        .update(&mut cx, |workspace, model, cx| {
+                            workspace.dismiss_toast(&toast.id, model, cx)
+                        })
+                        .ok();
+                })
+                .detach();
         }
     }
 
@@ -478,7 +487,7 @@ pub mod simple_message_notification {
 
     pub struct MessageNotification {
         message: SharedString,
-        on_click: Option<Arc<dyn Fn(&Model<Self>, &mut AppContext)>>,
+        on_click: Option<Arc<dyn Fn(&mut Window, &mut AppContext)>>,
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
         secondary_on_click: Option<Arc<dyn Fn(&Model<Self>, &mut AppContext)>>,
@@ -510,7 +519,7 @@ pub mod simple_message_notification {
 
         pub fn on_click<F>(mut self, on_click: F) -> Self
         where
-            F: 'static + Fn(&Model<Self>, &mut AppContext),
+            F: 'static + Fn(&mut Window, &mut AppContext),
         {
             self.on_click = Some(Arc::new(on_click));
             self
@@ -566,9 +575,9 @@ pub mod simple_message_notification {
                         .gap_3()
                         .children(self.click_message.iter().map(|message| {
                             Button::new(message.clone(), message.clone()).on_click(model.listener(
-                                |this, _event, model, _window, cx| {
+                                |this, _event, model, window, cx| {
                                     if let Some(on_click) = this.on_click.as_ref() {
-                                        (on_click)(model, cx)
+                                        (on_click)(window, cx)
                                     };
                                     this.dismiss(model, cx)
                                 },
@@ -628,21 +637,20 @@ where
         }
     }
 
-    fn notify_async_err(
-        self,
-        window_handle: AnyWindowHandle,
-        cx: &mut AsyncAppContext,
-    ) -> Option<T> {
+    fn notify_async_err(self, window: AnyWindowHandle, cx: &mut AsyncAppContext) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {
                 log::error!("{err:?}");
-                cx.update_root(|view, cx| {
-                    if let Ok(workspace) = view.downcast::<Workspace>() {
-                        workspace.update(cx, |workspace, model, cx| workspace.show_error(&err, cx))
-                    }
-                })
-                .ok();
+
+                window.downcast::<Workspace>().map(|workspace| {
+                    workspace
+                        .update(cx, |workspace, model, window, cx| {
+                            workspace.show_error(&err, model, cx)
+                        })
+                        .ok();
+                });
+
                 None
             }
         }
@@ -695,13 +703,15 @@ where
         f: impl FnOnce(&anyhow::Error, &mut Window, &mut AppContext) -> Option<String> + 'static,
     ) -> Task<Option<R>> {
         let msg = msg.to_owned();
-        cx.spawn(|mut cx| async move {
+        let window = window.handle();
+        cx.spawn(move |mut cx| async move {
             let result = self.await;
             if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");
-                if let Ok(prompt) = cx.update(|cx| {
-                    let detail = f(err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
-                    cx.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"])
+                if let Ok(prompt) = window.update(&mut cx, |window, cx| {
+                    let detail =
+                        f(err, window, cx).unwrap_or_else(|| format!("{err}. Please try again."));
+                    window.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"], cx)
                 }) {
                     prompt.await.ok();
                 }

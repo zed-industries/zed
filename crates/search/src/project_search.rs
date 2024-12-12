@@ -1138,7 +1138,7 @@ impl ProjectSearchView {
         self.query_editor.update(cx, |query_editor, model, cx| {
             query_editor.select_all(&SelectAll, cx);
         });
-        let editor_handle = self.query_editor.focus_handle(cx);
+        let editor_handle = self.query_editor.item_focus_handle(cx);
         cx.focus(&editor_handle);
     }
 
@@ -1176,7 +1176,7 @@ impl ProjectSearchView {
             let cursor = query_editor.selections.newest_anchor().head();
             query_editor.change_selections(None, model, cx, |s| s.select_ranges([cursor..cursor]));
         });
-        let results_handle = self.results_editor.focus_handle(cx);
+        let results_handle = self.results_editor.item_focus_handle(cx);
         cx.focus(&results_handle);
     }
 
@@ -1206,7 +1206,7 @@ impl ProjectSearchView {
                     cx,
                 );
             });
-            if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
+            if is_new_search && self.query_editor.item_focus_handle(cx).is_focused(window) {
                 self.focus_results_editor(model, cx);
             }
         }
@@ -1317,7 +1317,7 @@ impl ProjectSearchView {
     }
 
     fn move_focus_to_results(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        if !self.results_editor.focus_handle(cx).is_focused(window)
+        if !self.results_editor.item_focus_handle(cx).is_focused(window)
             && !self.model.read(cx).match_ranges.is_empty()
         {
             cx.stop_propagation();
@@ -1374,7 +1374,7 @@ impl ProjectSearchBar {
             search_view.update(cx, |search_view, model, cx| {
                 if !search_view
                     .replacement_editor
-                    .focus_handle(cx)
+                    .item_focus_handle(cx)
                     .is_focused(window)
                 {
                     cx.stop_propagation();
@@ -1400,7 +1400,7 @@ impl ProjectSearchBar {
     fn focus_search(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, model, cx| {
-                search_view.query_editor.focus_handle(cx).focus(window);
+                search_view.query_editor.item_focus_handle(cx).focus(window);
             });
         }
     }
@@ -1428,7 +1428,7 @@ impl ProjectSearchBar {
             let current_index = match views
                 .iter()
                 .enumerate()
-                .find(|(_, view)| view.focus_handle(cx).is_focused(window))
+                .find(|(_, view)| view.item_focus_handle(cx).is_focused(window))
             {
                 Some((index, _)) => index,
                 None => return,
@@ -1439,7 +1439,7 @@ impl ProjectSearchBar {
                 Direction::Prev if current_index == 0 => views.len() - 1,
                 Direction::Prev => (current_index - 1) % views.len(),
             };
-            let next_focus_handle = views[new_index].focus_handle(cx);
+            let next_focus_handle = views[new_index].item_focus_handle(cx);
             cx.focus(&next_focus_handle);
             cx.stop_propagation();
         });
@@ -1471,9 +1471,9 @@ impl ProjectSearchBar {
             search.update(cx, |this, model, cx| {
                 this.replace_enabled = !this.replace_enabled;
                 let editor_to_focus = if this.replace_enabled {
-                    this.replacement_editor.focus_handle(cx)
+                    this.replacement_editor.item_focus_handle(cx)
                 } else {
-                    this.query_editor.focus_handle(cx)
+                    this.query_editor.item_focus_handle(cx)
                 };
                 cx.focus(&editor_to_focus);
                 model.notify(cx);
@@ -1561,7 +1561,7 @@ impl ProjectSearchBar {
                         SearchInputKind::Exclude,
                     ),
                 ] {
-                    if editor.focus_handle(cx).is_focused(window) {
+                    if editor.item_focus_handle(cx).is_focused(window) {
                         let new_query = search_view.model.update(cx, |model, cx| {
                             let project = model.project.clone();
 
@@ -1603,7 +1603,7 @@ impl ProjectSearchBar {
                         SearchInputKind::Exclude,
                     ),
                 ] {
-                    if editor.focus_handle(cx).is_focused(window) {
+                    if editor.item_focus_handle(cx).is_focused(window) {
                         if editor.read(cx).text(cx).is_empty() {
                             if let Some(new_query) = search_view
                                 .model
@@ -2025,7 +2025,7 @@ impl Render for ProjectSearchBar {
 
         if search
             .replacement_editor
-            .focus_handle(cx)
+            .item_focus_handle(cx)
             .is_focused(window)
         {
             key_context.add("in_replace");
@@ -2333,7 +2333,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], model, cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let workspace = window;
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
@@ -2404,7 +2404,7 @@ pub mod tests {
                 search_view.update(cx, |search_view, model, cx| {
                     let query_editor = &search_view.query_editor;
                     assert!(
-                        query_editor.focus_handle(cx).is_focused(window),
+                        query_editor.item_focus_handle(cx).is_focused(window),
                         "Search view should be focused after the new search view is activated",
                     );
                     let query_text = query_editor.read(cx).text(cx);
@@ -2577,7 +2577,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], model, cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let workspace = window;
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
@@ -2643,7 +2643,7 @@ pub mod tests {
                 search_view.update(cx, |search_view, model, cx| {
                     let query_editor = &search_view.query_editor;
                     assert!(
-                        query_editor.focus_handle(cx).is_focused(window),
+                        query_editor.item_focus_handle(cx).is_focused(window),
                         "Search view should be focused after the new search view is activated",
                     );
                     let query_text = query_editor.read(cx).text(cx);
@@ -2885,7 +2885,7 @@ pub mod tests {
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let workspace = window.root(cx).unwrap();
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
@@ -3009,7 +3009,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], model, cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let workspace = window.root(cx).unwrap();
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
@@ -3350,7 +3350,7 @@ pub mod tests {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let workspace = window.root(cx).unwrap();
 
         let panes: Vec<_> = window
@@ -3570,7 +3570,7 @@ pub mod tests {
         let worktree_id = project.update(cx, |this, model, cx| {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let panes: Vec<_> = window
             .update(cx, |this, model, _| this.panes().to_owned())
             .unwrap();

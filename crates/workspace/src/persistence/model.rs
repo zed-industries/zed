@@ -399,7 +399,7 @@ impl SerializedPaneGroup {
                 } else {
                     let pane = pane.upgrade()?;
                     workspace
-                        .update_in_window(window, cx, |workspace, model, cx| {
+                        .update_in_window(window, cx, |workspace, model, window, cx| {
                             workspace.force_remove_pane(&pane, &None, model, window, cx)
                         })
                         .log_err()?;

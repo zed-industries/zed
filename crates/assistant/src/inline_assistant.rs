@@ -1739,7 +1739,7 @@ impl Render for PromptEditor {
 
 impl FocusableView for PromptEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.editor.focus_handle(cx)
+        self.editor.item_focus_handle(cx)
     }
 }
 
@@ -1838,7 +1838,7 @@ impl PromptEditor {
 
     fn unlink(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         let prompt = self.prompt(cx);
-        let focus = self.editor.focus_handle(cx).contains_focused(cx);
+        let focus = self.editor.item_focus_handle(cx).contains_focused(cx);
         self.editor = cx.new_model(|model, cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, model, cx);
             editor.set_soft_wrap_mode(
@@ -2147,7 +2147,7 @@ impl PromptEditor {
                     .disabled(disabled || current_index == 0)
                     .shape(IconButtonShape::Square)
                     .tooltip({
-                        let focus_handle = self.editor.focus_handle(cx);
+                        let focus_handle = self.editor.item_focus_handle(cx);
                         move |cx| {
                             cx.new_model(|model, cx| {
                                 let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
@@ -2190,7 +2190,7 @@ impl PromptEditor {
                     .disabled(disabled || current_index == total_models - 1)
                     .shape(IconButtonShape::Square)
                     .tooltip({
-                        let focus_handle = self.editor.focus_handle(cx);
+                        let focus_handle = self.editor.item_focus_handle(cx);
                         move |cx| {
                             cx.new_model(|model, cx| {
                                 let mut tooltip = Tooltip::new("Next Alternative").key_binding(

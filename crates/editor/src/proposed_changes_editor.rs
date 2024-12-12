@@ -288,7 +288,7 @@ impl Render for ProposedChangesEditor {
 
 impl FocusableView for ProposedChangesEditor {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        self.editor.focus_handle(cx)
+        self.editor.item_focus_handle(cx)
     }
 }
 
@@ -405,7 +405,7 @@ impl Render for ProposedChangesEditorToolbar {
 
         match &self.current_editor {
             Some(editor) => {
-                let focus_handle = editor.focus_handle(cx);
+                let focus_handle = editor.item_focus_handle(cx);
                 let keybinding =
                     KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, model, cx)
                         .map(|binding| binding.into_any_element());

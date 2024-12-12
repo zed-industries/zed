@@ -120,7 +120,7 @@ impl ToolbarItemView for MultibufferHint {
                 if let ItemEvent::UpdateBreadcrumbs = event {
                     this.update(cx, |this, model, cx| {
                         model.notify(cx);
-                        let location = this.determine_toolbar_location(cx);
+                        let location = this.determine_toolbar_location(model, cx);
                         model.emit(ToolbarItemEvent::ChangeLocation(location), cx)
                     })
                     .ok();
@@ -128,7 +128,7 @@ impl ToolbarItemView for MultibufferHint {
             }),
         ));
 
-        self.determine_toolbar_location(cx)
+        self.determine_toolbar_location(model, cx)
     }
 }
 

@@ -1002,7 +1002,7 @@ mod element {
             };
 
             PaneAxisHandleLayout {
-                hitbox: cx.insert_hitbox(handle_bounds, true),
+                hitbox: window.insert_hitbox(handle_bounds, true),
                 divider_bounds,
             }
         }
@@ -1037,7 +1037,7 @@ mod element {
                 size: size(relative(1.).into(), relative(1.).into()),
                 ..Style::default()
             };
-            (cx.request_layout(style, None), ())
+            (window.request_layout(style, None, cx), ())
         }
 
         fn prepaint(
@@ -1048,9 +1048,9 @@ mod element {
             window: &mut Window,
             cx: &mut gpui::AppContext,
         ) -> PaneAxisLayout {
-            let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
+            let dragged_handle = window.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
                 global_id.unwrap(),
-                |state, _cx| {
+                |state, window| {
                     let state = state.unwrap_or_else(|| Rc::new(RefCell::new(None)));
                     (state.clone(), state)
                 },
@@ -1173,12 +1173,12 @@ mod element {
                     };
 
                     if overlay_opacity.is_some() && self.active_pane_ix != Some(ix) {
-                        cx.paint_quad(gpui::fill(overlay_bounds, overlay_background));
+                        window.paint_quad(gpui::fill(overlay_bounds, overlay_background));
                     }
 
                     if let Some(border) = overlay_border {
                         if self.active_pane_ix == Some(ix) {
-                            cx.paint_quad(gpui::quad(
+                            window.paint_quad(gpui::quad(
                                 overlay_bounds,
                                 0.,
                                 gpui::transparent_black(),
@@ -1194,8 +1194,8 @@ mod element {
                         Axis::Vertical => CursorStyle::ResizeRow,
                         Axis::Horizontal => CursorStyle::ResizeColumn,
                     };
-                    cx.set_cursor_style(cursor_style, &handle.hitbox);
-                    cx.paint_quad(gpui::fill(
+                    window.set_cursor_style(cursor_style, &handle.hitbox);
+                    window.paint_quad(gpui::fill(
                         handle.divider_bounds,
                         cx.theme().colors().pane_group_border,
                     ));
@@ -1206,7 +1206,7 @@ mod element {
                         let workspace = self.workspace.clone();
                         let handle_hitbox = handle.hitbox.clone();
                         move |e: &MouseDownEvent, phase, window, cx| {
-                            if phase.bubble() && handle_hitbox.is_hovered(cx) {
+                            if phase.bubble() && handle_hitbox.is_hovered(window) {
                                 dragged_handle.replace(Some(ix));
                                 if e.click_count >= 2 {
                                     let mut borrow = flexes.lock();
@@ -1251,7 +1251,7 @@ mod element {
 
             window.on_mouse_event({
                 let dragged_handle = layout.dragged_handle.clone();
-                move |_: &MouseUpEvent, phase, _cx| {
+                move |_: &MouseUpEvent, phase, window, _cx| {
                     if phase.bubble() {
                         dragged_handle.replace(None);
                     }

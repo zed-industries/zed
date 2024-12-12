@@ -1358,7 +1358,7 @@ impl PlatformWindow for X11Window {
         inner.renderer.sprite_atlas().clone()
     }
 
-    fn show_window_menu(&self, position: Point<Pixels>) {
+    fn show_menu(&self, position: Point<Pixels>) {
         let state = self.0.state.borrow();
 
         check_reply(
@@ -1392,16 +1392,16 @@ impl PlatformWindow for X11Window {
         .unwrap();
     }
 
-    fn start_window_move(&self) {
+    fn start_move(&self) {
         const MOVERESIZE_MOVE: u32 = 8;
         self.send_moveresize(MOVERESIZE_MOVE).unwrap();
     }
 
-    fn start_window_resize(&self, edge: ResizeEdge) {
+    fn start_resize(&self, edge: ResizeEdge) {
         self.send_moveresize(edge.to_moveresize()).unwrap();
     }
 
-    fn window_decorations(&self) -> crate::Decorations {
+    fn decorations(&self) -> crate::Decorations {
         let state = self.0.state.borrow();
 
         // Client window decorations require compositor support

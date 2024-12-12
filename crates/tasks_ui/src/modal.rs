@@ -599,7 +599,7 @@ mod tests {
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         let (workspace, model, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|cx| Workspace::test_new(project, model, window, cx));
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(

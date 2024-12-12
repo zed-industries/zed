@@ -89,7 +89,7 @@ impl MarkdownPreviewView {
                         pane.add_item(Box::new(view.clone()), false, false, None, model, cx)
                     }
                 });
-                editor.focus_handle(cx).focus(window);
+                editor.item_focus_handle(cx).focus(window);
                 model.notify(cx);
             }
         });

@@ -51,7 +51,7 @@ impl SharedScreen {
                         model.notify(cx);
                     })?;
                 }
-                this.update(&mut cx, |_, cx| model.emit(Event::Close, cx))?;
+                this.update(&mut cx, |_, model, cx| model.emit(Event::Close, cx))?;
                 Ok(())
             }),
             focus: window.focus_handle(),
@@ -93,9 +93,9 @@ impl Item for SharedScreen {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
-    fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
+    fn deactivated(&mut self, window: &mut Window, cx: &mut AppContext) {
         if let Some(nav_history) = self.nav_history.as_mut() {
-            nav_history.push::<()>(None, model, cx);
+            nav_history.push::<()>(None, window, cx);
         }
     }
 
@@ -123,7 +123,9 @@ impl Item for SharedScreen {
         cx: &mut AppContext,
     ) -> Option<Model<Self>> {
         let track = self.track.upgrade()?;
-        Some(cx.new_model(|model, cx| Self::new(track, self.peer_id, self.user.clone(), cx)))
+        Some(cx.new_model(|model, cx| {
+            Self::new(track, self.peer_id, self.user.clone(), model, window, cx)
+        }))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {

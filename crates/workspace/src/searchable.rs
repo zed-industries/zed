@@ -236,7 +236,9 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         cx: &mut gpui::AppContext,
         handler: Box<dyn Fn(&SearchEvent, &mut gpui::Window, &mut gpui::AppContext) + Send>,
     ) -> Subscription {
-        cx.subscribe(self, move |_, event: &SearchEvent, cx| handler(event, cx))
+        cx.subscribe(self, move |_, event: &SearchEvent, cx| {
+            handler(event, window, cx)
+        })
     }
 
     fn clear_matches(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) {

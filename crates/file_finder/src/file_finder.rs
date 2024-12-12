@@ -75,8 +75,8 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl FileFinder {
-    fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
-        workspace.register_action(|workspace, action: &workspace::ToggleFileFinder, cx| {
+    fn register(workspace: &mut Workspace, _: &Model<Workspace>, cx: &mut AppContext) {
+        workspace.register_action(cx, |workspace, action: &workspace::ToggleFileFinder, cx| {
             let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
                 Self::open(workspace, action.separate_history, model, cx).detach();
                 return;
@@ -303,10 +303,11 @@ impl Render for FileFinder {
         window: &mut gpui::Window,
         cx: &mut AppContext,
     ) -> impl IntoElement {
-        let key_context = self.picker.read(cx).delegate.key_context(cx);
+        let key_context = self.picker.read(cx).delegate.key_context(window, cx);
 
         let file_finder_settings = FileFinderSettings::get_global(cx);
-        let modal_max_width = Self::modal_max_width(file_finder_settings.modal_max_width, cx);
+        let modal_max_width =
+            Self::modal_max_width(file_finder_settings.modal_max_width, model, cx);
 
         v_flex()
             .key_context(key_context)
@@ -652,7 +653,7 @@ impl FileFinderDelegate {
         model: &Model<FileFinder>,
         cx: &mut AppContext,
     ) -> Self {
-        Self::subscribe_to_updates(&project, cx);
+        Self::subscribe_to_updates(&project, model, cx);
         Self {
             file_finder,
             workspace,
@@ -1119,6 +1120,7 @@ impl PickerDelegate for FileFinderDelegate {
                                     allow_preview,
                                     None,
                                     model,
+                                    window,
                                     cx,
                                 )
                             } else {
@@ -1264,7 +1266,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .into_any_element(),
         };
         let (file_name, file_name_positions, full_path, full_path_positions) =
-            self.labels_for_match(path_match, cx, ix);
+            self.labels_for_match(&path_match, cx, ix);
 
         let file_icon = if settings.file_icons {
             FileIcons::get_icon(Path::new(&file_name), cx)
@@ -1307,7 +1309,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("open-selection", "Open")
-                        .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
+                        .key_binding(KeyBinding::for_action(&menu::Confirm, window, cx))
                         .on_click(|_, cx| model.dispatch_action(cx, menu::Confirm.boxed_clone())),
                 )
                 .child(
@@ -1327,7 +1329,7 @@ impl PickerDelegate for FileFinderDelegate {
                         )
                         .menu({
                             move |window, cx| {
-                                Some(ContextMenu::build(cx, {
+                                Some(ContextMenu::build(model, cx, {
                                     let context = context.clone();
                                     move |menu, _| {
                                         menu.context(context)

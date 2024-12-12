@@ -165,7 +165,7 @@ impl Render for QuickActionBar {
         );
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
-            let focus = editor.focus_handle(cx);
+            let focus = editor.item_focus_handle(cx);
             PopoverMenu::new("editor-selections-dropdown")
                 .trigger(
                     IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)

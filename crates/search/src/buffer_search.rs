@@ -197,7 +197,7 @@ impl Render for BufferSearchBar {
             })
             .unwrap_or_else(|| "0/0".to_string());
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
-        let in_replace = self.replacement_editor.focus_handle(cx).is_focused(window);
+        let in_replace = self.replacement_editor.item_focus_handle(cx).is_focused(window);
 
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
@@ -482,7 +482,7 @@ impl Render for BufferSearchBar {
 
 impl FocusableView for BufferSearchBar {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        self.query_editor.focus_handle(cx)
+        self.query_editor.item_focus_handle(cx)
     }
 }
 
@@ -635,7 +635,7 @@ impl BufferSearchBar {
             self.replace_enabled = false;
             active_editor.search_bar_visibility_changed(false, model, cx);
             active_editor.toggle_filtered_search_ranges(false, model, cx);
-            let handle = active_editor.focus_handle(cx);
+            let handle = active_editor.item_focus_handle(cx);
             self.focus(&handle, model, cx);
         }
         model.emit(Event::UpdateLocation, cx);
@@ -656,10 +656,10 @@ impl BufferSearchBar {
             self.replace_enabled = deploy.replace_enabled;
             self.selection_search_enabled = deploy.selection_search_enabled;
             if deploy.focus {
-                let mut handle = self.query_editor.focus_handle(cx).clone();
+                let mut handle = self.query_editor.item_focus_handle(cx).clone();
                 let mut select_query = true;
                 if deploy.replace_enabled && handle.is_focused(window) {
-                    handle = self.replacement_editor.focus_handle(cx).clone();
+                    handle = self.replacement_editor.item_focus_handle(cx).clone();
                     select_query = false;
                 };
 
@@ -818,7 +818,7 @@ impl BufferSearchBar {
 
     pub fn focus_editor(&mut self, _: &FocusEditor, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
-            let handle = active_editor.focus_handle(model, cx);
+            let handle = active_editor.item_focus_handle(model, cx);
             cx.focus(&handle);
         }
     }
@@ -1182,9 +1182,9 @@ impl BufferSearchBar {
     fn tab(&mut self, _: &Tab, model: &Model<Self>, cx: &mut AppContext) {
         // Search -> Replace -> Editor
         let focus_handle = if self.replace_enabled && self.query_editor_focused {
-            self.replacement_editor.focus_handle(cx)
+            self.replacement_editor.item_focus_handle(cx)
         } else if let Some(item) = self.active_searchable_item.as_ref() {
-            item.focus_handle(cx)
+            item.item_focus_handle(cx)
         } else {
             return;
         };
@@ -1195,9 +1195,9 @@ impl BufferSearchBar {
     fn tab_prev(&mut self, _: &TabPrev, model: &Model<Self>, cx: &mut AppContext) {
         // Search -> Replace -> Search
         let focus_handle = if self.replace_enabled && self.query_editor_focused {
-            self.replacement_editor.focus_handle(cx)
+            self.replacement_editor.item_focus_handle(cx)
         } else if self.replacement_editor_focused {
-            self.query_editor.focus_handle(cx)
+            self.query_editor.item_focus_handle(cx)
         } else {
             return;
         };
@@ -1260,9 +1260,9 @@ impl BufferSearchBar {
         if self.active_searchable_item.is_some() {
             self.replace_enabled = !self.replace_enabled;
             let handle = if self.replace_enabled {
-                self.replacement_editor.focus_handle(cx)
+                self.replacement_editor.item_focus_handle(cx)
             } else {
-                self.query_editor.focus_handle(cx)
+                self.query_editor.item_focus_handle(cx)
             };
             self.focus(&handle, cx);
             model.notify(cx);

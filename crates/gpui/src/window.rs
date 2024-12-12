@@ -3724,7 +3724,7 @@ impl From<u64> for WindowId {
 
 /// A handle to a window with a specific root view type.
 /// Note that this does not keep the window alive on its own.
-#[derive(Deref, DerefMut)]
+#[derive(Deref, DerefMut, Hash, Eq, PartialEq)]
 pub struct WindowHandle<T> {
     #[deref]
     #[deref_mut]

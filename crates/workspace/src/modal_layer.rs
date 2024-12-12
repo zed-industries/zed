@@ -119,13 +119,18 @@ impl ModalLayer {
         self.active_modal = Some(ActiveModal {
             modal: Box::new(new_modal.clone()),
             _subscriptions: [
-                model.subscribe(&new_modal, cx, |this, _, _: &DismissEvent, model, cx| {
-                    window_handle
-                        .update(cx, |window, cx| {
-                            this.hide_modal(model, window, cx);
-                        })
-                        .ok();
-                }),
+                model.subscribe_in_window(
+                    &new_modal,
+                    window,
+                    cx,
+                    move |this, _, _: &DismissEvent, model, window, cx| {
+                        window_handle
+                            .update(cx, |window, cx| {
+                                this.hide_modal(model, window, cx);
+                            })
+                            .ok();
+                    },
+                ),
                 window.on_focus_out(
                     &focus_handle,
                     cx,
@@ -171,7 +176,7 @@ impl ModalLayer {
 
         if let Some(active_modal) = self.active_modal.take() {
             if let Some(previous_focus) = active_modal.previous_focus_handle {
-                if active_modal.focus_handle.contains_focused(windowwindow) {
+                if active_modal.focus_handle.contains_focused(window) {
                     previous_focus.focus(window);
                 }
             }
@@ -185,7 +190,7 @@ impl ModalLayer {
         V: 'static,
     {
         let active_modal = self.active_modal.as_ref()?;
-        active_modal.modal.view().downcast::<V>().ok()
+        active_modal.modal.model().downcast::<V>().ok()
     }
 
     pub fn has_active_modal(&self) -> bool {

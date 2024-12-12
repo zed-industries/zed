@@ -14,7 +14,8 @@ use client::{
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     AnyElement, AnyModel, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, Font, HighlightStyle, Model, Pixels, Point, SharedString, Task, WeakModel,
+    FocusableView, Font, HighlightStyle, Model, Pixels, Point, Render, SharedString, Task,
+    WeakModel,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
@@ -176,7 +177,7 @@ impl TabContentParams {
     }
 }
 
-pub trait Item: FocusableView + EventEmitter<Self::Event> + Sized {
+pub trait Item: FocusableView + EventEmitter<Self::Event> + Render + Sized {
     type Event;
 
     /// Returns the tab contents.
@@ -211,7 +212,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> + Sized {
 
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
-    fn deactivated(&mut self, _: &Model<Self>, _: &mut AppContext) {}
+    fn deactivated(&mut self, _: &mut Window, _: &mut AppContext) {}
     fn discarded(&self, _project: Model<Project>, model: &Model<Self>, _cx: &mut AppContext) {}
     fn workspace_deactivated(&mut self, _: &Model<Self>, _: &mut AppContext) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &Model<Self>, _: &mut AppContext) -> bool {
@@ -407,9 +408,9 @@ pub trait ItemHandle: 'static + Send {
     fn subscribe_to_item_events(
         &self,
         cx: &mut AppContext,
-        handler: Box<dyn Fn(ItemEvent, &mut gpui::Window, &mut AppContext)>,
+        handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
     ) -> gpui::Subscription;
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+    fn item_focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &AppContext)
@@ -508,14 +509,14 @@ impl<T: Item> ItemHandle for Model<T> {
     fn subscribe_to_item_events(
         &self,
         cx: &mut AppContext,
-        handler: Box<dyn Fn(ItemEvent, &mut gpui::Window, &mut AppContext)>,
+        handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
     ) -> gpui::Subscription {
-        cx.subscribe(self, move |_, event, cx| {
+        self.subscribe(self, cx, move |_, emitter, event, model, cx| {
             T::to_item_events(event, |item_event| handler(item_event, cx));
         })
     }
 
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn item_focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.read(cx).focus_handle(cx)
     }
 
@@ -676,7 +677,7 @@ impl<T: Item> ItemHandle for Model<T> {
                 let is_project_item = item.is_project_item(cx);
                 let item = item.downgrade();
 
-                send_follower_updates = Some(cx.spawn({
+                send_follower_updates = Some(model.spawn(cx, {
                     let pending_update = pending_update.clone();
                     |workspace, mut cx| async move {
                         while let Some(mut leader_id) = pending_update_rx.next().await {
@@ -707,10 +708,11 @@ impl<T: Item> ItemHandle for Model<T> {
                 }));
             }
 
-            let mut event_subscription = Some(model.subscribe(
+            let mut event_subscription = Some(model.subscribe_in_window(
                 self,
+                window,
                 cx,
-                move |workspace, item: Model<T>, event, model, cx| {
+                move |workspace, item: Model<T>, event, model, window, cx| {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item
                         .get(&item.item_id())
@@ -730,7 +732,7 @@ impl<T: Item> ItemHandle for Model<T> {
                             }
                         }
 
-                        if item.focus_handle(cx).contains_focused(window) {
+                        if item.item_focus_handle(cx).contains_focused(window) {
                             item.add_event_to_update_proto(
                                 event,
                                 &mut pending_update.borrow_mut(),
@@ -778,12 +780,7 @@ impl<T: Item> ItemHandle for Model<T> {
                                     model,
                                     cx,
                                     move |workspace, model, cx| {
-                                        Pane::autosave_item(
-                                            &item,
-                                            workspace.project().clone(),
-                                            model,
-                                            cx,
-                                        )
+                                        Pane::autosave_item(&item, workspace.project().clone(), cx)
                                     },
                                 );
                             }
@@ -798,27 +795,35 @@ impl<T: Item> ItemHandle for Model<T> {
             ));
 
             window
-                .on_blur(&self.focus_handle(cx), cx, move |workspace, cx| {
-                    if let Some(item) = weak_item.upgrade() {
-                        if item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange {
-                            Pane::autosave_item(&item, workspace.project.clone(), model, cx)
-                                .detach_and_log_err(cx);
-                        }
+                .on_blur(&self.item_focus_handle(cx), cx, {
+                    let model = model.clone();
+                    move |window, cx| {
+                        model.update(cx, |workspace, model, cx| {
+                            if let Some(item) = weak_item.upgrade() {
+                                if item.workspace_settings(cx).autosave
+                                    == AutosaveSetting::OnFocusChange
+                                {
+                                    Pane::autosave_item(&item, workspace.project.clone(), cx)
+                                        .detach_and_log_err(cx);
+                                }
+                            }
+                        });
                     }
                 })
                 .detach();
 
             let item_id = self.item_id();
-            cx.observe_release(self, move |workspace, _, _| {
-                workspace.panes_by_item.remove(&item_id);
-                event_subscription.take();
-                send_follower_updates.take();
-            })
-            .detach();
+            model
+                .observe_release(self, cx, move |workspace, _, _, _| {
+                    workspace.panes_by_item.remove(&item_id);
+                    event_subscription.take();
+                    send_follower_updates.take();
+                })
+                .detach();
         }
 
-        cx.defer(|workspace, cx| {
-            workspace.serialize_workspace(cx);
+        model.defer(cx, |workspace, model, cx| {
+            workspace.serialize_workspace(model, cx);
         });
     }
 
@@ -827,7 +832,7 @@ impl<T: Item> ItemHandle for Model<T> {
     }
 
     fn deactivated(&self, window: &mut gpui::Window, cx: &mut AppContext) {
-        self.update(cx, |this, model, cx| this.deactivated(model, cx));
+        self.update(cx, |this, model, cx| this.deactivated(window, cx));
     }
 
     fn workspace_deactivated(&self, window: &mut gpui::Window, cx: &mut AppContext) {
@@ -1123,9 +1128,8 @@ pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
     use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
     use gpui::{
-        AnyElement, AnyWindowHandle, AppContext, Context as _, EntityId, EventEmitter,
-        FocusableView, InteractiveElement, IntoElement, Model, Render, SharedString, Task,
-        WeakModel, Window,
+        AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
+        InteractiveElement, IntoElement, Model, Render, SharedString, Task, WeakModel, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};
@@ -1268,14 +1272,14 @@ pub mod test {
             self
         }
 
-        pub fn set_state(&mut self, state: String, model: &Model<Self>, cx: &mut AppContext) {
-            self.push_to_nav_history(model, cx);
+        pub fn set_state(&mut self, state: String, window: &mut Window, cx: &mut AppContext) {
+            self.push_to_nav_history(window, cx);
             self.state = state;
         }
 
-        fn push_to_nav_history(&mut self, model: &Model<Self>, cx: &mut AppContext) {
+        fn push_to_nav_history(&mut self, window: &mut Window, cx: &mut AppContext) {
             if let Some(history) = &mut self.nav_history {
-                history.push(Some(Box::new(self.state.clone())), model, cx);
+                history.push(Some(Box::new(self.state.clone())), window, cx);
             }
         }
     }
@@ -1360,8 +1364,8 @@ pub mod test {
             }
         }
 
-        fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-            self.push_to_nav_history(model, cx);
+        fn deactivated(&mut self, window: &mut Window, cx: &mut AppContext) {
+            self.push_to_nav_history(window, cx);
         }
 
         fn clone_on_split(

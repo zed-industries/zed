@@ -72,7 +72,7 @@ pub trait PanelHandle: Send + Sync {
     fn icon_tooltip(&self, cx: &AppContext) -> Option<&'static str>;
     fn toggle_action(&self, cx: &AppContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &AppContext) -> Option<String>;
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+    fn panel_focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn model(&self) -> AnyModel;
     fn view(&self) -> AnyView;
 }
@@ -145,7 +145,7 @@ where
         self.read(cx).icon_label(cx)
     }
 
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn panel_focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.read(cx).focus_handle(cx).clone()
     }
 
@@ -231,7 +231,7 @@ impl Dock {
             let focus_subscription = window.on_focus(&focus_handle, cx, move |window, cx| {
                 dock.update(cx, |dock, model, cx| {
                     if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
-                        active_entry.panel.focus_handle(cx).focus(window)
+                        active_entry.panel.panel_focus_handle(cx).focus(window)
                     }
                 })
             });
@@ -365,14 +365,13 @@ impl Dock {
 
     pub fn set_panel_zoomed(
         &mut self,
-        panel: &AnyView,
+        panel: &AnyModel,
         zoomed: bool,
         model: &Model<Self>,
-        window: &mut Window,
         cx: &mut AppContext,
     ) {
         for entry in &mut self.panel_entries {
-            if entry.panel.panel_id() == model.entity_id() {
+            if entry.panel.panel_id() == panel.entity_id() {
                 if zoomed != entry.panel.is_zoomed(cx) {
                     entry.panel.set_zoomed(zoomed, cx);
                 }
@@ -384,7 +383,7 @@ impl Dock {
         model.notify(cx);
     }
 
-    pub fn zoom_out(&mut self, model: &Model<Self>, window: &mut Window, cx: &mut AppContext) {
+    pub fn zoom_out(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         for entry in &mut self.panel_entries {
             if entry.panel.is_zoomed(cx) {
                 entry.panel.set_zoomed(false, cx);
@@ -462,13 +461,13 @@ impl Dock {
                 }),
                 model.subscribe_in_window(
                     &panel,
-                    window,
+                    &*window,
                     cx,
-                    move |this, panel, event, model, window, cx| match event {
+                    move |this, panel: Model<T>, event, model, window, cx| match event {
                         PanelEvent::ZoomIn => {
-                            this.set_panel_zoomed(&panel.to_any(), true, window, cx);
-                            if !panel.focus_handle(cx).contains_focused(cx) {
-                                cx.focus_view(&panel);
+                            this.set_panel_zoomed(&panel.clone().into(), true, model, cx);
+                            if !FocusableView::focus_handle(&panel, cx).contains_focused(window) {
+                                window.focus_view(&panel, cx);
                             }
                             workspace
                                 .update(cx, |workspace, model, cx| {
@@ -479,7 +478,7 @@ impl Dock {
                                 .ok();
                         }
                         PanelEvent::ZoomOut => {
-                            this.set_panel_zoomed(&panel.to_any(), false, window, cx);
+                            this.set_panel_zoomed(&panel.into(), false, model, cx);
                             workspace
                                 .update(cx, |workspace, model, cx| {
                                     if workspace.zoomed_position == Some(this.position) {
@@ -495,9 +494,9 @@ impl Dock {
                             if let Some(ix) = this.panel_entries.iter().position(|entry| {
                                 entry.panel.panel_id() == Entity::entity_id(&panel)
                             }) {
-                                this.set_open(true, window, cx);
-                                this.activate_panel(ix, window, cx);
-                                cx.focus_view(&panel);
+                                this.set_open(true, model, cx);
+                                this.activate_panel(ix, model, window, cx);
+                                window.focus_view(&panel, cx);
                             }
                         }
                         PanelEvent::Close => {
@@ -505,7 +504,7 @@ impl Dock {
                                 .visible_panel()
                                 .map_or(false, |p| p.panel_id() == Entity::entity_id(&panel))
                             {
-                                this.set_open(false, window, cx);
+                                this.set_open(false, model, cx);
                             }
                         }
                     },
@@ -519,7 +518,7 @@ impl Dock {
 
         if !self.restore_state(model, window, cx) && panel.read(cx).starts_open(cx) {
             self.activate_panel(self.panel_entries.len() - 1, model, window, cx);
-            self.set_open(true, window, cx);
+            self.set_open(true, model, cx);
         }
 
         model.notify(cx)
@@ -543,7 +542,7 @@ impl Dock {
                     panel.set_zoomed(true, cx)
                 }
             }
-            self.set_open(serialized.visible, window, cx);
+            self.set_open(serialized.visible, model, cx);
             return true;
         }
         false
@@ -567,7 +566,7 @@ impl Dock {
                 }
                 std::cmp::Ordering::Equal => {
                     self.active_panel_index = 0;
-                    self.set_open(false, window, cx);
+                    self.set_open(false, model, cx);
                 }
                 std::cmp::Ordering::Greater => {}
             }
@@ -794,7 +793,8 @@ impl Render for Dock {
 
 impl PanelButtons {
     pub fn new(dock: Model<Dock>, model: &Model<Self>, cx: &mut AppContext) -> Self {
-        cx.observe(&dock, |_, _, cx| model.notify(cx)).detach();
+        let model = model.clone();
+        cx.observe(&dock, move |_, cx| model.notify(cx)).detach();
         Self { dock }
     }
 }

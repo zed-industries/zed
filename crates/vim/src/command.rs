@@ -108,7 +108,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
         window,
         cx,
         |vim, _: &CountCommand, model, window, cx| {
-            let Some(workspace) = vim.workspace(cx) else {
+            let Some(workspace) = vim.workspace(model, cx) else {
                 return;
             };
             let count = Vim::take_count(cx).unwrap_or(1);
@@ -130,23 +130,28 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
         cx,
         |vim, action: &GoToLine, model, window, cx| {
             vim.switch_mode(Mode::Normal, false, window, cx);
-            let result = vim.update_editor(cx, |vim, editor, cx| {
-                action.range.head().buffer_row(vim, editor, window, cx)
+            let result = vim.update_editor(model, cx, |vim, editor, cx| {
+                action.range.head().buffer_row(vim, editor, cx)
             });
             let buffer_row = match result {
                 None => return,
                 Some(e @ Err(_)) => {
-                    let Some(workspace) = vim.workspace(cx) else {
+                    let Some(workspace) = vim.workspace(model, cx) else {
                         return;
                     };
                     workspace.update(cx, |workspace, model, cx| {
-                        e.notify_err(workspace, cx);
+                        e.notify_err(workspace, model, cx);
                     });
                     return;
                 }
                 Some(Ok(result)) => result,
             };
-            vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), cx);
+            vim.move_cursor(
+                Motion::StartOfDocument,
+                Some(buffer_row.0 as usize + 1),
+                model,
+                cx,
+            );
         },
     );
 
@@ -157,7 +162,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
         |vim, action: &YankCommand, window, cx| {
             vim.update_editor(cx, |vim, editor, cx| {
                 let snapshot = editor.snapshot(model, cx);
-                if let Ok(range) = action.range.buffer_range(vim, editor, cx) {
+                if let Ok(range) = action.range.buffer_range(vim, editor, model, cx) {
                     let end = if range.end < snapshot.buffer_snapshot.max_row() {
                         Point::new(range.end.0 + 1, 0)
                     } else {
@@ -183,7 +188,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
         cx,
         |_, action: &WithCount, model, window, cx| {
             for _ in 0..action.count {
-                cx.dispatch_action(action.action.boxed_clone())
+                cx.dispatch_action(Box::new(action.action))
             }
         },
     );
@@ -459,7 +464,6 @@ impl Position {
         &self,
         vim: &Vim,
         editor: &mut Editor,
-        window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> Result<MultiBufferRow> {
         let snapshot = editor.snapshot(model, cx);
@@ -1108,7 +1112,7 @@ mod test {
 
         // Assert base state, that we're in /root/dir/file.rs
         cx.workspace(|workspace, cx| {
-            assert_active_item(workspace, "/root/dir/file.rs", "", cx);
+            assert_active_item(workspace, "/root/dir/file.rs", "", model, cx);
         });
 
         // Insert a new file
@@ -1129,7 +1133,13 @@ mod test {
         // We now have two items
         cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.workspace(|workspace, cx| {
-            assert_active_item(workspace, "/root/dir/file2.rs", "This is file2.rs", cx);
+            assert_active_item(
+                workspace,
+                "/root/dir/file2.rs",
+                "This is file2.rs",
+                model,
+                cx,
+            );
         });
 
         // Update editor to point to `file2.rs`
@@ -1145,7 +1155,7 @@ mod test {
         // We now have three items
         cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 3));
         cx.workspace(|workspace, cx| {
-            assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", cx);
+            assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", model, cx);
         });
     }
 }
