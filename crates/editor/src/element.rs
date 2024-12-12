@@ -1346,9 +1346,8 @@ impl EditorElement {
                 .unwrap_err();
             let mut expanded_hunks = expanded_hunks[expanded_hunks_start_ix..].iter().peekable();
 
-            let mut display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)> = editor
+            let mut display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)> = snapshot
                 .diff_map
-                .snapshot
                 .diff_hunks_in_range(buffer_start..buffer_end, &buffer_snapshot)
                 .filter_map(|hunk| {
                     let display_hunk = diff_hunk_to_display(&hunk, snapshot);

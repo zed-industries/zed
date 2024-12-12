@@ -12,9 +12,14 @@ use text::{Bias, Edit, Patch, Point, TextSummary, ToOffset as _};
 pub(crate) struct DiffMap {
     snapshot: DiffMapSnapshot,
     multibuffer: Model<MultiBuffer>,
-    change_set_subscriptions: HashMap<BufferId, Subscription>,
+    diff_bases: HashMap<BufferId, ChangeSetState>,
     all_hunks_expanded: bool,
     edits_since_sync: Patch<DiffOffset>,
+}
+
+struct ChangeSetState {
+    _change_set: Model<BufferChangeSet>,
+    _subscription: Subscription,
 }
 
 #[derive(Clone)]
@@ -145,7 +150,7 @@ impl DiffMap {
             multibuffer,
             snapshot: snapshot.clone(),
             all_hunks_expanded: false,
-            change_set_subscriptions: HashMap::default(),
+            diff_bases: HashMap::default(),
             edits_since_sync: Patch::default(),
         });
 
@@ -159,9 +164,12 @@ impl DiffMap {
     ) {
         let buffer_id = change_set.read(cx).buffer_id;
         self.buffer_diff_changed(change_set.clone(), cx);
-        self.change_set_subscriptions.insert(
+        self.diff_bases.insert(
             buffer_id,
-            cx.observe(&change_set, Self::buffer_diff_changed),
+            ChangeSetState {
+                _subscription: cx.observe(&change_set, Self::buffer_diff_changed),
+                _change_set: change_set,
+            },
         );
     }
 
