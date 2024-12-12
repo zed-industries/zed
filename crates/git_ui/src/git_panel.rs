@@ -46,6 +46,8 @@ impl GitPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
+            // Clippy incorrectly classifies this as a redundant closure
+            #[allow(clippy::redundant_closure)]
             workspace.update(&mut cx, |workspace, cx| Self::new(workspace, cx))
         })
     }
