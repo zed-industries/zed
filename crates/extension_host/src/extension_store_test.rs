@@ -403,6 +403,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             http_client.clone(),
             None,
             node_runtime.clone(),
+            model,
             cx,
         )
     });
@@ -483,7 +484,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let proxy = Arc::new(ExtensionHostProxy::new());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
-    let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+    let language_registry =
+        project.read_with(cx, |project, model, _cx| project.languages().clone());
     language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
@@ -584,6 +586,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             builder_client,
             None,
             node_runtime,
+            model,
             cx,
         )
     });
@@ -600,12 +603,13 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     });
 
     extension_store.update(cx, |_, model, cx| {
-        cx.subscribe(&extension_store, |_, _, event, _| {
-            if matches!(event, Event::ExtensionFailedToLoad(_)) {
-                panic!("extension failed to load");
-            }
-        })
-        .detach();
+        model
+            .subscribe(&extension_store, cx, |_, _, event, model, _| {
+                if matches!(event, Event::ExtensionFailedToLoad(_)) {
+                    panic!("extension failed to load");
+                }
+            })
+            .detach();
     });
 
     extension_store

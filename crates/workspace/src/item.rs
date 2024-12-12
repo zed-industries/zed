@@ -13,8 +13,8 @@ use client::{
 };
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    AnyElement, AnyView, AppContext, AppContext, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, Font, HighlightStyle, Model, Pixels, Point, SharedString, Task, View, WeakView,
+    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
+    Font, HighlightStyle, Model, Pixels, Point, SharedString, Task, View, WeakView,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;

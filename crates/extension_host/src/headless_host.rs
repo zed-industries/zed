@@ -221,7 +221,7 @@ impl HeadlessExtensionStore {
 
         let path = self.extension_dir.join(&extension_id.to_string());
         let fs = self.fs.clone();
-        cx.spawn(|_, _| async move {
+        cx.spawn(|_| async move {
             fs.remove_dir(
                 &path,
                 RemoveOptions {
@@ -274,8 +274,8 @@ impl HeadlessExtensionStore {
                     dev: p.dev,
                 });
         let missing_extensions = extension_store
-            .update(&mut cx, |extension_store, cx| {
-                extension_store.sync_extensions(requested_extensions.collect(), cx)
+            .update(&mut cx, |extension_store, model, cx| {
+                extension_store.sync_extensions(requested_extensions.collect(), model, cx)
             })?
             .await?;
 
@@ -305,7 +305,7 @@ impl HeadlessExtensionStore {
             .with_context(|| anyhow!("Invalid InstallExtension request"))?;
 
         extensions
-            .update(&mut cx, |extensions, cx| {
+            .update(&mut cx, |extensions, model, cx| {
                 extensions.install_extension(
                     ExtensionVersion {
                         id: extension.id,
@@ -313,6 +313,7 @@ impl HeadlessExtensionStore {
                         dev: extension.dev,
                     },
                     PathBuf::from(envelope.payload.tmp_dir),
+                    model,
                     cx,
                 )
             })?

@@ -258,15 +258,14 @@ fn start_server(
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
     let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
 
-    model
-        .on_app_quit(cx, move |_| {
-            let mut app_quit_tx = app_quit_tx.clone();
-            async move {
-                log::info!("app quitting. sending signal to server main loop");
-                app_quit_tx.send(()).await.ok();
-            }
-        })
-        .detach();
+    cx.on_app_quit(move |_| {
+        let mut app_quit_tx = app_quit_tx.clone();
+        async move {
+            log::info!("app quitting. sending signal to server main loop");
+            app_quit_tx.send(()).await.ok();
+        }
+    })
+    .detach();
 
     cx.spawn(|cx| async move {
         let mut stdin_incoming = listeners.stdin.incoming();
@@ -473,6 +472,7 @@ pub fn execute_run(
                     languages,
                     extension_host_proxy,
                 },
+                model,
                 cx,
             )
         });
@@ -838,7 +838,7 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-fn read_proxy_settings(model: &Model<Self>, cx: &mut AppContext) -> Option<Uri> {
+fn read_proxy_settings(cx: &mut AppContext) -> Option<Uri> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()

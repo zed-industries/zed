@@ -941,7 +941,7 @@ impl Workspace {
                 Stream::map(current_user, drop).merge(Stream::map(connection_status, drop));
 
             while stream.recv().await.is_some() {
-                this.update(&mut cx, |_, cx| model.notify(cx))?;
+                this.update(&mut cx, |_, model, cx| model.notify(cx))?;
             }
             anyhow::Ok(())
         });
@@ -1670,7 +1670,8 @@ impl Workspace {
 
                     if let Some(project_path) = project_path {
                         let (worktree, path) = project_path.await?;
-                        let worktree_id = worktree.read_with(&cx, |worktree, _| worktree.id())?;
+                        let worktree_id =
+                            worktree.read_with(&cx, |worktree, model, _| worktree.id())?;
                         tx.send(Some(ProjectPath {
                             worktree_id,
                             path: path.into(),
@@ -2197,7 +2198,7 @@ impl Workspace {
         cx: &mut AppContext,
     ) -> Task<Result<(Model<Worktree>, ProjectPath)>> {
         let entry = project.update(cx, |project, model, cx| {
-            project.find_or_create_worktree(abs_path, visible, cx)
+            project.find_or_create_worktree(abs_path, visible, model, cx)
         });
         cx.spawn(|mut cx| async move {
             let (worktree, path) = entry.await?;
@@ -2349,7 +2350,7 @@ impl Workspace {
         if tasks.is_empty() {
             None
         } else {
-            Some(cx.spawn(|_, _| async move {
+            Some(cx.spawn(|_| async move {
                 for task in tasks {
                     task.await?
                 }

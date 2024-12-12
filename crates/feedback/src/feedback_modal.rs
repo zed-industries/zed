@@ -349,7 +349,7 @@ impl FeedbackModal {
     fn update_email_in_store(&self, model: &Model<Self>, cx: &mut AppContext) {
         let email = self.email_address_editor.read(cx).text_option(cx);
 
-        cx.spawn(|_, _| async move {
+        cx.spawn(|_| async move {
             match email {
                 Some(email) => {
                     KEY_VALUE_STORE

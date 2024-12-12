@@ -1225,8 +1225,8 @@ impl ExtensionStore {
                 } else {
                     this.update(&mut cx, |_, model, cx| {
                         model.emit(
-                            cx,
                             Event::ExtensionFailedToLoad(extension.manifest.id.clone()),
+                            cx,
                         )
                     })
                     .ok();

@@ -577,7 +577,7 @@ impl Room {
         let client = self.client.clone();
         let room_id = self.id;
         let role = role.into();
-        cx.spawn(|_, _| async move {
+        cx.spawn(|_| async move {
             client
                 .request(proto::SetRoomParticipantRole {
                     room_id,

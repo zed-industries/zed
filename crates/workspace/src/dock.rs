@@ -3,10 +3,10 @@ use crate::{status_bar::StatusItemView, Workspace};
 use crate::{DraggedDock, Event, Pane};
 use client::proto;
 use gpui::{
-    deferred, div, px, Action, AnchorCorner, AnyView, AppContext, AppContext, Axis, Entity,
-    EntityId, EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton,
-    MouseDownEvent, MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled,
-    Subscription, View, VisualContext, WeakView,
+    deferred, div, px, Action, AnchorCorner, AnyView, AppAxis, AppContext, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, MouseDownEvent,
+    MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, View,
+    VisualContext, WeakView,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

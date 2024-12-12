@@ -163,7 +163,7 @@ impl ReplStore {
                     token,
                 };
                 let http_client = cx.http_client();
-                Some(cx.spawn(|_, _| async move {
+                Some(cx.spawn(|_| async move {
                     list_remote_kernelspecs(remote_server, http_client)
                         .await
                         .map(|specs| specs.into_iter().map(KernelSpecification::Remote).collect())

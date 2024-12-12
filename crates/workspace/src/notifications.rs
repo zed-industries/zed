@@ -263,7 +263,7 @@ impl LanguageServerPrompt {
                 .await
                 .ok_or_else(|| anyhow::anyhow!("Stream already closed"))?;
 
-            this.update(&mut cx, |_, cx| model.emit(DismissEvent, cx))?;
+            this.update(&mut cx, |_, model, cx| model.emit(DismissEvent, cx))?;
 
             anyhow::Ok(())
         })

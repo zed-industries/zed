@@ -80,7 +80,7 @@ impl HeadlessProject {
         });
         let buffer_store = cx.new_model(|model, cx| {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), model, cx);
-            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), model, cx);
+            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
         let prettier_store = cx.new_model(|model, cx| {
@@ -93,7 +93,7 @@ impl HeadlessProject {
                 cx,
             )
         });
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, model, cx);
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let toolchain_store = cx.new_model(|model, cx| {
             ToolchainStore::local(
                 languages.clone(),
@@ -114,7 +114,7 @@ impl HeadlessProject {
                 model,
                 cx,
             );
-            task_store.shared(SSH_PROJECT_ID, session.clone().into(), model, cx);
+            task_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             task_store
         });
         let settings_observer = cx.new_model(|model, cx| {
@@ -146,18 +146,22 @@ impl HeadlessProject {
             lsp_store
         });
 
-        cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+        model
+            .subscribe(&lsp_store, cx, Self::on_lsp_store_event)
+            .detach();
 
-        cx.subscribe(
-            &buffer_store,
-            |_this, _buffer_store, event, cx| match event {
-                BufferStoreEvent::BufferAdded(buffer) => {
-                    cx.subscribe(buffer, Self::on_buffer_event).detach();
-                }
-                _ => {}
-            },
-        )
-        .detach();
+        model
+            .subscribe(
+                &buffer_store,
+                cx,
+                |_this, _buffer_store, event, model, cx| match event {
+                    BufferStoreEvent::BufferAdded(buffer) => {
+                        model.subscribe(buffer, cx, Self::on_buffer_event).detach();
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
 
         let extensions = HeadlessExtensionStore::new(
             fs.clone(),
@@ -321,7 +325,7 @@ impl HeadlessProject {
         use client::ErrorCodeExt;
         let path = shellexpand::tilde(&message.payload.path).to_string();
 
-        let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
+        let fs = this.read_with(&mut cx, |this, model, _| this.fs.clone())?;
         let path = PathBuf::from(path);
 
         let canonicalized = match fs.canonicalize(&path).await {
@@ -343,7 +347,7 @@ impl HeadlessProject {
         };
 
         let worktree = this
-            .update(&mut cx.clone(), |this, _| {
+            .update(&mut cx.clone(), |this, model, _| {
                 Worktree::local(
                     Arc::from(canonicalized.as_path()),
                     message.payload.visible,
@@ -354,7 +358,7 @@ impl HeadlessProject {
             })?
             .await?;
 
-        let response = this.update(&mut cx, |_, cx| {
+        let response = this.update(&mut cx, |_, model, cx| {
             worktree.update(cx, |worktree, model, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
                 canonicalized_path: canonicalized.to_string_lossy().to_string(),
@@ -414,6 +418,7 @@ impl HeadlessProject {
                         worktree_id,
                         path: PathBuf::from(message.payload.path).into(),
                     },
+                    model,
                     cx,
                 )
             });
@@ -421,10 +426,11 @@ impl HeadlessProject {
         })??;
 
         let buffer = buffer.await?;
-        let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
-        buffer_store.update(&mut cx, |buffer_store, cx| {
+        let buffer_id = buffer.read_with(&cx, |b, model, _| b.remote_id())?;
+
+        buffer_store.update(&mut cx, |buffer_store, model, cx| {
             buffer_store
-                .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                .create_buffer_for_peer(&buffer, SSH_PEER_ID, model, cx)
                 .detach_and_log_err(cx);
         })?;
 
@@ -440,17 +446,17 @@ impl HeadlessProject {
     ) -> Result<proto::OpenBufferResponse> {
         let (buffer_store, buffer) = this.update(&mut cx, |this, model, cx| {
             let buffer_store = this.buffer_store.clone();
-            let buffer = this
-                .buffer_store
-                .update(cx, |buffer_store, model, cx| buffer_store.create_buffer(cx));
+            let buffer = this.buffer_store.update(cx, |buffer_store, model, cx| {
+                buffer_store.create_buffer(model, cx)
+            });
             anyhow::Ok((buffer_store, buffer))
         })??;
 
         let buffer = buffer.await?;
-        let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
-        buffer_store.update(&mut cx, |buffer_store, cx| {
+        let buffer_id = buffer.read_with(&cx, |b, model, _| b.remote_id())?;
+        buffer_store.update(&mut cx, |buffer_store, model, cx| {
             buffer_store
-                .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                .create_buffer_for_peer(&buffer, SSH_PEER_ID, model, cx)
                 .detach_and_log_err(cx);
         })?;
 
@@ -480,6 +486,7 @@ impl HeadlessProject {
                         worktree_id: worktree.read(cx).id(),
                         path: path.into(),
                     },
+                    model,
                     cx,
                 )
             });
@@ -496,11 +503,11 @@ impl HeadlessProject {
                 });
             }
 
-            let buffer_id = buffer.read_with(cx, |b, _| b.remote_id());
+            let buffer_id = buffer.read_with(cx, |b, model, _| b.remote_id());
 
             buffer_store.update(cx, |buffer_store, model, cx| {
                 buffer_store
-                    .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                    .create_buffer_for_peer(&buffer, SSH_PEER_ID, model, cx)
                     .detach_and_log_err(cx);
             });
 
@@ -525,7 +532,13 @@ impl HeadlessProject {
         )?;
         let mut results = this.update(&mut cx, |this, model, cx| {
             this.buffer_store.update(cx, |buffer_store, model, cx| {
-                buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
+                buffer_store.find_search_candidates(
+                    &query,
+                    message.limit as _,
+                    this.fs.clone(),
+                    model,
+                    cx,
+                )
             })
         })?;
 
@@ -533,14 +546,14 @@ impl HeadlessProject {
             buffer_ids: Vec::new(),
         };
 
-        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
+        let buffer_store = this.read_with(&cx, |this, model, _| this.buffer_store.clone())?;
 
         while let Some(buffer) = results.next().await {
-            let buffer_id = buffer.update(&mut cx, |this, _| this.remote_id())?;
+            let buffer_id = buffer.update(&mut cx, |this, model, _| this.remote_id())?;
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store
-                .update(&mut cx, |buffer_store, cx| {
-                    buffer_store.create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                .update(&mut cx, |buffer_store, model, cx| {
+                    buffer_store.create_buffer_for_peer(&buffer, SSH_PEER_ID, model, cx)
                 })?
                 .await?;
         }
@@ -554,7 +567,7 @@ impl HeadlessProject {
         cx: AsyncAppContext,
     ) -> Result<proto::ListRemoteDirectoryResponse> {
         let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
-        let fs = cx.read_model(&this, |this, _| this.fs.clone())?;
+        let fs = cx.read_model(&this, |this, model, _| this.fs.clone())?;
 
         let mut entries = Vec::new();
         let mut response = fs.read_dir(Path::new(&expanded)).await?;
@@ -571,7 +584,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::GetPathMetadata>,
         cx: AsyncAppContext,
     ) -> Result<proto::GetPathMetadataResponse> {
-        let fs = cx.read_model(&this, |this, _| this.fs.clone())?;
+        let fs = cx.read_model(&this, |this, model, _| this.fs.clone())?;
         let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
 
         let metadata = fs.metadata(&PathBuf::from(expanded.clone())).await?;
