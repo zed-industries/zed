@@ -1244,7 +1244,7 @@ impl<'a> Iterator for FoldBufferRows<'a> {
                 self.input_buffer_rows.next();
             }
             *self.fold_point.row_mut() += 1;
-            self.input_buffer_rows.next()
+            self.input_buffer_rows.next().map(|info| info.row)
         } else {
             None
         }

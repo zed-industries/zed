@@ -1,6 +1,7 @@
 use super::inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlaySnapshot};
 use crate::{Highlights, InlayOffset, InlayPoint};
 use collections::HashMap;
+use git::diff::DiffHunkStatus;
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{BufferChunks, BufferId, Chunk};
 use multi_buffer::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset};
@@ -1131,14 +1132,38 @@ impl<'a> DiffMapBufferRows<'a> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct LineInfo {
+    pub row: Option<u32>,
+    pub diff_status: Option<DiffHunkStatus>,
+}
+
 impl<'a> Iterator for DiffMapBufferRows<'a> {
-    type Item = Option<u32>;
+    type Item = LineInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = if let Some(DiffTransform::DeletedHunk { .. }) = self.cursor.item() {
-            Some(None)
-        } else {
-            self.input_buffer_rows.next()
+        let result = match self.cursor.item() {
+            Some(DiffTransform::DeletedHunk { .. }) => Some(LineInfo {
+                row: None,
+                diff_status: Some(DiffHunkStatus::Removed),
+            }),
+            Some(DiffTransform::BufferContent {
+                is_inserted_hunk, ..
+            }) => {
+                let row = self.input_buffer_rows.next();
+                row.map(|row| LineInfo {
+                    row,
+                    diff_status: if *is_inserted_hunk {
+                        Some(DiffHunkStatus::Added)
+                    } else {
+                        None
+                    },
+                })
+            }
+            None => self.input_buffer_rows.next().map(|row| LineInfo {
+                row,
+                diff_status: None,
+            }),
         };
         self.diff_point.0 += Point::new(1, 0);
         if self.diff_point >= self.cursor.end(&()).0 {
@@ -1381,22 +1406,23 @@ mod tests {
             sync,
             indoc!(
                 "
-                ZERO
-                one
-                two
-                TWO
-                three
-                four
-                five
-                six
+                + ZERO
+                  one
+                - two
+                + TWO
+                  three
+                - four
+                - five
+                  six
                 "
             ),
         );
 
-        assert_chunks_in_ranges(&snapshot);
-
         assert_eq!(
-            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            snapshot
+                .buffer_rows(0)
+                .map(|info| info.row)
+                .collect::<Vec<_>>(),
             vec![
                 Some(0),
                 Some(1),
@@ -1410,29 +1436,8 @@ mod tests {
             ]
         );
 
-        assert_eq!(
-            snapshot.buffer_rows(4).collect::<Vec<_>>(),
-            vec![Some(3), None, None, Some(4), Some(5)]
-        );
-        assert_eq!(
-            snapshot.buffer_rows(5).collect::<Vec<_>>(),
-            vec![None, None, Some(4), Some(5)]
-        );
-        assert_eq!(
-            snapshot.buffer_rows(6).collect::<Vec<_>>(),
-            vec![None, Some(4), Some(5)]
-        );
-
-        let mut buffer_rows = snapshot.buffer_rows(0);
-        buffer_rows.seek(7);
-        assert_eq!(buffer_rows.next(), Some(Some(4)));
-        buffer_rows.seek(6);
-        assert_eq!(buffer_rows.next(), Some(None));
-        buffer_rows.seek(5);
-        assert_eq!(buffer_rows.next(), Some(None));
-        buffer_rows.seek(4);
-        assert_eq!(buffer_rows.next(), Some(Some(3)));
-        drop(buffer_rows);
+        assert_chunks_in_ranges(&snapshot);
+        assert_consistent_line_numbers(&snapshot);
 
         for (point, offset) in &[
             (
@@ -1492,12 +1497,12 @@ mod tests {
             sync,
             indoc!(
                 "
-                ZERO
-                one
-                two
-                TWO
-                three
-                six
+                  ZERO
+                  one
+                - two
+                + TWO
+                  three
+                  six
                 "
             ),
         );
@@ -1531,13 +1536,13 @@ mod tests {
             sync,
             indoc!(
                 "
-                ZERO
-                one hundred
-                  thousand
-                two
-                TWO
-                three
-                six
+                  ZERO
+                  one hundred
+                    thousand
+                - two
+                + TWO
+                  three
+                  six
                 "
             ),
         );
@@ -1725,16 +1730,49 @@ mod tests {
         let (_diff_map, diff_snapshot) =
             cx.update(|cx| DiffMap::new(inlay_snapshot.clone(), multibuffer.clone(), cx));
 
-        assert_eq!(diff_snapshot.buffer_rows(0).collect::<Vec<_>>(), [Some(0)]);
+        assert_eq!(
+            diff_snapshot
+                .buffer_rows(0)
+                .map(|info| info.row)
+                .collect::<Vec<_>>(),
+            [Some(0)]
+        );
     }
 
     #[track_caller]
     fn assert_new_snapshot(
         snapshot: &mut DiffMapSnapshot,
         (new_snapshot, edits): (DiffMapSnapshot, Vec<Edit<DiffOffset>>),
-        expected_text: &str,
+        expected_diff: &str,
     ) {
-        assert_eq!(new_snapshot.text(), expected_text);
+        let actual_text = new_snapshot.text();
+        let line_infos = new_snapshot.buffer_rows(0).collect::<Vec<_>>();
+        let has_diff = line_infos.iter().any(|info| info.diff_status.is_some());
+        let actual_diff = actual_text
+            .split('\n')
+            .zip(line_infos)
+            .map(|(line, info)| {
+                let marker = match info.diff_status {
+                    Some(DiffHunkStatus::Added) => "+ ",
+                    Some(DiffHunkStatus::Removed) => "- ",
+                    Some(DiffHunkStatus::Modified) => unreachable!(),
+                    None => {
+                        if has_diff {
+                            "  "
+                        } else {
+                            ""
+                        }
+                    }
+                };
+                if line.is_empty() {
+                    String::new()
+                } else {
+                    format!("{marker}{line}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        pretty_assertions::assert_eq!(actual_diff, expected_diff);
         check_edits(snapshot, &new_snapshot, &edits);
         *snapshot = new_snapshot;
     }
@@ -1790,6 +1828,30 @@ mod tests {
                 .map(|chunk| chunk.text)
                 .collect::<String>();
             assert_eq!(head, &full_text[..ix], "start with range: {:?}", ..ix);
+        }
+    }
+
+    #[track_caller]
+    fn assert_consistent_line_numbers(snapshot: &DiffMapSnapshot) {
+        let all_line_numbers = snapshot.buffer_rows(0).collect::<Vec<_>>();
+        for start_row in 1..all_line_numbers.len() {
+            let line_numbers = snapshot.buffer_rows(start_row as u32).collect::<Vec<_>>();
+            assert_eq!(
+                line_numbers,
+                all_line_numbers[start_row..],
+                "start_row: {start_row}"
+            );
+
+            for seek_row in 0..all_line_numbers.len() {
+                let mut numbers = snapshot.buffer_rows(start_row as u32);
+                numbers.seek(seek_row as u32);
+                let line_numbers = numbers.collect::<Vec<_>>();
+                assert_eq!(
+                    line_numbers,
+                    all_line_numbers[seek_row..],
+                    "seek_row: {seek_row}, start_row: {start_row}"
+                );
+            }
         }
     }
 
