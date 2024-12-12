@@ -12,14 +12,9 @@ use text::{Bias, Edit, Patch, Point, TextSummary, ToOffset as _};
 pub(crate) struct DiffMap {
     snapshot: DiffMapSnapshot,
     multibuffer: Model<MultiBuffer>,
-    diff_bases: HashMap<BufferId, ChangeSetState>,
+    change_set_subscriptions: HashMap<BufferId, Subscription>,
     all_hunks_expanded: bool,
     edits_since_sync: Patch<DiffOffset>,
-}
-
-struct ChangeSetState {
-    change_set: Model<BufferChangeSet>,
-    _subscription: Subscription,
 }
 
 #[derive(Clone)]
@@ -40,6 +35,7 @@ pub struct DiffMapSnapshot {
 enum DiffTransform {
     BufferContent {
         summary: TextSummary,
+        is_inserted_hunk: bool,
     },
     DeletedHunk {
         summary: TextSummary,
@@ -138,6 +134,7 @@ impl DiffMap {
             transforms: SumTree::from_item(
                 DiffTransform::BufferContent {
                     summary: inlay_snapshot.text_summary(),
+                    is_inserted_hunk: false,
                 },
                 &(),
             ),
@@ -148,7 +145,7 @@ impl DiffMap {
             multibuffer,
             snapshot: snapshot.clone(),
             all_hunks_expanded: false,
-            diff_bases: HashMap::default(),
+            change_set_subscriptions: HashMap::default(),
             edits_since_sync: Patch::default(),
         });
 
@@ -162,12 +159,9 @@ impl DiffMap {
     ) {
         let buffer_id = change_set.read(cx).buffer_id;
         self.buffer_diff_changed(change_set.clone(), cx);
-        self.diff_bases.insert(
+        self.change_set_subscriptions.insert(
             buffer_id,
-            ChangeSetState {
-                _subscription: cx.observe(&change_set, Self::buffer_diff_changed),
-                change_set,
-            },
+            cx.observe(&change_set, Self::buffer_diff_changed),
         );
     }
 
@@ -215,6 +209,26 @@ impl DiffMap {
             self.snapshot.diffs.remove(&buffer_id);
         }
         self.recompute_transforms(DiffMapOperation::BufferDiffUpdated { buffer_id }, cx);
+    }
+
+    pub(super) fn has_expanded_diff_hunks_in_ranges(
+        &self,
+        ranges: &[Range<multi_buffer::Anchor>],
+    ) -> bool {
+        let mut cursor = self.snapshot.transforms.cursor::<InlayOffset>(&());
+        for range in ranges {
+            let range = range.to_offset(self.snapshot.buffer());
+            let inlay_start = self.snapshot.inlay_snapshot.to_inlay_offset(range.start);
+            let inlay_end = self.snapshot.inlay_snapshot.to_inlay_offset(range.end);
+            cursor.seek(&inlay_start, Bias::Right, &());
+            while *cursor.start() < inlay_end {
+                if let Some(DiffTransform::DeletedHunk { .. }) = cursor.item() {
+                    return true;
+                }
+                cursor.next(&());
+            }
+        }
+        false
     }
 
     pub(super) fn expand_diff_hunks(
@@ -333,6 +347,7 @@ impl DiffMap {
         while let Some((mut edit, mut is_inlay_edit, mut multibuffer_range)) = changes.next() {
             new_transforms.append(cursor.slice(&edit.old.start, Bias::Left, &()), &());
 
+            let mut end_of_current_insert = InlayOffset(0);
             loop {
                 let old_overshoot = (edit.old.start - cursor.start().0).0;
                 let new_overshoot = edit.new.start.0 - new_transforms.summary().inlay_map.len;
@@ -381,9 +396,11 @@ impl DiffMap {
                                 continue;
                             }
 
+                            let excerpt_buffer_range_start_offset =
+                                excerpt_buffer_range.start.to_offset(buffer);
                             let hunk_start_multibuffer_offset = excerpt_range.start
                                 + hunk_start_buffer_offset
-                                - excerpt_buffer_range.start.to_offset(buffer);
+                                - excerpt_buffer_range_start_offset;
                             let hunk_start_inlay_offset = self
                                 .snapshot
                                 .inlay_snapshot
@@ -392,6 +409,7 @@ impl DiffMap {
                             self.push_buffer_content_transform(
                                 &mut new_transforms,
                                 hunk_start_inlay_offset,
+                                end_of_current_insert,
                             );
 
                             while cursor.end(&()).0 <= hunk_start_inlay_offset {
@@ -440,41 +458,54 @@ impl DiffMap {
                                 }
                                 _ => {}
                             };
-                            if hunk.diff_base_byte_range.len() == 0 {
-                                should_expand_hunk = false;
-                            }
 
                             if should_expand_hunk {
-                                let mut text_cursor = base_text.as_rope().cursor(0);
-                                let base_text_start =
-                                    text_cursor.summary::<Point>(hunk.diff_base_byte_range.start);
-                                let base_text_summary = text_cursor
-                                    .summary::<TextSummary>(hunk.diff_base_byte_range.end);
+                                if hunk.diff_base_byte_range.len() > 0 {
+                                    if !was_previously_expanded {
+                                        let hunk_overshoot =
+                                            (hunk_start_inlay_offset - cursor.start().0).0;
+                                        let old_offset =
+                                            cursor.start().1 + DiffOffset(hunk_overshoot);
+                                        let new_start =
+                                            DiffOffset(new_transforms.summary().diff_map.len);
+                                        let new_end =
+                                            new_start + DiffOffset(hunk.diff_base_byte_range.len());
+                                        let edit = Edit {
+                                            old: old_offset..old_offset,
+                                            new: new_start..new_end,
+                                        };
+                                        edits.push(edit);
+                                    }
 
-                                if !was_previously_expanded {
-                                    let hunk_overshoot =
-                                        (hunk_start_inlay_offset - cursor.start().0).0;
-                                    let old_offset = cursor.start().1 + DiffOffset(hunk_overshoot);
-                                    let new_start =
-                                        DiffOffset(new_transforms.summary().diff_map.len);
-                                    let new_end =
-                                        new_start + DiffOffset(hunk.diff_base_byte_range.len());
-                                    let edit = Edit {
-                                        old: old_offset..old_offset,
-                                        new: new_start..new_end,
-                                    };
-                                    edits.push(edit);
+                                    let mut text_cursor = base_text.as_rope().cursor(0);
+                                    let base_text_start = text_cursor
+                                        .summary::<Point>(hunk.diff_base_byte_range.start);
+                                    let base_text_summary = text_cursor
+                                        .summary::<TextSummary>(hunk.diff_base_byte_range.end);
+                                    new_transforms.push(
+                                        DiffTransform::DeletedHunk {
+                                            base_text_byte_range: hunk.diff_base_byte_range.clone(),
+                                            summary: base_text_summary,
+                                            buffer_id,
+                                            base_text_start,
+                                        },
+                                        &(),
+                                    );
                                 }
 
-                                new_transforms.push(
-                                    DiffTransform::DeletedHunk {
-                                        base_text_byte_range: hunk.diff_base_byte_range.clone(),
-                                        summary: base_text_summary,
-                                        buffer_id,
-                                        base_text_start,
-                                    },
-                                    &(),
-                                );
+                                let hunk_end_buffer_offset =
+                                    hunk.buffer_range.end.to_offset(buffer);
+
+                                if hunk_end_buffer_offset > hunk_start_buffer_offset {
+                                    let hunk_end_multibuffer_offset = excerpt_range.start
+                                        + hunk_end_buffer_offset
+                                        - excerpt_buffer_range_start_offset;
+                                    let hunk_end_inlay_offset = self
+                                        .snapshot
+                                        .inlay_snapshot
+                                        .to_inlay_offset(hunk_end_multibuffer_offset);
+                                    end_of_current_insert = hunk_end_inlay_offset;
+                                }
                             } else if was_previously_expanded {
                                 let old_start = cursor.start().1;
                                 let new_offset = DiffOffset(new_transforms.summary().diff_map.len);
@@ -506,7 +537,11 @@ impl DiffMap {
                 }
 
                 let old_overshoot = (edit.old.end - cursor.start().0).0;
-                self.push_buffer_content_transform(&mut new_transforms, edit.new.end);
+                self.push_buffer_content_transform(
+                    &mut new_transforms,
+                    edit.new.end,
+                    end_of_current_insert,
+                );
                 let diff_edit_old_end = cursor.start().1 + DiffOffset(old_overshoot);
                 let diff_edit_new_end = DiffOffset(new_transforms.summary().diff_map.len);
 
@@ -526,7 +561,11 @@ impl DiffMap {
 
                 let suffix = (cursor.end(&()).0 - edit.old.end).0;
                 let transform_end = InlayOffset(new_transforms.summary().inlay_map.len + suffix);
-                self.push_buffer_content_transform(&mut new_transforms, transform_end);
+                self.push_buffer_content_transform(
+                    &mut new_transforms,
+                    transform_end,
+                    end_of_current_insert,
+                );
                 cursor.next(&());
                 break;
             }
@@ -548,17 +587,33 @@ impl DiffMap {
         &self,
         new_transforms: &mut SumTree<DiffTransform>,
         end_offset: InlayOffset,
+        end_of_current_inserted_hunk: InlayOffset,
     ) {
-        let summary_to_add = self.snapshot.inlay_snapshot.text_summary_for_range(
-            InlayOffset(new_transforms.summary().inlay_map.len)..end_offset,
-        );
-        if summary_to_add.len > 0 {
+        for (end_offset, region_is_inserted_hunk) in [
+            (end_offset.min(end_of_current_inserted_hunk), true),
+            (end_offset, false),
+        ] {
+            let start_offset = InlayOffset(new_transforms.summary().inlay_map.len);
+            if end_offset <= start_offset {
+                continue;
+            }
+            let summary_to_add = self
+                .snapshot
+                .inlay_snapshot
+                .text_summary_for_range(start_offset..end_offset);
+
             let mut did_extend = false;
             new_transforms.update_last(
                 |last_transform| {
-                    if let DiffTransform::BufferContent { summary } = last_transform {
-                        did_extend = true;
-                        *summary += summary_to_add.clone();
+                    if let DiffTransform::BufferContent {
+                        summary,
+                        is_inserted_hunk,
+                    } = last_transform
+                    {
+                        if *is_inserted_hunk == region_is_inserted_hunk {
+                            did_extend = true;
+                            *summary += summary_to_add.clone();
+                        }
                     }
                 },
                 &(),
@@ -567,6 +622,7 @@ impl DiffMap {
                 new_transforms.push(
                     DiffTransform::BufferContent {
                         summary: summary_to_add,
+                        is_inserted_hunk: region_is_inserted_hunk,
                     },
                     &(),
                 )
@@ -586,22 +642,27 @@ impl DiffMap {
             );
         }
 
-        let mut prev_transform_is_buffer_content = false;
+        let mut prev_transform: Option<&DiffTransform> = None;
         for item in snapshot.transforms.iter() {
-            match item {
-                DiffTransform::BufferContent { summary } => {
-                    if prev_transform_is_buffer_content {
-                        panic!("multiple adjacent buffer content transforms");
-                    }
-                    prev_transform_is_buffer_content = true;
-                    if summary.len == 0 && !snapshot.buffer().is_empty() {
-                        panic!("empty buffer content transform");
+            if let DiffTransform::BufferContent {
+                summary,
+                is_inserted_hunk: is_new,
+            } = item
+            {
+                if let Some(DiffTransform::BufferContent {
+                    is_inserted_hunk: prev_is_new,
+                    ..
+                }) = prev_transform
+                {
+                    if *is_new == *prev_is_new {
+                        panic!("multiple adjacent buffer content transforms with the same is_new value");
                     }
                 }
-                DiffTransform::DeletedHunk { .. } => {
-                    prev_transform_is_buffer_content = false;
+                if summary.len == 0 && !snapshot.buffer().is_empty() {
+                    panic!("empty buffer content transform");
                 }
             }
+            prev_transform = Some(item);
         }
     }
 }
@@ -980,7 +1041,7 @@ impl<'a> Iterator for DiffMapChunks<'a> {
         let transform = self.cursor.item()?;
 
         match transform {
-            DiffTransform::BufferContent { summary } => {
+            DiffTransform::BufferContent { summary, .. } => {
                 let chunk = self
                     .inlay_chunk
                     .get_or_insert_with(|| self.inlay_chunks.next().unwrap());
@@ -1084,7 +1145,7 @@ impl sum_tree::Item for DiffTransform {
 
     fn summary(&self, _: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
         match self {
-            DiffTransform::BufferContent { summary } => DiffTransformSummary {
+            DiffTransform::BufferContent { summary, .. } => DiffTransformSummary {
                 inlay_map: summary.clone(),
                 diff_map: summary.clone(),
             },

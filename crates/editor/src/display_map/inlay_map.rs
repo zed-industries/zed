@@ -272,10 +272,6 @@ impl<'a> InlayChunks<'a> {
         self.highlight_endpoints = highlight_endpoints.into_iter().peekable();
         self.active_highlights.clear();
     }
-
-    pub fn offset(&self) -> InlayOffset {
-        self.output_offset
-    }
 }
 
 impl<'a> Iterator for InlayChunks<'a> {

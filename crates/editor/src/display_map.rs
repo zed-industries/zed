@@ -55,6 +55,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
     ToOffset, ToPoint,
 };
+use project::buffer_store::BufferChangeSet;
 use serde::Deserialize;
 use std::{
     any::TypeId,
@@ -370,6 +371,41 @@ impl DisplayMap {
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         self.crease_map.remove(crease_ids, &snapshot)
+    }
+
+    pub fn add_change_set(
+        &mut self,
+        change_set: Model<BufferChangeSet>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.diff_map.update(cx, |diff_map, cx| {
+            diff_map.add_change_set(change_set, cx);
+        });
+    }
+
+    pub fn has_expanded_diff_hunks_in_ranges(
+        &mut self,
+        ranges: &[Range<multi_buffer::Anchor>],
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        self.diff_map
+            .read(cx)
+            .has_expanded_diff_hunks_in_ranges(ranges)
+    }
+
+    pub fn set_all_hunks_expanded(&mut self, cx: &mut ModelContext<Self>) {
+        self.diff_map
+            .update(cx, |diff_map, cx| diff_map.set_all_hunks_expanded(cx))
+    }
+
+    pub fn expand_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut ModelContext<Self>) {
+        self.diff_map
+            .update(cx, |diff_map, cx| diff_map.expand_diff_hunks(ranges, cx))
+    }
+
+    pub fn collapse_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut ModelContext<Self>) {
+        self.diff_map
+            .update(cx, |diff_map, cx| diff_map.collapse_diff_hunks(ranges, cx))
     }
 
     pub fn insert_blocks(

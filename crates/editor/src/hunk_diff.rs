@@ -198,9 +198,9 @@ impl DiffMapSnapshot {
 }
 
 impl Editor {
-    pub fn set_expand_all_diff_hunks(&mut self) {
-        self.diff_map.expand_all = true;
-    }
+    // pub fn set_expand_all_diff_hunks(&mut self) {
+    //     self.diff_map.expand_all = true;
+    // }
 
     pub(super) fn toggle_hovered_hunk(
         &mut self,
@@ -212,12 +212,6 @@ impl Editor {
             self.toggle_hunks_expanded(vec![diff_hunk], cx);
             self.change_selections(None, cx, |selections| selections.refresh());
         }
-    }
-
-    pub fn toggle_hunk_diff(&mut self, _: &ToggleHunkDiff, cx: &mut ViewContext<Self>) {
-        let snapshot = self.snapshot(cx);
-        let selections = self.selections.all(cx);
-        self.toggle_hunks_expanded(hunks_for_selections(&snapshot, &selections), cx);
     }
 
     pub fn expand_all_hunk_diffs(&mut self, _: &ExpandAllHunkDiffs, cx: &mut ViewContext<Self>) {

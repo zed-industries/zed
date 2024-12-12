@@ -1176,7 +1176,12 @@ impl Editor {
 
         let mut code_action_providers = Vec::new();
         if let Some(project) = project.clone() {
-            get_unstaged_changes_for_buffers(&project, buffer.read(cx).all_buffers(), cx);
+            get_unstaged_changes_for_buffers(
+                &project,
+                buffer.read(cx).all_buffers(),
+                display_map.clone(),
+                cx,
+            );
             code_action_providers.push(Arc::new(project) as Arc<_>);
         }
 
@@ -10660,6 +10665,23 @@ impl Editor {
         self.display_map.read(cx).fold_placeholder.clone()
     }
 
+    pub fn set_expand_all_diff_hunks(&mut self, cx: &mut AppContext) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.set_all_hunks_expanded(cx);
+        });
+    }
+
+    pub fn toggle_hunk_diff(&mut self, _: &ToggleHunkDiff, cx: &mut ViewContext<Self>) {
+        let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
+        self.display_map.update(cx, |display_map, cx| {
+            if display_map.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
+                display_map.collapse_diff_hunks(ranges, cx)
+            } else {
+                display_map.expand_diff_hunks(ranges, cx)
+            }
+        })
+    }
+
     pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ViewContext<Self>) {
         if hovered != self.gutter_hovered {
             self.gutter_hovered = hovered;
@@ -11963,7 +11985,12 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if !self.diff_map.diff_bases.contains_key(&buffer_id) {
                     if let Some(project) = &self.project {
-                        get_unstaged_changes_for_buffers(project, [buffer.clone()], cx);
+                        get_unstaged_changes_for_buffers(
+                            project,
+                            [buffer.clone()],
+                            self.display_map.clone(),
+                            cx,
+                        );
                     }
                 }
                 cx.emit(EditorEvent::ExcerptsAdded {
@@ -12668,7 +12695,8 @@ impl Editor {
 fn get_unstaged_changes_for_buffers(
     project: &Model<Project>,
     buffers: impl IntoIterator<Item = Model<Buffer>>,
-    cx: &mut ViewContext<Editor>,
+    display_map: Model<DisplayMap>,
+    cx: &mut AppContext,
 ) {
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
@@ -12676,16 +12704,17 @@ fn get_unstaged_changes_for_buffers(
             tasks.push(project.open_unstaged_changes(buffer.clone(), cx))
         }
     });
-    cx.spawn(|this, mut cx| async move {
+    cx.spawn(|mut cx| async move {
         let change_sets = futures::future::join_all(tasks).await;
-        this.update(&mut cx, |this, cx| {
-            for change_set in change_sets {
-                if let Some(change_set) = change_set.log_err() {
-                    this.diff_map.add_change_set(change_set, cx);
+        display_map
+            .update(&mut cx, |display_map, cx| {
+                for change_set in change_sets {
+                    if let Some(change_set) = change_set.log_err() {
+                        display_map.add_change_set(change_set, cx);
+                    }
                 }
-            }
-        })
-        .ok();
+            })
+            .ok();
     })
     .detach();
 }

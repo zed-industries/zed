@@ -150,7 +150,7 @@ impl ProjectDiffEditor {
         let editor = cx.new_view(|cx| {
             let mut diff_display_editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project.clone()), true, cx);
-            diff_display_editor.set_expand_all_diff_hunks();
+            diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor
         });
 
