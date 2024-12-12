@@ -3192,19 +3192,32 @@ impl ProjectPanel {
         } else {
             item_colors.default
         };
+
         let bg_hover_color = if self.mouse_down {
             item_colors.marked_active
         } else {
             item_colors.hover
         };
-        let border_hover_color = if self.mouse_down || !(is_marked || is_active) {
-            item_colors.hover
-        } else {
-            item_colors.marked_active
-        };
+
+        let border_color =
+            if !self.mouse_down && is_active && self.focus_handle.contains_focused(cx) {
+                item_colors.focused
+            } else if self.mouse_down && is_marked || is_active {
+                item_colors.marked_active
+            } else {
+                item_colors.default
+            };
 
         div()
             .id(entry_id.to_proto() as usize)
+            .group(GROUP_NAME)
+            .cursor_pointer()
+            .rounded_none()
+            .bg(default_color)
+            .border_1()
+            .border_r_2()
+            .border_color(border_color)
+            .hover(|style| style.bg(bg_hover_color))
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
@@ -3340,11 +3353,6 @@ impl ProjectPanel {
                     this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                 }
             }))
-            .cursor_pointer()
-            .bg(default_color)
-            .border_color(default_color)
-            .group(GROUP_NAME)
-            .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
@@ -3508,13 +3516,6 @@ impl ProjectPanel {
                         },
                     ))
                     .overflow_x(),
-            )
-            .border_1()
-            .border_r_2()
-            .rounded_none()
-            .when(
-                !self.mouse_down && is_active && self.focus_handle.contains_focused(cx),
-                |this| this.border_color(item_colors.focused),
             )
     }
 
