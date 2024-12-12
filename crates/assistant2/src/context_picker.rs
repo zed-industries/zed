@@ -2,11 +2,15 @@ mod file_context_picker;
 
 use std::sync::Arc;
 
-use gpui::{DismissEvent, SharedString, Task, View, WeakView};
+use gpui::{
+    AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, FocusableView, SharedString, Task,
+    View, WeakView,
+};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use ui::{
     prelude::*, IconButtonShape, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip,
 };
+use util::ResultExt;
 use workspace::notifications::NotificationHandle;
 use workspace::Workspace;
 
@@ -20,6 +24,7 @@ enum ContextPickerMode {
 }
 
 pub(super) struct ContextPicker {
+    mode: ContextPickerMode,
     workspace: WeakView<Workspace>,
     message_editor: WeakView<MessageEditor>,
     picker: View<Picker<ContextPickerDelegate>>,
@@ -50,8 +55,8 @@ impl ContextPicker {
         ];
 
         let delegate = ContextPickerDelegate {
+            context_picker: cx.view().downgrade(),
             workspace: workspace.clone(),
-            mode: ContextPickerMode::Default,
             all_entries: entries.clone(),
             message_editor: message_editor.clone(),
             filtered_entries: entries,
@@ -62,6 +67,7 @@ impl ContextPicker {
             cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
 
         ContextPicker {
+            mode: ContextPickerMode::Default,
             workspace,
             message_editor,
             picker,
@@ -69,56 +75,19 @@ impl ContextPicker {
     }
 }
 
+impl EventEmitter<DismissEvent> for ContextPicker {}
+
+impl FocusableView for ContextPicker {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
 impl Render for ContextPicker {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let picker = self.picker.clone();
-        let mode = picker.read(cx).delegate.mode.clone();
-
-        match mode {
-            ContextPickerMode::Default => {
-                let handle = self
-                    .message_editor
-                    .update(cx, |this, _| this.context_picker_handle.clone())
-                    .ok();
-
-                PopoverMenu::new("context-picker")
-                    .menu(move |_cx| Some(picker.clone()))
-                    .trigger(
-                        IconButton::new("add-context", IconName::Plus)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small),
-                    )
-                    .attach(gpui::AnchorCorner::TopLeft)
-                    .anchor(gpui::AnchorCorner::BottomLeft)
-                    .offset(gpui::Point {
-                        x: px(0.0),
-                        y: px(-16.0),
-                    })
-                    .when_some(handle, |this, handle| this.with_handle(handle))
-                    .into_any()
-            }
-            ContextPickerMode::File(picker) => {
-                let handle = self
-                    .message_editor
-                    .update(cx, |this, _| this.context_picker_handle.clone())
-                    .ok();
-
-                PopoverMenu::new("context-picker")
-                    .menu(move |_cx| Some(picker.clone()))
-                    .trigger(
-                        IconButton::new("add-context", IconName::Plus)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small),
-                    )
-                    .attach(gpui::AnchorCorner::TopLeft)
-                    .anchor(gpui::AnchorCorner::BottomLeft)
-                    .offset(gpui::Point {
-                        x: px(0.0),
-                        y: px(-16.0),
-                    })
-                    // .when_some(handle, |this, handle| this.with_handle(handle))
-                    .into_any()
-            }
+        match &self.mode {
+            ContextPickerMode::Default => self.picker.clone().into_any(),
+            ContextPickerMode::File(file_picker) => file_picker.clone().into_any(),
         }
     }
 }
@@ -131,7 +100,7 @@ struct ContextPickerEntry {
 }
 
 pub(crate) struct ContextPickerDelegate {
-    mode: ContextPickerMode,
+    context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
     all_entries: Vec<ContextPickerEntry>,
     filtered_entries: Vec<ContextPickerEntry>,
@@ -192,22 +161,24 @@ impl PickerDelegate for ContextPickerDelegate {
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(entry) = self.filtered_entries.get(self.selected_ix) {
-            match entry.name.to_string().as_str() {
-                "file" => {
-                    self.mode = ContextPickerMode::File(cx.new_view(|cx| {
-                        FileContextPicker::new(
-                            self.workspace.clone(),
-                            self.message_editor.clone(),
-                            cx,
-                        )
-                    }));
-                }
-                _ => {}
-            }
+            self.context_picker
+                .update(cx, |this, cx| match entry.name.to_string().as_str() {
+                    "file" => {
+                        this.mode = ContextPickerMode::File(cx.new_view(|cx| {
+                            FileContextPicker::new(
+                                self.workspace.clone(),
+                                self.message_editor.clone(),
+                                cx,
+                            )
+                        }));
+                    }
+                    _ => {}
+                })
+                .log_err();
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {}
 
     fn editor_position(&self) -> PickerEditorPosition {
         PickerEditorPosition::End

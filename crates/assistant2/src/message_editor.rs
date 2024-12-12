@@ -9,7 +9,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, IconButtonShape, KeyBinding,
-    PopoverMenuHandle, Tooltip,
+    PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use workspace::Workspace;
 
@@ -26,7 +26,7 @@ pub struct MessageEditor {
     context: Vec<Context>,
     next_context_id: ContextId,
     context_picker: View<ContextPicker>,
-    pub(crate) context_picker_handle: PopoverMenuHandle<Picker<ContextPickerDelegate>>,
+    pub(crate) context_picker_handle: PopoverMenuHandle<ContextPicker>,
     use_tools: bool,
 }
 
@@ -191,6 +191,12 @@ impl Render for MessageEditor {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
         let focus_handle = self.editor.focus_handle(cx);
+        let context_picker = self.context_picker.clone();
+
+        // let handle = self
+        //     .message_editor
+        //     .update(cx, |this, _| this.context_picker_handle.clone())
+        //     .ok();
 
         v_flex()
             .key_context("MessageEditor")
@@ -203,7 +209,22 @@ impl Render for MessageEditor {
                 h_flex()
                     .flex_wrap()
                     .gap_2()
-                    .child(self.context_picker.clone())
+                    .child(
+                        PopoverMenu::new("context-picker")
+                            .menu(move |_cx| Some(context_picker.clone()))
+                            .trigger(
+                                IconButton::new("add-context", IconName::Plus)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::Small),
+                            )
+                            .attach(gpui::AnchorCorner::TopLeft)
+                            .anchor(gpui::AnchorCorner::BottomLeft)
+                            .offset(gpui::Point {
+                                x: px(0.0),
+                                y: px(-16.0),
+                            })
+                            .with_handle(self.context_picker_handle.clone()),
+                    )
                     .children(self.context.iter().map(|context| {
                         ContextPill::new(context.clone()).on_remove({
                             let context = context.clone();
