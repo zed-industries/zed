@@ -9,7 +9,7 @@ use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
     point, size, Along, AnyModel, AnyWeakModel, Axis, Bounds, IntoElement, Model, MouseButton,
-    Pixels, Point, StyleRefinement, Model,
+    Pixels, Point, StyleRefinement,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -128,9 +128,10 @@ impl PaneGroup {
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &Model<Pane>,
-        zoomed: Option<&AnyWeakView>,
+        zoomed: Option<&AnyWeakModel>,
         app_state: &Arc<AppState>,
-        model: &Model<Workspace>, cx: &mut AppContext,
+        model: &Model<Workspace>,
+        cx: &mut AppContext,
     ) -> impl IntoElement {
         self.root.render(
             project,
@@ -235,9 +236,10 @@ impl Member {
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &Model<Pane>,
-        zoomed: Option<&AnyWeakView>,
+        zoomed: Option<&AnyWeakModel>,
         app_state: &Arc<AppState>,
-        model: &Model<Workspace>, cx: &mut AppContext,
+        model: &Model<Workspace>,
+        cx: &mut AppContext,
     ) -> impl IntoElement {
         match self {
             Member::Pane(pane) => {
@@ -321,8 +323,8 @@ impl Member {
                     .flex_1()
                     .size_full()
                     .child(
-                        AnyModel::from(pane.clone())
-                            .cached(StyleRefinement::default().v_flex().size_full()),
+                        pane.clone(), // todo! implement caching!!
+                                      // .cached(StyleRefinement::default().v_flex().size_full()),
                     )
                     .when_some(leader_border, |this, color| {
                         this.child(
@@ -350,7 +352,7 @@ impl Member {
                                     |this, (leader_project_id, leader_user_id)| {
                                         this.cursor_pointer().on_mouse_down(
                                             MouseButton::Left,
-                                            model.listener(move |this, _, cx| {
+                                            model.listener(move |this, _, model, window, cx| {
                                                 crate::join_in_room_project(
                                                     leader_project_id,
                                                     leader_user_id,
@@ -684,9 +686,10 @@ impl PaneAxis {
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &Model<Pane>,
-        zoomed: Option<&AnyWeakView>,
+        zoomed: Option<&AnyWeakModel>,
         app_state: &Arc<AppState>,
-        model: &Model<Workspace>, cx: &mut AppContext,
+        model: &Model<Workspace>,
+        cx: &mut AppContext,
     ) -> gpui::AnyElement {
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;
@@ -970,7 +973,7 @@ mod element {
             }
 
             workspace
-                .update(cx, |this, model, cx| this.serialize_workspace(cx))
+                .update(cx, |this, model, cx| this.serialize_workspace(model, cx))
                 .log_err();
             cx.stop_propagation();
             cx.refresh();
@@ -1100,8 +1103,8 @@ mod element {
                 };
 
                 bounding_boxes.push(Some(child_bounds));
-                child.layout_as_root(child_size.into(), cx);
-                child.prepaint_at(origin, cx);
+                child.layout_as_root(child_size.into(), window, cx);
+                child.prepaint_at(origin, window, cx);
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
                 layout.children.push(PaneAxisChildLayout {
@@ -1113,8 +1116,12 @@ mod element {
 
             for (ix, child_layout) in layout.children.iter_mut().enumerate() {
                 if active_pane_magnification.is_none() && ix < len - 1 {
-                    child_layout.handle =
-                        Some(Self::layout_handle(self.axis, child_layout.bounds, cx));
+                    child_layout.handle = Some(Self::layout_handle(
+                        self.axis,
+                        child_layout.bounds,
+                        window,
+                        cx,
+                    ));
                 }
             }
 
@@ -1127,7 +1134,8 @@ mod element {
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
-            cx: &mut ui::prelude::
+            window: &mut Window,
+            cx: &mut AppContext,
         ) {
             for child in &mut layout.children {
                 child.element.paint(window, cx);
@@ -1197,14 +1205,16 @@ mod element {
                         let flexes = self.flexes.clone();
                         let workspace = self.workspace.clone();
                         let handle_hitbox = handle.hitbox.clone();
-                        move |e: &MouseDownEvent, phase, cx| {
+                        move |e: &MouseDownEvent, phase, model, cx| {
                             if phase.bubble() && handle_hitbox.is_hovered(cx) {
                                 dragged_handle.replace(Some(ix));
                                 if e.click_count >= 2 {
                                     let mut borrow = flexes.lock();
                                     *borrow = vec![1.; borrow.len()];
                                     workspace
-                                        .update(cx, |this, model, cx| this.serialize_workspace(model, cx))
+                                        .update(cx, |this, model, cx| {
+                                            this.serialize_workspace(model, cx)
+                                        })
                                         .log_err();
 
                                     cx.refresh();

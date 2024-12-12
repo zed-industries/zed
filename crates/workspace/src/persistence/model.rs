@@ -377,12 +377,12 @@ impl SerializedPaneGroup {
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
                     .update(cx, |workspace, model, cx| {
-                        workspace.add_pane(cx).downgrade()
+                        workspace.add_pane(model, window, cx).downgrade()
                     })
                     .log_err()?;
                 let active = serialized_pane.active;
-                let new_items = serialized_pane
-                    .deserialize_to(project, &pane, workspace_id, workspace.clone(), cx)
+                let new_items = serialized_paneself
+                    .deserialize_to(project, &pane, workspace_id, workspace.clone(), window, cx)
                     .await
                     .log_err()?;
 
@@ -400,7 +400,7 @@ impl SerializedPaneGroup {
                     let pane = pane.upgrade()?;
                     workspace
                         .update(cx, |workspace, model, cx| {
-                            workspace.force_remove_pane(&pane, &None, cx)
+                            workspace.force_remove_pane(&pane, &None, model, window, cx)
                         })
                         .log_err()?;
                     None
@@ -432,7 +432,7 @@ impl SerializedPane {
         pane: &WeakModel<Pane>,
         workspace_id: WorkspaceId,
         workspace: WeakModel<Workspace>,
-        window_handle: AnyWindowHandle,
+        window: AnyWindowHandle,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut item_tasks = Vec::new();
@@ -465,15 +465,19 @@ impl SerializedPane {
             items.push(item_handle.clone());
 
             if let Some(item_handle) = item_handle {
-                pane.update(cx, |pane, model, cx| {
-                    pane.add_item(item_handle.clone(), true, true, None, model, cx);
+                window.update(cx, |window, cx| {
+                    pane.update(cx, |pane, model, cx| {
+                        pane.add_item(item_handle.clone(), true, true, None, model, window, cx);
+                    })
                 })?;
             }
         }
 
         if let Some(active_item_index) = active_item_index {
-            pane.update(cx, |pane, model, cx| {
-                pane.activate_item(active_item_index, false, false, model, cx);
+            window.update(cx, |window, cx| {
+                pane.update(cx, |pane, model, cx| {
+                    pane.activate_item(active_item_index, false, false, model, window, cx);
+                })
             })?;
         }
 

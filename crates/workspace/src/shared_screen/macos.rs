@@ -7,8 +7,8 @@ use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, surface, AppContext, AppContext, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Task, VisualContext,
+    div, surface, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement, Model,
+    ParentElement, Render, SharedString, Styled, Task, Window,
 };
 use std::sync::{Arc, Weak};
 use ui::{prelude::*, Icon, IconName};
@@ -33,6 +33,7 @@ impl SharedScreen {
         peer_id: PeerId,
         user: Arc<User>,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Self {
         window.focus_handle();
@@ -69,7 +70,7 @@ impl Render for SharedScreen {
     fn render(
         &mut self,
         model: &Model<Self>,
-        window: &mut gpui::Window,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> impl IntoElement {
         div()
@@ -94,15 +95,15 @@ impl Item for SharedScreen {
 
     fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(nav_history) = self.nav_history.as_mut() {
-            nav_history.push::<()>(None, cx);
+            nav_history.push::<()>(None, model, cx);
         }
     }
 
-    fn tab_icon(&self, _window: &Window, cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, cx: &AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::Screen))
     }
 
-    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, cx: &AppContext) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
@@ -118,6 +119,7 @@ impl Item for SharedScreen {
         &self,
         _workspace_id: Option<WorkspaceId>,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Model<Self>> {
         let track = self.track.upgrade()?;

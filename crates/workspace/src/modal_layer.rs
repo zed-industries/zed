@@ -77,8 +77,13 @@ impl ModalLayer {
         }
     }
 
-    pub fn toggle_modal<V, B>(&mut self, model: &Model<Self>, cx: &mut AppContext, build_view: B)
-    where
+    pub fn toggle_modal<V, B>(
+        &mut self,
+        model: &Model<Self>,
+        window: &mut Window,
+        cx: &mut AppContext,
+        build_view: B,
+    ) where
         V: ModalView,
         B: FnOnce(&Model<V>, &mut AppContext) -> V,
     {

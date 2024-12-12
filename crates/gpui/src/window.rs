@@ -843,6 +843,7 @@ impl Window {
             prompt: None,
         })
     }
+
     fn new_focus_listener(&self, value: AnyWindowFocusListener) -> (Subscription, impl FnOnce()) {
         self.focus_listeners.insert((), value)
     }
@@ -1045,7 +1046,7 @@ impl Window {
     }
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
-    pub fn window_decorations(&self) -> Decorations {
+    pub fn decorations(&self) -> Decorations {
         self.platform_window.decorations()
     }
 
@@ -3636,6 +3637,17 @@ impl Window {
         let window_handle = self.handle.clone();
         cx.spawn(|async_cx| f(window_handle, async_cx))
     }
+
+    /// Defer an action to be executed on the next frame.
+    pub fn defer<F>(&self, cx: &mut AppContext, f: F)
+    where
+        F: FnOnce(&mut Window, &mut AppContext) + 'static,
+    {
+        let handle = self.handle();
+        cx.defer(move |cx| {
+            handle.update(cx, |window, cx| f(window, cx)).ok();
+        });
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -3732,6 +3744,19 @@ impl<T: 'static> WindowHandle<T> {
             let state = window.state.clone().unwrap().downcast().unwrap();
             state.update(cx, |state, model, cx| update(state, model, window, cx))
         })
+    }
+
+    /// Defer an action to be executed on the next frame.
+    pub fn defer<F>(&self, cx: &mut AppContext, f: F)
+    where
+        F: FnOnce(&mut T, &Model<T>, &mut Window, &mut AppContext) + 'static,
+    {
+        let handle = self.clone();
+        cx.defer(move |cx| {
+            handle
+                .update(cx, |state, model, window, cx| f(state, model, window, cx))
+                .ok();
+        });
     }
 
     /// Read the state out of this window.

@@ -18,7 +18,7 @@ impl Render for WindowShadowExample {
         window: &mut Window,
         _cx: &mut AppContext,
     ) -> impl IntoElement {
-        let decorations = window.window_decorations();
+        let decorations = window.decorations();
         let rounding = px(10.0);
         let shadow_size = px(10.0);
         let border_size = px(1.0);

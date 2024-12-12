@@ -231,12 +231,11 @@ impl TestAppContext {
             )
             .unwrap();
         drop(cx);
-        let state = window.state(self).unwrap();
         let cx = VisualTestContext::from_window(window.into(), self).as_mut();
         cx.run_until_parked();
 
         // it might be nice to try and cleanup these at the end of each test.
-        (state, cx)
+        (window.state(cx).unwrap(), cx)
     }
 
     /// returns the TextSystem

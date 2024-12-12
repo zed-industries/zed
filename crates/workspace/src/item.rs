@@ -13,8 +13,8 @@ use client::{
 };
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    AnyElement, AnyModel, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    Font, HighlightStyle, Model, Pixels, Point, SharedString, Task, WeakModel,
+    AnyElement, AnyModel, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, Font, HighlightStyle, Model, Pixels, Point, SharedString, Task, WeakModel,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
@@ -452,7 +452,8 @@ pub trait ItemHandle: 'static + Send {
     fn workspace_deactivated(&self, window: &mut gpui::Window, cx: &mut AppContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut AppContext) -> bool;
     fn item_id(&self) -> EntityId;
-    fn to_any(&self) -> AnyModel;
+    fn model(&self) -> AnyModel;
+    fn view(&self) -> AnyView;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_deleted_file(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
@@ -494,7 +495,7 @@ pub trait WeakItemHandle: Send + Sync {
 
 impl dyn ItemHandle {
     pub fn downcast<V: 'static>(&self) -> Option<Model<V>> {
-        self.to_any().downcast().ok()
+        self.model().downcast().ok()
     }
 
     pub fn act_as<V: 'static>(&self, cx: &AppContext) -> Option<Model<V>> {
@@ -840,7 +841,11 @@ impl<T: Item> ItemHandle for Model<T> {
         self.entity_id()
     }
 
-    fn to_any(&self) -> AnyModel {
+    fn model(&self) -> AnyModel {
+        self.clone().into()
+    }
+
+    fn view(&self) -> AnyView {
         self.clone().into()
     }
 
@@ -921,7 +926,7 @@ impl<T: Item> ItemHandle for Model<T> {
         &self,
         cx: &AppContext,
     ) -> Option<Box<dyn SerializableItemHandle>> {
-        SerializableItemRegistry::view_to_serializable_item_handle(self.to_any(), cx)
+        SerializableItemRegistry::view_to_serializable_item_handle(self.model(), cx)
     }
 
     fn preserve_preview(&self, cx: &AppContext) -> bool {
@@ -931,13 +936,13 @@ impl<T: Item> ItemHandle for Model<T> {
 
 impl From<Box<dyn ItemHandle>> for AnyModel {
     fn from(val: Box<dyn ItemHandle>) -> Self {
-        val.to_any()
+        val.model()
     }
 }
 
 impl From<&Box<dyn ItemHandle>> for AnyModel {
     fn from(val: &Box<dyn ItemHandle>) -> Self {
-        val.to_any()
+        val.model()
     }
 }
 
@@ -968,6 +973,7 @@ pub trait ProjectItem: Item {
         project: Model<Project>,
         item: Model<Self::Item>,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Self
     where
@@ -1096,7 +1102,7 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
     }
 
     fn dedup(&self, existing: &dyn FollowableItemHandle, cx: &AppContext) -> Option<Dedup> {
-        let existing = existing.to_any().downcast::<T>().ok()?;
+        let existing = existing.model().downcast::<T>().ok()?;
         self.read(cx).dedup(existing.read(cx), cx)
     }
 }
