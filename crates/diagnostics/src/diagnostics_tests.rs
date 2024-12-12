@@ -1052,7 +1052,7 @@ fn editor_blocks(
 
                             Block::ExcerptBoundary { kind, .. } => match kind {
                                 ExcerptBoundaryKind::FoldedBufferBoundary => FILE_HEADER.into(),
-                                ExcerptBoundaryKind::UnfoldedBufferBoundary => FILE_HEADER.into(),
+                                ExcerptBoundaryKind::BufferBoundary => FILE_HEADER.into(),
                                 ExcerptBoundaryKind::ExcerptSeparator => EXCERPT_HEADER.into(),
                             },
                         };

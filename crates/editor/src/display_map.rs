@@ -30,8 +30,7 @@ use crate::{
 };
 pub use block_map::{
     Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap,
-    BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, ExcerptBoundaryKind,
-    RenderBlock,
+    BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
