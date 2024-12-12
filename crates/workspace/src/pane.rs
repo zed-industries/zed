@@ -562,10 +562,10 @@ impl Pane {
         // Before the next render, we might transfer focus
         // to the item, and `focus_handle.contains_focus` returns false because the `active_item`
         // is not hooked up to us in the dispatch tree.
-        self.focus_handle.contains_focused(cx)
+        self.focus_handle.contains_focused(window)
             || self
                 .active_item()
-                .map_or(false, |item| item.focus_handle(cx).contains_focused(cx))
+                .map_or(false, |item| item.focus_handle(cx).contains_focused(window))
     }
 
     fn focus_in(&mut self, model: &Model<Self>, window: &mut Window, cx: &mut AppContext) {
@@ -1118,7 +1118,7 @@ impl Pane {
         if self.zoomed {
             model.emit(Event::ZoomOut, cx);
         } else if !self.items.is_empty() {
-            if !self.focus_handle.contains_focused(cx) {
+            if !self.focus_handle.contains_focused(window) {
                 cx.focus_self();
             }
             model.emit(Event::ZoomIn, cx);
@@ -1167,7 +1167,7 @@ impl Pane {
             self.update_status_bar(model, window, cx);
 
             if focus_item {
-                self.focus_active_item(model, cx);
+                self.focus_active_item(window, cx);
             }
 
             if !self.is_tab_pinned(index) {
@@ -1245,6 +1245,7 @@ impl Pane {
         &mut self,
         action: &CloseActiveItem,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
@@ -1263,6 +1264,7 @@ impl Pane {
             active_item_id,
             action.save_intent.unwrap_or(SaveIntent::Close),
             model,
+            window,
             cx,
         ))
     }
@@ -1272,9 +1274,10 @@ impl Pane {
         item_id_to_close: EntityId,
         save_intent: SaveIntent,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
-        self.close_items(save_intent, model, cx, move |view_id| {
+        self.close_items(save_intent, model, window, cx, move |view_id| {
             view_id == item_id_to_close
         })
     }
@@ -1283,6 +1286,7 @@ impl Pane {
         &mut self,
         action: &CloseInactiveItems,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
@@ -1294,6 +1298,7 @@ impl Pane {
         Some(self.close_items(
             action.save_intent.unwrap_or(SaveIntent::Close),
             model,
+            window,
             cx,
             move |item_id| item_id != active_item_id && !non_closeable_items.contains(&item_id),
         ))
@@ -1303,6 +1308,7 @@ impl Pane {
         &mut self,
         action: &CloseCleanItems,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         let item_ids: Vec<_> = self
@@ -1312,7 +1318,7 @@ impl Pane {
             .collect();
         let non_closeable_items = self.get_non_closeable_item_ids(action.close_pinned);
         Some(
-            self.close_items(SaveIntent::Close, model, cx, move |item_id| {
+            self.close_items(SaveIntent::Close, model, window, cx, move |item_id| {
                 item_ids.contains(&item_id) && !non_closeable_items.contains(&item_id)
             }),
         )
@@ -1322,6 +1328,7 @@ impl Pane {
         &mut self,
         action: &CloseItemsToTheLeft,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
@@ -1329,7 +1336,13 @@ impl Pane {
         }
         let active_item_id = self.items[self.active_item_index].item_id();
         let non_closeable_items = self.get_non_closeable_item_ids(action.close_pinned);
-        Some(self.close_items_to_the_left_by_id(active_item_id, non_closeable_items, model, cx))
+        Some(self.close_items_to_the_left_by_id(
+            active_item_id,
+            non_closeable_items,
+            model,
+            window,
+            cx,
+        ))
     }
 
     pub fn close_items_to_the_left_by_id(
@@ -1337,6 +1350,7 @@ impl Pane {
         item_id: EntityId,
         non_closeable_items: Vec<EntityId>,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let item_ids: Vec<_> = self
@@ -1344,7 +1358,7 @@ impl Pane {
             .take_while(|item| item.item_id() != item_id)
             .map(|item| item.item_id())
             .collect();
-        self.close_items(SaveIntent::Close, cx, model, move |item_id| {
+        self.close_items(SaveIntent::Close, cx, window, model, move |item_id| {
             item_ids.contains(&item_id) && !non_closeable_items.contains(&item_id)
         })
     }
@@ -1353,6 +1367,7 @@ impl Pane {
         &mut self,
         action: &CloseItemsToTheRight,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
@@ -1360,7 +1375,13 @@ impl Pane {
         }
         let active_item_id = self.items[self.active_item_index].item_id();
         let non_closeable_items = self.get_non_closeable_item_ids(action.close_pinned);
-        Some(self.close_items_to_the_right_by_id(active_item_id, non_closeable_items, model, cx))
+        Some(self.close_items_to_the_right_by_id(
+            active_item_id,
+            non_closeable_items,
+            model,
+            window,
+            cx,
+        ))
     }
 
     pub fn close_items_to_the_right_by_id(
@@ -1368,6 +1389,7 @@ impl Pane {
         item_id: EntityId,
         non_closeable_items: Vec<EntityId>,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let item_ids: Vec<_> = self
@@ -1376,7 +1398,7 @@ impl Pane {
             .take_while(|item| item.item_id() != item_id)
             .map(|item| item.item_id())
             .collect();
-        self.close_items(SaveIntent::Close, model, cx, move |item_id| {
+        self.close_items(SaveIntent::Close, model, window, cx, move |item_id| {
             item_ids.contains(&item_id) && !non_closeable_items.contains(&item_id)
         })
     }
@@ -1385,6 +1407,7 @@ impl Pane {
         &mut self,
         action: &CloseAllItems,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
@@ -1395,6 +1418,7 @@ impl Pane {
         Some(self.close_items(
             action.save_intent.unwrap_or(SaveIntent::Close),
             model,
+            window,
             cx,
             |item_id| !non_closeable_items.contains(&item_id),
         ))
@@ -1441,6 +1465,7 @@ impl Pane {
         &mut self,
         mut save_intent: SaveIntent,
         model: &Model<Pane>,
+        window: &mut Window,
         cx: &mut AppContext,
         should_close: impl Fn(EntityId) -> bool,
     ) -> Task<Result<()>> {
@@ -1555,7 +1580,7 @@ impl Pane {
 
                 // Remove the item from the pane.
                 pane.update(&mut cx, |pane, cx| {
-                    pane.remove_item(item_to_close.item_id(), false, true, cx);
+                    pane.remove_item(item_to_close.item_id(), false, true, window, cx);
                 })
                 .ok();
             }
@@ -2227,7 +2252,7 @@ impl Pane {
             .on_mouse_down(
                 MouseButton::Middle,
                 model.listener(move |pane, _event, model, window, cx| {
-                    pane.close_item_by_id(item_id, SaveIntent::Close, model, cx)
+                    pane.close_item_by_id(item_id, SaveIntent::Close, model, window, cx)
                         .detach_and_log_err(cx);
                 }),
             )
@@ -2306,7 +2331,7 @@ impl Pane {
                         .size(ButtonSize::None)
                         .icon_size(IconSize::XSmall)
                         .on_click(model.listener(move |pane, _, model, window, cx| {
-                            pane.close_item_by_id(item_id, SaveIntent::Close, model, cx)
+                            pane.close_item_by_id(item_id, SaveIntent::Close, model, window, cx)
                                 .detach_and_log_err(cx);
                         }))
                 }
@@ -2374,6 +2399,7 @@ impl Pane {
                                             item_id,
                                             SaveIntent::Close,
                                             model,
+                                            window,
                                             cx,
                                         )
                                         .detach_and_log_err(cx);
@@ -2391,9 +2417,13 @@ impl Pane {
                                 let pane = pane.clone();
                                 move |window, cx| {
                                     pane.update(cx, |pane, model, cx| {
-                                        pane.close_items(SaveIntent::Close, model, cx, |id| {
-                                            id != item_id
-                                        })
+                                        pane.close_items(
+                                            SaveIntent::Close,
+                                            model,
+                                            window,
+                                            cx,
+                                            |id| id != item_id,
+                                        )
                                         .detach_and_log_err(cx);
                                     });
                                 }
@@ -2413,6 +2443,7 @@ impl Pane {
                                             item_id,
                                             pane.get_non_closeable_item_ids(false),
                                             model,
+                                            window,
                                             cx,
                                         )
                                         .detach_and_log_err(cx);
@@ -2433,6 +2464,7 @@ impl Pane {
                                             item_id,
                                             pane.get_non_closeable_item_ids(false),
                                             model,
+                                            window,
                                             cx,
                                         )
                                         .detach_and_log_err(cx);
@@ -2455,6 +2487,7 @@ impl Pane {
                                                 close_pinned: false,
                                             },
                                             model,
+                                            window,
                                             cx,
                                         ) {
                                             task.detach_and_log_err(cx)
@@ -2479,6 +2512,7 @@ impl Pane {
                                                 close_pinned: false,
                                             },
                                             model,
+                                            window,
                                             cx,
                                         ) {
                                             task.detach_and_log_err(cx)
@@ -3212,49 +3246,49 @@ impl Render for Pane {
             })
             .on_action(model.listener(
                 |pane: &mut Self, action: &CloseActiveItem, model, window, cx| {
-                    if let Some(task) = pane.close_active_item(action, model, cx) {
+                    if let Some(task) = pane.close_active_item(action, model, window, cx) {
                         task.detach_and_log_err(cx)
                     }
                 },
             ))
             .on_action(model.listener(
                 |pane: &mut Self, action: &CloseInactiveItems, model, window, cx| {
-                    if let Some(task) = pane.close_inactive_items(action, model, cx) {
+                    if let Some(task) = pane.close_inactive_items(action, model, window, cx) {
                         task.detach_and_log_err(cx)
                     }
                 },
             ))
             .on_action(model.listener(
                 |pane: &mut Self, action: &CloseCleanItems, model, window, cx| {
-                    if let Some(task) = pane.close_clean_items(action, model, cx) {
+                    if let Some(task) = pane.close_clean_items(action, model, window, cx) {
                         task.detach_and_log_err(cx)
                     }
                 },
             ))
             .on_action(model.listener(
                 |pane: &mut Self, action: &CloseItemsToTheLeft, model, window, cx| {
-                    if let Some(task) = pane.close_items_to_the_left(action, model, cx) {
+                    if let Some(task) = pane.close_items_to_the_left(action, model, window, cx) {
                         task.detach_and_log_err(cx)
                     }
                 },
             ))
             .on_action(model.listener(
                 |pane: &mut Self, action: &CloseItemsToTheRight, model, window, cx| {
-                    if let Some(task) = pane.close_items_to_the_right(action, model, cx) {
+                    if let Some(task) = pane.close_items_to_the_right(action, model, window, cx) {
                         task.detach_and_log_err(cx)
                     }
                 },
             ))
             .on_action(model.listener(
                 |pane: &mut Self, action: &CloseAllItems, model, window, cx| {
-                    if let Some(task) = pane.close_all_items(action, model, cx) {
+                    if let Some(task) = pane.close_all_items(action, model, window, cx) {
                         task.detach_and_log_err(cx)
                     }
                 },
             ))
             .on_action(model.listener(
                 |pane: &mut Self, action: &CloseActiveItem, model, window, cx| {
-                    if let Some(task) = pane.close_active_item(action, model, cx) {
+                    if let Some(task) = pane.close_active_item(action, model, window, cx) {
                         task.detach_and_log_err(cx)
                     }
                 },
@@ -3685,7 +3719,7 @@ mod tests {
 
         pane.update(cx, |pane, model, cx| {
             assert!(pane
-                .close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
+                .close_active_item(&CloseActiveItem { save_intent: None }, model, window, cx)
                 .is_none())
         });
     }
@@ -3699,99 +3733,95 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|model, window, cx| {
             Workspace::test_new(project.clone(), model, window, cx)
         });
-        let window: AnyWindowHandle = cx.handle();
-        let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
+        let window = cx.handle();
+        let pane = workspace.update(cx, |workspace, _, _| workspace.active_pane().clone());
 
-        window
-            .update(cx, |window, _cx| {
-                // 1. Add with a destination index
-                //   a. Add before the active item
-                set_labeled_items(&pane, ["A", "B*", "C"], cx);
-                pane.update(cx, |pane, model, cx| {
-                    pane.add_item(
-                        Box::new(cx.new_model(|model, cx| {
-                            TestItem::new(model, window, cx).with_label("D")
-                        })),
-                        false,
-                        false,
-                        Some(0),
-                        model,
-                        window,
-                        cx,
-                    );
-                });
-                assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
+        // 1. Add with a destination index
+        //   a. Add before the active item
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
+            pane.add_item(
+                Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label("D")),
+                ),
+                false,
+                false,
+                Some(0),
+                model,
+                window,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
 
-                //   b. Add after the active item
-                set_labeled_items(&pane, ["A", "B*", "C"], cx);
-                pane.update(cx, |pane, model, cx| {
-                    pane.add_item(
-                        Box::new(cx.new_model(|model, cx| {
-                            TestItem::new(model, window, cx).with_label("D")
-                        })),
-                        false,
-                        false,
-                        Some(2),
-                        model,
-                        cx,
-                        window,
-                    );
-                });
-                assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
+        //   b. Add after the active item
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
+            pane.add_item(
+                Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label("D")),
+                ),
+                false,
+                false,
+                Some(2),
+                model,
+                window,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
 
-                //   c. Add at the end of the item list (including off the length)
-                set_labeled_items(&pane, ["A", "B*", "C"], cx);
-                pane.update(cx, |pane, model, cx| {
-                    pane.add_item(
-                        Box::new(cx.new_model(|model, cx| {
-                            TestItem::new(model, window, cx).with_label("D")
-                        })),
-                        false,
-                        false,
-                        Some(5),
-                        model,
-                        cx,
-                        window,
-                    );
-                });
-                assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+        //   c. Add at the end of the item list (including off the length)
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
+            pane.add_item(
+                Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label("D")),
+                ),
+                false,
+                false,
+                Some(5),
+                model,
+                window,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
-                // 2. Add without a destination index
-                //   a. Add with active item at the start of the item list
-                set_labeled_items(&pane, ["A*", "B", "C"], cx);
-                pane.update(cx, |pane, model, cx| {
-                    pane.add_item(
-                        Box::new(cx.new_model(|model, cx| {
-                            TestItem::new(model, window, cx).with_label("D")
-                        })),
-                        false,
-                        false,
-                        None,
-                        model,
-                        cx,
-                        window,
-                    );
-                });
-                set_labeled_items(&pane, ["A", "D*", "B", "C"], cx);
+        // 2. Add without a destination index
+        //   a. Add with active item at the start of the item list
+        set_labeled_items(&pane, ["A*", "B", "C"], cx);
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
+            pane.add_item(
+                Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label("D")),
+                ),
+                false,
+                false,
+                None,
+                model,
+                window,
+                cx,
+            );
+        });
+        set_labeled_items(&pane, ["A", "D*", "B", "C"], cx);
 
-                //   b. Add with active item at the end of the item list
-                set_labeled_items(&pane, ["A", "B", "C*"], cx);
-                pane.update(cx, |pane, model, cx| {
-                    pane.add_item(
-                        Box::new(cx.new_model(|model, cx| {
-                            TestItem::new(model, window, cx).with_label("D")
-                        })),
-                        false,
-                        false,
-                        None,
-                        model,
-                        cx,
-                        window,
-                    );
-                });
-                assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
-            })
-            .unwrap();
+        //   b. Add with active item at the end of the item list
+        set_labeled_items(&pane, ["A", "B", "C*"], cx);
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
+            pane.add_item(
+                Box::new(
+                    cx.new_model(|model, cx| TestItem::new(model, window, cx).with_label("D")),
+                ),
+                false,
+                false,
+                None,
+                model,
+                window,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
     }
 
     #[gpui::test]
@@ -3859,14 +3889,14 @@ mod tests {
 
         //   2c. Add active item to active item at end of list
         let [_, _, c] = set_labeled_items(&pane, ["A", "B", "C*"], cx);
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.add_item(c, false, false, None, model, window, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         //   2d. Add active item to active item at start of list
         let [a, _, _] = set_labeled_items(&pane, ["A*", "B", "C"], cx);
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.add_item(a, false, false, None, model, window, cx);
         });
         assert_item_labels(&pane, ["A*", "B", "C"], cx);
@@ -3881,6 +3911,7 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|model, window, cx| {
             Workspace::test_new(project.clone(), model, window, cx)
         });
+        let window = cx.handle();
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         // singleton view
@@ -3896,8 +3927,8 @@ mod tests {
                 false,
                 None,
                 model,
-                cx,
                 window,
+                cx,
             );
         });
         assert_item_labels(&pane, ["buffer 1*"], cx);
@@ -3915,8 +3946,8 @@ mod tests {
                 false,
                 None,
                 model,
-                cx,
                 window,
+                cx,
             );
         });
         assert_item_labels(&pane, ["buffer 1*"], cx);
@@ -3934,8 +3965,8 @@ mod tests {
                 false,
                 None,
                 model,
-                cx,
                 window,
+                cx,
             );
         });
         assert_item_labels(&pane, ["buffer 1", "buffer 2*"], cx);
@@ -3953,8 +3984,8 @@ mod tests {
                 false,
                 None,
                 model,
-                cx,
                 window,
+                cx,
             );
         });
         assert_item_labels(&pane, ["buffer 1", "buffer 2", "multibuffer 1*"], cx);
@@ -4001,27 +4032,27 @@ mod tests {
         add_labeled_item(&pane, "D", false, cx);
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
-        pane.update_in_window(window, cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.activate_item(1, false, false, model, window, cx)
         });
         add_labeled_item(&pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, window, cx)
         })
         .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
 
-        pane.update_in_window(window, cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.activate_item(3, false, false, model, window, cx)
         });
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, window, cx)
         })
         .unwrap()
         .await
@@ -4029,7 +4060,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, window, cx)
         })
         .unwrap()
         .await
@@ -4037,7 +4068,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "C*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, window, cx)
         })
         .unwrap()
         .await
@@ -4068,13 +4099,13 @@ mod tests {
         add_labeled_item(&pane, "D", false, cx);
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
-        pane.update_in_window(window, cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.activate_item(1, false, false, model, window, cx)
         });
         add_labeled_item(&pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
-        pane.update_in_window(window, cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.close_active_item(&CloseActiveItem { save_intent: None }, model, window, cx)
         })
         .unwrap()
@@ -4082,13 +4113,13 @@ mod tests {
         .unwrap();
         assert_item_labels(&pane, ["A", "B", "C*", "D"], cx);
 
-        pane.update_in_window(window, cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.activate_item(3, false, false, model, window, cx)
         });
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, window, cx)
         })
         .unwrap()
         .await
@@ -4096,7 +4127,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, window, cx)
         })
         .unwrap()
         .await
@@ -4104,7 +4135,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, window, cx)
         })
         .unwrap()
         .await
@@ -4124,7 +4155,6 @@ mod tests {
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
-
         pane.update(cx, |pane, model, cx| {
             pane.close_inactive_items(
                 &CloseInactiveItems {
@@ -4132,6 +4162,7 @@ mod tests {
                     close_pinned: false,
                 },
                 model,
+                window,
                 cx,
             )
         })
@@ -4150,7 +4181,7 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|model, window, cx| {
             Workspace::test_new(project.clone(), model, window, cx)
         });
-        let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
+        let pane = workspace.update(cx, |workspace, _, _| workspace.active_pane().clone());
 
         add_labeled_item(&pane, "A", true, cx);
         add_labeled_item(&pane, "B", false, cx);
@@ -4165,6 +4196,7 @@ mod tests {
                     close_pinned: false,
                 },
                 model,
+                window,
                 cx,
             )
         })
@@ -4186,13 +4218,13 @@ mod tests {
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
-
         pane.update(cx, |pane, model, cx| {
             pane.close_items_to_the_left(
                 &CloseItemsToTheLeft {
                     close_pinned: false,
                 },
                 model,
+                window,
                 cx,
             )
         })
@@ -4214,13 +4246,13 @@ mod tests {
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
-
         pane.update(cx, |pane, model, cx| {
             pane.close_items_to_the_right(
                 &CloseItemsToTheRight {
                     close_pinned: false,
                 },
                 model,
+                window,
                 cx,
             )
         })
@@ -4247,50 +4279,54 @@ mod tests {
         add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        pane.update_in_window(cx.handle(), cx, |pane, model, cx| {
+        pane.update_in_window(cx.handle(), cx, |pane, model, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
-            pane.pin_tab_at(ix, model, cx);
+            pane.pin_tab_at(ix, model, window, cx);
             pane.close_all_items(
                 &CloseAllItems {
                     save_intent: None,
                     close_pinned: false,
                 },
                 model,
+                window,
                 cx,
             )
         })
+        .unwrap()
         .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A*"], cx);
 
-        pane.update_in_window(window, cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
-            pane.unpin_tab_at(ix, model, cx);
+            pane.unpin_tab_at(ix, model, window, cx);
             pane.close_all_items(
                 &CloseAllItems {
                     save_intent: None,
                     close_pinned: false,
                 },
                 model,
+                window,
                 cx,
             )
         })
+        .unwrap()
         .unwrap()
         .await
         .unwrap();
 
         assert_item_labels(&pane, [], cx);
 
-        add_labeled_item(&pane, "A", true, cx).update(cx, |item, model, cx| {
+        add_labeled_item(&pane, "A", true, cx).update(cx, |item, _model, cx| {
             item.project_items
                 .push(TestProjectItem::new(1, "A.txt", cx))
         });
-        add_labeled_item(&pane, "B", true, cx).update(cx, |item, model, cx| {
+        add_labeled_item(&pane, "B", true, cx).update(cx, |item, _model, cx| {
             item.project_items
                 .push(TestProjectItem::new(2, "B.txt", cx))
         });
-        add_labeled_item(&pane, "C", true, cx).update(cx, |item, model, cx| {
+        add_labeled_item(&pane, "C", true, cx).update(cx, |item, _model, cx| {
             item.project_items
                 .push(TestProjectItem::new(3, "C.txt", cx))
         });
@@ -4304,6 +4340,7 @@ mod tests {
                         close_pinned: false,
                     },
                     model,
+                    window,
                     cx,
                 )
             })
@@ -4326,6 +4363,7 @@ mod tests {
                         close_pinned: false,
                     },
                     model,
+                    window,
                     cx,
                 )
             })
@@ -4349,16 +4387,17 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|model, window, cx| {
             Workspace::test_new(project.clone(), model, window, cx)
         });
-        let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
+        let window = cx.handle();
+        let pane = workspace.update(cx, |workspace, _, _| workspace.active_pane().clone());
 
         let item_a = add_labeled_item(&pane, "A", false, cx);
         add_labeled_item(&pane, "B", false, cx);
         add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        pane.update_window_window(window, cx, |pane, model, window, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
-            pane.pin_tab_at(ix, model, cx);
+            pane.pin_tab_at(ix, model, window, cx);
             pane.close_all_items(
                 &CloseAllItems {
                     save_intent: None,
@@ -4369,6 +4408,7 @@ mod tests {
                 cx,
             )
         })
+        .unwrap()
         .unwrap()
         .await
         .unwrap();

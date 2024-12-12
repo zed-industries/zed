@@ -26,7 +26,7 @@ pub enum PanelEvent {
 
 pub use proto::PanelId;
 
-pub trait Panel: FocusableView + EventEmitter<PanelEvent> + Sized {
+pub trait Panel: FocusableView + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
     fn position(&self, cx: &AppContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
@@ -159,8 +159,8 @@ where
 }
 
 impl From<&dyn PanelHandle> for AnyView {
-    fn from(val: &dyn PanelHandle) -> Self {
-        val.model()
+    fn from(handle: &dyn PanelHandle) -> Self {
+        handle.view()
     }
 }
 
@@ -225,19 +225,23 @@ impl Dock {
         cx: &mut AppContext,
     ) -> Model<Self> {
         let focus_handle = window.focus_handle();
-        let workspace = cx.view().clone();
+        let workspace = model.clone();
         let dock = cx.new_model(|model: &Model<Self>, cx: &mut AppContext| {
-            let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
-                if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
-                    active_entry.panel.focus_handle(cx).focus(window)
-                }
+            let dock = model.clone();
+            let focus_subscription = window.on_focus(&focus_handle, cx, move |window, cx| {
+                dock.update(cx, |dock, model, cx| {
+                    if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
+                        active_entry.panel.focus_handle(cx).focus(window)
+                    }
+                })
             });
-            let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
-                if matches!(e, Event::ZoomChanged) {
-                    let is_zoomed = workspace.read(cx).zoomed.is_some();
-                    dock.resizeable = !is_zoomed;
-                }
-            });
+            let zoom_subscription =
+                model.subscribe(&workspace, cx, |dock, workspace, e: &Event, model, cx| {
+                    if matches!(e, Event::ZoomChanged) {
+                        let is_zoomed = workspace.read(cx).zoomed.is_some();
+                        dock.resizeable = !is_zoomed;
+                    }
+                });
             Self {
                 position,
                 panel_entries: Default::default(),
@@ -252,47 +256,58 @@ impl Dock {
 
         window
             .on_focus_in(&focus_handle, cx, {
+                let workspace = model.downgrade();
                 let dock = dock.downgrade();
                 let model = model.downgrade();
-                move |workspace, window, cx| {
-                    let Some(dock) = dock.upgrade() else {
-                        return;
-                    };
-                    let Some(panel) = dock.read(cx).active_panel() else {
-                        return;
-                    };
-                    if panel.is_zoomed(cx) {
-                        workspace.zoomed = Some(panel.model().downgrade());
-                        workspace.zoomed_position = Some(position);
-                    } else {
-                        workspace.zoomed = None;
-                        workspace.zoomed_position = None;
-                    }
-                    model.emit(Event::ZoomChanged, cx);
-                    workspace.dismiss_zoomed_items_to_reveal(Some(position), window, cx);
-                    workspace.update_active_view_for_followers(cx)
+                move |window, cx| {
+                    workspace
+                        .update(cx, |workspace, model, cx| {
+                            let Some(dock) = dock.upgrade() else {
+                                return;
+                            };
+                            let Some(panel) = dock.read(cx).active_panel() else {
+                                return;
+                            };
+                            if panel.is_zoomed(cx) {
+                                workspace.zoomed = Some(panel.model().downgrade());
+                                workspace.zoomed_position = Some(position);
+                            } else {
+                                workspace.zoomed = None;
+                                workspace.zoomed_position = None;
+                            }
+                            model.emit(Event::ZoomChanged, cx);
+                            workspace.dismiss_zoomed_items_to_reveal(
+                                Some(position),
+                                model,
+                                window,
+                                cx,
+                            );
+                            workspace.update_active_view_for_followers(window, cx);
+                        })
+                        .ok();
                 }
             })
             .detach();
 
-        cx.observe(&dock, move |workspace, dock, cx| {
-            if dock.read(cx).is_open() {
-                if let Some(panel) = dock.read(cx).active_panel() {
-                    if panel.is_zoomed(cx) {
-                        workspace.zoomed = Some(panel.to_any().downgrade());
-                        workspace.zoomed_position = Some(position);
-                        model.emit(Event::ZoomChanged, cx);
-                        return;
+        model
+            .observe(&dock, cx, move |workspace, dock, model, cx| {
+                if dock.read(cx).is_open() {
+                    if let Some(panel) = dock.read(cx).active_panel() {
+                        if panel.is_zoomed(cx) {
+                            workspace.zoomed = Some(panel.model().downgrade());
+                            workspace.zoomed_position = Some(position);
+                            model.emit(Event::ZoomChanged, cx);
+                            return;
+                        }
                     }
                 }
-            }
-            if workspace.zoomed_position == Some(position) {
-                workspace.zoomed = None;
-                workspace.zoomed_position = None;
-                model.emit(Event::ZoomChanged, cx);
-            }
-        })
-        .detach();
+                if workspace.zoomed_position == Some(position) {
+                    workspace.zoomed = None;
+                    workspace.zoomed_position = None;
+                    model.emit(Event::ZoomChanged, cx);
+                }
+            })
+            .detach();
 
         dock
     }
@@ -357,7 +372,7 @@ impl Dock {
         cx: &mut AppContext,
     ) {
         for entry in &mut self.panel_entries {
-            if entry.panel.panel_id() == panel.entity_id() {
+            if entry.panel.panel_id() == model.entity_id() {
                 if zoomed != entry.panel.is_zoomed(cx) {
                     entry.panel.set_zoomed(zoomed, cx);
                 }
@@ -385,113 +400,117 @@ impl Dock {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        let subscriptions = [
-            cx.observe(&panel, |_, _, cx| model.notify(cx)),
-            model.observe_global::<SettingsStore>(cx, {
-                let workspace = workspace.clone();
-                let panel = panel.clone();
-                let window = window.handle();
+        let subscriptions =
+            [
+                model.observe(&panel, cx, |_, _, model, cx| model.notify(cx)),
+                model.observe_global::<SettingsStore>(cx, {
+                    let workspace = workspace.clone();
+                    let panel = panel.clone();
+                    let window = window.handle();
 
-                move |this, model, cx| {
-                    window
-                        .update(cx, |window, cx| {
-                            let new_position = panel.read(cx).position(cx);
-                            if new_position == this.position {
-                                return;
-                            }
-
-                            let Ok(new_dock) = workspace.update(cx, |workspace, model, cx| {
-                                if panel.is_zoomed(cx) {
-                                    workspace.zoomed_position = Some(new_position);
+                    move |this, model, cx| {
+                        window
+                            .update(cx, |window, cx| {
+                                let new_position = panel.read(cx).position(cx);
+                                if new_position == this.position {
+                                    return;
                                 }
-                                match new_position {
-                                    DockPosition::Left => &workspace.left_dock,
-                                    DockPosition::Bottom => &workspace.bottom_dock,
-                                    DockPosition::Right => &workspace.right_dock,
-                                }
-                                .clone()
-                            }) else {
-                                return;
-                            };
 
-                            let was_visible = this.is_open()
-                                && this.visible_panel().map_or(false, |active_panel| {
-                                    active_panel.panel_id() == Entity::entity_id(&panel)
-                                });
+                                let Ok(new_dock) = workspace.update(cx, |workspace, model, cx| {
+                                    if panel.is_zoomed(cx) {
+                                        workspace.zoomed_position = Some(new_position);
+                                    }
+                                    match new_position {
+                                        DockPosition::Left => &workspace.left_dock,
+                                        DockPosition::Bottom => &workspace.bottom_dock,
+                                        DockPosition::Right => &workspace.right_dock,
+                                    }
+                                    .clone()
+                                }) else {
+                                    return;
+                                };
 
-                            this.remove_panel(&panel, model, window, cx);
+                                let was_visible = this.is_open()
+                                    && this.visible_panel().map_or(false, |active_panel| {
+                                        active_panel.panel_id() == Entity::entity_id(&panel)
+                                    });
 
-                            new_dock.update(cx, |new_dock, model, cx| {
-                                new_dock.remove_panel(&panel, model, window, cx);
-                                new_dock.add_panel(
-                                    panel.clone(),
-                                    workspace.clone(),
-                                    model,
-                                    window,
-                                    cx,
-                                );
-                                if was_visible {
-                                    new_dock.set_open(true, window, cx);
-                                    new_dock.activate_panel(
-                                        new_dock.panels_len() - 1,
+                                this.remove_panel(&panel, model, window, cx);
+
+                                new_dock.update(cx, |new_dock, model, cx| {
+                                    new_dock.remove_panel(&panel, model, window, cx);
+                                    new_dock.add_panel(
+                                        panel.clone(),
+                                        workspace.clone(),
                                         model,
                                         window,
                                         cx,
                                     );
-                                }
-                            });
-                        })
-                        .ok();
-                }
-            }),
-            cx.subscribe(&panel, move |this, panel, event, cx| match event {
-                PanelEvent::ZoomIn => {
-                    this.set_panel_zoomed(&panel.to_any(), true, window, cx);
-                    if !panel.focus_handle(cx).contains_focused(cx) {
-                        cx.focus_view(&panel);
+                                    if was_visible {
+                                        new_dock.set_open(true, model, cx);
+                                        new_dock.activate_panel(
+                                            new_dock.panels_len() - 1,
+                                            model,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                });
+                            })
+                            .ok();
                     }
-                    workspace
-                        .update(cx, |workspace, model, cx| {
-                            workspace.zoomed = Some(panel.downgrade().into());
-                            workspace.zoomed_position = Some(panel.read(cx).position(cx));
-                            model.emit(Event::ZoomChanged, cx);
-                        })
-                        .ok();
-                }
-                PanelEvent::ZoomOut => {
-                    this.set_panel_zoomed(&panel.to_any(), false, window, cx);
-                    workspace
-                        .update(cx, |workspace, model, cx| {
-                            if workspace.zoomed_position == Some(this.position) {
-                                workspace.zoomed = None;
-                                workspace.zoomed_position = None;
-                                model.emit(Event::ZoomChanged, cx);
+                }),
+                model.subscribe_in_window(
+                    &panel,
+                    window,
+                    cx,
+                    move |this, panel, event, model, window, cx| match event {
+                        PanelEvent::ZoomIn => {
+                            this.set_panel_zoomed(&panel.to_any(), true, window, cx);
+                            if !panel.focus_handle(cx).contains_focused(cx) {
+                                cx.focus_view(&panel);
                             }
-                            model.notify(cx);
-                        })
-                        .ok();
-                }
-                PanelEvent::Activate => {
-                    if let Some(ix) = this
-                        .panel_entries
-                        .iter()
-                        .position(|entry| entry.panel.panel_id() == Entity::entity_id(&panel))
-                    {
-                        this.set_open(true, window, cx);
-                        this.activate_panel(ix, window, cx);
-                        cx.focus_view(&panel);
-                    }
-                }
-                PanelEvent::Close => {
-                    if this
-                        .visible_panel()
-                        .map_or(false, |p| p.panel_id() == Entity::entity_id(&panel))
-                    {
-                        this.set_open(false, window, cx);
-                    }
-                }
-            }),
-        ];
+                            workspace
+                                .update(cx, |workspace, model, cx| {
+                                    workspace.zoomed = Some(panel.downgrade().into());
+                                    workspace.zoomed_position = Some(panel.read(cx).position(cx));
+                                    model.emit(Event::ZoomChanged, cx);
+                                })
+                                .ok();
+                        }
+                        PanelEvent::ZoomOut => {
+                            this.set_panel_zoomed(&panel.to_any(), false, window, cx);
+                            workspace
+                                .update(cx, |workspace, model, cx| {
+                                    if workspace.zoomed_position == Some(this.position) {
+                                        workspace.zoomed = None;
+                                        workspace.zoomed_position = None;
+                                        model.emit(Event::ZoomChanged, cx);
+                                    }
+                                    model.notify(cx);
+                                })
+                                .ok();
+                        }
+                        PanelEvent::Activate => {
+                            if let Some(ix) = this.panel_entries.iter().position(|entry| {
+                                entry.panel.panel_id() == Entity::entity_id(&panel)
+                            }) {
+                                this.set_open(true, window, cx);
+                                this.activate_panel(ix, window, cx);
+                                cx.focus_view(&panel);
+                            }
+                        }
+                        PanelEvent::Close => {
+                            if this
+                                .visible_panel()
+                                .map_or(false, |p| p.panel_id() == Entity::entity_id(&panel))
+                            {
+                                this.set_open(false, window, cx);
+                            }
+                        }
+                    },
+                ),
+            ];
 
         self.panel_entries.push(PanelEntry {
             panel: Arc::new(panel.clone()),

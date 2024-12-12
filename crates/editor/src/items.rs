@@ -11,8 +11,9 @@ use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::repository::GitFileStatus;
 use gpui::{
-    point, AnyElement, AppContext, Context, Entity, EntityId, EventEmitter, IntoElement, Model,
-    ParentElement, Pixels, SharedString, Styled, Task, View, VisualContext, WeakView,
+    point, AnyElement, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter,
+    IntoElement, Model, ParentElement, Pixels, SharedString, Styled, Task, View, VisualContext,
+    WeakView,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
@@ -79,7 +80,7 @@ impl FollowableItem for Editor {
         let buffers = project.update(cx, |project, model, cx| {
             buffer_ids
                 .iter()
-                .map(|id| BufferId::new(*id).map(|id| project.open_buffer_by_id(id, cx)))
+                .map(|id| BufferId::new(*id).map(|id| project.open_buffer_by_id(id, model, cx)))
                 .collect::<Result<Vec<_>>>()
         });
 
@@ -149,8 +150,8 @@ impl FollowableItem for Editor {
                     scroll_y: state.scroll_y,
                     ..Default::default()
                 },
-                &mut model,
-                cx,
+                window.handle(),
+                &mut cx,
             )
             .await?;
 
@@ -838,7 +839,7 @@ impl Item for Editor {
         self.report_editor_event("save", file_extension, cx);
 
         project.update(cx, |project, model, cx| {
-            project.save_buffer_as(buffer, path, cx)
+            project.save_buffer_as(buffer, path, model, cx)
         })
     }
 
@@ -1765,7 +1766,8 @@ mod tests {
         // Test case 1: Deserialize with path and contents
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
-            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+            let (workspace, cx) =
+                cx.add_window_view(|cx| Workspace::test_new(project.clone(), model, window, cx));
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
@@ -1801,7 +1803,8 @@ mod tests {
         // Test case 2: Deserialize with only path
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
-            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+            let (workspace, cx) =
+                cx.add_window_view(|cx| Workspace::test_new(project.clone(), model, window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -1838,7 +1841,8 @@ mod tests {
                 project.languages().add(rust_language())
             });
 
-            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+            let (workspace, cx) =
+                cx.add_window_view(|cx| Workspace::test_new(project.clone(), model, window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -1873,7 +1877,8 @@ mod tests {
         // Test case 4: Deserialize with path, content, and old mtime
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
-            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+            let (workspace, cx) =
+                cx.add_window_view(|cx| Workspace::test_new(project.clone(), model, window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 

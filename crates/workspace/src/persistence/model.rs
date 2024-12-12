@@ -376,12 +376,12 @@ impl SerializedPaneGroup {
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
-                    .update(cx, |workspace, model, cx| {
+                    .update_in_window(window, cx, |workspace, model, window, cx| {
                         workspace.add_pane(model, window, cx).downgrade()
                     })
                     .log_err()?;
                 let active = serialized_pane.active;
-                let new_items = serialized_paneself
+                let new_items = serialized_pane
                     .deserialize_to(project, &pane, workspace_id, workspace.clone(), window, cx)
                     .await
                     .log_err()?;
@@ -399,7 +399,7 @@ impl SerializedPaneGroup {
                 } else {
                     let pane = pane.upgrade()?;
                     workspace
-                        .update(cx, |workspace, model, cx| {
+                        .update_in_window(window, cx, |workspace, model, cx| {
                             workspace.force_remove_pane(&pane, &None, model, window, cx)
                         })
                         .log_err()?;
@@ -440,7 +440,7 @@ impl SerializedPane {
         let mut preview_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
-            item_tasks.push(pane.update(cx, |_, model, cx| {
+            item_tasks.push(pane.update_in_window(window, cx, |_, model, window, cx| {
                 SerializableItemRegistry::deserialize(
                     &item.kind,
                     project,
@@ -448,6 +448,7 @@ impl SerializedPane {
                     workspace_id,
                     item.item_id,
                     model,
+                    window,
                     cx,
                 )
             })?);

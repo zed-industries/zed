@@ -672,6 +672,19 @@ impl VisualTestContext {
             .unwrap()
     }
 
+    fn new_view<T: 'static>(
+        &mut self,
+        window: impl Into<AnyWindowHandle>,
+        build_view: impl FnOnce(&Model<T>, &mut Window, &mut AppContext) -> T,
+    ) -> Model<T> {
+        let window = window.into();
+        self.cx
+            .update_window(window, |window, cx| {
+                cx.new_model(|model, cx| build_view(model, window, cx))
+            })
+            .unwrap()
+    }
+
     /// Creates a new VisualTestContext. You would typically shadow the passed in
     /// TestAppContext with this, as this is typically more useful.
     /// `let cx = VisualTestContext::from_window(window, cx);`

@@ -1,9 +1,7 @@
 use std::{any::Any, sync::Arc};
 
 use any_vec::AnyVec;
-use gpui::{
-    AnyModel, AnyView, AnyWeakModel, AppContext, EventEmitter, Subscription, Task, View, WeakModel,
-};
+use gpui::{AnyView, AnyWeakModel, AppContext, EventEmitter, Subscription, Task, WeakModel};
 use project::search::SearchQuery;
 use ui::Model;
 
@@ -252,7 +250,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
     ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, model, cx| {
-            this.update_matches(matches.as_slice(), cx)
+            this.update_matches(matches.as_slice(), window, cx)
         });
     }
     fn query_suggestion(&self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> String {
@@ -279,7 +277,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
     ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, model, cx| {
-            this.select_matches(matches.as_slice(), cx)
+            this.select_matches(matches.as_slice(), window, cx)
         });
     }
 
@@ -381,7 +379,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         cx: &mut gpui::AppContext,
     ) {
         self.update(cx, |this, model, cx| {
-            this.toggle_filtered_search_ranges(enabled, cx)
+            this.toggle_filtered_search_ranges(enabled, window, cx)
         });
     }
 }

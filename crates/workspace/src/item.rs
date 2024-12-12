@@ -392,7 +392,7 @@ where
         cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         self.update(cx, |this, model, cx| {
-            this.serialize(workspace, cx.entity_id().as_u64(), closing, model, cx)
+            this.serialize(workspace, model.entity_id().as_u64(), closing, model, cx)
         })
     }
 
@@ -730,7 +730,7 @@ impl<T: Item> ItemHandle for Model<T> {
                             }
                         }
 
-                        if item.focus_handle(cx).contains_focused(cx) {
+                        if item.focus_handle(cx).contains_focused(window) {
                             item.add_event_to_update_proto(
                                 event,
                                 &mut pending_update.borrow_mut(),
@@ -753,6 +753,7 @@ impl<T: Item> ItemHandle for Model<T> {
                                     item.item_id(),
                                     crate::SaveIntent::Close,
                                     model,
+                                    window,
                                     cx,
                                 )
                             })
@@ -1122,8 +1123,9 @@ pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
     use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
     use gpui::{
-        AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
-        InteractiveElement, IntoElement, Model, Render, SharedString, Task, WeakModel, Window,
+        AnyElement, AnyWindowHandle, AppContext, Context as _, EntityId, EventEmitter,
+        FocusableView, InteractiveElement, IntoElement, Model, Render, SharedString, Task,
+        WeakModel, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};

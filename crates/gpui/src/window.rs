@@ -2659,6 +2659,28 @@ impl Window {
         ));
     }
 
+    /// Register a listener to be called when the given focus handle receives focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus(
+        &mut self,
+        handle: &FocusHandle,
+        cx: &mut AppContext,
+        mut listener: impl FnMut(&mut Window, &mut AppContext) + 'static,
+    ) -> Subscription {
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            self.new_focus_listener(Box::new(move |event, window, cx| {
+                if event.previous_focus_path.last() == Some(&focus_id)
+                    && event.current_focus_path.last() != Some(&focus_id)
+                {
+                    listener(window, cx);
+                }
+                true
+            }));
+        cx.defer(move |_| activate());
+        subscription
+    }
+
     /// Register a listener to be called when the given focus handle loses focus.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_blur(
@@ -2706,8 +2728,8 @@ impl Window {
     pub fn on_focus_in(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(&mut Window, &mut AppContext) + 'static,
         cx: &mut AppContext,
+        mut listener: impl FnMut(&mut Window, &mut AppContext) + 'static,
     ) -> Subscription {
         let focus_id = handle.id;
         let (subscription, activate) =
@@ -2726,8 +2748,8 @@ impl Window {
     pub fn on_focus_out(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(FocusOutEvent, &mut Window, &mut AppContext) + 'static,
         cx: &mut AppContext,
+        mut listener: impl FnMut(&FocusOutEvent, &mut Window, &mut AppContext) + 'static,
     ) -> Subscription {
         let focus_id = handle.id;
         let (subscription, activate) =
@@ -2740,7 +2762,7 @@ impl Window {
                                 handles: Arc::downgrade(&window.focus_handles),
                             },
                         };
-                        listener(event, window, cx)
+                        listener(&event, window, cx)
                     }
                 }
                 true
@@ -3819,6 +3841,19 @@ impl<T: 'static> WindowHandle<T> {
         cx.update_window(self.any_handle, |window, _cx| window.is_active())
             .ok()
     }
+
+    /// Replace the root view of a window with a new view.
+    pub fn replace_state(
+        &mut self,
+        cx: &mut AppContext,
+        build_view: impl FnOnce(&Model<T>, &mut Window, &mut AppContext) -> T,
+    ) -> Result<Model<T>> {
+        self.update(cx, |_this, _model, window, cx| {
+            let state = cx.new_model(|model, cx| build_view(model, window, cx));
+            window.state = Some(state.clone().into());
+            state
+        })
+    }
 }
 
 impl<T> Copy for WindowHandle<T> {}
@@ -3837,6 +3872,18 @@ unsafe impl<V> Sync for WindowHandle<V> {}
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
+}
+
+impl From<&mut Window> for AnyWindowHandle {
+    fn from(window: &mut Window) -> Self {
+        window.handle()
+    }
+}
+
+impl From<&Window> for AnyWindowHandle {
+    fn from(window: &Window) -> Self {
+        window.handle()
+    }
 }
 
 impl AnyWindowHandle {

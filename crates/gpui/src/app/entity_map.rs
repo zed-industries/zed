@@ -1,6 +1,6 @@
 use crate::{
     seal::Sealed, Action, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity,
-    EventEmitter, Subscription, Task, Window,
+    EventEmitter, Flatten, Subscription, Task, Window,
 };
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
@@ -596,6 +596,38 @@ impl<T: 'static> Model<T> {
         })
     }
 
+    /// Subscribe to an event type from another model or view
+    pub fn subscribe_in_window<U, E>(
+        &self,
+        entity: &Model<U>,
+        window: impl Into<AnyWindowHandle>,
+        cx: &mut AppContext,
+        mut on_event: impl FnMut(&mut T, Model<U>, &E, &Model<T>, &mut Window, &mut AppContext)
+            + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+        U: 'static + EventEmitter<E>,
+        E: 'static,
+    {
+        let this = self.downgrade();
+        let window = window.into();
+        cx.subscribe_internal(entity, move |emitter, event, cx| {
+            if let Some(this) = this.upgrade() {
+                window
+                    .update(cx, |window, cx| {
+                        this.update(cx, |this, model, cx| {
+                            on_event(this, emitter, event, model, window, cx)
+                        });
+                        true
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        })
+    }
+
     /// Emit an event of the specified type, which can be handled by other entities that have subscribed via `subscribe` methods on their respective contexts.
     pub fn emit<E>(&self, event: E, cx: &mut AppContext)
     where
@@ -919,6 +951,18 @@ impl<T: 'static> WeakModel<T> {
                 .ok_or_else(|| anyhow!("entity release"))
                 .map(|this| cx.update_model(&this, update)),
         )
+    }
+
+    /// Updates the entity referenced by this model with the given function in the specified window.
+    pub fn update_in_window<C: Context, R>(
+        &self,
+        window: impl Into<AnyWindowHandle>,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &Model<T>, &mut Window, &mut AppContext) -> R,
+    ) -> Result<R> {
+        Flatten::flatten(window.into().update(cx, |window, cx: &mut AppContext| {
+            self.update(cx, |this, model, cx| update(this, model, window, cx))
+        }))
     }
 
     /// Schedules an update to be performed on this model at the end of the current effect cycle.

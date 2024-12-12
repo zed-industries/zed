@@ -8,8 +8,13 @@ pub enum DismissDecision {
     Pending,
 }
 
-pub trait ModalView: FocusableView + EventEmitter<DismissEvent> + Sized {
-    fn on_before_dismiss(&mut self, _: &Model<Self>, _: &mut AppContext) -> DismissDecision {
+pub trait ModalView: Render + FocusableView + EventEmitter<DismissEvent> + Sized {
+    fn on_before_dismiss(
+        &mut self,
+        _: &Model<Self>,
+        _: &mut Window,
+        _: &mut AppContext,
+    ) -> DismissDecision {
         DismissDecision::Dismiss(true)
     }
 
@@ -35,7 +40,9 @@ impl<V: ModalView> ModalViewHandle for Model<V> {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> DismissDecision {
-        self.update(cx, |this, model, cx| this.on_before_dismiss(model, cx))
+        self.update(cx, |this, model, cx| {
+            this.on_before_dismiss(model, window, cx)
+        })
     }
 
     fn model(&self) -> AnyModel {
@@ -88,7 +95,7 @@ impl ModalLayer {
         B: FnOnce(&Model<V>, &mut AppContext) -> V,
     {
         if let Some(active_modal) = &self.active_modal {
-            let is_close = active_modal.modal.view().downcast::<V>().is_ok();
+            let is_close = active_modal.modal.model().downcast::<V>().is_ok();
             let did_close = self.hide_modal(model, window, cx);
             if is_close || !did_close {
                 return;
@@ -108,23 +115,32 @@ impl ModalLayer {
         V: ModalView,
     {
         let focus_handle = window.focus_handle();
+        let window_handle = window.handle();
         self.active_modal = Some(ActiveModal {
             modal: Box::new(new_modal.clone()),
             _subscriptions: [
-                cx.subscribe(&new_modal, |this, _, _: &DismissEvent, cx| {
-                    this.hide_modal(cx);
+                model.subscribe(&new_modal, cx, |this, _, _: &DismissEvent, model, cx| {
+                    window_handle
+                        .update(cx, |window, cx| {
+                            this.hide_modal(model, window, cx);
+                        })
+                        .ok();
                 }),
-                cx.on_focus_out(&focus_handle, |this, _event, cx| {
-                    if this.dismiss_on_focus_lost {
-                        this.hide_modal(cx);
-                    }
-                }),
+                window.on_focus_out(
+                    &focus_handle,
+                    cx,
+                    model.listener(|this, _event, model, window, cx| {
+                        if this.dismiss_on_focus_lost {
+                            this.hide_modal(model, window, cx);
+                        }
+                    }),
+                ),
             ],
-            previous_focus_handle: cx.focused(),
+            previous_focus_handle: window.focused(),
             focus_handle,
         });
-        cx.defer(move |_, cx| {
-            cx.focus_view(&new_modal);
+        window.defer(cx, move |window, cx| {
+            window.focus_view(&new_modal, cx);
         });
         model.notify(cx);
     }
@@ -140,7 +156,7 @@ impl ModalLayer {
             return false;
         };
 
-        match active_modal.modal.on_before_dismiss(model, cx) {
+        match active_modal.modal.on_before_dismiss(window, cx) {
             DismissDecision::Dismiss(dismiss) => {
                 self.dismiss_on_focus_lost = !dismiss;
                 if !dismiss {
@@ -155,7 +171,7 @@ impl ModalLayer {
 
         if let Some(active_modal) = self.active_modal.take() {
             if let Some(previous_focus) = active_modal.previous_focus_handle {
-                if active_modal.focus_handle.contains_focused(cx) {
+                if active_modal.focus_handle.contains_focused(windowwindow) {
                     previous_focus.focus(window);
                 }
             }
