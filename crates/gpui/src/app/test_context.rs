@@ -656,23 +656,25 @@ pub struct VisualTestContext {
     #[deref_mut]
     /// cx is the original TestAppContext (you can more easily access this using Deref)
     pub cx: TestAppContext,
-    window: AnyWindowHandle,
+    handle: AnyWindowHandle,
 }
 
 impl VisualTestContext {
     /// Get the underlying window handle underlying this context.
     pub fn handle(&self) -> AnyWindowHandle {
-        self.window
+        self.handle
     }
 
     /// Provides the `Window` and `AppContext` for the duration of the closure.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut Window, &mut AppContext) -> R) -> R {
         self.cx
-            .update_window(self.window, |window, cx| f(window, cx))
+            .update_window(self.handle, |window, cx| f(window, cx))
             .unwrap()
     }
 
-    fn new_view<T: 'static>(
+    /// Creates a new view with a reference to the window based on the given handle.
+    /// This is a convenience method that passes you a window reference.
+    pub fn new_view<T: 'static>(
         &mut self,
         window: impl Into<AnyWindowHandle>,
         build_view: impl FnOnce(&Model<T>, &mut Window, &mut AppContext) -> T,
@@ -691,7 +693,7 @@ impl VisualTestContext {
     pub fn from_window(window: AnyWindowHandle, cx: &TestAppContext) -> Self {
         Self {
             cx: cx.clone(),
-            window,
+            handle: window,
         }
     }
 
@@ -705,24 +707,24 @@ impl VisualTestContext {
     where
         A: Action,
     {
-        self.cx.dispatch_action(self.window, action)
+        self.cx.dispatch_action(self.handle, action)
     }
 
     /// Read the title off the window (set by `Window#set_title`)
     pub fn window_title(&mut self) -> Option<String> {
-        self.cx.test_window(self.window).0.lock().title.clone()
+        self.cx.test_window(self.handle).0.lock().title.clone()
     }
 
     /// Simulate a sequence of keystrokes `cx.simulate_keystrokes("cmd-p escape")`
     /// Automatically runs until parked.
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
-        self.cx.simulate_keystrokes(self.window, keystrokes)
+        self.cx.simulate_keystrokes(self.handle, keystrokes)
     }
 
     /// Simulate typing text `cx.simulate_input("hello")`
     /// Automatically runs until parked.
     pub fn simulate_input(&mut self, input: &str) {
-        self.cx.simulate_input(self.window, input)
+        self.cx.simulate_input(self.handle, input)
     }
 
     /// Simulate a mouse move event to the given point
@@ -794,7 +796,7 @@ impl VisualTestContext {
 
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_resize(&self, size: Size<Pixels>) {
-        self.simulate_window_resize(self.window, size)
+        self.simulate_window_resize(self.handle, size)
     }
 
     /// debug_bounds returns the bounds of the element with the given selector.
@@ -831,14 +833,14 @@ impl VisualTestContext {
     /// Simulate an event from the platform, e.g. a SrollWheelEvent
     /// Make sure you've called [VisualTestContext::draw] first!
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
-        self.test_window(self.window)
+        self.test_window(self.handle)
             .simulate_input(event.to_platform_input());
         self.background_executor.run_until_parked();
     }
 
     /// Simulates the user blurring the window.
     pub fn deactivate_window(&mut self) {
-        if Some(self.window) == self.test_platform.active_window() {
+        if Some(self.handle) == self.test_platform.active_window() {
             self.test_platform.set_active_window(None)
         }
         self.background_executor.run_until_parked();
@@ -848,7 +850,7 @@ impl VisualTestContext {
     /// Returns true if the window was closed.
     pub fn simulate_close(&mut self) -> bool {
         let handler = self
-            .window
+            .handle
             .update(&mut self.cx, |window, _cx| {
                 window
                     .platform_window
@@ -863,7 +865,7 @@ impl VisualTestContext {
 
         if let Some(mut handler) = handler {
             let should_close = handler();
-            self.window
+            self.handle
                 .update(&mut self.cx, |window, _cx| {
                     window.platform_window.on_should_close(handler);
                 })

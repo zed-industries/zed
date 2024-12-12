@@ -568,6 +568,25 @@ impl<T: 'static> Model<T> {
         cx.spawn(|cx| f(model, cx))
     }
 
+    /// Spawn the future returned by the given function in the specified window.
+    /// The function is provided a weak handle to this model, the window handle, and a context that can be held across await points.
+    /// The returned task must be held or detached.
+    pub fn spawn_in_window<Fut, R>(
+        &self,
+        window: &Window,
+        cx: &mut AppContext,
+        f: impl FnOnce(WeakModel<T>, AnyWindowHandle, AsyncAppContext) -> Fut,
+    ) -> Task<R>
+    where
+        T: 'static,
+        Fut: Future<Output = R> + 'static,
+        R: 'static,
+    {
+        let model = self.downgrade();
+        let window = window.handle();
+        cx.spawn(move |cx| f(model, window, cx))
+    }
+
     /// Arranges for the given function to be called whenever [`Model::notify`] is called with the given model or view.
     pub fn observe<U>(
         &self,
