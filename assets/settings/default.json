@@ -471,6 +471,14 @@
     // Default width of the chat panel.
     "default_width": 240
   },
+  "git_panel": {
+    // Whether to show the git panel button in the status bar.
+    "button": true,
+    // Where to the git panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Default width of the git panel.
+    "default_width": 360
+  },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
     // For example: typing `:wave:` gets replaced with `👋`.
