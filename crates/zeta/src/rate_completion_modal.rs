@@ -523,8 +523,8 @@ impl Render for RateCompletionModal {
                     .border_color(border_color)
                     .w_96()
                     .h_full()
-                    .p_0p5()
-                    .overflow_y_scroll()
+                    .flex_shrink_0()
+                    .overflow_hidden()
                     .child(
                         h_flex()
                             .px_2()
