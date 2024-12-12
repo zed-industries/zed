@@ -29,7 +29,7 @@ struct DiffSnapshot {
 }
 
 #[derive(Clone)]
-pub(crate) struct DiffMapSnapshot {
+pub struct DiffMapSnapshot {
     diffs: TreeMap<BufferId, DiffSnapshot>,
     transforms: SumTree<DiffTransform>,
     pub(crate) version: usize,
@@ -70,20 +70,20 @@ impl DiffTransformSummary {
     }
 }
 
-pub(crate) struct DiffMapChunks<'a> {
+pub struct DiffMapChunks<'a> {
     snapshot: &'a DiffMapSnapshot,
     language_aware: bool,
     cursor: Cursor<'a, DiffTransform, (DiffOffset, InlayOffset)>,
-    fold_chunks: InlayChunks<'a>,
-    fold_chunk: Option<Chunk<'a>>,
-    fold_offset: InlayOffset,
+    inlay_chunks: InlayChunks<'a>,
+    inlay_chunk: Option<Chunk<'a>>,
+    inlay_offset: InlayOffset,
     offset: DiffOffset,
     end_offset: DiffOffset,
     diff_base_chunks: Option<(BufferId, BufferChunks<'a>)>,
 }
 
 #[derive(Clone)]
-pub(crate) struct DiffMapBufferRows<'a> {
+pub struct DiffMapBufferRows<'a> {
     cursor: Cursor<'a, DiffTransform, (DiffPoint, InlayPoint)>,
     diff_point: DiffPoint,
     input_buffer_rows: InlayBufferRows<'a>,
@@ -883,30 +883,30 @@ impl DiffMapSnapshot {
         let mut cursor = self.transforms.cursor::<(DiffOffset, InlayOffset)>(&());
 
         cursor.seek(&range.end, Bias::Right, &());
-        let mut fold_end = cursor.start().1;
+        let mut inlay_end = cursor.start().1;
         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
             let overshoot = range.end.0 - cursor.start().0 .0;
-            fold_end.0 += overshoot;
+            inlay_end.0 += overshoot;
         }
 
         cursor.seek(&range.start, Bias::Right, &());
-        let mut fold_start = cursor.start().1;
+        let mut inlay_start = cursor.start().1;
         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
             let overshoot = range.start.0 - cursor.start().0 .0;
-            fold_start.0 += overshoot;
+            inlay_start.0 += overshoot;
         }
 
-        let fold_chunks =
+        let inlay_chunks =
             self.inlay_snapshot
-                .chunks(fold_start..fold_end, language_aware, highlights);
+                .chunks(inlay_start..inlay_end, language_aware, highlights);
 
         DiffMapChunks {
             snapshot: self,
             language_aware,
             cursor,
-            fold_chunk: None,
-            fold_chunks,
-            fold_offset: fold_start,
+            inlay_chunk: None,
+            inlay_chunks,
+            inlay_offset: inlay_start,
             offset: range.start,
             diff_base_chunks: None,
             end_offset: range.end,
@@ -943,7 +943,25 @@ impl DiffMapSnapshot {
 
 impl<'a> DiffMapChunks<'a> {
     pub fn seek(&mut self, range: Range<DiffOffset>) {
-        todo!()
+        self.cursor.seek(&range.end, Bias::Right, &());
+        let mut inlay_end = self.cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = self.cursor.item() {
+            let overshoot = range.end.0 - self.cursor.start().0 .0;
+            inlay_end.0 += overshoot;
+        }
+
+        self.cursor.seek(&range.start, Bias::Right, &());
+        let mut inlay_start = self.cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = self.cursor.item() {
+            let overshoot = range.start.0 - self.cursor.start().0 .0;
+            inlay_start.0 += overshoot;
+        }
+
+        self.inlay_chunks.seek(inlay_start..inlay_end);
+        self.inlay_chunk.take();
+        self.inlay_offset = inlay_start;
+        self.offset = range.start;
+        self.end_offset = range.end;
     }
 
     pub fn offset(&self) -> DiffOffset {
@@ -967,8 +985,8 @@ impl<'a> Iterator for DiffMapChunks<'a> {
         match transform {
             DiffTransform::BufferContent { summary } => {
                 let chunk = self
-                    .fold_chunk
-                    .get_or_insert_with(|| self.fold_chunks.next().unwrap());
+                    .inlay_chunk
+                    .get_or_insert_with(|| self.inlay_chunks.next().unwrap());
 
                 let chunk_end = self.offset + DiffOffset(chunk.text.len());
                 let mut transform_end = self.cursor.start().0 + DiffOffset(summary.len);
@@ -987,13 +1005,11 @@ impl<'a> Iterator for DiffMapChunks<'a> {
                     })
                 } else {
                     self.offset = chunk_end;
-                    self.fold_chunk.take()
+                    self.inlay_chunk.take()
                 }
             }
             DiffTransform::DeletedHunk {
-                summary,
                 buffer_id,
-                base_text_start,
                 base_text_byte_range,
                 ..
             } => {
@@ -1226,7 +1242,7 @@ mod tests {
     use text::OffsetUtf16;
 
     #[gpui::test]
-    fn test_basic_diff(cx: &mut TestAppContext) {
+    fn test_basic_diff_map_updates(cx: &mut TestAppContext) {
         cx.update(init_test);
 
         let text = indoc!(
@@ -1305,6 +1321,9 @@ mod tests {
                 "
             ),
         );
+
+        assert_chunks_in_ranges(&snapshot);
+
         assert_eq!(
             snapshot.buffer_rows(0).collect::<Vec<_>>(),
             vec![
@@ -1625,6 +1644,31 @@ mod tests {
         }
 
         pretty_assertions::assert_eq!(text, new_text, "invalid edits: {:?}", edits);
+    }
+
+    #[track_caller]
+    fn assert_chunks_in_ranges(snapshot: &DiffMapSnapshot) {
+        let full_text = snapshot.text();
+        for ix in 0..full_text.len() {
+            let offset = DiffOffset(ix);
+            let mut chunks =
+                snapshot.chunks(DiffOffset(0)..snapshot.len(), false, Default::default());
+            chunks.seek(offset..snapshot.len());
+            let tail = chunks.map(|chunk| chunk.text).collect::<String>();
+            assert_eq!(tail, &full_text[ix..]);
+
+            let tail = snapshot
+                .chunks(offset..snapshot.len(), false, Default::default())
+                .map(|chunk| chunk.text)
+                .collect::<String>();
+            assert_eq!(tail, &full_text[ix..]);
+
+            let head = snapshot
+                .chunks(DiffOffset(0)..offset, false, Default::default())
+                .map(|chunk| chunk.text)
+                .collect::<String>();
+            assert_eq!(head, &full_text[..ix]);
+        }
     }
 
     fn init_test(cx: &mut AppContext) {
