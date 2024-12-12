@@ -167,7 +167,7 @@ impl Render for ApplicationMenu {
             .flex()
             .flex_row()
             .gap_x_1()
-            .when(!is_any_deployed, |this| {
+            .when(!is_any_deployed && !self.entries.is_empty(), |this| {
                 this.child(self.render_application_menu(&self.entries[0]))
             })
             .when(is_any_deployed, |this| {
