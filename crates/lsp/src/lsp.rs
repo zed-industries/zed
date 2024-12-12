@@ -608,6 +608,10 @@ impl LanguageServer {
             root_uri: Some(root_uri.clone()),
             initialization_options: None,
             capabilities: ClientCapabilities {
+                general: Some(GeneralClientCapabilities {
+                    position_encodings: Some(vec![PositionEncodingKind::UTF16]),
+                    ..Default::default()
+                }),
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
                     did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
@@ -644,6 +648,7 @@ impl LanguageServer {
                         will_rename: Some(true),
                         ..Default::default()
                     }),
+                    apply_edit: Some(true),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -760,9 +765,11 @@ impl LanguageServer {
                 })),
                 window: Some(WindowClientCapabilities {
                     work_done_progress: Some(true),
+                    show_message: Some(ShowMessageRequestClientCapabilities {
+                        message_action_item: None,
+                    }),
                     ..Default::default()
                 }),
-                general: None,
             },
             trace: None,
             workspace_folders: Some(vec![WorkspaceFolder {
@@ -776,6 +783,7 @@ impl LanguageServer {
                 }
             }),
             locale: None,
+
             ..Default::default()
         }
     }
