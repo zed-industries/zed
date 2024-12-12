@@ -225,7 +225,13 @@ impl TitleBar {
 
         let platform_style = PlatformStyle::platform();
         let application_menu = match platform_style {
-            PlatformStyle::Mac => None,
+            PlatformStyle::Mac => {
+                if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
+                    Some(cx.new_view(ApplicationMenu::new))
+                } else {
+                    None
+                }
+            }
             PlatformStyle::Linux | PlatformStyle::Windows => {
                 Some(cx.new_view(ApplicationMenu::new))
             }
