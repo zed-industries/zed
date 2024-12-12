@@ -3,15 +3,12 @@ mod file_context_picker;
 use std::sync::Arc;
 
 use gpui::{
-    AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, FocusableView, SharedString, Task,
-    View, WeakView,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, SharedString, Task, View,
+    WeakView,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use ui::{
-    prelude::*, IconButtonShape, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip,
-};
+use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
 use util::ResultExt;
-use workspace::notifications::NotificationHandle;
 use workspace::Workspace;
 
 use crate::context_picker::file_context_picker::FileContextPicker;
@@ -25,51 +22,45 @@ enum ContextPickerMode {
 
 pub(super) struct ContextPicker {
     mode: ContextPickerMode,
-    workspace: WeakView<Workspace>,
-    message_editor: WeakView<MessageEditor>,
     picker: View<Picker<ContextPickerDelegate>>,
 }
 
 impl ContextPicker {
-    pub(crate) fn new(
+    pub fn new(
         workspace: WeakView<Workspace>,
         message_editor: WeakView<MessageEditor>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let entries = vec![
-            ContextPickerEntry {
-                name: "directory".into(),
-                description: "Insert any directory".into(),
-                icon: IconName::Folder,
-            },
-            ContextPickerEntry {
-                name: "file".into(),
-                description: "Insert any file".into(),
-                icon: IconName::File,
-            },
-            ContextPickerEntry {
-                name: "web".into(),
-                description: "Fetch content from URL".into(),
-                icon: IconName::Globe,
-            },
-        ];
-
         let delegate = ContextPickerDelegate {
             context_picker: cx.view().downgrade(),
             workspace: workspace.clone(),
-            all_entries: entries.clone(),
             message_editor: message_editor.clone(),
-            filtered_entries: entries,
+            entries: vec![
+                ContextPickerEntry {
+                    name: "directory".into(),
+                    description: "Insert any directory".into(),
+                    icon: IconName::Folder,
+                },
+                ContextPickerEntry {
+                    name: "file".into(),
+                    description: "Insert any file".into(),
+                    icon: IconName::File,
+                },
+                ContextPickerEntry {
+                    name: "web".into(),
+                    description: "Fetch content from URL".into(),
+                    icon: IconName::Globe,
+                },
+            ],
             selected_ix: 0,
         };
 
-        let picker =
-            cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
+        let picker = cx.new_view(|cx| {
+            Picker::nonsearchable_uniform_list(delegate, cx).max_height(Some(rems(20.).into()))
+        });
 
         ContextPicker {
             mode: ContextPickerMode::Default,
-            workspace,
-            message_editor,
             picker,
         }
     }
@@ -102,9 +93,8 @@ struct ContextPickerEntry {
 pub(crate) struct ContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
-    all_entries: Vec<ContextPickerEntry>,
-    filtered_entries: Vec<ContextPickerEntry>,
     message_editor: WeakView<MessageEditor>,
+    entries: Vec<ContextPickerEntry>,
     selected_ix: usize,
 }
 
@@ -112,7 +102,7 @@ impl PickerDelegate for ContextPickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
-        self.filtered_entries.len()
+        self.entries.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -120,7 +110,7 @@ impl PickerDelegate for ContextPickerDelegate {
     }
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
-        self.selected_ix = ix.min(self.filtered_entries.len().saturating_sub(1));
+        self.selected_ix = ix.min(self.entries.len().saturating_sub(1));
         cx.notify();
     }
 
@@ -128,39 +118,12 @@ impl PickerDelegate for ContextPickerDelegate {
         "Select a context source…".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
-        let all_commands = self.all_entries.clone();
-        cx.spawn(|this, mut cx| async move {
-            let filtered_commands = cx
-                .background_executor()
-                .spawn(async move {
-                    if query.is_empty() {
-                        all_commands
-                    } else {
-                        all_commands
-                            .into_iter()
-                            .filter(|model_info| {
-                                model_info
-                                    .name
-                                    .to_lowercase()
-                                    .contains(&query.to_lowercase())
-                            })
-                            .collect()
-                    }
-                })
-                .await;
-
-            this.update(&mut cx, |this, cx| {
-                this.delegate.filtered_entries = filtered_commands;
-                this.delegate.set_selected_index(0, cx);
-                cx.notify();
-            })
-            .ok();
-        })
+    fn update_matches(&mut self, _query: String, _cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+        Task::ready(())
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(entry) = self.filtered_entries.get(self.selected_ix) {
+        if let Some(entry) = self.entries.get(self.selected_ix) {
             self.context_picker
                 .update(cx, |this, cx| match entry.name.to_string().as_str() {
                     "file" => {
@@ -190,7 +153,7 @@ impl PickerDelegate for ContextPickerDelegate {
         selected: bool,
         _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let entry = self.filtered_entries.get(ix)?;
+        let entry = &self.entries[ix];
 
         Some(
             ListItem::new(ix)
