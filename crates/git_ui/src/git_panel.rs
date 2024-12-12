@@ -140,6 +140,22 @@ impl GitPanel {
                 .opacity(0.5),
         )
     }
+
+    fn render_empty_state(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .h_full()
+            .flex_1()
+            .justify_center()
+            .items_center()
+            .child(
+                v_flex()
+                    .gap_3()
+                    .child("No changes to commit")
+                    .text_ui_sm(cx)
+                    .mx_auto()
+                    .text_color(Color::Placeholder.color(cx)),
+            )
+    }
 }
 
 impl Render for GitPanel {
@@ -160,23 +176,7 @@ impl Render for GitPanel {
                     .h(px(8.))
                     .child(Divider::horizontal_dashed().color(DividerColor::Border)),
             )
-            .child(
-                h_flex()
-                    .h_full()
-                    .flex_1()
-                    .justify_center()
-                    .items_center()
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .child("No changes to commit")
-                            .child("Staff-only alpha. Expect non-functioal elements.")
-                            .text_ui_sm(cx)
-                            .max_w(px(144.))
-                            .mx_auto()
-                            .text_color(Color::Placeholder.color(cx)),
-                    ),
-            )
+            .child(self.render_empty_state(cx))
             .child(
                 h_flex()
                     .items_center()
