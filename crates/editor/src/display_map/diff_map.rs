@@ -51,22 +51,22 @@ enum DiffTransform {
 
 #[derive(Debug, Clone)]
 struct DiffTransformSummary {
-    inlay_coords: TextSummary,
-    diff_coords: TextSummary,
+    inlay_map: TextSummary,
+    diff_map: TextSummary,
 }
 
 impl DiffTransformSummary {
     pub fn inlay_point(&self) -> InlayPoint {
-        InlayPoint(self.inlay_coords.lines)
+        InlayPoint(self.inlay_map.lines)
     }
     pub fn inlay_offset(&self) -> InlayOffset {
-        InlayOffset(self.inlay_coords.len)
+        InlayOffset(self.inlay_map.len)
     }
     pub fn diff_point(&self) -> DiffPoint {
-        DiffPoint(self.diff_coords.lines)
+        DiffPoint(self.diff_map.lines)
     }
     pub fn diff_offset(&self) -> DiffOffset {
-        DiffOffset(self.diff_coords.len)
+        DiffOffset(self.diff_map.len)
     }
 }
 
@@ -331,7 +331,7 @@ impl DiffMap {
 
             let diff_edit_old_start = cursor.start().1 + DiffOffset(edit_start_overshoot);
             let diff_edit_new_start =
-                DiffOffset(new_transforms.summary().diff_coords.len + edit_start_overshoot);
+                DiffOffset(new_transforms.summary().diff_map.len + edit_start_overshoot);
 
             for (buffer, buffer_range, excerpt_id) in
                 multibuffer.range_to_buffer_ranges(multibuffer_range.clone(), cx)
@@ -399,8 +399,7 @@ impl DiffMap {
                                 let old_range = prev_old_transform_start
                                     ..prev_old_transform_start
                                         + DiffOffset(base_text_byte_range.len());
-                                let new_offset =
-                                    DiffOffset(new_transforms.summary().diff_coords.len);
+                                let new_offset = DiffOffset(new_transforms.summary().diff_map.len);
                                 let edit = Edit {
                                     old: old_range,
                                     new: new_offset..new_offset,
@@ -455,8 +454,7 @@ impl DiffMap {
 
                             if !was_previously_expanded {
                                 let old_offset = prev_old_transform_start;
-                                let new_start =
-                                    DiffOffset(new_transforms.summary().diff_coords.len);
+                                let new_start = DiffOffset(new_transforms.summary().diff_map.len);
                                 let edit = Edit {
                                     old: old_offset..old_offset,
                                     new: new_start
@@ -477,7 +475,7 @@ impl DiffMap {
                             );
                         } else if was_previously_expanded {
                             let old_start = cursor.start().1;
-                            let new_offset = DiffOffset(new_transforms.summary().diff_coords.len);
+                            let new_offset = DiffOffset(new_transforms.summary().diff_map.len);
                             let edit = Edit {
                                 old: old_start
                                     ..old_start + DiffOffset(hunk.diff_base_byte_range.len()),
@@ -500,7 +498,7 @@ impl DiffMap {
                     } = item
                     {
                         let old_start = cursor.start().1;
-                        let new_offset = DiffOffset(new_transforms.summary().diff_coords.len);
+                        let new_offset = DiffOffset(new_transforms.summary().diff_map.len);
                         let edit = Edit {
                             old: old_start..old_start + DiffOffset(base_text_byte_range.len()),
                             new: new_offset..new_offset,
@@ -520,7 +518,7 @@ impl DiffMap {
 
             let diff_edit_old_end = cursor.start().1 - DiffOffset(edit_undershoot);
             let diff_edit_new_end =
-                DiffOffset(new_transforms.summary().diff_coords.len - edit_undershoot);
+                DiffOffset(new_transforms.summary().diff_map.len - edit_undershoot);
 
             if is_inlay_edit {
                 edits.push(DiffEdit {
@@ -548,7 +546,7 @@ impl DiffMap {
         end_offset: InlayOffset,
     ) {
         let summary_to_add = self.snapshot.inlay_snapshot.text_summary_for_range(
-            InlayOffset(new_transforms.summary().inlay_coords.len)..end_offset,
+            InlayOffset(new_transforms.summary().inlay_map.len)..end_offset,
         );
         if summary_to_add.len > 0 {
             let mut did_extend = false;
@@ -575,11 +573,11 @@ impl DiffMap {
     #[cfg(test)]
     fn check_invariants(&self) {
         let snapshot = &self.snapshot;
-        if snapshot.transforms.summary().inlay_coords.len != snapshot.inlay_snapshot.len().0 {
+        if snapshot.transforms.summary().inlay_map.len != snapshot.inlay_snapshot.len().0 {
             panic!(
                 "incorrect input length. expected {}, got {}. transforms: {:+?}",
                 snapshot.inlay_snapshot.len().0,
-                snapshot.transforms.summary().inlay_coords.len,
+                snapshot.transforms.summary().inlay_map.len,
                 snapshot.transforms.items(&()),
             );
         }
@@ -613,11 +611,11 @@ impl DiffMapSnapshot {
     }
 
     pub fn len(&self) -> DiffOffset {
-        DiffOffset(self.transforms.summary().diff_coords.len)
+        DiffOffset(self.transforms.summary().diff_map.len)
     }
 
     pub fn text_summary(&self) -> TextSummary {
-        self.transforms.summary().diff_coords.clone()
+        self.transforms.summary().diff_map.clone()
     }
 
     pub fn text_summary_for_range(&self, range: Range<DiffOffset>) -> TextSummary {
@@ -833,7 +831,7 @@ impl DiffMapSnapshot {
     }
 
     pub fn buffer_rows(&self, start_row: u32) -> DiffMapBufferRows {
-        if start_row > self.transforms.summary().diff_coords.lines.row {
+        if start_row > self.transforms.summary().diff_map.lines.row {
             panic!("invalid diff map row {}", start_row);
         }
 
@@ -967,12 +965,12 @@ impl sum_tree::Item for DiffTransform {
     fn summary(&self, _: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
         match self {
             DiffTransform::BufferContent { summary } => DiffTransformSummary {
-                inlay_coords: summary.clone(),
-                diff_coords: summary.clone(),
+                inlay_map: summary.clone(),
+                diff_map: summary.clone(),
             },
             DiffTransform::DeletedHunk { summary, .. } => DiffTransformSummary {
-                inlay_coords: TextSummary::default(),
-                diff_coords: summary.clone(),
+                inlay_map: TextSummary::default(),
+                diff_map: summary.clone(),
             },
         }
     }
@@ -983,14 +981,14 @@ impl sum_tree::Summary for DiffTransformSummary {
 
     fn zero(_: &Self::Context) -> Self {
         DiffTransformSummary {
-            inlay_coords: TextSummary::default(),
-            diff_coords: TextSummary::default(),
+            inlay_map: TextSummary::default(),
+            diff_map: TextSummary::default(),
         }
     }
 
     fn add_summary(&mut self, summary: &Self, _: &Self::Context) {
-        self.inlay_coords += &summary.inlay_coords;
-        self.diff_coords += &summary.diff_coords;
+        self.inlay_map += &summary.inlay_map;
+        self.diff_map += &summary.diff_map;
     }
 }
 
@@ -1000,7 +998,7 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for InlayOffset {
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
-        self.0 += summary.inlay_coords.len
+        self.0 += summary.inlay_map.len
     }
 }
 
@@ -1010,7 +1008,7 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for DiffOffset {
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
-        self.0 += summary.diff_coords.len
+        self.0 += summary.diff_map.len
     }
 }
 
@@ -1020,7 +1018,7 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for InlayPoint {
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
-        self.0 += summary.inlay_coords.lines
+        self.0 += summary.inlay_map.lines
     }
 }
 
@@ -1030,7 +1028,7 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for DiffPoint {
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
-        self.0 += summary.diff_coords.lines
+        self.0 += summary.diff_map.lines
     }
 }
 
