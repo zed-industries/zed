@@ -158,7 +158,9 @@ impl RemoteRunningKernel {
 
             let ws_url = format!(
                 "{}/api/kernels/{}/channels?token={}",
-                remote_server.base_url, kernel_id, remote_server.token
+                remote_server.base_url.replace("http", "ws"),
+                kernel_id,
+                remote_server.token
             );
 
             let mut req: Request<()> = ws_url.into_client_request()?;
