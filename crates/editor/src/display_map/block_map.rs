@@ -2911,7 +2911,7 @@ mod tests {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
-                    let (buffer_to_fold, buffer_to_unfold) = buffer.read_with(cx, |buffer, _| {
+                    let (unfolded_buffers, folded_buffers) = buffer.read_with(cx, |buffer, _| {
                         let folded_buffers = block_map
                             .0
                             .folded_buffers
@@ -2924,22 +2924,32 @@ mod tests {
                         log::debug!("Folded buffers {folded_buffers:?}");
                         unfolded_buffers
                             .retain(|buffer_id| !block_map.0.folded_buffers.contains(buffer_id));
-                        let buffer_to_fold = if unfolded_buffers.len() > 1 {
-                            let range_with_one_miss = rng.gen_range(0..=unfolded_buffers.len());
-                            unfolded_buffers.get(range_with_one_miss).copied()
-                        } else {
-                            None
-                        };
-                        let buffer_to_unfold = if folded_buffers.len() > 1 {
-                            let range_with_one_miss = rng.gen_range(0..=folded_buffers.len());
-                            folded_buffers.get(range_with_one_miss).copied()
-                        } else {
-                            None
-                        };
-                        (buffer_to_fold, buffer_to_unfold)
+                        (unfolded_buffers, folded_buffers)
                     });
+                    let mut folded_count = folded_buffers.len();
+                    let mut unfolded_count = unfolded_buffers.len();
+
+                    let toggle_probability =
+                        |items_len, opposite_items_len| match (items_len, opposite_items_len) {
+                            (0..=1, _) => 0.0,
+                            (2..=3, 0..=1) => 0.8,
+                            (2..=3, _) => 0.6,
+                            (4..=5, 0..=1) => 1.0,
+                            (4..=5, _) => 0.3,
+                            _ => 0.9,
+                        };
+                    let fold = rng.gen_bool(toggle_probability(unfolded_count, folded_count));
+                    let unfold = rng.gen_bool(toggle_probability(folded_count, unfolded_count));
+                    if !fold && !unfold {
+                        log::info!("Noop fold/unfold operation. Unfolded buffers: {unfolded_count}, folded buffers: {folded_count}");
+                        continue;
+                    }
+
                     buffer.update(cx, |buffer, cx| {
-                        if let Some(buffer_to_fold) = buffer_to_fold {
+                        if fold {
+                            let buffer_to_fold =
+                                unfolded_buffers[rng.gen_range(0..unfolded_buffers.len())];
+                            log::info!("Folding {buffer_to_fold:?}");
                             let related_text = buffer_snapshot
                                 .excerpts()
                                 .filter_map(|(_, buffer, range)| {
@@ -2957,12 +2967,19 @@ mod tests {
                             log::info!(
                                 "Folding {buffer_to_fold:?}, related excerpts: {related_text:?}"
                             );
+                            folded_count += 1;
                             block_map.fold_buffer(buffer_to_fold, buffer, cx);
                         }
-                        if let Some(buffer_to_unfold) = buffer_to_unfold {
+                        if unfold {
+                            let buffer_to_unfold =
+                                folded_buffers[rng.gen_range(0..folded_buffers.len())];
                             log::info!("Unfolding {buffer_to_unfold:?}");
+                            unfolded_count += 1;
                             block_map.unfold_buffer(buffer_to_unfold, buffer, cx);
                         }
+                        log::info!(
+                            "Unfolded buffers: {unfolded_count}, folded buffers: {folded_count}"
+                        );
                     });
                 }
                 _ => {
