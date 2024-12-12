@@ -369,30 +369,34 @@ impl RateCompletionModal {
                         .overflow_scroll()
                         .child(StyledText::new(diff).with_highlights(&text_style, diff_highlights)),
                 )
-                .child(
-                    h_flex()
-                        .p_2()
-                        .gap_2()
-                        .border_y_1()
-                        .border_color(border_color)
-                        .child(
-                            Icon::new(IconName::Info)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted)
-                        )
-                        .child(
-                            Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                        )
-                )
-                .child(
-                    div()
-                        .h_40()
-                        .pt_1()
-                        .bg(bg_color)
-                        .child(active_completion.feedback_editor.clone()),
-                )
+                .when_some((!rated).then(|| ()), |this, _| {
+                    this.child(
+                        h_flex()
+                            .p_2()
+                            .gap_2()
+                            .border_y_1()
+                            .border_color(border_color)
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                            )
+                            .child(
+                                Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                            )
+                    )
+                })
+                .when_some((!rated).then(|| ()), |this, _| {
+                    this.child(
+                        div()
+                            .h_40()
+                            .pt_1()
+                            .bg(bg_color)
+                            .child(active_completion.feedback_editor.clone())
+                    )
+                })
                 .child(
                     h_flex()
                         .p_1()
