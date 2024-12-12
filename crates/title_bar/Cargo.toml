@@ -46,12 +46,6 @@ util.workspace = true
 telemetry.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-install_cli.workspace = true
-editor.workspace = true
-project_panel.workspace = true
-search.workspace = true
-outline_panel.workspace = true
-terminal_view.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
