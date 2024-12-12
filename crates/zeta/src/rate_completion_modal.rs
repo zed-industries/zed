@@ -401,6 +401,7 @@ impl RateCompletionModal {
                     h_flex()
                         .p_1()
                         .h_8()
+                        .max_h_8()
                         .border_t_1()
                         .border_color(border_color)
                         .max_w_full()
