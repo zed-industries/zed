@@ -499,6 +499,7 @@ dependencies = [
  "similar",
  "smol",
  "telemetry_events",
+ "terminal",
  "terminal_view",
  "text",
  "theme",

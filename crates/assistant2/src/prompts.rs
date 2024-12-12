@@ -288,4 +288,25 @@ impl PromptBuilder {
         };
         self.handlebars.lock().render("content_prompt", &context)
     }
+
+    pub fn generate_terminal_assistant_prompt(
+        &self,
+        user_prompt: &str,
+        shell: Option<&str>,
+        working_directory: Option<&str>,
+        latest_output: &[String],
+    ) -> Result<String, RenderError> {
+        let context = TerminalAssistantPromptContext {
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            shell: shell.map(|s| s.to_string()),
+            working_directory: working_directory.map(|s| s.to_string()),
+            latest_output: latest_output.to_vec(),
+            user_prompt: user_prompt.to_string(),
+        };
+
+        self.handlebars
+            .lock()
+            .render("terminal_assistant_prompt", &context)
+    }
 }
