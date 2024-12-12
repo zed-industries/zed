@@ -129,9 +129,9 @@ impl RemoteBufferStore {
         let (tx, rx) = oneshot::channel();
         self.remote_buffer_listeners.entry(id).or_default().push(tx);
 
-        cx.spawn(|this, cx| async move {
+        model.spawn(cx, |this, cx| async move {
             if let Some(buffer) = this
-                .read_with(&cx, |buffer_store, _| buffer_store.get(id))
+                .read_with(&cx, |buffer_store, model, _| buffer_store.get(id))
                 .ok()
                 .flatten()
             {
@@ -572,8 +572,9 @@ impl LocalBufferStore {
 
         model
             .spawn(cx, move |this, mut cx| async move {
-                let snapshot = worktree_handle
-                    .update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
+                let snapshot = worktree_handle.update(&mut cx, |tree, model, _| {
+                    tree.as_local().unwrap().snapshot()
+                })?;
                 let diff_bases_by_buffer = cx
                     .background_executor()
                     .spawn(async move {
@@ -598,6 +599,7 @@ impl LocalBufferStore {
                                 let _ = change_set.set_base_text(
                                     staged_text,
                                     buffer_snapshot.clone(),
+                                    model,
                                     cx,
                                 );
                             } else {
@@ -832,7 +834,7 @@ impl LocalBufferStore {
             let buffer = match load_buffer.await {
                 Ok(buffer) => Ok(buffer),
                 Err(error) if is_not_found_error(&error) => cx.new_model(|model, cx| {
-                    let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
+                    let buffer_id = BufferId::from(model.entity_id().as_non_zero_u64());
                     let text_buffer = text::Buffer::new(0, buffer_id, "".into());
                     Buffer::build(
                         text_buffer,
@@ -884,8 +886,8 @@ impl LocalBufferStore {
             let buffer = cx.new_model(|model, cx| {
                 Buffer::local("", model, cx).with_language(language::PLAIN_TEXT.clone(), model, cx)
             })?;
-            buffer_store.update(&mut cx, |buffer_store, cx| {
-                buffer_store.add_buffer(buffer.clone(), cx).log_err();
+            buffer_store.update(&mut cx, |buffer_store, model, cx| {
+                buffer_store.add_buffer(buffer.clone(), model, cx).log_err();
             })?;
             Ok(buffer)
         })
@@ -943,12 +945,16 @@ impl BufferStore {
                 local_buffer_ids_by_path: Default::default(),
                 local_buffer_ids_by_entry_id: Default::default(),
                 worktree_store: worktree_store.clone(),
-                _subscription: model.subscribe(&worktree_store, cx, |this, _, event, cx| {
-                    if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
-                        let this = this.as_local_mut().unwrap();
-                        this.subscribe_to_worktree(worktree, cx);
-                    }
-                }),
+                _subscription: model.subscribe(
+                    &worktree_store,
+                    cx,
+                    |this, _emitter, event, model, cx| {
+                        if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
+                            let this = this.as_local_mut().unwrap();
+                            this.subscribe_to_worktree(worktree, model, cx);
+                        }
+                    },
+                ),
             }),
             downstream_client: None,
             opened_buffers: Default::default(),
@@ -1036,7 +1042,7 @@ impl BufferStore {
                         model
                             .spawn(cx, move |this, mut cx| async move {
                                 let load_result = load_buffer.await;
-                                this.update(&mut cx, |this, _cx| {
+                                this.update(&mut cx, |this, model, _cx| {
                                     // Record the fact that the buffer is no longer loading.
                                     this.loading_buffers.remove(&project_path);
                                 })
@@ -1075,7 +1081,7 @@ impl BufferStore {
                 entry
                     .insert(
                         model
-                            .spawn(cx, move |this, model, cx| async move {
+                            .spawn(cx, move |this, cx| async move {
                                 Self::open_unstaged_changes_internal(this, load.await, buffer, cx)
                                     .await
                                     .map_err(Arc::new)
@@ -1119,9 +1125,9 @@ impl BufferStore {
 
         if let Some(text) = text {
             change_set
-                .update(&mut cx, |change_set, cx| {
+                .update(&mut cx, |change_set, model, cx| {
                     let snapshot = buffer.read(cx).text_snapshot();
-                    change_set.set_base_text(text, snapshot, cx)
+                    change_set.set_base_text(text, snapshot, model, cx)
                 })?
                 .await
                 .ok();
@@ -1182,10 +1188,10 @@ impl BufferStore {
         };
         model.spawn(cx, |this, mut cx| async move {
             task.await?;
-            this.update(&mut cx, |_, cx| {
+            this.update(&mut cx, |_, model, cx| {
                 model.emit(
-                    cx,
                     BufferStoreEvent::BufferChangedFilePath { buffer, old_file },
+                    cx,
                 );
             })
         })
@@ -1372,9 +1378,7 @@ impl BufferStore {
             }
         }
 
-        model
-            .subscribe(&buffer, model, cx, Self::on_buffer_event)
-            .detach();
+        model.subscribe(&buffer, cx, Self::on_buffer_event).detach();
         model.emit(BufferStoreEvent::BufferAdded(buffer), cx);
         Ok(())
     }
@@ -1791,8 +1795,8 @@ impl BufferStore {
                 });
                 if let Some(old_file) = old_file {
                     model.emit(
-                        cx,
                         BufferStoreEvent::BufferChangedFilePath { buffer, old_file },
+                        cx,
                     );
                 }
             }
@@ -2006,7 +2010,7 @@ impl BufferStore {
                 shared.unstaged_changes = Some(change_set.clone());
             }
         })?;
-        let staged_text = change_set.read_with(&cx, |change_set, cx| {
+        let staged_text = change_set.read_with(&cx, |change_set, model, cx| {
             change_set
                 .base_text
                 .as_ref()
@@ -2035,11 +2039,16 @@ impl BufferStore {
         else {
             return Ok(());
         };
-        change_set.update(&mut cx, |change_set, cx| {
+        change_set.update(&mut cx, |change_set, model, cx| {
             if let Some(staged_text) = request.payload.staged_text {
-                let _ = change_set.set_base_text(staged_text, buffer.read(cx).text_snapshot(), cx);
+                let _ = change_set.set_base_text(
+                    staged_text,
+                    buffer.read(cx).text_snapshot(),
+                    model,
+                    cx,
+                );
             } else {
-                change_set.unset_base_text(buffer.read(cx).text_snapshot(), cx)
+                change_set.unset_base_text(buffer.read(cx).text_snapshot(), model, cx)
             }
         })?;
         Ok(())
@@ -2118,7 +2127,7 @@ impl BufferStore {
                 return anyhow::Ok(());
             };
 
-            let operations = buffer.update(&mut cx, |b, cx| b.serialize_ops(None, cx))?;
+            let operations = buffer.update(&mut cx, |b, model, cx| b.serialize_ops(None, cx))?;
             let operations = operations.await;
             let state = buffer.update(&mut cx, |buffer, model, cx| buffer.to_proto(cx))?;
 

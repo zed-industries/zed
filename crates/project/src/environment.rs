@@ -116,7 +116,7 @@ impl ProjectEnvironment {
 
         let cli_environment = self.get_cli_environment();
         if let Some(environment) = cli_environment {
-            cx.spawn(|_, _| async move {
+            cx.spawn(|_| async move {
                 let path = environment
                     .get("PATH")
                     .map(|path| path.as_str())

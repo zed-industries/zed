@@ -111,7 +111,7 @@ impl RichText {
         InteractiveText::new(
             id,
             StyledText::new(self.text.clone()).with_highlights(
-                &cx.text_style(),
+                &window.text_style(),
                 self.highlights.iter().map(|(range, highlight)| {
                     (
                         range.clone(),
@@ -157,7 +157,7 @@ impl RichText {
         )
         .on_click(self.link_ranges.clone(), {
             let link_urls = self.link_urls.clone();
-            move |ix, cx| {
+            move |ix, _window, cx| {
                 let url = &link_urls[ix];
                 if url.starts_with("http") {
                     cx.open_url(url);
@@ -169,7 +169,7 @@ impl RichText {
             let link_urls = self.link_urls.clone();
             let custom_tooltip_ranges = self.custom_ranges.clone();
             let custom_tooltip_fn = self.custom_ranges_tooltip_fn.clone();
-            move |idx, cx| {
+            move |idx, window, cx| {
                 for (ix, range) in link_ranges.iter().enumerate() {
                     if range.contains(&idx) {
                         return Some(LinkPreview::new(&link_urls[ix], cx));
@@ -178,7 +178,7 @@ impl RichText {
                 for range in &custom_tooltip_ranges {
                     if range.contains(&idx) {
                         if let Some(f) = &custom_tooltip_fn {
-                            return f(idx, range.clone(), cx);
+                            return f(idx, range.clone(), window, cx);
                         }
                     }
                 }

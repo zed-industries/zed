@@ -64,7 +64,7 @@ impl TaskStore {
             .payload
             .location
             .context("no location given for task context handling")?;
-        let (buffer_store, is_remote) = store.update(&mut cx, |store, _| {
+        let (buffer_store, is_remote) = store.update(&mut cx, |store, model, _| {
             Ok(match store {
                 TaskStore::Functional(state) => (
                     state.buffer_store.clone(),
@@ -98,9 +98,9 @@ impl TaskStore {
             .and_then(deserialize_anchor)
             .context("missing task context location end")?;
         let buffer = buffer_store
-            .update(&mut cx, |buffer_store, cx| {
+            .update(&mut cx, |buffer_store, model, cx| {
                 if is_remote {
-                    buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                    buffer_store.wait_for_remote_buffer(buffer_id, model, cx)
                 } else {
                     Task::ready(
                         buffer_store
@@ -171,7 +171,7 @@ impl TaskStore {
             buffer_store,
             toolchain_store,
             worktree_store,
-            _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(fs, cx),
+            _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(fs, model, cx),
         })
     }
 
@@ -194,7 +194,7 @@ impl TaskStore {
             buffer_store,
             toolchain_store,
             worktree_store,
-            _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(fs, cx),
+            _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(fs, model, cx),
         })
     }
 
@@ -297,25 +297,26 @@ impl TaskStore {
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         model.spawn(cx, move |task_store, mut cx| async move {
             if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(_) = task_store.update(&mut cx, |task_store, cx| {
+                let Ok(_) = task_store.update(&mut cx, |task_store, model, cx| {
                     task_store
-                        .update_user_tasks(None, Some(&user_tasks_content), cx)
+                        .update_user_tasks(None, Some(&user_tasks_content), model, cx)
                         .log_err();
                 }) else {
                     return;
                 };
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(()) = task_store.update(&mut cx, |task_store, cx| {
-                    let result = task_store.update_user_tasks(None, Some(&user_tasks_content), cx);
+                let Ok(()) = task_store.update(&mut cx, |task_store, model, cx| {
+                    let result =
+                        task_store.update_user_tasks(None, Some(&user_tasks_content), model, cx);
                     if let Err(err) = &result {
                         log::error!("Failed to load user tasks: {err}");
                         model.emit(
-                            cx,
                             crate::Event::Toast {
                                 notification_id: "load-user-tasks".into(),
                                 message: format!("Invalid global tasks file\n{err}"),
                             },
+                            cx,
                         );
                     }
                     cx.refresh();
@@ -343,8 +344,8 @@ fn local_task_context_for_location(
     cx.spawn(|mut cx| async move {
         let worktree_abs_path = worktree_abs_path.clone();
         let project_env = environment
-            .update(&mut cx, |environment, cx| {
-                environment.get_environment(worktree_id, worktree_abs_path.clone(), cx)
+            .update(&mut cx, |environment, model, cx| {
+                environment.get_environment(worktree_id, worktree_abs_path.clone(), model, cx)
             })
             .ok()?
             .await;

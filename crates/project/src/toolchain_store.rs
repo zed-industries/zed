@@ -60,7 +60,7 @@ impl ToolchainStore {
     ) -> Task<Option<()>> {
         match &self.0 {
             ToolchainStoreInner::Local(local, _) => local.update(cx, |this, model, cx| {
-                this.activate_toolchain(worktree_id, toolchain, cx)
+                this.activate_toolchain(worktree_id, toolchain, model, cx)
             }),
             ToolchainStoreInner::Remote(remote) => {
                 remote
@@ -308,8 +308,8 @@ impl LocalToolchainStore {
         let environment = self.project_environment.clone();
         cx.spawn(|mut cx| async move {
             let project_env = environment
-                .update(&mut cx, |environment, cx| {
-                    environment.get_environment(Some(worktree_id), Some(root.clone()), cx)
+                .update(&mut cx, |environment, model, cx| {
+                    environment.get_environment(Some(worktree_id), Some(root.clone()), model, cx)
                 })
                 .ok()?
                 .await;

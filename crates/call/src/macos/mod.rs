@@ -124,12 +124,12 @@ impl ActiveCall {
         let call = IncomingCall {
             room_id: envelope.payload.room_id,
             participants: user_store
-                .update(&mut cx, |user_store, cx| {
+                .update(&mut cx, |user_store, model, cx| {
                     user_store.get_users(envelope.payload.participant_user_ids, cx)
                 })?
                 .await?,
             calling_user: user_store
-                .update(&mut cx, |user_store, cx| {
+                .update(&mut cx, |user_store, model, cx| {
                     user_store.get_user(envelope.payload.calling_user_id, cx)
                 })?
                 .await?,

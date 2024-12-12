@@ -67,7 +67,7 @@ impl Manager {
         if self.maintain_connection.is_none() {
             self.maintain_connection = Some(cx.spawn({
                 let client = self.client.clone();
-                move |_, cx| Self::maintain_connection(manager, client.clone(), cx).log_err()
+                move |cx| Self::maintain_connection(manager, client.clone(), cx).log_err()
             }));
         }
     }
@@ -108,7 +108,7 @@ impl Manager {
             let response = request.await?;
             let message_id = response.message_id;
 
-            this.update(&mut cx, |_, cx| {
+            this.update(&mut cx, |_, model, cx| {
                 for rejoined_project in response.payload.rejoined_projects {
                     if let Some(project) = projects.get(&rejoined_project.id) {
                         project.update(cx, |project, model, cx| {

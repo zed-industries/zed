@@ -406,7 +406,7 @@ impl LspCommand for PerformRename {
         let transaction = lsp_store
             .buffer_store()
             .update(cx, |buffer_store, model, cx| {
-                buffer_store.serialize_project_transaction_for_peer(response, peer_id, cx)
+                buffer_store.serialize_project_transaction_for_peer(response, peer_id, model, cx)
             });
         proto::PerformRenameResponse {
             transaction: Some(transaction),
@@ -424,13 +424,14 @@ impl LspCommand for PerformRename {
             .transaction
             .ok_or_else(|| anyhow!("missing transaction"))?;
         lsp_store
-            .update(&mut cx, |lsp_store, cx| {
+            .update(&mut cx, |lsp_store, model, cx| {
                 lsp_store
                     .buffer_store()
                     .update(cx, |buffer_store, model, cx| {
                         buffer_store.deserialize_project_transaction(
                             message,
                             self.push_to_history,
+                            model,
                             cx,
                         )
                     })
@@ -863,8 +864,8 @@ async fn location_links_from_proto(
             Some(origin) => {
                 let buffer_id = BufferId::new(origin.buffer_id)?;
                 let buffer = lsp_store
-                    .update(&mut cx, |lsp_store, cx| {
-                        lsp_store.wait_for_remote_buffer(buffer_id, cx)
+                    .update(&mut cx, |lsp_store, model, cx| {
+                        lsp_store.wait_for_remote_buffer(buffer_id, model, cx)
                     })?
                     .await?;
                 let start = origin
@@ -876,7 +877,9 @@ async fn location_links_from_proto(
                     .and_then(deserialize_anchor)
                     .ok_or_else(|| anyhow!("missing origin end"))?;
                 buffer
-                    .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
+                    .update(&mut cx, |buffer, model, _| {
+                        buffer.wait_for_anchors([start, end])
+                    })?
                     .await?;
                 Some(Location {
                     buffer,
@@ -889,8 +892,8 @@ async fn location_links_from_proto(
         let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
         let buffer_id = BufferId::new(target.buffer_id)?;
         let buffer = lsp_store
-            .update(&mut cx, |lsp_store, cx| {
-                lsp_store.wait_for_remote_buffer(buffer_id, cx)
+            .update(&mut cx, |lsp_store, model, cx| {
+                lsp_store.wait_for_remote_buffer(buffer_id, model, cx)
             })?
             .await?;
         let start = target
@@ -902,7 +905,9 @@ async fn location_links_from_proto(
             .and_then(deserialize_anchor)
             .ok_or_else(|| anyhow!("missing target end"))?;
         buffer
-            .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
+            .update(&mut cx, |buffer, model, _| {
+                buffer.wait_for_anchors([start, end])
+            })?
             .await?;
         let target = Location {
             buffer,
@@ -1011,9 +1016,9 @@ fn location_links_to_proto(
                 lsp_store
                     .buffer_store()
                     .update(cx, |buffer_store, model, cx| {
-                        buffer_store.create_buffer_for_peer(&origin.buffer, peer_id, cx)
+                        buffer_store.create_buffer_for_peer(&origin.buffer, peer_id, model, cx)
                     })
-                    .detach_and_log_err(model, cx);
+                    .detach_and_log_err(cx);
 
                 let buffer_id = origin.buffer.read(cx).remote_id().into();
                 proto::Location {
@@ -1026,9 +1031,14 @@ fn location_links_to_proto(
             lsp_store
                 .buffer_store()
                 .update(cx, |buffer_store, model, cx| {
-                    buffer_store.create_buffer_for_peer(&definition.target.buffer, peer_id, cx)
+                    buffer_store.create_buffer_for_peer(
+                        &definition.target.buffer,
+                        peer_id,
+                        model,
+                        cx,
+                    )
                 })
-                .detach_and_log_err(model, cx);
+                .detach_and_log_err(cx);
 
             let buffer_id = definition.target.buffer.read(cx).remote_id().into();
             let target = proto::Location {
@@ -1100,11 +1110,12 @@ impl LspCommand for GetReferences {
         if let Some(locations) = locations {
             for lsp_location in locations {
                 let target_buffer_handle = lsp_store
-                    .update(&mut cx, |lsp_store, cx| {
+                    .update(&mut cx, |lsp_store, model, cx| {
                         lsp_store.open_local_buffer_via_lsp(
                             lsp_location.uri,
                             language_server.server_id(),
                             lsp_adapter.name.clone(),
+                            model,
                             cx,
                         )
                     })?
@@ -1112,7 +1123,7 @@ impl LspCommand for GetReferences {
 
                 target_buffer_handle
                     .clone()
-                    .update(&mut cx, |target_buffer, _| {
+                    .update(&mut cx, |target_buffer, model, _| {
                         let target_start = target_buffer
                             .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
                         let target_end = target_buffer
@@ -1173,9 +1184,9 @@ impl LspCommand for GetReferences {
                 lsp_store
                     .buffer_store()
                     .update(cx, |buffer_store, model, cx| {
-                        buffer_store.create_buffer_for_peer(&definition.buffer, peer_id, cx)
+                        buffer_store.create_buffer_for_peer(&definition.buffer, peer_id, model, cx)
                     })
-                    .detach_and_log_err(model, cx);
+                    .detach_and_log_err(cx);
                 let buffer_id = definition.buffer.read(cx).remote_id();
                 proto::Location {
                     start: Some(serialize_anchor(&definition.range.start)),
@@ -1199,7 +1210,7 @@ impl LspCommand for GetReferences {
             let buffer_id = BufferId::new(location.buffer_id)?;
             let target_buffer = project
                 .update(&mut cx, |this, model, cx| {
-                    this.wait_for_remote_buffer(buffer_id, cx)
+                    this.wait_for_remote_buffer(buffer_id, model, cx)
                 })?
                 .await?;
             let start = location
@@ -1776,7 +1787,7 @@ impl LspCommand for GetCompletions {
         };
 
         let language_server_adapter = lsp_store
-            .update(&mut cx, |lsp_store, _| {
+            .update(&mut cx, |lsp_store, model, _| {
                 lsp_store.language_server_adapter_for_id(server_id)
             })?
             .ok_or_else(|| anyhow!("no such language server"))?;
@@ -1842,7 +1853,7 @@ impl LspCommand for GetCompletions {
         }
 
         let mut completion_edits = Vec::new();
-        buffer.update(&mut cx, |buffer, _cx| {
+        buffer.update(&mut cx, |buffer, model, _cx| {
             let snapshot = buffer.snapshot();
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
 

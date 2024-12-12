@@ -295,12 +295,7 @@ impl MarkdownElement {
         }
     }
 
-    fn load_language(
-        &self,
-        name: &str,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
-    ) -> Option<Arc<Language>> {
+    fn load_language(&self, name: &str, cx: &mut gpui::AppContext) -> Option<Arc<Language>> {
         let language_test = self.language_registry.as_ref()?.language_for_name(name);
 
         let language_name = match language_test.now_or_never() {
@@ -415,10 +410,10 @@ impl MarkdownElement {
             window.set_cursor_style(CursorStyle::IBeam, hitbox);
         }
 
-        self.on_mouse_event(cx, {
+        self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
-            move |markdown, event: &MouseDownEvent, phase, cx| {
+            move |markdown, event: &MouseDownEvent, phase, model, window, cx| {
                 if hitbox.is_hovered(window) {
                     if phase.bubble() {
                         if let Some(link) = rendered_text.link_for_position(event.position) {
@@ -441,8 +436,8 @@ impl MarkdownElement {
                                 reversed: false,
                                 pending: true,
                             };
-                            cx.focus(&markdown.focus_handle);
-                            cx.prevent_default()
+                            window.focus(&markdown.focus_handle);
+                            window.prevent_default()
                         }
 
                         model.notify(cx);
@@ -454,11 +449,13 @@ impl MarkdownElement {
                 }
             }
         });
-        self.on_mouse_event(cx, {
+
+        self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
             let was_hovering_link = is_hovering_link;
-            move |markdown, event: &MouseMoveEvent, phase, cx| {
+
+            move |markdown, event: &MouseMoveEvent, phase, model, window, cx| {
                 if phase.capture() {
                     return;
                 }
@@ -480,9 +477,9 @@ impl MarkdownElement {
                 }
             }
         });
-        self.on_mouse_event(cx, {
+        self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
-            move |markdown, event: &MouseUpEvent, phase, cx| {
+            move |markdown, event: &MouseUpEvent, phase, model, window, cx| {
                 if phase.bubble() {
                     if let Some(pressed_link) = markdown.pressed_link.take() {
                         if Some(&pressed_link) == rendered_text.link_for_position(event.position) {
@@ -516,14 +513,14 @@ impl MarkdownElement {
 
         let text_style = self.style.base_text_style.clone();
         let font_id = cx.text_system().resolve_font(&text_style.font());
-        let font_size = text_style.font_size.to_pixels(cx.rem_size());
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
         let em_width = cx
             .text_system()
             .typographic_bounds(font_id, font_size, 'm')
             .unwrap()
             .size
             .width;
-        cx.request_autoscroll(Bounds::from_corners(
+        window.request_autoscroll(Bounds::from_corners(
             point(position.x - 3. * em_width, position.y - 3. * line_height),
             point(position.x + 3. * em_width, position.y + 3. * line_height),
         ));
@@ -534,13 +531,16 @@ impl MarkdownElement {
         &self,
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
-        mut f: impl 'static + FnMut(&mut Markdown, &T, DispatchPhase, &Model<Markdown>, &mut AppContext),
+        mut f: impl 'static
+            + FnMut(&mut Markdown, &T, DispatchPhase, &Model<Markdown>, &mut Window, &mut AppContext),
     ) {
-        cx.on_mouse_event({
+        window.on_mouse_event({
             let markdown = self.markdown.downgrade();
-            move |event, phase, cx| {
+            move |event, phase, window, cx| {
                 markdown
-                    .update(cx, |markdown, model, cx| f(markdown, event, phase, cx))
+                    .update(cx, |markdown, model, cx| {
+                        f(markdown, event, phase, model, window, cx)
+                    })
                     .log_err();
             }
         });
@@ -611,7 +611,7 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::CodeBlock(kind) => {
                             let language = if let CodeBlockKind::Fenced(language) = kind {
-                                self.load_language(language.as_ref(), model, cx)
+                                self.load_language(language.as_ref(), cx)
                             } else {
                                 None
                             };
@@ -751,8 +751,8 @@ impl Element for MarkdownElement {
             }
         }
         let mut rendered_markdown = builder.build();
-        let child_layout_id = rendered_markdown.element.request_layout(model, cx);
-        let layout_id = cx.request_layout(gpui::Style::default(), [child_layout_id]);
+        let child_layout_id = rendered_markdown.element.request_layout(window, cx);
+        let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
         (layout_id, rendered_markdown)
     }
 
@@ -769,7 +769,7 @@ impl Element for MarkdownElement {
 
         let hitbox = window.insert_hitbox(bounds, false);
         rendered_markdown.element.prepaint(window, cx);
-        self.autoscroll(&rendered_markdown.text, model, cx);
+        self.autoscroll(&rendered_markdown.text, window, cx);
         hitbox
     }
 

@@ -1,8 +1,8 @@
 use crate::{
-    ActiveTooltip, AnyElement, AnyTooltip, AppContext, Bounds, Context, DispatchPhase, Element,
-    ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate,
-    WhiteSpace, Window, WrappedLine, TOOLTIP_DELAY,
+    ActiveTooltip, AnyElement, AnyTooltip, AnyView, AppContext, Bounds, Context, DispatchPhase,
+    Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement, LayoutId,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextRun,
+    TextStyle, Truncate, WhiteSpace, Window, WrappedLine, TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -555,14 +555,10 @@ impl InteractiveText {
     }
 
     /// tooltip lets you specify a tooltip for a given character index in the string.
-    pub fn tooltip<F, E>(
+    pub fn tooltip(
         mut self,
-        builder: impl 'static + Fn(usize, &mut Window, &mut AppContext) -> Option<F>,
-    ) -> Self
-    where
-        F: 'static + Fn(&mut Window, &mut AppContext) -> E,
-        E: IntoElement,
-    {
+        builder: impl 'static + Fn(usize, &mut Window, &mut AppContext) -> Option<AnyView>,
+    ) -> Self {
         self.tooltip_builder = Some(Rc::new(move |position, window, cx| {
             let renderer = builder(position, window, cx);
             renderer.map(|renderer| {

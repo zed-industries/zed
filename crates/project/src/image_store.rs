@@ -137,7 +137,9 @@ impl ProjectItem for ImageItem {
         if Img::extensions().contains(&ext) && !ext.contains("svg") {
             Some(cx.spawn(|mut cx| async move {
                 project
-                    .update(&mut cx, |project, cx| project.open_image(path, model, cx))?
+                    .update(&mut cx, |project, model, cx| {
+                        project.open_image(path, model, cx)
+                    })?
                     .await
             }))
         } else {
@@ -206,11 +208,12 @@ impl ImageStore {
         let this = model.downgrade();
         Self {
             state: Box::new(cx.new_model(|model, cx| {
-                let subscription = cx.subscribe(
+                let subscription = model.subscribe(
                     &worktree_store,
-                    |this: &mut LocalImageStore, _, event, cx| {
+                    cx,
+                    |this: &mut LocalImageStore, _, event, model, cx| {
                         if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
-                            this.subscribe_to_worktree(worktree, cx);
+                            this.subscribe_to_worktree(worktree, model, cx);
                         }
                     },
                 );
@@ -297,7 +300,7 @@ impl ImageStore {
                 model
                     .spawn(cx, move |this, mut cx| async move {
                         let load_result = load_image.await;
-                        *tx.borrow_mut() = Some(this.update(&mut cx, |this, _cx| {
+                        *tx.borrow_mut() = Some(this.update(&mut cx, |this, model, _cx| {
                             // Record the fact that the image is no longer loading.
                             this.loading_images_by_path.remove(&project_path);
                             let image = load_result.map_err(Arc::new)?;
@@ -356,9 +359,7 @@ impl ImageStore {
 
         self.opened_images.insert(image_id, image.downgrade());
 
-        model
-            .subscribe(&image, model, cx, Self::on_image_event)
-            .detach();
+        model.subscribe(&image, cx, Self::on_image_event).detach();
         model.emit(ImageStoreEvent::ImageAdded(image), cx);
         Ok(())
     }
@@ -400,18 +401,18 @@ impl ImageStoreImpl for Model<LocalImageStore> {
             let LoadedBinaryFile { file, content } = load_file.await?;
             let image = create_gpui_image(content)?;
 
-            let model = cx.new_model(|model, cx| ImageItem {
-                id: cx.entity_id().as_non_zero_u64().into(),
+            let image_item = cx.new_model(|model, cx| ImageItem {
+                id: model.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
                 reload_task: None,
             })?;
 
-            let image_id = cx.read_model(&model, |model, _| model.id)?;
+            let image_id = cx.read_model(&image_item, |image_item, _, _| image_item.id)?;
 
             this.update(&mut cx, |this, model, cx| {
                 image_store.update(cx, |image_store, model, cx| {
-                    image_store.add_image(model.clone(), cx)
+                    image_store.add_image(image_item.clone(), model, cx)
                 })??;
                 this.local_image_ids_by_path.insert(
                     ProjectPath {
@@ -428,7 +429,7 @@ impl ImageStoreImpl for Model<LocalImageStore> {
                 anyhow::Ok(())
             })??;
 
-            Ok(model)
+            Ok(image_item)
         })
     }
 
@@ -438,7 +439,7 @@ impl ImageStoreImpl for Model<LocalImageStore> {
         model: &Model<ImageStore>,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
-        model.spawn(cx, move |mut cx| async move {
+        cx.spawn(move |mut cx| async move {
             for image in images {
                 if let Some(rec) =
                     image.update(&mut cx, |image, model, cx| image.reload(model, cx))?
@@ -467,7 +468,7 @@ impl LocalImageStore {
                 if worktree.read(cx).is_local() {
                     match event {
                         worktree::Event::UpdatedEntries(changes) => {
-                            this.local_worktree_entries_changed(&worktree, changes, cx);
+                            this.local_worktree_entries_changed(&worktree, changes, model, cx);
                         }
                         _ => {}
                     }
@@ -485,7 +486,14 @@ impl LocalImageStore {
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
         for (path, entry_id, _) in changes {
-            self.local_worktree_entry_changed(*entry_id, path, worktree_handle, &snapshot, cx);
+            self.local_worktree_entry_changed(
+                *entry_id,
+                path,
+                worktree_handle,
+                &snapshot,
+                model,
+                cx,
+            );
         }
     }
 
@@ -590,7 +598,7 @@ impl LocalImageStore {
                 }
             }
 
-            image.file_updated(Arc::new(new_file), cx);
+            image.file_updated(Arc::new(new_file), model, cx);
         });
         None
     }
@@ -721,8 +729,8 @@ mod tests {
 
         let (task1, task2) = project.update(cx, |project, model, cx| {
             (
-                project.open_image(project_path.clone(), cx),
-                project.open_image(project_path.clone(), cx),
+                project.open_image(project_path.clone(), model, cx),
+                project.open_image(project_path.clone(), model, cx),
             )
         });
 

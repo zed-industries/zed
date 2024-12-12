@@ -336,11 +336,11 @@ impl NotificationStore {
         this.update(&mut cx, |this, model, cx| {
             if options.clear_old {
                 model.emit(
-                    cx,
                     NotificationEvent::NotificationsUpdated {
                         old_range: 0..this.notifications.summary().count,
                         new_count: 0,
                     },
+                    cx,
                 );
                 this.notifications = SumTree::default();
                 this.channel_messages.clear();
@@ -400,28 +400,28 @@ impl NotificationStore {
                     if let Some(new_notification) = &new_notification {
                         if new_notification.is_read {
                             model.emit(
-                                cx,
                                 NotificationEvent::NotificationRead {
                                     entry: new_notification.clone(),
                                 },
+                                cx,
                             );
                         }
                     } else {
                         model.emit(
-                            cx,
                             NotificationEvent::NotificationRemoved {
                                 entry: old_notification.clone(),
                             },
+                            cx,
                         );
                     }
                 }
             } else if let Some(new_notification) = &new_notification {
                 if is_new {
                     model.emit(
-                        cx,
                         NotificationEvent::NewNotification {
                             entry: new_notification.clone(),
                         },
+                        cx,
                     );
                 }
             }
@@ -438,11 +438,11 @@ impl NotificationStore {
 
         self.notifications = new_notifications;
         model.emit(
-            cx,
             NotificationEvent::NotificationsUpdated {
                 old_range,
                 new_count,
             },
+            cx,
         );
     }
 

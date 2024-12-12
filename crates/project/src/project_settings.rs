@@ -251,7 +251,7 @@ impl SettingsObserver {
         cx: &mut AppContext,
     ) -> Self {
         model
-            .subscribe(&worktree_store, model, cx, Self::on_worktree_store_event)
+            .subscribe(&worktree_store, cx, Self::on_worktree_store_event)
             .detach();
 
         Self {
@@ -369,7 +369,7 @@ impl SettingsObserver {
             model
                 .subscribe(worktree, cx, |this, worktree, event, model, cx| {
                     if let worktree::Event::UpdatedEntries(changes) = event {
-                        this.update_local_worktree_settings(&worktree, changes, cx)
+                        this.update_local_worktree_settings(&worktree, changes, model, cx)
                     }
                 })
                 .detach()
@@ -482,7 +482,7 @@ impl SettingsObserver {
 
         let worktree = worktree.clone();
         model
-            .spawn(cx, move |this, model, cx| async move {
+            .spawn(cx, move |this, cx| async move {
                 let settings_contents: Vec<(Arc<Path>, _, _)> =
                     futures::future::join_all(settings_contents).await;
                 cx.update(|cx| {
@@ -492,6 +492,7 @@ impl SettingsObserver {
                             settings_contents.into_iter().map(|(path, kind, content)| {
                                 (path, kind, content.and_then(|c| c.log_err()))
                             }),
+                            model,
                             cx,
                         )
                     })
@@ -531,10 +532,10 @@ impl SettingsObserver {
                                     message
                                 );
                                 model.emit(
-                                    cx,
                                     SettingsObserverEvent::LocalSettingsUpdated(Err(
                                         InvalidSettingsError::LocalSettings { path, message },
                                     )),
+                                    cx,
                                 );
                             }
                             Err(e) => {

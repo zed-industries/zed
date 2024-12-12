@@ -159,7 +159,6 @@ impl SnippetProvider {
     pub fn new(
         fs: Arc<dyn Fs>,
         dirs_to_watch: BTreeSet<PathBuf>,
-        model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(move |model, cx| {

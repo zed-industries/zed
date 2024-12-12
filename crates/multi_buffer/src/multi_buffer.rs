@@ -844,10 +844,10 @@ impl MultiBuffer {
             }
 
             model.emit(
-                cx,
                 Event::ExcerptsEdited {
                     ids: edited_excerpt_ids,
                 },
+                cx,
             );
         }
     }
@@ -1548,18 +1548,18 @@ impl MultiBuffer {
             new: edit_start..edit_end,
         }]);
         model.emit(
-            cx,
             Event::Edited {
                 singleton_buffer_edited: false,
             },
+            cx,
         );
         model.emit(
-            cx,
             Event::ExcerptsAdded {
                 buffer,
                 predecessor: prev_excerpt_id,
                 excerpts,
             },
+            cx,
         );
         model.notify(cx);
     }
@@ -1581,10 +1581,10 @@ impl MultiBuffer {
             new: 0..0,
         }]);
         model.emit(
-            cx,
             Event::Edited {
                 singleton_buffer_edited: false,
             },
+            cx,
         );
         model.emit(Event::ExcerptsRemoved { ids }, cx);
         model.notify(cx);
@@ -1826,10 +1826,10 @@ impl MultiBuffer {
 
         self.subscriptions.publish_mut(edits);
         model.emit(
-            cx,
             Event::Edited {
                 singleton_buffer_edited: false,
             },
+            cx,
         );
         model.emit(Event::ExcerptsRemoved { ids }, cx);
         model.notify(cx);
@@ -1893,7 +1893,6 @@ impl MultiBuffer {
         cx: &mut AppContext,
     ) {
         model.emit(
-            cx,
             match event {
                 language::BufferEvent::Edited => Event::Edited {
                     singleton_buffer_edited: true,
@@ -1917,6 +1916,7 @@ impl MultiBuffer {
                 //
                 language::BufferEvent::Operation { .. } => return,
             },
+            cx,
         );
     }
 

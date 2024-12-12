@@ -259,25 +259,30 @@ impl Project {
                     cx,
                 )
                 .map(|builder| {
-                    let terminal_handle = cx.new_model(|model, cx| builder.subscribe(cx));
+                    let terminal_handle = cx.new_model(|model, cx| builder.subscribe(model, cx));
 
                     this.terminals
                         .local_handles
                         .push(terminal_handle.downgrade());
 
                     let id = terminal_handle.entity_id();
-                    cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
-                        let handles = &mut project.terminals.local_handles;
+                    model
+                        .observe_release(
+                            &terminal_handle,
+                            cx,
+                            move |project, _terminal, model, cx| {
+                                let handles = &mut project.terminals.local_handles;
 
-                        if let Some(index) = handles
-                            .iter()
-                            .position(|terminal| terminal.entity_id() == id)
-                        {
-                            handles.remove(index);
-                            model.notify(cx);
-                        }
-                    })
-                    .detach();
+                                if let Some(index) = handles
+                                    .iter()
+                                    .position(|terminal| terminal.entity_id() == id)
+                                {
+                                    handles.remove(index);
+                                    model.notify(cx);
+                                }
+                            },
+                        )
+                        .detach();
 
                     if let Some(activate_command) = python_venv_activate_command {
                         this.activate_python_virtual_environment(

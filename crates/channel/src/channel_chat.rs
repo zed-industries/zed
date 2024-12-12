@@ -554,11 +554,11 @@ impl ChannelChat {
         this.update(&mut cx, |this, model, cx| {
             this.insert_messages(SumTree::from_item(message, &()), model, cx);
             model.emit(
-                cx,
                 ChannelChatEvent::NewMessage {
                     channel_id: this.channel_id,
                     message_id,
                 },
+                cx,
             )
         })?;
 
@@ -653,11 +653,11 @@ impl ChannelChat {
 
             for range in ranges.into_iter().rev() {
                 model.emit(
-                    cx,
                     ChannelChatEvent::MessagesUpdated {
                         old_range: range,
                         new_count: 0,
                     },
+                    cx,
                 );
             }
             model.emit(
