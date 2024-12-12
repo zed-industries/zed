@@ -40,7 +40,7 @@ actions!(
         ResetBufferFontSize,
         DecreaseUiFontSize,
         IncreaseUiFontSize,
-        ResetUiFontSize,
+        ResetUiFontSize
     ]
 );
 

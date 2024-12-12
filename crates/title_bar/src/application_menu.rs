@@ -26,12 +26,46 @@ impl ApplicationMenu {
         }
     }
 
+    fn sanitize_menu_items(items: Vec<OwnedMenuItem>) -> Vec<OwnedMenuItem> {
+        let mut cleaned = Vec::new();
+        let mut last_was_separator = false;
+
+        for item in items {
+            match item {
+                OwnedMenuItem::Separator => {
+                    if !last_was_separator {
+                        cleaned.push(item);
+                        last_was_separator = true;
+                    }
+                }
+                OwnedMenuItem::Submenu(submenu) => {
+                    // Skip empty submenus
+                    if !submenu.items.is_empty() {
+                        cleaned.push(OwnedMenuItem::Submenu(submenu));
+                        last_was_separator = false;
+                    }
+                }
+                item => {
+                    cleaned.push(item);
+                    last_was_separator = false;
+                }
+            }
+        }
+
+        // Remove trailing separator
+        if let Some(OwnedMenuItem::Separator) = cleaned.last() {
+            cleaned.pop();
+        }
+
+        cleaned
+    }
+
     fn build_menu_from_items(entry: MenuEntry, cx: &mut WindowContext<'_>) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, cx| {
             let menu = menu.when_some(cx.focused(), |menu, focused| menu.context(focused));
-            entry
-                .menu
-                .items
+            let sanitized_items = Self::sanitize_menu_items(entry.menu.items);
+
+            sanitized_items
                 .into_iter()
                 .fold(menu, |menu, item| match item {
                     OwnedMenuItem::Separator => menu.separator(),
@@ -58,6 +92,8 @@ impl ApplicationMenu {
         let menu_name = entry.menu.name.clone();
         let entry = entry.clone();
 
+        // Application menu must have same ids as first menu item in standard menu
+        // Hence, we generate ids based on the menu name
         div()
             .id(SharedString::from(format!("{}-menu-item", menu_name)))
             .occlude()
