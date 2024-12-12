@@ -1943,10 +1943,34 @@ async fn test_mute_deafen(
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
     let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
 
-    room_a.read_with(cx_a, |room, _| assert!(!room.is_muted()));
-    room_b.read_with(cx_b, |room, _| assert!(!room.is_muted()));
+    // Users A and B are both muted.
+    room_a.read_with(cx_a, |room, _| assert!(room.is_muted()));
+    room_b.read_with(cx_b, |room, _| assert!(room.is_muted()));
+    assert_eq!(
+        participant_audio_state(&room_a, cx_a),
+        &[ParticipantAudioState {
+            user_id: client_b.user_id().unwrap(),
+            is_muted: true,
+            audio_tracks_playing: vec![],
+        }]
+    );
+    assert_eq!(
+        participant_audio_state(&room_b, cx_b),
+        &[ParticipantAudioState {
+            user_id: client_a.user_id().unwrap(),
+            is_muted: true,
+            audio_tracks_playing: vec![],
+        }]
+    );
+
+    // Both users unmute
+    room_a.update(cx_a, |room, cx| room.toggle_mute(cx));
+    room_b.update(cx_b, |room, cx| room.toggle_mute(cx));
+    executor.run_until_parked();
 
     // Users A and B are both unmuted.
+    room_a.read_with(cx_a, |room, _| assert!(!room.is_muted()));
+    room_b.read_with(cx_b, |room, _| assert!(!room.is_muted()));
     assert_eq!(
         participant_audio_state(&room_a, cx_a),
         &[ParticipantAudioState {
@@ -2024,6 +2048,12 @@ async fn test_mute_deafen(
         .update(cx_c, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
+    executor.run_until_parked();
+
+    let room_c = active_call_c.read_with(cx_c, |call, _| call.room().unwrap().clone());
+
+    // User C unmutes
+    room_c.update(cx_c, |room, cx| room.toggle_mute(cx));
     executor.run_until_parked();
 
     // User A does not hear users B or C.
