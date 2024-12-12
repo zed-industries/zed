@@ -76,9 +76,16 @@ pub struct InlineCompletion {
     input_events: Arc<str>,
     input_excerpt: Arc<str>,
     output_excerpt: Arc<str>,
+    request_sent_at: Instant,
+    response_received_at: Instant,
 }
 
 impl InlineCompletion {
+    fn latency(&self) -> Duration {
+        self.response_received_at
+            .duration_since(self.request_sent_at)
+    }
+
     fn interpolate(&self, new_snapshot: BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
         let mut edits = Vec::new();
 
@@ -282,7 +289,7 @@ impl Zeta {
         let llm_token = self.llm_token.clone();
 
         cx.spawn(|this, mut cx| async move {
-            let start = std::time::Instant::now();
+            let request_sent_at = Instant::now();
 
             let mut input_events = String::new();
             for event in events {
@@ -304,7 +311,6 @@ impl Zeta {
             let response = perform_predict_edits(client, llm_token, body).await?;
 
             let output_excerpt = response.output_excerpt;
-            log::debug!("prediction took: {:?}", start.elapsed());
             log::debug!("completion response: {}", output_excerpt);
 
             let inline_completion = Self::process_completion_response(
@@ -314,6 +320,7 @@ impl Zeta {
                 path,
                 input_events,
                 input_excerpt,
+                request_sent_at,
                 &cx,
             )
             .await?;
@@ -539,6 +546,7 @@ and then another
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_completion_response(
         output_excerpt: String,
         snapshot: &BufferSnapshot,
@@ -546,6 +554,7 @@ and then another
         path: Arc<Path>,
         input_events: String,
         input_excerpt: String,
+        request_sent_at: Instant,
         cx: &AsyncAppContext,
     ) -> Task<Result<InlineCompletion>> {
         let snapshot = snapshot.clone();
@@ -580,6 +589,8 @@ and then another
                 input_events: input_events.into(),
                 input_excerpt: input_excerpt.into(),
                 output_excerpt: output_excerpt.into(),
+                request_sent_at,
+                response_received_at: Instant::now(),
             })
         })
     }
@@ -1027,6 +1038,8 @@ mod tests {
             input_events: "".into(),
             input_excerpt: "".into(),
             output_excerpt: "".into(),
+            request_sent_at: Instant::now(),
+            response_received_at: Instant::now(),
         };
 
         assert_eq!(
