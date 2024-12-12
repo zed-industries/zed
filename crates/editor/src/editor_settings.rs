@@ -10,9 +10,6 @@ pub struct EditorSettings {
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub hover_popover_enabled: bool,
-    pub show_completions_on_input: bool,
-    pub show_completion_documentation: bool,
-    pub completion_documentation_secondary_query_debounce: u64,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
@@ -194,21 +191,6 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
 
-    /// Whether to pop the completions menu while typing in an editor without
-    /// explicitly requesting it.
-    ///
-    /// Default: true
-    pub show_completions_on_input: Option<bool>,
-    /// Whether to display inline and alongside documentation for items in the
-    /// completions menu.
-    ///
-    /// Default: true
-    pub show_completion_documentation: Option<bool>,
-    /// The debounce delay before re-querying the language server for completion
-    /// documentation when not included in original completion list.
-    ///
-    /// Default: 300 ms
-    pub completion_documentation_secondary_query_debounce: Option<u64>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings

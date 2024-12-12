@@ -3,8 +3,8 @@ use std::sync::Arc;
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, AnyElement, Empty, ListAlignment, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, View, WeakView,
+    list, AnyElement, AppContext, Empty, ListAlignment, ListState, Model, StyleRefinement,
+    Subscription, TextStyleRefinement, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -15,6 +15,7 @@ use ui::prelude::*;
 use workspace::Workspace;
 
 use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
+use crate::ui::ContextPill;
 
 pub struct ActiveThread {
     workspace: WeakView<Workspace>,
@@ -68,6 +69,10 @@ impl ActiveThread {
 
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
+    }
+
+    pub fn summary(&self, cx: &AppContext) -> Option<SharedString> {
+        self.thread.read(cx).summary()
     }
 
     pub fn last_error(&self) -> Option<ThreadError> {
@@ -139,6 +144,7 @@ impl ActiveThread {
                 self.last_error = Some(error.clone());
             }
             ThreadEvent::StreamedCompletion => {}
+            ThreadEvent::SummaryChanged => {}
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, cx| {
@@ -197,6 +203,8 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
+        let context = self.thread.read(cx).context_for_message(message_id);
+
         let (role_icon, role_name) = match message.role {
             Role::User => (IconName::Person, "You"),
             Role::Assistant => (IconName::ZedAssistant, "Assistant"),
@@ -224,7 +232,16 @@ impl ActiveThread {
                                     .child(Label::new(role_name).size(LabelSize::Small)),
                             ),
                     )
-                    .child(v_flex().p_1p5().text_ui(cx).child(markdown.clone())),
+                    .child(v_flex().p_1p5().text_ui(cx).child(markdown.clone()))
+                    .when_some(context, |parent, context| {
+                        parent.child(
+                            h_flex().flex_wrap().gap_2().p_1p5().children(
+                                context
+                                    .iter()
+                                    .map(|context| ContextPill::new(context.clone())),
+                            ),
+                        )
+                    }),
             )
             .into_any()
     }

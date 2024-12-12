@@ -85,7 +85,7 @@ pub fn init_panic_hook(
         // Strip out leading stack frames for rust panic-handling.
         if let Some(ix) = backtrace
             .iter()
-            .position(|name| name == "rust_begin_unwind")
+            .position(|name| name == "rust_begin_unwind" || name == "_rust_begin_unwind")
         {
             backtrace.drain(0..=ix);
         }

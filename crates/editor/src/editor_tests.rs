@@ -9,8 +9,8 @@ use crate::{
 };
 use futures::StreamExt;
 use gpui::{
-    div, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds,
-    WindowOptions,
+    div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
+    WindowBounds, WindowOptions,
 };
 use indoc::indoc;
 use language::{
@@ -25,16 +25,19 @@ use language::{
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
+use pretty_assertions::{assert_eq, assert_ne};
 use project::{buffer_store::BufferChangeSet, FakeFs};
 use project::{
     lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
     project_settings::{LspSettings, ProjectSettings},
 };
 use serde_json::{self, json};
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::{self, AtomicBool};
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
-use test::editor_lsp_test_context::rust_lang;
+use std::{
+    iter,
+    sync::atomic::{self, AtomicUsize},
+};
+use test::{build_editor_with_project, editor_lsp_test_context::rust_lang};
 use unindent::Unindent;
 use util::{
     assert_set_eq,
@@ -6836,13 +6839,14 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    cx.executor().start_waiting();
-    let fake_server = fake_servers.next().await.unwrap();
-
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+    let (editor, cx) =
+        cx.add_window_view(|cx| build_editor_with_project(project.clone(), buffer, cx));
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
 
     let save = editor
         .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
@@ -7117,6 +7121,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.is_dirty());
         assert_eq!(buffer.text(), sample_text_3,)
     });
+    cx.executor().run_until_parked();
 
     cx.executor().start_waiting();
     let save = multi_buffer_editor
@@ -7188,13 +7193,14 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    cx.executor().start_waiting();
-    let fake_server = fake_servers.next().await.unwrap();
-
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+    let (editor, cx) =
+        cx.add_window_view(|cx| build_editor_with_project(project.clone(), buffer, cx));
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
 
     let save = editor
         .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
@@ -7339,12 +7345,13 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
+    let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) =
+        cx.add_window_view(|cx| build_editor_with_project(project.clone(), buffer, cx));
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+
     cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
-
-    let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
     let format = editor
         .update(cx, |editor, cx| {
@@ -8376,12 +8383,8 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 
-    cx.update(|cx| {
-        cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.show_completions_on_input = Some(false);
-            });
-        })
+    update_test_language_settings(&mut cx, |settings| {
+        settings.defaults.show_completions_on_input = Some(false);
     });
     cx.set_state("editorˇ");
     cx.simulate_keystroke(".");
@@ -8447,7 +8450,7 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     cx.update_editor(|editor, _| {
-        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["first", "last"]
@@ -8459,7 +8462,7 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, cx| {
         editor.move_page_down(&MovePageDown::default(), cx);
-        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert!(
                 menu.selected_item == 1,
                 "expected PageDown to select the last item from the context menu"
@@ -8471,7 +8474,7 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, cx| {
         editor.move_page_up(&MovePageUp::default(), cx);
-        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert!(
                 menu.selected_item == 0,
                 "expected PageUp to select the first item from the context menu"
@@ -8539,7 +8542,7 @@ async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     cx.update_editor(|editor, _| {
-        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["r", "ret", "Range", "return"]
@@ -9927,7 +9930,8 @@ async fn go_to_prev_overlapping_diagnostic(
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let project = cx.update_editor(|editor, _| editor.project.clone().unwrap());
+    let lsp_store =
+        cx.update_editor(|editor, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
 
     cx.set_state(indoc! {"
         ˇfn func(abc def: i32) -> u32 {
@@ -9935,8 +9939,8 @@ async fn go_to_prev_overlapping_diagnostic(
     "});
 
     cx.update(|cx| {
-        project.update(cx, |project, cx| {
-            project
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
@@ -10025,11 +10029,12 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
         fn func(abˇc def: i32) -> u32 {
         }
     "});
-    let project = cx.update_editor(|editor, _| editor.project.clone().unwrap());
+    let lsp_store =
+        cx.update_editor(|editor, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
 
     cx.update(|cx| {
-        project.update(cx, |project, cx| {
-            project.update_diagnostics(
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
                     uri: lsp::Url::from_file_path("/root/file").unwrap(),
@@ -10334,9 +10339,6 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    cx.executor().run_until_parked();
-    cx.executor().start_waiting();
-    let fake_server = fake_servers.next().await.unwrap();
     let editor_handle = workspace
         .update(cx, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -10346,6 +10348,9 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
 
     fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
         assert_eq!(
@@ -10436,7 +10441,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let _window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
     let _buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/a/main.rs", cx)
+            project.open_local_buffer_with_lsp("/a/main.rs", cx)
         })
         .await
         .unwrap();
@@ -10670,12 +10675,12 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
             .as_ref()
             .expect("Should have the context menu deployed");
         match context_menu {
-            ContextMenu::Completions(completions_menu) => {
+            CodeContextMenu::Completions(completions_menu) => {
                 let completions = completions_menu.completions.read();
                 assert_eq!(completions.len(), 1, "Should have one completion");
                 assert_eq!(completions.get(0).unwrap().label.text, "unresolved");
             }
-            ContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
+            CodeContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
         }
     });
 
@@ -10701,7 +10706,7 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
             .as_ref()
             .expect("Should have the context menu deployed");
         match context_menu {
-            ContextMenu::Completions(completions_menu) => {
+            CodeContextMenu::Completions(completions_menu) => {
                 let completions = completions_menu.completions.read();
                 assert_eq!(completions.len(), 1, "Should have one completion");
                 assert_eq!(
@@ -10710,7 +10715,7 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
                     "Should update the completion label after resolving"
                 );
             }
-            ContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
+            CodeContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
         }
     });
 }
@@ -10718,6 +10723,62 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
 #[gpui::test]
 async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
+
+    let item_0 = lsp::CompletionItem {
+        label: "abs".into(),
+        insert_text: Some("abs".into()),
+        data: Some(json!({ "very": "special"})),
+        insert_text_mode: Some(lsp::InsertTextMode::ADJUST_INDENTATION),
+        text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+            lsp::InsertReplaceEdit {
+                new_text: "abs".to_string(),
+                insert: lsp::Range::default(),
+                replace: lsp::Range::default(),
+            },
+        )),
+        ..lsp::CompletionItem::default()
+    };
+    let items = iter::once(item_0.clone())
+        .chain((11..51).map(|i| lsp::CompletionItem {
+            label: format!("item_{}", i),
+            insert_text: Some(format!("item_{}", i)),
+            insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
+            ..lsp::CompletionItem::default()
+        }))
+        .collect::<Vec<_>>();
+
+    let default_commit_characters = vec!["?".to_string()];
+    let default_data = json!({ "default": "data"});
+    let default_insert_text_format = lsp::InsertTextFormat::SNIPPET;
+    let default_insert_text_mode = lsp::InsertTextMode::AS_IS;
+    let default_edit_range = lsp::Range {
+        start: lsp::Position {
+            line: 0,
+            character: 5,
+        },
+        end: lsp::Position {
+            line: 0,
+            character: 5,
+        },
+    };
+
+    let item_0_out = lsp::CompletionItem {
+        commit_characters: Some(default_commit_characters.clone()),
+        insert_text_format: Some(default_insert_text_format),
+        ..item_0
+    };
+    let items_out = iter::once(item_0_out)
+        .chain(items[1..].iter().map(|item| lsp::CompletionItem {
+            commit_characters: Some(default_commit_characters.clone()),
+            data: Some(default_data.clone()),
+            insert_text_mode: Some(default_insert_text_mode),
+            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                range: default_edit_range,
+                new_text: item.label.clone(),
+            })),
+            ..item.clone()
+        }))
+        .collect::<Vec<lsp::CompletionItem>>();
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
@@ -10735,138 +10796,15 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
     cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
     cx.simulate_keystroke(".");
 
-    let default_commit_characters = vec!["?".to_string()];
-    let default_data = json!({ "very": "special"});
-    let default_insert_text_format = lsp::InsertTextFormat::SNIPPET;
-    let default_insert_text_mode = lsp::InsertTextMode::AS_IS;
-    let default_edit_range = lsp::Range {
-        start: lsp::Position {
-            line: 0,
-            character: 5,
-        },
-        end: lsp::Position {
-            line: 0,
-            character: 5,
-        },
-    };
-
-    let resolve_requests_number = Arc::new(AtomicUsize::new(0));
-    let expect_first_item = Arc::new(AtomicBool::new(true));
-    cx.lsp
-        .server
-        .on_request::<lsp::request::ResolveCompletionItem, _, _>({
-            let closure_default_data = default_data.clone();
-            let closure_resolve_requests_number = resolve_requests_number.clone();
-            let closure_expect_first_item = expect_first_item.clone();
-            let closure_default_commit_characters = default_commit_characters.clone();
-            move |item_to_resolve, _| {
-                closure_resolve_requests_number.fetch_add(1, atomic::Ordering::Release);
-                let default_data = closure_default_data.clone();
-                let default_commit_characters = closure_default_commit_characters.clone();
-                let expect_first_item = closure_expect_first_item.clone();
-                async move {
-                    if expect_first_item.load(atomic::Ordering::Acquire) {
-                        assert_eq!(
-                            item_to_resolve.label, "Some(2)",
-                            "Should have selected the first item"
-                        );
-                        assert_eq!(
-                            item_to_resolve.data,
-                            Some(json!({ "very": "special"})),
-                            "First item should bring its own data for resolving"
-                        );
-                        assert_eq!(
-                            item_to_resolve.commit_characters,
-                            Some(default_commit_characters),
-                            "First item had no own commit characters and should inherit the default ones"
-                        );
-                        assert!(
-                            matches!(
-                                item_to_resolve.text_edit,
-                                Some(lsp::CompletionTextEdit::InsertAndReplace { .. })
-                            ),
-                            "First item should bring its own edit range for resolving"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_format,
-                            Some(default_insert_text_format),
-                            "First item had no own insert text format and should inherit the default one"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_mode,
-                            Some(lsp::InsertTextMode::ADJUST_INDENTATION),
-                            "First item should bring its own insert text mode for resolving"
-                        );
-                        Ok(item_to_resolve)
-                    } else {
-                        assert_eq!(
-                            item_to_resolve.label, "vec![2]",
-                            "Should have selected the last item"
-                        );
-                        assert_eq!(
-                            item_to_resolve.data,
-                            Some(default_data),
-                            "Last item has no own resolve data and should inherit the default one"
-                        );
-                        assert_eq!(
-                            item_to_resolve.commit_characters,
-                            Some(default_commit_characters),
-                            "Last item had no own commit characters and should inherit the default ones"
-                        );
-                        assert_eq!(
-                            item_to_resolve.text_edit,
-                            Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: default_edit_range,
-                                new_text: "vec![2]".to_string()
-                            })),
-                            "Last item had no own edit range and should inherit the default one"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_format,
-                            Some(lsp::InsertTextFormat::PLAIN_TEXT),
-                            "Last item should bring its own insert text format for resolving"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_mode,
-                            Some(default_insert_text_mode),
-                            "Last item had no own insert text mode and should inherit the default one"
-                        );
-
-                        Ok(item_to_resolve)
-                    }
-                }
-            }
-        }).detach();
-
     let completion_data = default_data.clone();
     let completion_characters = default_commit_characters.clone();
     cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
         let default_data = completion_data.clone();
         let default_commit_characters = completion_characters.clone();
+        let items = items.clone();
         async move {
             Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                items: vec![
-                    lsp::CompletionItem {
-                        label: "Some(2)".into(),
-                        insert_text: Some("Some(2)".into()),
-                        data: Some(json!({ "very": "special"})),
-                        insert_text_mode: Some(lsp::InsertTextMode::ADJUST_INDENTATION),
-                        text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                            lsp::InsertReplaceEdit {
-                                new_text: "Some(2)".to_string(),
-                                insert: lsp::Range::default(),
-                                replace: lsp::Range::default(),
-                            },
-                        )),
-                        ..lsp::CompletionItem::default()
-                    },
-                    lsp::CompletionItem {
-                        label: "vec![2]".into(),
-                        insert_text: Some("vec![2]".into()),
-                        insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
-                        ..lsp::CompletionItem::default()
-                    },
-                ],
+                items,
                 item_defaults: Some(lsp::CompletionListItemDefaults {
                     data: Some(default_data.clone()),
                     commit_characters: Some(default_commit_characters.clone()),
@@ -10883,51 +10821,76 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
     .next()
     .await;
 
+    let resolved_items = Arc::new(Mutex::new(Vec::new()));
+    cx.lsp
+        .server
+        .on_request::<lsp::request::ResolveCompletionItem, _, _>({
+            let closure_resolved_items = resolved_items.clone();
+            move |item_to_resolve, _| {
+                let closure_resolved_items = closure_resolved_items.clone();
+                async move {
+                    closure_resolved_items.lock().push(item_to_resolve.clone());
+                    Ok(item_to_resolve)
+                }
+            }
+        })
+        .detach();
+
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.run_until_parked();
     cx.update_editor(|editor, _| {
         let menu = editor.context_menu.read();
         match menu.as_ref().expect("should have the completions menu") {
-            ContextMenu::Completions(completions_menu) => {
+            CodeContextMenu::Completions(completions_menu) => {
                 assert_eq!(
                     completions_menu
                         .matches
                         .iter()
-                        .map(|c| c.string.as_str())
-                        .collect::<Vec<_>>(),
-                    vec!["Some(2)", "vec![2]"]
+                        .map(|c| c.string.clone())
+                        .collect::<Vec<String>>(),
+                    items_out
+                        .iter()
+                        .map(|completion| completion.label.clone())
+                        .collect::<Vec<String>>()
                 );
             }
-            ContextMenu::CodeActions(_) => panic!("Expected to have the completions menu"),
+            CodeContextMenu::CodeActions(_) => panic!("Expected to have the completions menu"),
         }
     });
+    // Approximate initial displayed interval is 0..12. With extra item padding of 4 this is 0..16
+    // with 4 from the end.
     assert_eq!(
-        resolve_requests_number.load(atomic::Ordering::Acquire),
-        1,
-        "While there are 2 items in the completion list, only 1 resolve request should have been sent, for the selected item"
+        *resolved_items.lock(),
+        [
+            &items_out[0..16],
+            &items_out[items_out.len() - 4..items_out.len()]
+        ]
+        .concat()
+        .iter()
+        .cloned()
+        .collect::<Vec<lsp::CompletionItem>>()
     );
+    resolved_items.lock().clear();
 
     cx.update_editor(|editor, cx| {
-        editor.context_menu_first(&ContextMenuFirst, cx);
+        editor.context_menu_prev(&ContextMenuPrev, cx);
     });
     cx.run_until_parked();
+    // Completions that have already been resolved are skipped.
     assert_eq!(
-        resolve_requests_number.load(atomic::Ordering::Acquire),
-        2,
-        "After re-selecting the first item, another resolve request should have been sent"
+        *resolved_items.lock(),
+        [
+            // Selected item is always resolved even if it was resolved before.
+            &items_out[items_out.len() - 1..items_out.len()],
+            &items_out[items_out.len() - 16..items_out.len() - 4]
+        ]
+        .concat()
+        .iter()
+        .cloned()
+        .collect::<Vec<lsp::CompletionItem>>()
     );
-
-    expect_first_item.store(false, atomic::Ordering::Release);
-    cx.update_editor(|editor, cx| {
-        editor.context_menu_last(&ContextMenuLast, cx);
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        resolve_requests_number.load(atomic::Ordering::Acquire),
-        3,
-        "After selecting the other item, another resolve request should have been sent"
-    );
+    resolved_items.lock().clear();
 }
 
 #[gpui::test]
@@ -10992,7 +10955,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("-");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-red", "bg-blue", "bg-yellow"]
@@ -11005,7 +10968,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-blue", "bg-yellow"]
@@ -11021,7 +10984,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-yellow"]
@@ -11651,7 +11614,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_multibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
+async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let cols = 4;
@@ -11938,74 +11901,6 @@ async fn test_multibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
             assert!(!active_item.is_singleton(cx));
         })
         .unwrap();
-}
-
-#[gpui::test]
-async fn test_multibuffer_unfold_on_jump(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-
-    let texts = ["{\n\tx\n}".to_owned(), "y".to_owned()];
-    let buffers = texts
-        .clone()
-        .map(|txt| cx.new_model(|cx| Buffer::local(txt, cx)));
-    let multi_buffer = cx.new_model(|cx| {
-        let mut multi_buffer = MultiBuffer::new(ReadWrite);
-        for i in 0..2 {
-            multi_buffer.push_excerpts(
-                buffers[i].clone(),
-                [ExcerptRange {
-                    context: 0..texts[i].len(),
-                    primary: None,
-                }],
-                cx,
-            );
-        }
-        multi_buffer
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/project",
-        json!({
-            "x": &texts[0],
-            "y": &texts[1],
-        }),
-    )
-    .await;
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
-    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
-
-    let multi_buffer_editor = cx.new_view(|cx| {
-        Editor::for_multibuffer(multi_buffer.clone(), Some(project.clone()), true, cx)
-    });
-    let buffer_editor =
-        cx.new_view(|cx| Editor::for_buffer(buffers[0].clone(), Some(project.clone()), cx));
-    workspace
-        .update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(
-                Box::new(multi_buffer_editor.clone()),
-                None,
-                true,
-                cx,
-            );
-            workspace.add_item_to_active_pane(Box::new(buffer_editor.clone()), None, false, cx);
-        })
-        .unwrap();
-    cx.executor().run_until_parked();
-    buffer_editor.update(cx, |buffer_editor, cx| {
-        buffer_editor.fold_at_level(&FoldAtLevel { level: 1 }, cx);
-        assert!(buffer_editor.snapshot(cx).fold_count() == 1);
-    });
-    cx.executor().run_until_parked();
-    multi_buffer_editor.update(cx, |multi_buffer_editor, cx| {
-        multi_buffer_editor.change_selections(None, cx, |s| s.select_ranges([3..4]));
-        multi_buffer_editor.open_excerpts(&OpenExcerpts, cx);
-    });
-    cx.executor().run_until_parked();
-    buffer_editor.update(cx, |buffer_editor, cx| {
-        assert!(buffer_editor.snapshot(cx).fold_count() == 0);
-    });
 }
 
 #[gpui::test]

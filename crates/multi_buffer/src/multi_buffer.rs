@@ -89,6 +89,7 @@ pub enum Event {
     },
     Edited {
         singleton_buffer_edited: bool,
+        edited_buffer: Option<Model<Buffer>>,
     },
     TransactionUndone {
         transaction_id: TransactionId,
@@ -1485,6 +1486,7 @@ impl MultiBuffer {
         }]);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
+            edited_buffer: None,
         });
         cx.emit(Event::ExcerptsAdded {
             buffer,
@@ -1512,6 +1514,7 @@ impl MultiBuffer {
         }]);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
+            edited_buffer: None,
         });
         cx.emit(Event::ExcerptsRemoved { ids });
         cx.notify();
@@ -1783,6 +1786,7 @@ impl MultiBuffer {
         self.subscriptions.publish_mut(edits);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
+            edited_buffer: None,
         });
         cx.emit(Event::ExcerptsRemoved { ids });
         cx.notify();
@@ -1846,6 +1850,7 @@ impl MultiBuffer {
         cx.emit(match event {
             language::BufferEvent::Edited => Event::Edited {
                 singleton_buffer_edited: true,
+                edited_buffer: Some(buffer.clone()),
             },
             language::BufferEvent::DirtyChanged => Event::DirtyChanged,
             language::BufferEvent::Saved => Event::Saved,
@@ -2009,6 +2014,7 @@ impl MultiBuffer {
         self.subscriptions.publish_mut(edits);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
+            edited_buffer: None,
         });
         cx.emit(Event::ExcerptsExpanded { ids: vec![id] });
         cx.notify();
@@ -2106,6 +2112,7 @@ impl MultiBuffer {
         self.subscriptions.publish_mut(edits);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
+            edited_buffer: None,
         });
         cx.emit(Event::ExcerptsExpanded { ids });
         cx.notify();
@@ -5408,13 +5415,16 @@ mod tests {
             events.read().as_slice(),
             &[
                 Event::Edited {
-                    singleton_buffer_edited: false
+                    singleton_buffer_edited: false,
+                    edited_buffer: None,
                 },
                 Event::Edited {
-                    singleton_buffer_edited: false
+                    singleton_buffer_edited: false,
+                    edited_buffer: None,
                 },
                 Event::Edited {
-                    singleton_buffer_edited: false
+                    singleton_buffer_edited: false,
+                    edited_buffer: None,
                 }
             ]
         );

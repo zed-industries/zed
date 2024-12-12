@@ -46,7 +46,7 @@
         "tab.active_background": "#1b1810ff",
         "search.match_background": "#499bef66",
         "panel.background": "#231f16ff",
-        "panel.focused_border": null,
+        "panel.focused_border": "#499befff",
         "pane.focused_border": null,
         "scrollbar.thumb.background": "#f8f5de4c",
         "scrollbar.thumb.hover_background": "#29251bff",

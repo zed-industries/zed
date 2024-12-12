@@ -399,14 +399,19 @@ fn main() {
             cx,
         );
         snippet_provider::init(cx);
-        inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
+        inline_completion_registry::init(app_state.client.clone(), cx);
         let prompt_builder = assistant::init(
             app_state.fs.clone(),
             app_state.client.clone(),
             stdout_is_a_pty(),
             cx,
         );
-        assistant2::init(cx);
+        assistant2::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            stdout_is_a_pty(),
+            cx,
+        );
         assistant_tools::init(cx);
         repl::init(
             app_state.fs.clone(),
@@ -463,6 +468,7 @@ fn main() {
         welcome::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
+        zeta::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let languages = app_state.languages.clone();

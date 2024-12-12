@@ -105,6 +105,7 @@ pub struct MoveDownByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
+
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct SelectUpByLines {
     #[serde(default)]
@@ -164,6 +165,13 @@ pub struct FoldAtLevel {
 pub struct SpawnNearestTask {
     #[serde(default)]
     pub reveal: task::RevealStrategy,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default)]
+pub enum UuidVersion {
+    #[default]
+    V4,
+    V7,
 }
 
 impl_actions!(
@@ -271,6 +279,8 @@ gpui::actions!(
         HalfPageUp,
         Hover,
         Indent,
+        InsertUuidV4,
+        InsertUuidV7,
         JoinLines,
         KillRingCut,
         KillRingYank,

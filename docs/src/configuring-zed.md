@@ -691,11 +691,19 @@ List of `string` values
 }
 ```
 
-2. Activate the neighbour tab (prefers the right one, if present):
+2. Activate the right neighbour tab if present:
 
 ```json
 {
   "activate_on_close": "neighbour"
+}
+```
+
+3. Activate the left neighbour tab if present:
+
+```json
+{
+  "activate_on_close": "left_neighbour"
 }
 ```
 
@@ -994,6 +1002,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
   "**/.git",
   "**/.svn",
   "**/.hg",
+  "**/.jj",
   "**/CVS",
   "**/.DS_Store",
   "**/Thumbs.db",
@@ -1515,16 +1524,6 @@ Or to set a `socks5` proxy:
 **Options**
 
 `boolean` values
-
-## Completion Documentation Debounce Delay
-
-- Description: The debounce delay before re-querying the language server for completion documentation when not included in original completion list.
-- Setting: `completion_documentation_secondary_query_debounce`
-- Default: `300` ms
-
-**Options**
-
-`integer` values
 
 ## Show Inline Completions
 

@@ -151,7 +151,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
 
     // Open the project diagnostics view while there are already diagnostics.
     let view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
 
@@ -459,7 +465,13 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let workspace = window.root(cx).unwrap();
 
     let view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
 
@@ -720,7 +732,13 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     let workspace = window.root(cx).unwrap();
 
     let mutated_view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
 
     workspace.update(cx, |workspace, cx| {
@@ -791,7 +809,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
                 updated_language_servers.insert(server_id);
 
-                project.update(cx, |project, cx| {
+                lsp_store.update(cx, |lsp_store, cx| {
                     log::info!("updating diagnostics. language server {server_id} path {path:?}");
                     randomly_update_diagnostics_for_path(
                         &fs,
@@ -800,10 +818,12 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                         &mut next_group_id,
                         &mut rng,
                     );
-                    project
+                    lsp_store
                         .update_diagnostic_entries(server_id, path, None, diagnostics.clone(), cx)
                         .unwrap()
                 });
+                cx.executor()
+                    .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
 
                 cx.run_until_parked();
             }
@@ -816,12 +836,33 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
     log::info!("constructing reference diagnostics view");
     let reference_view = window.build_view(cx, |cx| {
-        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+        ProjectDiagnosticsEditor::new_with_context(
+            1,
+            true,
+            project.clone(),
+            workspace.downgrade(),
+            cx,
+        )
     });
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 
     let mutated_excerpts = get_diagnostics_excerpts(&mutated_view, cx);
     let reference_excerpts = get_diagnostics_excerpts(&reference_view, cx);
+
+    for ((path, language_server_id), diagnostics) in current_diagnostics {
+        for diagnostic in diagnostics {
+            let found_excerpt = reference_excerpts.iter().any(|info| {
+                let row_range = info.range.context.start.row..info.range.context.end.row;
+                info.path == path.strip_prefix("/test").unwrap()
+                    && info.language_server == language_server_id
+                    && row_range.contains(&diagnostic.range.start.0.row)
+            });
+            assert!(found_excerpt, "diagnostic not found in reference view");
+        }
+    }
+
     assert_eq!(mutated_excerpts, reference_excerpts);
 }
 

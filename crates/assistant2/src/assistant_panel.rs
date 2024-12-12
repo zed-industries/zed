@@ -9,17 +9,17 @@ use gpui::{
     WindowContext,
 };
 use language::LanguageRegistry;
-use language_model::LanguageModelRegistry;
-use language_model_selector::LanguageModelSelector;
-use ui::{prelude::*, ButtonLike, Divider, IconButtonShape, KeyBinding, ListItem, Tab, Tooltip};
+use time::UtcOffset;
+use ui::{prelude::*, Divider, IconButtonShape, KeyBinding, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::active_thread::ActiveThread;
 use crate::message_editor::MessageEditor;
-use crate::thread::{Thread, ThreadError, ThreadId};
+use crate::thread::{ThreadError, ThreadId};
+use crate::thread_history::{PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{NewThread, OpenHistory, ToggleFocus, ToggleModelSelector};
+use crate::{NewThread, OpenHistory, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -32,13 +32,21 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+enum ActiveView {
+    Thread,
+    History,
+}
+
 pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Model<ThreadStore>,
-    thread: Option<View<ActiveThread>>,
+    thread: View<ActiveThread>,
     message_editor: View<MessageEditor>,
     tools: Arc<ToolWorkingSet>,
+    local_timezone: UtcOffset,
+    active_view: ActiveView,
+    history: View<ThreadHistory>,
 }
 
 impl AssistantPanel {
@@ -68,15 +76,36 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
+        let language_registry = workspace.project().read(cx).languages().clone();
+        let workspace = workspace.weak_handle();
+        let weak_self = cx.view().downgrade();
 
         Self {
-            workspace: workspace.weak_handle(),
-            language_registry: workspace.project().read(cx).languages().clone(),
-            thread_store,
-            thread: None,
-            message_editor: cx.new_view(|cx| MessageEditor::new(thread, cx)),
+            active_view: ActiveView::Thread,
+            workspace: workspace.clone(),
+            language_registry: language_registry.clone(),
+            thread_store: thread_store.clone(),
+            thread: cx.new_view(|cx| {
+                ActiveThread::new(
+                    thread.clone(),
+                    workspace,
+                    language_registry,
+                    tools.clone(),
+                    cx,
+                )
+            }),
+            message_editor: cx.new_view(|cx| MessageEditor::new(thread.clone(), cx)),
             tools,
+            local_timezone: UtcOffset::from_whole_seconds(
+                chrono::Local::now().offset().local_minus_utc(),
+            )
+            .unwrap(),
+            history: cx.new_view(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
         }
+    }
+
+    pub(crate) fn local_timezone(&self) -> UtcOffset {
+        self.local_timezone
     }
 
     fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
@@ -84,7 +113,8 @@ impl AssistantPanel {
             .thread_store
             .update(cx, |this, cx| this.create_thread(cx));
 
-        self.thread = Some(cx.new_view(|cx| {
+        self.active_view = ActiveView::Thread;
+        self.thread = cx.new_view(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.workspace.clone(),
@@ -92,12 +122,12 @@ impl AssistantPanel {
                 self.tools.clone(),
                 cx,
             )
-        }));
+        });
         self.message_editor = cx.new_view(|cx| MessageEditor::new(thread, cx));
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
-    fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
+    pub(crate) fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
         let Some(thread) = self
             .thread_store
             .update(cx, |this, cx| this.open_thread(thread_id, cx))
@@ -105,7 +135,8 @@ impl AssistantPanel {
             return;
         };
 
-        self.thread = Some(cx.new_view(|cx| {
+        self.active_view = ActiveView::Thread;
+        self.thread = cx.new_view(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.workspace.clone(),
@@ -113,15 +144,23 @@ impl AssistantPanel {
                 self.tools.clone(),
                 cx,
             )
-        }));
+        });
         self.message_editor = cx.new_view(|cx| MessageEditor::new(thread, cx));
         self.message_editor.focus_handle(cx).focus(cx);
+    }
+
+    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
+        self.thread_store
+            .update(cx, |this, cx| this.delete_thread(thread_id, cx));
     }
 }
 
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.message_editor.focus_handle(cx)
+        match self.active_view {
+            ActiveView::Thread => self.message_editor.focus_handle(cx),
+            ActiveView::History => self.history.focus_handle(cx),
+        }
     }
 }
 
@@ -180,11 +219,10 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
-            .child(h_flex().child(Label::new("Thread Title Goes Here")))
+            .child(h_flex().children(self.thread.read(cx).summary(cx).map(Label::new)))
             .child(
                 h_flex()
                     .gap(DynamicSpacing::Base08.rems(cx))
-                    .child(self.render_language_model_selector(cx))
                     .child(Divider::vertical())
                     .child(
                         IconButton::new("new-thread", IconName::Plus)
@@ -239,67 +277,12 @@ impl AssistantPanel {
             )
     }
 
-    fn render_language_model_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
-        let active_model = LanguageModelRegistry::read_global(cx).active_model();
-
-        LanguageModelSelector::new(
-            |model, _cx| {
-                println!("Selected {:?}", model.name());
-            },
-            ButtonLike::new("active-model")
-                .style(ButtonStyle::Subtle)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_0p5()
-                        .child(
-                            div()
-                                .overflow_x_hidden()
-                                .flex_grow()
-                                .whitespace_nowrap()
-                                .child(match (active_provider, active_model) {
-                                    (Some(provider), Some(model)) => h_flex()
-                                        .gap_1()
-                                        .child(
-                                            Icon::new(
-                                                model.icon().unwrap_or_else(|| provider.icon()),
-                                            )
-                                            .color(Color::Muted)
-                                            .size(IconSize::XSmall),
-                                        )
-                                        .child(
-                                            Label::new(model.name().0)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .into_any_element(),
-                                    _ => Label::new("No model selected")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .into_any_element(),
-                                }),
-                        )
-                        .child(
-                            Icon::new(IconName::ChevronDown)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
-                        ),
-                )
-                .tooltip(move |cx| Tooltip::for_action("Change Model", &ToggleModelSelector, cx)),
-        )
-    }
-
     fn render_active_thread_or_empty_state(&self, cx: &mut ViewContext<Self>) -> AnyElement {
-        let Some(thread) = self.thread.as_ref() else {
-            return self.render_thread_empty_state(cx).into_any_element();
-        };
-
-        if thread.read(cx).is_empty() {
+        if self.thread.read(cx).is_empty() {
             return self.render_thread_empty_state(cx).into_any_element();
         }
 
-        thread.clone().into_any()
+        self.thread.clone().into_any()
     }
 
     fn render_thread_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -321,103 +304,41 @@ impl AssistantPanel {
                         .mb_4(),
                 ),
             )
-            .child(v_flex())
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_center()
-                    .child(Label::new("Context Examples:").size(LabelSize::Small)),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .justify_center()
+            .when(!recent_threads.is_empty(), |parent| {
+                parent
                     .child(
                         h_flex()
-                            .gap_1()
-                            .p_0p5()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(
-                                Icon::new(IconName::Terminal)
-                                    .size(IconSize::Small)
-                                    .color(Color::Disabled),
-                            )
-                            .child(Label::new("Terminal").size(LabelSize::Small)),
+                            .w_full()
+                            .justify_center()
+                            .child(Label::new("Recent Threads:").size(LabelSize::Small)),
                     )
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .p_0p5()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(
-                                Icon::new(IconName::Folder)
-                                    .size(IconSize::Small)
-                                    .color(Color::Disabled),
-                            )
-                            .child(Label::new("/src/components").size(LabelSize::Small)),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_center()
-                    .child(Label::new("Recent Threads:").size(LabelSize::Small)),
-            )
-            .child(
-                v_flex().gap_2().children(
-                    recent_threads
-                        .into_iter()
-                        .map(|thread| self.render_past_thread(thread, cx)),
-                ),
-            )
-            .child(
-                h_flex().w_full().justify_center().child(
-                    Button::new("view-all-past-threads", "View All Past Threads")
-                        .style(ButtonStyle::Subtle)
-                        .label_size(LabelSize::Small)
-                        .key_binding(KeyBinding::for_action_in(
-                            &OpenHistory,
-                            &self.focus_handle(cx),
-                            cx,
-                        ))
-                        .on_click(move |_event, cx| {
-                            cx.dispatch_action(OpenHistory.boxed_clone());
-                        }),
-                ),
-            )
-    }
-
-    fn render_past_thread(
-        &self,
-        thread: Model<Thread>,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let id = thread.read(cx).id().clone();
-
-        ListItem::new(("past-thread", thread.entity_id()))
-            .start_slot(Icon::new(IconName::MessageBubbles))
-            .child(Label::new(format!("Thread {id}")))
-            .end_slot(
-                h_flex()
-                    .gap_2()
-                    .child(Label::new("1 hour ago").color(Color::Disabled))
+                        v_flex().gap_2().children(
+                            recent_threads
+                                .into_iter()
+                                .map(|thread| PastThread::new(thread, cx.view().downgrade())),
+                        ),
+                    )
                     .child(
-                        IconButton::new("delete", IconName::TrashAlt)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small),
-                    ),
-            )
-            .on_click(cx.listener(move |this, _event, cx| {
-                this.open_thread(&id, cx);
-            }))
+                        h_flex().w_full().justify_center().child(
+                            Button::new("view-all-past-threads", "View All Past Threads")
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::Small)
+                                .key_binding(KeyBinding::for_action_in(
+                                    &OpenHistory,
+                                    &self.focus_handle(cx),
+                                    cx,
+                                ))
+                                .on_click(move |_event, cx| {
+                                    cx.dispatch_action(OpenHistory.boxed_clone());
+                                }),
+                        ),
+                    )
+            })
     }
 
     fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        let last_error = self.thread.as_ref()?.read(cx).last_error()?;
+        let last_error = self.thread.read(cx).last_error()?;
 
         Some(
             div()
@@ -467,11 +388,9 @@ impl AssistantPanel {
                     .mt_1()
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
                         |this, _, cx| {
-                            if let Some(thread) = this.thread.as_ref() {
-                                thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-                            }
+                            this.thread.update(cx, |this, _cx| {
+                                this.clear_last_error();
+                            });
 
                             cx.open_url(&zed_urls::account_url(cx));
                             cx.notify();
@@ -479,11 +398,9 @@ impl AssistantPanel {
                     )))
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, cx| {
-                            if let Some(thread) = this.thread.as_ref() {
-                                thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-                            }
+                            this.thread.update(cx, |this, _cx| {
+                                this.clear_last_error();
+                            });
 
                             cx.notify();
                         },
@@ -518,11 +435,9 @@ impl AssistantPanel {
                     .child(
                         Button::new("subscribe", "Update Monthly Spend Limit").on_click(
                             cx.listener(|this, _, cx| {
-                                if let Some(thread) = this.thread.as_ref() {
-                                    thread.update(cx, |this, _cx| {
-                                        this.clear_last_error();
-                                    });
-                                }
+                                this.thread.update(cx, |this, _cx| {
+                                    this.clear_last_error();
+                                });
 
                                 cx.open_url(&zed_urls::account_url(cx));
                                 cx.notify();
@@ -531,11 +446,9 @@ impl AssistantPanel {
                     )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, cx| {
-                            if let Some(thread) = this.thread.as_ref() {
-                                thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-                            }
+                            this.thread.update(cx, |this, _cx| {
+                                this.clear_last_error();
+                            });
 
                             cx.notify();
                         },
@@ -574,11 +487,9 @@ impl AssistantPanel {
                     .mt_1()
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, cx| {
-                            if let Some(thread) = this.thread.as_ref() {
-                                thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-                            }
+                            this.thread.update(cx, |this, _cx| {
+                                this.clear_last_error();
+                            });
 
                             cx.notify();
                         },
@@ -597,17 +508,23 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &NewThread, cx| {
                 this.new_thread(cx);
             }))
-            .on_action(cx.listener(|_this, _: &OpenHistory, _cx| {
-                println!("Open History");
+            .on_action(cx.listener(|this, _: &OpenHistory, cx| {
+                this.active_view = ActiveView::History;
+                this.history.focus_handle(cx).focus(cx);
+                cx.notify();
             }))
             .child(self.render_toolbar(cx))
-            .child(self.render_active_thread_or_empty_state(cx))
-            .child(
-                h_flex()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(self.message_editor.clone()),
-            )
-            .children(self.render_last_error(cx))
+            .map(|parent| match self.active_view {
+                ActiveView::Thread => parent
+                    .child(self.render_active_thread_or_empty_state(cx))
+                    .child(
+                        h_flex()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(self.message_editor.clone()),
+                    )
+                    .children(self.render_last_error(cx)),
+                ActiveView::History => parent.child(self.history.clone()),
+            })
     }
 }

@@ -3,9 +3,8 @@ use crate::{
     LanguageModelProviderState,
 };
 use collections::BTreeMap;
-use gpui::{AppContext, EventEmitter, Global, Model, ModelContext};
+use gpui::{prelude::*, AppContext, EventEmitter, Global, Model, ModelContext};
 use std::sync::Arc;
-use ui::Context;
 
 pub fn init(cx: &mut AppContext) {
     let registry = cx.new_model(|_cx| LanguageModelRegistry::default());
