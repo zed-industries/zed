@@ -9,6 +9,7 @@ pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
+    pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
@@ -185,6 +186,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: all
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    /// The debounce delay before querying highlights from the language
+    /// server based on the current cursor location.
+    ///
+    /// Default: 75
+    pub lsp_highlight_debounce: Option<u64>,
     /// Whether to show the informational hover box when moving the mouse
     /// over symbols in the editor.
     ///

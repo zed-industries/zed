@@ -144,6 +144,9 @@
   // 4. Highlight the full line (default):
   //    "all"
   "current_line_highlight": "all",
+  // The debounce delay before querying highlights from the language
+  // server based on the current cursor location.
+  "lsp_highlight_debounce": 75,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
