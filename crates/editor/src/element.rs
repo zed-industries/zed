@@ -6705,7 +6705,6 @@ mod tests {
     use language::language_settings;
     use log::info;
     use std::num::NonZeroU32;
-    use ui::Context;
     use util::test::sample_text;
 
     #[gpui::test]

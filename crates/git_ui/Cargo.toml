@@ -1,0 +1,25 @@
+[package]
+name = "git_ui"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+name = "git_ui"
+path = "src/git_ui.rs"
+
+[dependencies]
+gpui.workspace = true
+serde.workspace = true
+workspace.workspace = true
+ui.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+[features]
+default = []

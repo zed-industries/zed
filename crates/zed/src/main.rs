@@ -406,7 +406,12 @@ fn main() {
             stdout_is_a_pty(),
             cx,
         );
-        assistant2::init(cx);
+        assistant2::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            stdout_is_a_pty(),
+            cx,
+        );
         assistant_tools::init(cx);
         repl::init(
             app_state.fs.clone(),
@@ -442,6 +447,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
+        git_ui::git_panel::init(cx);
         outline_panel::init(Assets, cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);

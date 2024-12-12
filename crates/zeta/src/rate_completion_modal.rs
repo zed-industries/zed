@@ -5,8 +5,8 @@ use gpui::{
     HighlightStyle, Model, StyledText, TextStyle, View, ViewContext,
 };
 use language::{language_settings, OffsetRangeExt};
-
 use settings::Settings;
+use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, TintColor, Tooltip};
 use workspace::{ModalView, Workspace};
@@ -530,6 +530,7 @@ impl Render for RateCompletionModal {
                                         });
                                     let rated =
                                         self.zeta.read(cx).is_completion_rated(completion.id);
+
                                     ListItem::new(completion.id)
                                         .inset(true)
                                         .spacing(ListItemSpacing::Sparse)
@@ -542,16 +543,17 @@ impl Render for RateCompletionModal {
                                         } else {
                                             Icon::new(IconName::FileDiff).color(Color::Accent).size(IconSize::Small)
                                         })
-                                        .child(Label::new(
-                                            completion.path.to_string_lossy().to_string(),
-                                        ).size(LabelSize::Small))
                                         .child(
-                                            div()
-                                                .overflow_hidden()
-                                                .text_ellipsis()
-                                                .child(Label::new(format!("({})", completion.id))
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::XSmall)),
+                                            v_flex()
+                                                .child(Label::new(completion.path.to_string_lossy().to_string()).size(LabelSize::Small))
+                                                .child(div()
+                                                    .overflow_hidden()
+                                                    .text_ellipsis()
+                                                    .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::XSmall)
+                                                    )
+                                                )
                                         )
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.select_completion(Some(completion.clone()), true, cx);
@@ -574,3 +576,20 @@ impl FocusableView for RateCompletionModal {
 }
 
 impl ModalView for RateCompletionModal {}
+
+fn format_time_ago(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    if seconds < 120 {
+        "1 minute".to_string()
+    } else if seconds < 3600 {
+        format!("{} minutes", seconds / 60)
+    } else if seconds < 7200 {
+        "1 hour".to_string()
+    } else if seconds < 86400 {
+        format!("{} hours", seconds / 3600)
+    } else if seconds < 172800 {
+        "1 day".to_string()
+    } else {
+        format!("{} days", seconds / 86400)
+    }
+}
