@@ -104,7 +104,7 @@ impl GitPanel {
                 this.hide_scrollbar(cx);
             })
             .detach();
-            cx.subscribe(&project, |this, project, event, cx| match event {
+            cx.subscribe(&project, |this, _project, event, cx| match event {
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
                     this.update_visible_entries(None, cx);
@@ -274,6 +274,18 @@ impl GitPanel {
         self.visible_entries.is_empty()
     }
 
+    fn entry_count(&self) -> usize {
+        self.visible_entries
+            .iter()
+            .map(|(_, entries, _)| {
+                entries
+                    .iter()
+                    .filter(|entry| entry.git_status.is_some())
+                    .count()
+            })
+            .sum()
+    }
+
     fn for_each_visible_entry(
         &self,
         range: Range<usize>,
@@ -414,6 +426,8 @@ impl GitPanel {
     pub fn render_panel_header(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
 
+        let changes_string = format!("{} changes", self.entry_count());
+
         h_flex()
             .h(px(32.))
             .items_center()
@@ -423,7 +437,7 @@ impl GitPanel {
                 h_flex()
                     .gap_2()
                     .child(Checkbox::new("all-changes", true.into()).disabled(true))
-                    .child(div().text_buffer(cx).text_ui_sm(cx).child("0 changes")),
+                    .child(div().text_buffer(cx).text_ui_sm(cx).child(changes_string)),
             )
             .child(div().flex_grow())
             .child(
