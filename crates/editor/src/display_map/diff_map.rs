@@ -3,13 +3,13 @@ use crate::{Highlights, InlayOffset, InlayPoint};
 use collections::HashMap;
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{BufferChunks, BufferId, Chunk};
-use multi_buffer::{Anchor, AnchorRangeExt, MultiBuffer, ToOffset};
+use multi_buffer::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset};
 use project::buffer_store::BufferChangeSet;
 use std::{mem, ops::Range};
 use sum_tree::{Cursor, SumTree, TreeMap};
 use text::{Bias, Edit, Patch, Point, TextSummary, ToOffset as _};
 
-struct DiffMap {
+pub(crate) struct DiffMap {
     snapshot: DiffMapSnapshot,
     multibuffer: Model<MultiBuffer>,
     diff_bases: HashMap<BufferId, ChangeSetState>,
@@ -32,6 +32,7 @@ struct DiffSnapshot {
 pub(crate) struct DiffMapSnapshot {
     diffs: TreeMap<BufferId, DiffSnapshot>,
     transforms: SumTree<DiffTransform>,
+    pub(crate) version: usize,
     inlay_snapshot: InlaySnapshot,
 }
 
@@ -54,7 +55,7 @@ struct DiffTransformSummary {
     output: TextSummary,
 }
 
-struct DiffMapChunks<'a> {
+pub(crate) struct DiffMapChunks<'a> {
     snapshot: &'a DiffMapSnapshot,
     language_aware: bool,
     cursor: Cursor<'a, DiffTransform, (DiffOffset, InlayOffset)>,
@@ -66,7 +67,8 @@ struct DiffMapChunks<'a> {
     diff_base_chunks: Option<(BufferId, BufferChunks<'a>)>,
 }
 
-struct DiffMapBufferRows<'a> {
+#[derive(Clone)]
+pub(crate) struct DiffMapBufferRows<'a> {
     cursor: Cursor<'a, DiffTransform, (DiffPoint, InlayPoint)>,
     diff_point: DiffPoint,
     input_buffer_rows: InlayBufferRows<'a>,
@@ -104,6 +106,7 @@ impl DiffMap {
     ) -> (Model<Self>, DiffMapSnapshot) {
         let snapshot = DiffMapSnapshot {
             diffs: TreeMap::default(),
+            version: 0,
             transforms: SumTree::from_item(
                 DiffTransform::BufferContent {
                     summary: inlay_snapshot.text_summary(),
@@ -509,6 +512,7 @@ impl DiffMap {
         new_transforms.append(cursor.suffix(&()), &());
         drop(cursor);
         self.snapshot.transforms = new_transforms;
+        self.snapshot.version += 1;
         cx.notify();
 
         #[cfg(test)]
@@ -586,20 +590,110 @@ impl DiffMapSnapshot {
             .collect()
     }
 
-    #[cfg(test)]
     pub fn len(&self) -> DiffOffset {
         DiffOffset(self.transforms.summary().output.len)
+    }
+
+    pub fn text_summary(&self) -> TextSummary {
+        self.transforms.summary().output.clone()
+    }
+
+    pub fn text_summary_for_range(&self, range: Range<DiffOffset>) -> TextSummary {
+        todo!()
+    }
+
+    pub fn buffer(&self) -> &MultiBufferSnapshot {
+        &self.inlay_snapshot.buffer
+    }
+
+    pub fn to_point(&self, offset: DiffOffset) -> DiffPoint {
+        let mut cursor = self.transforms.cursor::<(DiffOffset, DiffPoint)>(&());
+        cursor.seek(&offset, Bias::Right, &());
+        let mut point = cursor.start().1;
+        match cursor.item() {
+            Some(_) => todo!(),
+            None => todo!(),
+        }
+        todo!();
+        point
+    }
+
+    pub fn clip_point(&self, point: DiffPoint, bias: Bias) -> DiffPoint {
+        todo!()
+    }
+
+    pub fn to_offset(&self, offset: DiffPoint) -> DiffOffset {
+        let mut cursor = self.transforms.cursor::<(DiffPoint, DiffOffset)>(&());
+        cursor.seek(&offset, Bias::Right, &());
+        let mut point = cursor.start().1;
+        match cursor.item() {
+            Some(_) => todo!(),
+            None => todo!(),
+        }
+        todo!();
+        point
     }
 
     pub fn to_inlay_offset(&self, offset: DiffOffset) -> InlayOffset {
         let mut cursor = self.transforms.cursor::<(DiffOffset, InlayOffset)>(&());
         cursor.seek(&offset, Bias::Right, &());
-        let mut fold_offset = cursor.start().1;
+        let mut inlay_offset = cursor.start().1;
         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
             let overshoot = offset.0 - cursor.start().0 .0;
-            fold_offset.0 += overshoot;
+            inlay_offset.0 += overshoot;
         }
-        fold_offset
+        inlay_offset
+    }
+
+    pub fn to_inlay_point(&self, point: DiffPoint) -> InlayPoint {
+        let mut cursor = self.transforms.cursor::<(DiffPoint, InlayPoint)>(&());
+        cursor.seek(&point, Bias::Right, &());
+        let mut inlay_point = cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
+            let overshoot = point.0 - cursor.start().0 .0;
+            inlay_point.0 += overshoot;
+        }
+        inlay_point
+    }
+
+    pub fn to_diff_offset(&self, offset: InlayOffset) -> DiffOffset {
+        let mut cursor = self.transforms.cursor::<(InlayOffset, DiffOffset)>(&());
+        cursor.seek(&offset, Bias::Right, &());
+        let mut diff_offset = cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
+            let overshoot = offset.0 - cursor.start().0 .0;
+            diff_offset.0 += overshoot;
+        }
+        diff_offset
+    }
+
+    pub fn to_diff_point(&self, point: InlayPoint) -> DiffPoint {
+        let mut cursor = self.transforms.cursor::<(InlayPoint, DiffPoint)>(&());
+        cursor.seek(&point, Bias::Right, &());
+        let mut diff_point = cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
+            let overshoot = point.0 - cursor.start().0 .0;
+            diff_point.0 += overshoot;
+        }
+        diff_point
+    }
+
+    pub fn make_diff_offset(&self, buffer_offset: usize) -> DiffOffset {
+        self.to_diff_offset(self.inlay_snapshot.to_inlay_offset(buffer_offset))
+    }
+
+    pub fn make_diff_point(&self, buffer_point: Point) -> DiffPoint {
+        self.to_diff_point(self.inlay_snapshot.to_inlay_point(buffer_point))
+    }
+
+    pub fn to_buffer_offset(&self, diff_offset: DiffOffset) -> usize {
+        self.inlay_snapshot
+            .to_buffer_offset(self.to_inlay_offset(diff_offset))
+    }
+
+    pub fn to_buffer_point(&self, diff_point: DiffPoint) -> Point {
+        self.inlay_snapshot
+            .to_buffer_point(self.to_inlay_point(diff_point))
     }
 
     pub fn chunks<'a>(
@@ -659,6 +753,16 @@ impl DiffMapSnapshot {
             input_buffer_rows,
             cursor,
         }
+    }
+}
+
+impl<'a> DiffMapChunks<'a> {
+    pub fn seek(&mut self, range: Range<DiffOffset>) {
+        todo!()
+    }
+
+    pub fn offset(&self) -> DiffOffset {
+        self.offset
     }
 }
 
@@ -735,6 +839,12 @@ impl<'a> Iterator for DiffMapChunks<'a> {
                 Some(chunk)
             }
         }
+    }
+}
+
+impl<'a> DiffMapBufferRows<'a> {
+    pub fn seek(&mut self, row: u32) {
+        todo!()
     }
 }
 
@@ -846,6 +956,34 @@ impl std::ops::Sub<DiffOffset> for DiffOffset {
 
     fn sub(self, rhs: DiffOffset) -> Self::Output {
         DiffOffset(self.0 - rhs.0)
+    }
+}
+
+impl std::ops::SubAssign<DiffOffset> for DiffOffset {
+    fn sub_assign(&mut self, rhs: DiffOffset) {
+        self.0 -= rhs.0;
+    }
+}
+
+impl std::ops::Add<DiffPoint> for DiffPoint {
+    type Output = DiffPoint;
+
+    fn add(self, rhs: DiffPoint) -> Self::Output {
+        DiffPoint(self.0 + rhs.0)
+    }
+}
+
+impl std::ops::AddAssign<DiffPoint> for DiffPoint {
+    fn add_assign(&mut self, rhs: DiffPoint) {
+        self.0 += rhs.0;
+    }
+}
+
+impl std::ops::Sub<DiffPoint> for DiffPoint {
+    type Output = DiffPoint;
+
+    fn sub(self, rhs: DiffPoint) -> Self::Output {
+        DiffPoint(self.0 - rhs.0)
     }
 }
 
