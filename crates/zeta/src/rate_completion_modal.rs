@@ -414,7 +414,7 @@ impl RateCompletionModal {
                                             .size(IconSize::Small)
                                             .color(Color::Success),
                                     )
-                                    .child(Label::new("Rated completion").color(Color::Muted)),
+                                    .child(Label::new("Rated completion.").color(Color::Muted)),
                             )
                         } else if active_completion.completion.edits.is_empty() {
                             Some(
@@ -424,7 +424,7 @@ impl RateCompletionModal {
                                             .size(IconSize::Small)
                                             .color(Color::Warning),
                                     )
-                                    .child(Label::new("No edits produced").color(Color::Muted)),
+                                    .child(Label::new("No edits produced.").color(Color::Muted)),
                             )
                         } else {
                             Some(label_container())
@@ -467,7 +467,6 @@ impl RateCompletionModal {
                                         .icon(IconName::ThumbsUp)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
-                                        .icon_color(Color::Success)
                                         .disabled(rated)
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.thumbs_up_active(&ThumbsUpActiveCompletion, cx);
@@ -550,13 +549,9 @@ impl Render for RateCompletionModal {
                                         .child(
                                             v_flex()
                                                 .child(Label::new(completion.path.to_string_lossy().to_string()).size(LabelSize::Small))
-                                                .child(div()
-                                                    .overflow_hidden()
-                                                    .text_ellipsis()
-                                                    .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
-                                                        .color(Color::Muted)
-                                                        .size(LabelSize::XSmall)
-                                                    )
+                                                .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall)
                                                 )
                                         )
                                         .on_click(cx.listener(move |this, _, cx| {
