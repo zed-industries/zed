@@ -362,14 +362,20 @@ impl TitleBar {
                     },
                 )
                 .tooltip(move |cx| {
-                    Tooltip::text(
-                        if is_muted {
-                            "Unmute microphone"
+                    if is_muted {
+                        if is_deafened {
+                            Tooltip::with_meta(
+                                "Unmute microphone",
+                                None,
+                                "Audio will be unmuted",
+                                cx,
+                            )
                         } else {
-                            "Mute microphone"
-                        },
-                        cx,
-                    )
+                            Tooltip::text("Unmute microphone", cx)
+                        }
+                    } else {
+                        Tooltip::text("Mute microphone", cx)
+                    }
                 })
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
@@ -395,7 +401,12 @@ impl TitleBar {
                 .icon_size(IconSize::Small)
                 .selected(is_deafened)
                 .tooltip(move |cx| {
-                    Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
+                    let (label, details) = if is_deafened {
+                        ("Unmute Audio", "Mic will be unmuted")
+                    } else {
+                        ("Mute Audio", "Mic will be muted")
+                    };
+                    Tooltip::with_meta(label, None, details, cx)
                 })
                 .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
                 .into_any_element(),
