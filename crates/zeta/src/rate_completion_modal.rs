@@ -439,11 +439,10 @@ impl RateCompletionModal {
                                             &self.focus_handle(cx),
                                             cx,
                                         ))
-                                        .style(ButtonStyle::Tinted(TintColor::Negative))
+                                        .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsDown)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
-                                        .icon_color(Color::Error)
                                         .disabled(rated || feedback_empty)
                                         .when(feedback_empty, |this| {
                                             this.tooltip(|cx| {
@@ -464,7 +463,7 @@ impl RateCompletionModal {
                                             &self.focus_handle(cx),
                                             cx,
                                         ))
-                                        .style(ButtonStyle::Tinted(TintColor::Positive))
+                                        .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsUp)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
@@ -542,7 +541,7 @@ impl Render for RateCompletionModal {
                                         .focused(index == self.selected_index)
                                         .selected(selected)
                                         .start_slot(if rated {
-                                            Icon::new(IconName::Check).color(Color::Success)
+                                            Icon::new(IconName::Check).color(Color::Success).size(IconSize::Small)
                                         } else if completion.edits.is_empty() {
                                             Icon::new(IconName::File).color(Color::Muted).size(IconSize::Small)
                                         } else {
