@@ -6,7 +6,7 @@ use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, SharedString, Task, View,
     WeakView,
 };
-use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
@@ -63,6 +63,10 @@ impl ContextPicker {
             mode: ContextPickerMode::Default,
             picker,
         }
+    }
+
+    pub fn reset_mode(&mut self) {
+        self.mode = ContextPickerMode::Default;
     }
 }
 
@@ -128,17 +132,22 @@ impl PickerDelegate for ContextPickerDelegate {
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(entry) = self.entries.get(self.selected_ix) {
             self.context_picker
-                .update(cx, |this, cx| match entry.name.to_string().as_str() {
-                    "file" => {
-                        this.mode = ContextPickerMode::File(cx.new_view(|cx| {
-                            FileContextPicker::new(
-                                self.workspace.clone(),
-                                self.message_editor.clone(),
-                                cx,
-                            )
-                        }));
+                .update(cx, |this, cx| {
+                    match entry.name.to_string().as_str() {
+                        "file" => {
+                            this.mode = ContextPickerMode::File(cx.new_view(|cx| {
+                                FileContextPicker::new(
+                                    self.context_picker.clone(),
+                                    self.workspace.clone(),
+                                    self.message_editor.clone(),
+                                    cx,
+                                )
+                            }));
+                        }
+                        _ => {}
                     }
-                    _ => {}
+
+                    cx.focus_self();
                 })
                 .log_err();
         }

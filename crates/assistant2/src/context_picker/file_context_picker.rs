@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{AppContext, FocusHandle, FocusableView, Task, View, WeakView};
+use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakView};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, WorktreeId};
 use ui::{prelude::*, ListItem, ListItemSpacing};
@@ -13,6 +13,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context::ContextKind;
+use crate::context_picker::ContextPicker;
 use crate::message_editor::MessageEditor;
 
 pub struct FileContextPicker {
@@ -21,11 +22,12 @@ pub struct FileContextPicker {
 
 impl FileContextPicker {
     pub fn new(
+        context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
         message_editor: WeakView<MessageEditor>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate = FileContextPickerDelegate::new(workspace, message_editor, cx);
+        let delegate = FileContextPickerDelegate::new(context_picker, workspace, message_editor);
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
@@ -45,6 +47,7 @@ impl Render for FileContextPicker {
 }
 
 pub struct FileContextPickerDelegate {
+    context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
     message_editor: WeakView<MessageEditor>,
     matches: Vec<PathMatch>,
@@ -53,11 +56,12 @@ pub struct FileContextPickerDelegate {
 
 impl FileContextPickerDelegate {
     pub fn new(
+        context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
         message_editor: WeakView<MessageEditor>,
-        cx: &mut ViewContext<FileContextPicker>,
     ) -> Self {
         Self {
+            context_picker,
             workspace,
             message_editor,
             matches: Vec::new(),
@@ -180,7 +184,7 @@ impl PickerDelegate for FileContextPickerDelegate {
             // TODO: This should be probably be run in the background.
             let paths = search_task.await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, _cx| {
                 this.delegate.matches = paths;
             })
             .log_err();
@@ -238,14 +242,19 @@ impl PickerDelegate for FileContextPickerDelegate {
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        println!("FileContextPicker dismissed");
+        self.context_picker
+            .update(cx, |this, cx| {
+                this.reset_mode();
+                cx.emit(DismissEvent);
+            })
+            .log_err();
     }
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
 

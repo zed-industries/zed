@@ -19,7 +19,6 @@ use crate::ui::ContextPill;
 use crate::{Chat, ToggleModelSelector};
 
 pub struct MessageEditor {
-    workspace: WeakView<Workspace>,
     thread: Model<Thread>,
     editor: View<Editor>,
     context: Vec<Context>,
@@ -36,8 +35,7 @@ impl MessageEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let weak_self = cx.view().downgrade();
-        let mut this = Self {
-            workspace: workspace.clone(),
+        Self {
             thread,
             editor: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(80, cx);
@@ -50,16 +48,7 @@ impl MessageEditor {
             context_picker: cx.new_view(|cx| ContextPicker::new(workspace.clone(), weak_self, cx)),
             context_picker_handle: PopoverMenuHandle::default(),
             use_tools: false,
-        };
-
-        this.context.push(Context {
-            id: this.next_context_id.post_inc(),
-            name: "shape.rs".into(),
-            kind: ContextKind::File,
-            text: "```rs\npub enum Shape {\n    Circle,\n    Square,\n    Triangle,\n}".into(),
-        });
-
-        this
+        }
     }
 
     pub fn insert_context(
