@@ -18,6 +18,7 @@ actions!(git_panel, [Deploy, ToggleFocus]);
 
 #[derive(Clone)]
 pub struct GitPanel {
+    _workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     width: Option<Pixels>,
 }
@@ -28,12 +29,17 @@ impl GitPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
-            workspace.update(&mut cx, |_workspace, cx| cx.new_view(|cx| Self::new(cx)))
+            workspace.update(&mut cx, |workspace, cx| {
+                let workspace_handle = workspace.weak_handle();
+
+                cx.new_view(|cx| Self::new(workspace_handle, cx))
+            })
         })
     }
 
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(workspace: WeakView<Workspace>, cx: &mut ViewContext<Self>) -> Self {
         Self {
+            _workspace: workspace,
             focus_handle: cx.focus_handle(),
             width: Some(px(360.)),
         }
