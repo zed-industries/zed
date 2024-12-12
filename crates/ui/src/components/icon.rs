@@ -426,8 +426,10 @@ impl IconDecorationKind {
 pub struct IconDecoration {
     kind: IconDecorationKind,
     color: Hsla,
+    knockout_hover_color: Hsla,
     knockout_color: Hsla,
     position: Point<Pixels>,
+    group_name: Option<SharedString>,
 }
 
 impl IconDecoration {
@@ -439,8 +441,10 @@ impl IconDecoration {
         Self {
             kind,
             color,
+            knockout_hover_color: color,
             knockout_color,
             position,
+            group_name: None,
         }
     }
 
@@ -453,6 +457,18 @@ impl IconDecoration {
     /// Sets the color of the decoration
     pub fn color(mut self, color: Hsla) -> Self {
         self.color = color;
+        self
+    }
+
+    /// Sets the color of the decoration that is used on hover
+    pub fn knockout_hover_color(mut self, color: Hsla) -> Self {
+        self.knockout_hover_color = color;
+        self
+    }
+
+    /// Sets the name of the group the decoration belongs to
+    pub fn group_name(mut self, name: Option<SharedString>) -> Self {
+        self.group_name = name;
         self
     }
 
@@ -498,7 +514,15 @@ impl RenderOnce for IconDecoration {
                     .right_0()
                     .size(px(ICON_DECORATION_SIZE))
                     .path(self.kind.bg().path())
-                    .text_color(self.knockout_color),
+                    .text_color(self.knockout_color)
+                    .when(self.group_name.is_none(), |this| {
+                        this.hover(|style| style.text_color(self.knockout_hover_color))
+                    })
+                    .when_some(self.group_name.clone(), |this, group_name| {
+                        this.group_hover(group_name, |style| {
+                            style.text_color(self.knockout_hover_color)
+                        })
+                    }),
             )
     }
 }
