@@ -10363,6 +10363,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
+ "async-tungstenite 0.28.1",
  "base64 0.22.1",
  "client",
  "collections",
