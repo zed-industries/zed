@@ -888,7 +888,7 @@ impl MultiBuffer {
         self.start_transaction_at(Instant::now(), model, cx)
     }
 
-    fn start_transaction_at(
+    pub fn start_transaction_at(
         &mut self,
         now: Instant,
         model: &Model<Self>,

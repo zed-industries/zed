@@ -724,7 +724,7 @@ impl InlineAssistant {
         };
 
         editor.update(cx, |editor, model, cx| {
-            let scroll_position = editor.scroll_position(model, cx);
+            let scroll_position = editor.scroll_position(model, window, cx);
             let target_scroll_top = editor
                 .row_for_block(decorations.prompt_block_id, model, cx)
                 .unwrap()
@@ -775,7 +775,7 @@ impl InlineAssistant {
                     let assist = &self.assists[&scroll_lock.assist_id];
                     if let Some(decorations) = assist.decorations.as_ref() {
                         let distance_from_top = editor.update(cx, |editor, model, cx| {
-                            let scroll_top = editor.scroll_position(model, cx).y;
+                            let scroll_top = editor.scroll_position(model, window, cx).y;
                             let prompt_row = editor
                                 .row_for_block(decorations.prompt_block_id, model, cx)
                                 .unwrap()

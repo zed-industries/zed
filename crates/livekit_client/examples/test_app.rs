@@ -405,8 +405,9 @@ impl Render for LivekitWindow {
                             "Publish mic"
                         })
                         .on_click(
-                            model
-                                .listener(|this, _, model, window, cx| this.toggle_mute(model, cx)),
+                            model.listener(|this, _, model, _window, cx| {
+                                this.toggle_mute(model, cx)
+                            }),
                         ),
                     button()
                         .id("toggle-screen-share")
@@ -415,7 +416,7 @@ impl Render for LivekitWindow {
                         } else {
                             "Unshare screen"
                         })
-                        .on_click(model.listener(|this, _, model, window, cx| {
+                        .on_click(model.listener(|this, _, model, _window, cx| {
                             this.toggle_screen_share(model, cx)
                         })),
                 ]),
@@ -453,7 +454,7 @@ impl Render for LivekitWindow {
                                         })
                                         .on_click(model.listener({
                                             let identity = identity.clone();
-                                            move |this, _, model, window, cx| {
+                                            move |this, _, model, _window, cx| {
                                                 this.toggle_remote_audio_for_participant(
                                                     &identity, model, cx,
                                                 );

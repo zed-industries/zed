@@ -3696,11 +3696,10 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, None, cx).await;
-        let (window, cx) = cx.add_window_view(|model, window, cx| {
+        let (workspace, cx) = cx.add_window_view(|model, window, cx| {
             Workspace::test_new(project.clone(), model, window, cx)
         });
-        let workspace = window.state(cx).unwrap();
-        let window: AnyWindowHandle = window.into();
+        let window: AnyWindowHandle = cx.handle();
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         window
@@ -3717,8 +3716,8 @@ mod tests {
                         false,
                         Some(0),
                         model,
-                        cx,
                         window,
+                        cx,
                     );
                 });
                 assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
@@ -3805,39 +3804,40 @@ mod tests {
             Workspace::test_new(project.clone(), model, window, cx)
         });
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
+        let window = cx.handle();
 
         // 1. Add with a destination index
         //   1a. Add before the active item
         let [_, _, _, d] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.add_item(d, false, false, Some(0), model, window, cx);
         });
         assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
 
         //   1b. Add after the active item
         let [_, _, _, d] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.add_item(d, false, false, Some(2), model, window, cx);
         });
         assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
 
         //   1c. Add at the end of the item list (including off the length)
         let [a, _, _, _] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.add_item(a, false, false, Some(5), model, window, cx);
         });
         assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
 
         //   1d. Add same item to active index
         let [_, b, _] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.add_item(b, false, false, Some(1), model, window, cx);
         });
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         //   1e. Add item to index after same item in last position
         let [_, _, c] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.add_item(c, false, false, Some(2), model, window, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
@@ -3845,14 +3845,14 @@ mod tests {
         // 2. Add without a destination index
         //   2a. Add with active item at the start of the item list
         let [_, _, _, d] = set_labeled_items(&pane, ["A*", "B", "C", "D"], cx);
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.add_item(d, false, false, None, model, window, cx);
         });
         assert_item_labels(&pane, ["A", "D*", "B", "C"], cx);
 
         //   2b. Add with active item at the end of the item list
         let [a, _, _, _] = set_labeled_items(&pane, ["A", "B", "C", "D*"], cx);
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, window, cx| {
             pane.add_item(a, false, false, None, model, window, cx);
         });
         assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
@@ -3993,6 +3993,7 @@ mod tests {
             Workspace::test_new(project.clone(), model, window, cx)
         });
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
+        let window = cx.handle();
 
         add_labeled_item(&pane, "A", false, cx);
         add_labeled_item(&pane, "B", false, cx);
@@ -4000,8 +4001,8 @@ mod tests {
         add_labeled_item(&pane, "D", false, cx);
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
-        pane.update(cx, |pane, model, cx| {
-            pane.activate_item(1, false, false, model, cx)
+        pane.update_in_window(window, cx, |pane, model, cx| {
+            pane.activate_item(1, false, false, model, window, cx)
         });
         add_labeled_item(&pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
@@ -4014,8 +4015,8 @@ mod tests {
         .unwrap();
         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
 
-        pane.update(cx, |pane, model, cx| {
-            pane.activate_item(3, false, false, model, cx)
+        pane.update_in_window(window, cx, |pane, model, cx| {
+            pane.activate_item(3, false, false, model, window, cx)
         });
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
@@ -4059,6 +4060,7 @@ mod tests {
             Workspace::test_new(project.clone(), model, window, cx)
         });
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
+        let window = cx.handle();
 
         add_labeled_item(&pane, "A", false, cx);
         add_labeled_item(&pane, "B", false, cx);
@@ -4066,22 +4068,22 @@ mod tests {
         add_labeled_item(&pane, "D", false, cx);
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
-        pane.update(cx, |pane, model, cx| {
-            pane.activate_item(1, false, false, model, cx)
+        pane.update_in_window(window, cx, |pane, model, cx| {
+            pane.activate_item(1, false, false, model, window, cx)
         });
         add_labeled_item(&pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
-        pane.update(cx, |pane, model, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, cx)
+        pane.update_in_window(window, cx, |pane, model, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, model, window, cx)
         })
         .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B", "C*", "D"], cx);
 
-        pane.update(cx, |pane, model, cx| {
-            pane.activate_item(3, false, false, model, cx)
+        pane.update_in_window(window, cx, |pane, model, cx| {
+            pane.activate_item(3, false, false, model, window, cx)
         });
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
@@ -4237,6 +4239,7 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|model, window, cx| {
             Workspace::test_new(project.clone(), model, window, cx)
         });
+        let window = cx.handle();
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         let item_a = add_labeled_item(&pane, "A", false, cx);
@@ -4244,7 +4247,7 @@ mod tests {
         add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(cx.handle(), cx, |pane, model, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
             pane.pin_tab_at(ix, model, cx);
             pane.close_all_items(
@@ -4261,7 +4264,7 @@ mod tests {
         .unwrap();
         assert_item_labels(&pane, ["A*"], cx);
 
-        pane.update(cx, |pane, model, cx| {
+        pane.update_in_window(window, cx, |pane, model, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
             pane.unpin_tab_at(ix, model, cx);
             pane.close_all_items(
@@ -4353,7 +4356,7 @@ mod tests {
         add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        pane.update(cx, |pane, model, cx| {
+        pane.update_window_window(window, cx, |pane, model, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
             pane.pin_tab_at(ix, model, cx);
             pane.close_all_items(
@@ -4362,6 +4365,7 @@ mod tests {
                     close_pinned: true,
                 },
                 model,
+                window,
                 cx,
             )
         })

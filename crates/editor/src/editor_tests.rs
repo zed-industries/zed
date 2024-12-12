@@ -203,7 +203,7 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
             buffer.start_transaction_at(now, model, cx);
             buffer.edit([(0..1, "a")], None, model, cx);
             buffer.edit([(1..1, "b")], None, model, cx);
-            buffer.end_transaction_at(now, cx);
+            buffer.end_transaction_at(now, model, cx);
         });
 
         assert_eq!(editor.text(cx), "ab2cde6");
@@ -665,7 +665,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
-    let workspace = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+    let workspace = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
     let pane = workspace
         .update(cx, |workspace, model, _| workspace.active_pane().clone())
         .unwrap();
@@ -743,12 +743,12 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             assert!(pop_history(&mut editor, model, cx).is_none());
 
             // Set scroll position to check later
-            editor.set_scroll_position(gpui::Point::<f32>::new(5.5, 5.5), model, cx);
+            editor.set_scroll_position(gpui::Point::<f32>::new(5.5, 5.5), model, window, cx);
             let original_scroll_position = editor.scroll_manager.anchor();
 
             // Jump to the end of the document and adjust scroll
             editor.move_to_end(&MoveToEnd, model, cx);
-            editor.set_scroll_position(gpui::Point::<f32>::new(-2.5, -0.5), model, cx);
+            editor.set_scroll_position(gpui::Point::<f32>::new(-2.5, -0.5), model, window, cx);
             assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
 
             let nav_entry = pop_history(&mut editor, model, cx).unwrap();
@@ -777,7 +777,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 &[editor.max_point(cx)..editor.max_point(cx)]
             );
             assert_eq!(
-                editor.scroll_position(model, cx),
+                editor.scroll_position(model, window, cx),
                 gpui::Point::new(0., editor.max_point(cx).row().as_f32())
             );
 
@@ -7081,7 +7081,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let workspace =
-        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, cx));
+        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -9921,7 +9921,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
     let workspace =
-        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, cx));
+        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, window, cx));
     let pane = workspace
         .update(cx, |workspace, model, _| workspace.active_pane().clone())
         .unwrap();
@@ -9936,7 +9936,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     // Start following the editor when it has no excerpts.
     let mut state_message = leader.update(cx, |leader, model, cx| leader.to_state_proto(cx));
     let follower_1 = cx
-        .update_window(*workspace.deref(), |_, cx| {
+        .update_window(*workspace.deref(), |window, cx| {
             Editor::from_state_proto(
                 workspace.root_view(cx).unwrap(),
                 ViewId {
@@ -9944,7 +9944,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
                     id: 0,
                 },
                 &mut state_message,
-                model,
+                window,
                 cx,
             )
         })
@@ -10042,7 +10042,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
                     id: 0,
                 },
                 &mut state_message,
-                model,
+                window,
                 cx,
             )
         })
@@ -10492,7 +10492,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     );
 
     let workspace =
-        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, cx));
+        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, window, cx));
 
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -10610,7 +10610,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     );
 
     let _window =
-        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, cx));
+        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, window, cx));
     let _buffer = project
         .update(cx, |project, model, cx| {
             project.open_local_buffer("/a/main.rs", model, cx)
@@ -11760,6 +11760,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
                 BufferChangeSet::new_with_base_text(
                     diff_base.to_string(),
                     buffer.read(cx).text_snapshot(),
+                    model,
                     cx,
                 )
             });
@@ -11932,7 +11933,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
     .await;
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let workspace =
-        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, cx));
+        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let multi_buffer_editor = cx.new_model(|model, cx| {
         Editor::new(
@@ -11940,6 +11941,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
             multi_buffer,
             Some(project.clone()),
             true,
+            model,
             cx,
         )
     });
@@ -12596,10 +12598,11 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                 (buffer_2.clone(), file_2_old),
                 (buffer_3.clone(), file_3_old),
             ] {
-                let change_set = cx.new_model(|model, cx| {
+                let change_set = cx.new_model(|change_set, model, cx| {
                     BufferChangeSet::new_with_base_text(
                         diff_base.to_string(),
                         buffer.read(cx).text_snapshot(),
+                        change_set,
                         model,
                         cx,
                     )
@@ -14030,7 +14033,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let workspace =
-        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, cx));
+        cx.add_window(|model, window, cx| Workspace::test_new(project.clone(), model, window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let buffer =
         cx.new_model(|model, cx| Buffer::local(text, model, cx).with_language(language, model, cx));

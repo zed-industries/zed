@@ -302,10 +302,10 @@ pub fn init(cx: &mut AppContext) {
     workspace::register_serializable_item::<Editor>(cx);
 
     cx.observe_new_views(
-        |workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext| {
-            workspace.register_action(Editor::new_file);
-            workspace.register_action(Editor::new_file_vertical);
-            workspace.register_action(Editor::new_file_horizontal);
+        |workspace: &mut Workspace, model: &Model<Workspace>, cx: &mut AppContext| {
+            workspace.register_action(cx, Editor::new_file);
+            workspace.register_action(cx, Editor::new_file_vertical);
+            workspace.register_action(cx, Editor::new_file_horizontal);
         },
     )
     .detach();
@@ -10768,7 +10768,7 @@ impl Editor {
                 let opened = workspace
                     .update(&mut cx, |workspace, model, cx| {
                         Self::open_locations_in_multibuffer(
-                            workspace, locations, title, split, model, cx,
+                            workspace, locations, title, split, model, window, cx,
                         )
                     })
                     .ok();
@@ -10909,7 +10909,9 @@ impl Editor {
                         )
                     })
                     .unwrap();
-                Self::open_locations_in_multibuffer(workspace, locations, title, false, model, cx);
+                Self::open_locations_in_multibuffer(
+                    workspace, locations, title, false, model, window, cx,
+                );
                 Navigated::Yes
             })
         }))
@@ -10922,6 +10924,7 @@ impl Editor {
         title: String,
         split: bool,
         model: &Model<Workspace>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         // If there are multiple definitions, open them in a multibuffer
@@ -10988,11 +10991,11 @@ impl Editor {
         let item_id = item.item_id();
 
         if split {
-            workspace.split_item(SplitDirection::Right, item.clone(), model, cx);
+            workspace.split_item(SplitDirection::Right, item.clone(), model, window, cx);
         } else {
             let destination_index = workspace.active_pane().update(cx, |pane, model, cx| {
                 if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
-                    pane.close_current_preview_item(model, cx)
+                    pane.close_current_preview_item(model, window, cx)
                 } else {
                     None
                 }
@@ -13000,7 +13003,7 @@ impl Editor {
         window: &mut gpui::Window,
         cx: &mut gpui::AppContext,
     ) -> BTreeMap<DisplayRow, Hsla> {
-        let snapshot = self.snapshot(model, cx);
+        let snapshot = self.snapshot(window, cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
@@ -13581,7 +13584,7 @@ impl Editor {
     }
 
     fn settings_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        self.tasks_update_task = Some(self.refresh_runnables(cx));
+        self.tasks_update_task = Some(self.refresh_runnables(model, cx));
         self.refresh_inline_completion(true, false, model, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
@@ -13679,6 +13682,7 @@ impl Editor {
                         true,
                         None,
                         model,
+                        window,
                         cx,
                     );
                 });
@@ -13775,10 +13779,10 @@ impl Editor {
         // We defer the pane interaction because we ourselves are a workspace item
         // and activating a new item causes the pane to call a method on us reentrantly,
         // which panics if we're on the stack.
-        cx.window_context().defer(move |cx| {
+        window.defer(move |window, cx| {
             workspace.update(cx, |workspace, model, cx| {
                 let pane = if split {
-                    workspace.adjacent_pane(model, cx)
+                    workspace.adjacent_pane(model, window, cx)
                 } else {
                     workspace.active_pane().clone()
                 };
@@ -13804,7 +13808,7 @@ impl Editor {
                                     }
                                 })?;
                             pane.update(cx, |pane, model, cx| {
-                                pane.activate_item(pane_item_index, true, true, model, cx)
+                                pane.activate_item(pane_item_index, true, true, model, window, cx)
                             });
                             Some(editor)
                         })
@@ -13816,6 +13820,7 @@ impl Editor {
                                 true,
                                 true,
                                 model,
+                                window,
                                 cx,
                             )
                         });
@@ -14283,7 +14288,7 @@ fn get_unstaged_changes_for_buffers(
             this.update(&mut cx, |this, model, cx| {
                 for change_set in change_sets {
                     if let Some(change_set) = change_set.log_err() {
-                        this.diff_map.add_change_set(change_set, cx);
+                        this.diff_map.add_change_set(change_set, model, cx);
                     }
                 }
             })
@@ -15489,7 +15494,7 @@ impl Render for Editor {
                 scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
-                inlay_hints_style: make_inlay_hints_style(cx),
+                inlay_hints_style: make_inlay_hints_style(window, cx),
                 suggestions_style: HighlightStyle {
                     color: Some(cx.theme().status().predictive),
                     ..HighlightStyle::default()

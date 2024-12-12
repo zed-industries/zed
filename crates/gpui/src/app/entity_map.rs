@@ -1,6 +1,6 @@
 use crate::{
-    seal::Sealed, AppContext, AsyncAppContext, Context, Effect, Entity, EventEmitter, Subscription,
-    Task, Window,
+    seal::Sealed, Action, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity,
+    EventEmitter, Subscription, Task, Window,
 };
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
@@ -423,6 +423,18 @@ impl<T: 'static> Model<T> {
         cx.update_model(self, update)
     }
 
+    /// Updates the entity referenced by this model with the given function in the specified window.
+    pub fn update_in_window<C: Context, R>(
+        &self,
+        window: impl Into<AnyWindowHandle>,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &Model<T>, &mut Window, &mut AppContext) -> R,
+    ) -> Result<R> {
+        window.into().update(cx, |window, cx: &mut AppContext| {
+            self.update(cx, |this, model, cx| update(this, model, window, cx))
+        })
+    }
+
     /// Schedules an update to be performed on this model at the end of the current effect cycle.
     pub fn defer<R>(
         &self,
@@ -694,6 +706,20 @@ impl<T: 'static> Model<T> {
         );
         activate();
         subscription
+    }
+
+    /// Register a global listener for actions invoked via the keyboard.
+    pub fn on_action<A: Action>(
+        &mut self,
+        cx: &mut AppContext,
+        listener: impl Fn(&mut T, &A, &Self, &mut AppContext) + 'static,
+    ) {
+        let model = self.downgrade();
+        cx.on_action(move |action: &A, cx| {
+            model
+                .update(cx, |this, model, cx| listener(this, action, model, cx))
+                .ok();
+        });
     }
 }
 

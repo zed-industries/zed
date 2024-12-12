@@ -1003,7 +1003,7 @@ impl Workspace {
         let (serializable_items_tx, serializable_items_rx) =
             mpsc::unbounded::<Box<dyn SerializableItemHandle>>();
         let _items_serializer = model.spawn(cx, |this, mut cx| async move {
-            Self::serialize_items(&this, serializable_items_rx, model, &mut cx).await
+            Self::serialize_items(&this, serializable_items_rx, &mut cx).await
         });
 
         let subscriptions = vec![
@@ -8664,7 +8664,7 @@ mod tests {
                 .update(cx, |workspace, model, cx| {
                     let project_path = (worktree_id, "one.png");
                     workspace.open_path(project_path, None, true, window, cx)
-                })?
+                })
                 .await
                 .unwrap();
 

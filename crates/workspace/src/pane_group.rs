@@ -1200,12 +1200,12 @@ mod element {
                         cx.theme().colors().pane_group_border,
                     ));
 
-                    cx.on_mouse_event({
+                    window.on_mouse_event({
                         let dragged_handle = layout.dragged_handle.clone();
                         let flexes = self.flexes.clone();
                         let workspace = self.workspace.clone();
                         let handle_hitbox = handle.hitbox.clone();
-                        move |e: &MouseDownEvent, phase, model, cx| {
+                        move |e: &MouseDownEvent, phase, window, cx| {
                             if phase.bubble() && handle_hitbox.is_hovered(cx) {
                                 dragged_handle.replace(Some(ix));
                                 if e.click_count >= 2 {
@@ -1223,7 +1223,7 @@ mod element {
                             }
                         }
                     });
-                    cx.on_mouse_event({
+                    window.on_mouse_event({
                         let workspace = self.workspace.clone();
                         let dragged_handle = layout.dragged_handle.clone();
                         let flexes = self.flexes.clone();
@@ -1249,7 +1249,7 @@ mod element {
                 }
             }
 
-            cx.on_mouse_event({
+            window.on_mouse_event({
                 let dragged_handle = layout.dragged_handle.clone();
                 move |_: &MouseUpEvent, phase, _cx| {
                     if phase.bubble() {

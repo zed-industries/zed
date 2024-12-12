@@ -445,13 +445,15 @@ impl TestAppContext {
         Evt: 'static + Clone,
     {
         let (tx, rx) = futures::channel::mpsc::unbounded();
-        entity
-            .update(self, |_, _model: &Model<T>, cx: &mut AppContext| {
-                cx.subscribe(entity, move |_handle, event, _cx| {
-                    let _ = tx.unbounded_send(event.clone());
+        self.update(|cx| {
+            entity
+                .update(cx, |_, _model: &Model<T>, cx: &mut AppContext| {
+                    cx.subscribe(entity, move |_handle, event, _cx| {
+                        let _ = tx.unbounded_send(event.clone());
+                    })
                 })
-            })
-            .detach();
+                .detach();
+        });
         rx
     }
 
@@ -470,7 +472,7 @@ impl TestAppContext {
 
         async {
             loop {
-                if model.update(self, &mut predicate) {
+                if self.update(|cx| model.update(cx, &mut predicate)) {
                     return Ok(());
                 }
 
@@ -500,11 +502,13 @@ impl<T: 'static> Model<T> {
     {
         let (tx, mut rx) = oneshot::channel();
         let mut tx = Some(tx);
-        let subscription = self.update(cx, |_, _, cx| {
-            cx.subscribe(self, move |_, event, _| {
-                if let Some(tx) = tx.take() {
-                    _ = tx.send(event.clone());
-                }
+        let subscription = cx.update(|cx| {
+            self.update(cx, |_, _, cx| {
+                cx.subscribe(self, move |_, event, _| {
+                    if let Some(tx) = tx.take() {
+                        _ = tx.send(event.clone());
+                    }
+                })
             })
         });
 

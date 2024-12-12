@@ -268,7 +268,7 @@ impl ScrollManager {
         }
         self.anchor = anchor;
         model.emit(EditorEvent::ScrollPositionChanged { local, autoscroll }, cx);
-        self.show_scrollbar(cx);
+        self.show_scrollbar(window, cx);
         self.autoscroll_request.take();
         if let Some(workspace_id) = workspace_id {
             let item_id = cx.view().entity_id().as_u64() as ItemId;
@@ -419,12 +419,13 @@ impl Editor {
         &mut self,
         scroll_position: gpui::Point<f32>,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         if self.scroll_manager.forbid_vertical_scroll {
             return;
         }
-        self.set_scroll_position_internal(scroll_position, true, false, model, cx);
+        self.set_scroll_position_internal(scroll_position, true, false, model, window, cx);
     }
 
     pub(crate) fn set_scroll_position_internal(
@@ -433,11 +434,12 @@ impl Editor {
         local: bool,
         autoscroll: bool,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         let map = self
             .display_map
-            .update(cx, |map, model, cx| map.snapshot(cx));
+            .update(cx, |map, model, cx| map.snapshot(window, cx));
         self.set_scroll_position_taking_display_map(
             scroll_position,
             local,
@@ -473,10 +475,15 @@ impl Editor {
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, model, cx);
     }
 
-    pub fn scroll_position(&self, model: &Model<Self>, cx: &mut AppContext) -> gpui::Point<f32> {
+    pub fn scroll_position(
+        &self,
+        model: &Model<Self>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> gpui::Point<f32> {
         let display_map = self
             .display_map
-            .update(cx, |map, model, cx| map.snapshot(cx));
+            .update(cx, |map, model, cx| map.snapshot(window, cx));
         self.scroll_manager.anchor.scroll_position(&display_map)
     }
 
@@ -543,12 +550,12 @@ impl Editor {
             return;
         }
 
-        let cur_position = self.scroll_position(cx);
+        let cur_position = self.scroll_position(window, cx);
         let Some(visible_line_count) = self.visible_line_count() else {
             return;
         };
         let new_pos = cur_position + point(0., amount.lines(visible_line_count));
-        self.set_scroll_position(new_pos, model, cx);
+        self.set_scroll_position(new_pos, model, window, window, cx);
     }
 
     /// Returns an ordering. The newest selection is:
@@ -558,7 +565,7 @@ impl Editor {
     pub fn newest_selection_on_screen(&self, cx: &mut AppContext) -> Ordering {
         let snapshot = self
             .display_map
-            .update(cx, |map, model, cx| map.snapshot(cx));
+            .update(cx, |map, model, cx| map.snapshot(window, cx));
         let newest_head = self
             .selections
             .newest_anchor()

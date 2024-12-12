@@ -604,7 +604,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     extension_store.update(cx, |_, model, cx| {
         model
-            .subscribe(&extension_store, cx, |_, _, event, model, _| {
+            .subscribe(&extension_store, cx, |_, _, event, _, _| {
                 if matches!(event, Event::ExtensionFailedToLoad(_)) {
                     panic!("extension failed to load");
                 }
