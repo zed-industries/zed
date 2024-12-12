@@ -84,11 +84,11 @@ impl FocusableView for ContextPicker {
 }
 
 impl Render for ContextPicker {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        match &self.mode {
-            ContextPickerMode::Default => self.picker.clone().into_any(),
-            ContextPickerMode::File(file_picker) => file_picker.clone().into_any(),
-        }
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex().min_w(px(400.)).map(|parent| match &self.mode {
+            ContextPickerMode::Default => parent.child(self.picker.clone()),
+            ContextPickerMode::File(file_picker) => parent.child(file_picker.clone()),
+        })
     }
 }
 

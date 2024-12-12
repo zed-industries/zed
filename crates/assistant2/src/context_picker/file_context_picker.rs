@@ -1,14 +1,13 @@
+use std::fmt::Write as _;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, ManagedView, Task, View,
-    WeakView,
-};
+use gpui::{Task, View, WeakView};
 use picker::{Picker, PickerDelegate};
-use project::PathMatchCandidateSet;
+use project::{PathMatchCandidateSet, WorktreeId};
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -33,17 +32,9 @@ impl FileContextPicker {
     }
 }
 
-impl FocusableView for FileContextPicker {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.picker.focus_handle(cx)
-    }
-}
-
-impl EventEmitter<DismissEvent> for FileContextPicker {}
-
 impl Render for FileContextPicker {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex().child(self.picker.clone())
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        self.picker.clone()
     }
 }
 
@@ -131,7 +122,7 @@ impl FileContextPickerDelegate {
                             .root_entry()
                             .map_or(false, |entry| entry.is_ignored),
                         include_root_name: true,
-                        candidates: project::Candidates::Entries,
+                        candidates: project::Candidates::Files,
                     }
                 })
                 .collect::<Vec<_>>();
@@ -164,7 +155,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
     }
 
@@ -190,16 +181,54 @@ impl PickerDelegate for FileContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        self.message_editor.update(cx, |message_editor, cx| {
-            let mat = &self.matches[self.selected_index];
+    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+        let mat = &self.matches[self.selected_index];
 
-            message_editor.insert_context(
-                ContextKind::File,
-                mat.path.to_string_lossy().to_string(),
-                "",
-            );
-        });
+        let workspace = self.workspace.clone();
+        let Some(project) = workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().clone())
+        else {
+            return;
+        };
+        let path = mat.path.clone();
+        let worktree_id = WorktreeId::from_usize(mat.worktree_id);
+        cx.spawn(|this, mut cx| async move {
+            let Some(open_buffer_task) = project
+                .update(&mut cx, |project, cx| {
+                    project.open_buffer((worktree_id, path.clone()), cx)
+                })
+                .ok()
+            else {
+                return anyhow::Ok(());
+            };
+
+            let buffer = open_buffer_task.await?;
+
+            this.update(&mut cx, |this, cx| {
+                this.delegate
+                    .message_editor
+                    .update(cx, |message_editor, cx| {
+                        let mut text = String::new();
+                        text.push_str(&codeblock_fence_for_path(Some(&path), None));
+                        text.push_str(&buffer.read(cx).text());
+                        if !text.ends_with('\n') {
+                            text.push('\n');
+                        }
+
+                        text.push_str("```\n");
+
+                        message_editor.insert_context(
+                            ContextKind::File,
+                            path.to_string_lossy().to_string(),
+                            text,
+                        );
+                    })
+            })??;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {}
@@ -220,4 +249,26 @@ impl PickerDelegate for FileContextPickerDelegate {
                 .child(mat.path.to_string_lossy().to_string()),
         )
     }
+}
+
+fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<RangeInclusive<u32>>) -> String {
+    let mut text = String::new();
+    write!(text, "```").unwrap();
+
+    if let Some(path) = path {
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            write!(text, "{} ", extension).unwrap();
+        }
+
+        write!(text, "{}", path.display()).unwrap();
+    } else {
+        write!(text, "untitled").unwrap();
+    }
+
+    if let Some(row_range) = row_range {
+        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
+    }
+
+    text.push('\n');
+    text
 }
