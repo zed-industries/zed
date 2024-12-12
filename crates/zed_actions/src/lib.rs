@@ -42,10 +42,6 @@ actions!(
         DecreaseUiFontSize,
         IncreaseUiFontSize,
         ResetUiFontSize,
-        OpenDefaultSettings,
-        OpenProjectSettings,
-        Minimize,
-        Zoom,
     ]
 );
 
