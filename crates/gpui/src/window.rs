@@ -3904,18 +3904,6 @@ pub struct AnyWindowHandle {
     state_type: TypeId,
 }
 
-impl From<&mut Window> for AnyWindowHandle {
-    fn from(window: &mut Window) -> Self {
-        window.handle()
-    }
-}
-
-impl From<&Window> for AnyWindowHandle {
-    fn from(window: &Window) -> Self {
-        window.handle()
-    }
-}
-
 impl AnyWindowHandle {
     /// Creates a new `AnyWindowHandle` from a window ID.
     pub fn new(id: WindowId) -> Self {

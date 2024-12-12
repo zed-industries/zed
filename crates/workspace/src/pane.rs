@@ -4487,7 +4487,7 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Box<Model<TestItem>> {
         cx.update(|window, cx| {
-            pane.update_in_window(window, cx, |pane, model, window, cx| {
+            pane.update(cx, |pane, model, window, cx| {
                 let labeled_item = Box::new(cx.new_model(|model, cx| {
                     TestItem::new(model, window, cx)
                         .with_label(label)

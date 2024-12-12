@@ -1038,7 +1038,15 @@ impl Workspace {
         });
 
         let subscriptions = vec![
-            window.on_activate(cx, Self::on_window_activation_changed),
+            window.on_activate({
+                let this = model.clone();
+                move |_window, cx| {
+                    this.update(cx, |this, model, cx| {
+                        this.on_window_activation_changed(model, cx)
+                    })
+                }
+            }),
+            // window.on_activate(cx, Self::on_window_activation_changed),
             window.on_resize({
                 let this = model.clone();
                 move |window, cx| {
@@ -1052,9 +1060,9 @@ impl Workspace {
                                     .timer(Duration::from_millis(100))
                                     .await;
                                 this.update(&mut cx, |this, model, cx| {
-                                    if let Some(display) = cx.display() {
+                                    if let Some(display) = window.display(cx) {
                                         if let Ok(display_uuid) = display.uuid() {
-                                            let window_bounds = cx.window_bounds();
+                                            let window_bounds = window.window_bounds();
                                             if let Some(database_id) = workspace_id {
                                                 cx.background_executor()
                                                     .spawn(DB.set_window_open_status(
@@ -1074,11 +1082,9 @@ impl Workspace {
                     })
                 }
             }),
-            cx.observe_window_appearance(|_, cx| {
-                let window_appearance = cx.appearance();
-
+            window.observe_appearance(|window, cx| {
+                let window_appearance = window.appearance();
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
-
                 ThemeSettings::reload_current_theme(cx);
             }),
             model.observe(&left_dock, cx, |this, _, model, cx| {
@@ -1531,7 +1537,7 @@ impl Workspace {
                                 pane.active_item().map(|p| p.item_id())
                             })?;
                             let open_by_abs_path = workspace.update(&mut cx, |workspace, model, cx| {
-                                workspace.open_abs_path(abs_path.clone(), false, model, cx)
+                                workspace.open_abs_path(abs_path.clone(), false, model, window, cx)
                             })?;
                             match open_by_abs_path
                                 .await
@@ -1638,7 +1644,7 @@ impl Workspace {
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_prompts {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
-            let rx = prompt(self, lister, cx);
+            let rx = prompt(self, lister, model, cx);
             self.on_prompt_for_open_path = Some(prompt);
             rx
         } else {
@@ -1685,7 +1691,7 @@ impl Workspace {
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
-            let rx = prompt(self, cx);
+            let rx = prompt(self, model, cx);
             self.on_prompt_for_new_path = Some(prompt);
             rx
         } else {
@@ -2204,13 +2210,16 @@ impl Workspace {
         &mut self,
         path: ResolvedPath,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         match path {
             ResolvedPath::ProjectPath { project_path, .. } => {
-                self.open_path(project_path, None, true, model, cx)
+                self.open_path(project_path, None, true, window, cx)
             }
-            ResolvedPath::AbsPath { path, .. } => self.open_abs_path(path, false, model, cx),
+            ResolvedPath::AbsPath { path, .. } => {
+                self.open_abs_path(path, false, model, window, cx)
+            }
         }
     }
 
@@ -2349,12 +2358,14 @@ impl Workspace {
         &mut self,
         action: &CloseInactiveTabsAndPanes,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         if let Some(task) = self.close_all_internal(
             true,
             action.save_intent.unwrap_or(SaveIntent::Close),
             model,
+            window,
             cx,
         ) {
             task.detach_and_log_err(cx)
@@ -2365,12 +2376,14 @@ impl Workspace {
         &mut self,
         action: &CloseAllItemsAndPanes,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
         if let Some(task) = self.close_all_internal(
             false,
             action.save_intent.unwrap_or(SaveIntent::Close),
             model,
+            window,
             cx,
         ) {
             task.detach_and_log_err(cx)
