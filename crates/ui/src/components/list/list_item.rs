@@ -245,12 +245,7 @@ impl RenderOnce for ListItem {
                             (on_mouse_down)(event, window, cx)
                         })
                     })
-                    .when_some(self.tooltip, |this, tooltip| {
-                        this.tooltip(move |window, cx| {
-                            let render = tooltip(window, cx);
-                            move |window, cx| render(window, cx)
-                        })
-                    })
+                    .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
                     .map(|this| {
                         if self.inset {
                             this.rounded_md()

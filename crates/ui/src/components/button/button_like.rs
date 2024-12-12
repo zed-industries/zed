@@ -356,14 +356,7 @@ pub struct ButtonLike {
     pub(super) layer: Option<ElevationIndex>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
-    tooltip: Option<
-        Box<
-            dyn Fn(
-                &mut Window,
-                &mut AppContext,
-            ) -> Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
-        >,
-    >,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut AppContext) -> AnyView>>,
     cursor_style: CursorStyle,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
@@ -546,12 +539,7 @@ impl RenderOnce for ButtonLike {
                         })
                 },
             )
-            .when_some(self.tooltip, |this, tooltip| {
-                this.tooltip(move |window, cx| {
-                    let render = tooltip(window, cx);
-                    move |window, cx| render(window, cx)
-                })
-            })
+            .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
             .children(self.children)
     }
 }

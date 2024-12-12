@@ -1060,7 +1060,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The fluent API equivalent to [`Interactivity::tooltip`]
-    fn tooltip<F, E>(
+    fn tooltip(
         mut self,
         build_tooltip: impl 'static + Fn(&mut Window, &mut AppContext) -> AnyView,
     ) -> Self
