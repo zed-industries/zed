@@ -117,6 +117,13 @@ impl DiffPoint {
     pub fn new(row: u32, col: u32) -> Self {
         DiffPoint(Point::new(row, col))
     }
+
+    pub fn row(&self) -> u32 {
+        self.0.row
+    }
+    pub fn column(&self) -> u32 {
+        self.0.column
+    }
 }
 
 impl DiffMap {
@@ -913,11 +920,18 @@ impl DiffMapSnapshot {
 
         let diff_point = DiffPoint(Point::new(start_row, 0));
         let mut cursor = self.transforms.cursor::<(DiffPoint, InlayPoint)>(&());
-        cursor.seek(&diff_point, Bias::Left, &());
+        cursor.seek(&diff_point, Bias::Right, &());
 
-        let overshoot = diff_point.0 - cursor.start().0 .0;
-        let inlay_point = InlayPoint(cursor.start().1 .0 + overshoot);
-        let input_buffer_rows = self.inlay_snapshot.buffer_rows(inlay_point.row());
+        let (diff_transform_start, inlay_transform_start) = cursor.start().clone();
+
+        let overshoot = if matches!(cursor.item(), Some(DiffTransform::BufferContent { .. })) {
+            diff_point.row() - diff_transform_start.row()
+        } else {
+            0
+        };
+        let input_buffer_rows = self
+            .inlay_snapshot
+            .buffer_rows(inlay_transform_start.row() + overshoot);
 
         DiffMapBufferRows {
             diff_point,
@@ -1015,7 +1029,19 @@ impl<'a> Iterator for DiffMapChunks<'a> {
 
 impl<'a> DiffMapBufferRows<'a> {
     pub fn seek(&mut self, row: u32) {
-        todo!()
+        self.diff_point = DiffPoint::new(row, 0);
+        self.cursor.seek(&self.diff_point, Bias::Right, &());
+        let (diff_transform_start, inlay_transform_start) = self.cursor.start().clone();
+        let overshoot = if matches!(
+            self.cursor.item(),
+            Some(DiffTransform::BufferContent { .. })
+        ) {
+            self.diff_point.row() - diff_transform_start.row()
+        } else {
+            0
+        };
+        self.input_buffer_rows
+            .seek(inlay_transform_start.row() + overshoot);
     }
 }
 
@@ -1292,6 +1318,30 @@ mod tests {
                 Some(4)
             ]
         );
+
+        assert_eq!(
+            snapshot.buffer_rows(4).collect::<Vec<_>>(),
+            vec![Some(3), None, None, Some(4)]
+        );
+        assert_eq!(
+            snapshot.buffer_rows(5).collect::<Vec<_>>(),
+            vec![None, None, Some(4)]
+        );
+        assert_eq!(
+            snapshot.buffer_rows(6).collect::<Vec<_>>(),
+            vec![None, Some(4)]
+        );
+
+        let mut buffer_rows = snapshot.buffer_rows(0);
+        buffer_rows.seek(7);
+        assert_eq!(buffer_rows.next(), Some(Some(4)));
+        buffer_rows.seek(6);
+        assert_eq!(buffer_rows.next(), Some(None));
+        buffer_rows.seek(5);
+        assert_eq!(buffer_rows.next(), Some(None));
+        buffer_rows.seek(4);
+        assert_eq!(buffer_rows.next(), Some(Some(3)));
+        drop(buffer_rows);
 
         for (point, offset) in &[
             (
