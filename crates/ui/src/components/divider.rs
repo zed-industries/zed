@@ -109,7 +109,7 @@ impl Divider {
             .bg(self.color.hsla(cx))
     }
 
-    // TOOD: Use canvas or a shader here
+    // TODO: Use canvas or a shader here
     // This obviously is a short term approach
     pub fn render_dashed(self, cx: &WindowContext) -> impl IntoElement {
         let segment_count = 128;
