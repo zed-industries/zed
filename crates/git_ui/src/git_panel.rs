@@ -12,7 +12,7 @@ use workspace::Workspace;
 
 use crate::settings::GitPanelSettings;
 
-const CHAT_PANEL_KEY: &str = "GitPanel";
+const GIT_PANEL_KEY: &str = "GitPanel";
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -69,7 +69,7 @@ impl GitPanel {
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
-                        CHAT_PANEL_KEY.into(),
+                        GIT_PANEL_KEY.into(),
                         serde_json::to_string(&SerializedGitPanel { width })?,
                     )
                     .await?;
@@ -117,11 +117,13 @@ impl GitPanel {
                 .h_full()
                 .py_2p5()
                 .px_3()
+                .gap_3()
                 .bg(cx.theme().colors().editor_background)
                 .font_buffer(cx)
                 .text_ui_sm(cx)
                 .text_color(cx.theme().colors().text_muted)
                 .child("Add a message")
+                .child("Staff-only alpha. Expect non-functioal elements.")
                 .gap_1()
                 .child(div().flex_grow())
                 .child(
