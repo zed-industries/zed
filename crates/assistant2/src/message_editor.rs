@@ -3,7 +3,7 @@ use std::rc::Rc;
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AppContext, FocusableView, Model, TextStyle, View, WeakView};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
-use language_model_selector::LanguageModelSelector;
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
@@ -25,6 +25,7 @@ pub struct MessageEditor {
     next_context_id: ContextId,
     context_picker: View<ContextPicker>,
     pub(crate) context_picker_handle: PopoverMenuHandle<ContextPicker>,
+    language_model_selector: View<LanguageModelSelector>,
     use_tools: bool,
 }
 
@@ -47,6 +48,14 @@ impl MessageEditor {
             next_context_id: ContextId(0),
             context_picker: cx.new_view(|cx| ContextPicker::new(workspace.clone(), weak_self, cx)),
             context_picker_handle: PopoverMenuHandle::default(),
+            language_model_selector: cx.new_view(|cx| {
+                LanguageModelSelector::new(
+                    |model, _cx| {
+                        println!("Selected {:?}", model.name());
+                    },
+                    cx,
+                )
+            }),
             use_tools: false,
         }
     }
@@ -120,10 +129,8 @@ impl MessageEditor {
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
 
-        LanguageModelSelector::new(
-            |model, _cx| {
-                println!("Selected {:?}", model.name());
-            },
+        LanguageModelSelectorPopoverMenu::new(
+            self.language_model_selector.clone(),
             ButtonLike::new("active-model")
                 .style(ButtonStyle::Subtle)
                 .child(

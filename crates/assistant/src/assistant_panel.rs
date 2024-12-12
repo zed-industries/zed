@@ -55,7 +55,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role,
     ZED_CLOUD_PROVIDER_ID,
 };
-use language_model_selector::{LanguageModelPickerDelegate, LanguageModelSelector};
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -143,7 +143,7 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
+    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
@@ -341,11 +341,12 @@ impl AssistantPanel {
     ) -> Self {
         let model_selector_menu_handle = PopoverMenuHandle::default();
         let model_summary_editor = cx.new_view(Editor::single_line);
-        let context_editor_toolbar = cx.new_view(|_| {
+        let context_editor_toolbar = cx.new_view(|cx| {
             ContextEditorToolbarItem::new(
                 workspace,
                 model_selector_menu_handle.clone(),
                 model_summary_editor.clone(),
+                cx,
             )
         });
 
@@ -4455,23 +4456,36 @@ impl FollowableItem for ContextEditor {
 }
 
 pub struct ContextEditorToolbarItem {
-    fs: Arc<dyn Fs>,
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_summary_editor: View<Editor>,
-    model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
+    language_model_selector: View<LanguageModelSelector>,
+    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 impl ContextEditorToolbarItem {
     pub fn new(
         workspace: &Workspace,
-        model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
+        model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
         model_summary_editor: View<Editor>,
+        cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
-            fs: workspace.app_state().fs.clone(),
             active_context_editor: None,
             model_summary_editor,
-            model_selector_menu_handle,
+            language_model_selector: cx.new_view(|cx| {
+                let fs = workspace.app_state().fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    cx,
+                )
+            }),
+            language_model_selector_menu_handle: model_selector_menu_handle,
         }
     }
 
@@ -4560,17 +4574,8 @@ impl Render for ContextEditorToolbarItem {
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
             .child(
-                LanguageModelSelector::new(
-                    {
-                        let fs = self.fs.clone();
-                        move |model, cx| {
-                            update_settings_file::<AssistantSettings>(
-                                fs.clone(),
-                                cx,
-                                move |settings, _| settings.set_model(model.clone()),
-                            );
-                        }
-                    },
+                LanguageModelSelectorPopoverMenu::new(
+                    self.language_model_selector.clone(),
                     ButtonLike::new("active-model")
                         .style(ButtonStyle::Subtle)
                         .child(
@@ -4616,7 +4621,7 @@ impl Render for ContextEditorToolbarItem {
                             Tooltip::for_action("Change Model", &ToggleModelSelector, cx)
                         }),
                 )
-                .with_handle(self.model_selector_menu_handle.clone()),
+                .with_handle(self.language_model_selector_menu_handle.clone()),
             )
             .children(self.render_remaining_tokens(cx));
 
