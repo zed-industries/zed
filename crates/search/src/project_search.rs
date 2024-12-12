@@ -2333,7 +2333,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], model, cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let workspace = window;
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
@@ -2577,7 +2577,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], model, cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let workspace = window;
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
@@ -2885,7 +2885,7 @@ pub mod tests {
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let workspace = window.root(cx).unwrap();
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
@@ -3009,7 +3009,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], model, cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let workspace = window.root(cx).unwrap();
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
@@ -3350,7 +3350,7 @@ pub mod tests {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let workspace = window.root(cx).unwrap();
 
         let panes: Vec<_> = window
@@ -3570,7 +3570,7 @@ pub mod tests {
         let worktree_id = project.update(cx, |this, model, cx| {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let window = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
         let panes: Vec<_> = window
             .update(cx, |this, model, _| this.panes().to_owned())
             .unwrap();

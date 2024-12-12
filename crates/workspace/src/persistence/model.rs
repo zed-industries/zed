@@ -381,7 +381,7 @@ impl SerializedPaneGroup {
                     })
                     .log_err()?;
                 let active = serialized_pane.active;
-                let new_items = serialized_paneself
+                let new_items = serialized_pane
                     .deserialize_to(project, &pane, workspace_id, workspace.clone(), window, cx)
                     .await
                     .log_err()?;

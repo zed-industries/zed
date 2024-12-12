@@ -3700,7 +3700,7 @@ mod tests {
             Workspace::test_new(project.clone(), model, window, cx)
         });
         let workspace = window.state(cx).unwrap();
-        let window: AnyWindowHandle = window.into();
+        let window: AnyWindowHandle = window.handle();
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         window
@@ -4001,7 +4001,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.activate_item(1, false, false, model, cx)
+            pane.activate_item(1, false, false, model, window, cx)
         });
         add_labeled_item(&pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
@@ -4015,7 +4015,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.activate_item(3, false, false, model, cx)
+            pane.activate_item(3, false, false, model, window, cx)
         });
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
@@ -4067,7 +4067,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.activate_item(1, false, false, model, cx)
+            pane.activate_item(1, false, false, model, window, cx)
         });
         add_labeled_item(&pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
@@ -4081,7 +4081,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C*", "D"], cx);
 
         pane.update(cx, |pane, model, cx| {
-            pane.activate_item(3, false, false, model, cx)
+            pane.activate_item(3, false, false, model, window, cx)
         });
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
@@ -4246,7 +4246,7 @@ mod tests {
 
         pane.update(cx, |pane, model, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
-            pane.pin_tab_at(ix, model, cx);
+            pane.pin_tab_at(ix, model, window, cx);
             pane.close_all_items(
                 &CloseAllItems {
                     save_intent: None,
@@ -4263,7 +4263,7 @@ mod tests {
 
         pane.update(cx, |pane, model, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
-            pane.unpin_tab_at(ix, model, cx);
+            pane.unpin_tab_at(ix, model, window, cx);
             pane.close_all_items(
                 &CloseAllItems {
                     save_intent: None,
@@ -4355,7 +4355,7 @@ mod tests {
 
         pane.update(cx, |pane, model, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
-            pane.pin_tab_at(ix, model, cx);
+            pane.pin_tab_at(ix, model, window, cx);
             pane.close_all_items(
                 &CloseAllItems {
                     save_intent: None,

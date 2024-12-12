@@ -1,9 +1,7 @@
 use std::{any::Any, sync::Arc};
 
 use any_vec::AnyVec;
-use gpui::{
-    AnyModel, AnyView, AnyWeakModel, AppContext, EventEmitter, Subscription, Task, View, WeakModel,
-};
+use gpui::{AnyView, AnyWeakModel, AppContext, EventEmitter, Subscription, Task, WeakModel};
 use project::search::SearchQuery;
 use ui::Model;
 

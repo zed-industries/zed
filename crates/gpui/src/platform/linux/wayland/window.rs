@@ -957,7 +957,7 @@ impl PlatformWindow for WaylandWindow {
         state.renderer.sprite_atlas().clone()
     }
 
-    fn show_window_menu(&self, position: Point<Pixels>) {
+    fn show_menu(&self, position: Point<Pixels>) {
         let state = self.borrow();
         let serial = state.client.get_serial(SerialKind::MousePress);
         state.toplevel.show_window_menu(
@@ -968,13 +968,13 @@ impl PlatformWindow for WaylandWindow {
         );
     }
 
-    fn start_window_move(&self) {
+    fn start_move(&self) {
         let state = self.borrow();
         let serial = state.client.get_serial(SerialKind::MousePress);
         state.toplevel._move(&state.globals.seat, serial);
     }
 
-    fn start_window_resize(&self, edge: crate::ResizeEdge) {
+    fn start_resize(&self, edge: crate::ResizeEdge) {
         let state = self.borrow();
         state.toplevel.resize(
             &state.globals.seat,
@@ -983,7 +983,7 @@ impl PlatformWindow for WaylandWindow {
         )
     }
 
-    fn window_decorations(&self) -> Decorations {
+    fn decorations(&self) -> Decorations {
         let state = self.borrow();
         match state.decorations {
             WindowDecorations::Server => Decorations::Server,
@@ -1002,7 +1002,7 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn window_controls(&self) -> WindowControls {
+    fn controls(&self) -> WindowControls {
         self.borrow().window_controls
     }
 

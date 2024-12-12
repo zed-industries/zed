@@ -303,9 +303,9 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(
         |workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext| {
-            workspace.register_action(Editor::new_file);
-            workspace.register_action(Editor::new_file_vertical);
-            workspace.register_action(Editor::new_file_horizontal);
+            workspace.register_action(model, Editor::new_file);
+            workspace.register_action(model, Editor::new_file_vertical);
+            workspace.register_action(model, Editor::new_file_horizontal);
         },
     )
     .detach();
@@ -10988,11 +10988,11 @@ impl Editor {
         let item_id = item.item_id();
 
         if split {
-            workspace.split_item(SplitDirection::Right, item.clone(), model, cx);
+            workspace.split_item(SplitDirection::Right, item.clone(), model, window, cx);
         } else {
             let destination_index = workspace.active_pane().update(cx, |pane, model, cx| {
                 if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
-                    pane.close_current_preview_item(model, cx)
+                    pane.close_current_preview_item(model, model, cx)
                 } else {
                     None
                 }
@@ -13581,7 +13581,7 @@ impl Editor {
     }
 
     fn settings_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
-        self.tasks_update_task = Some(self.refresh_runnables(cx));
+        self.tasks_update_task = Some(self.refresh_runnables(model, cx));
         self.refresh_inline_completion(true, false, model, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
@@ -13679,6 +13679,7 @@ impl Editor {
                         true,
                         None,
                         model,
+                        window,
                         cx,
                     );
                 });
@@ -13778,7 +13779,7 @@ impl Editor {
         cx.window_context().defer(move |cx| {
             workspace.update(cx, |workspace, model, cx| {
                 let pane = if split {
-                    workspace.adjacent_pane(model, cx)
+                    workspace.adjacent_pane(model, window, cx)
                 } else {
                     workspace.active_pane().clone()
                 };
@@ -13804,7 +13805,7 @@ impl Editor {
                                     }
                                 })?;
                             pane.update(cx, |pane, model, cx| {
-                                pane.activate_item(pane_item_index, true, true, model, cx)
+                                pane.activate_item(pane_item_index, true, true, model, window, cx)
                             });
                             Some(editor)
                         })
@@ -13816,6 +13817,7 @@ impl Editor {
                                 true,
                                 true,
                                 model,
+                                window,
                                 cx,
                             )
                         });
@@ -14283,7 +14285,7 @@ fn get_unstaged_changes_for_buffers(
             this.update(&mut cx, |this, model, cx| {
                 for change_set in change_sets {
                     if let Some(change_set) = change_set.log_err() {
-                        this.diff_map.add_change_set(change_set, cx);
+                        this.diff_map.add_change_set(change_set, model, cx);
                     }
                 }
             })
@@ -15489,7 +15491,7 @@ impl Render for Editor {
                 scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
-                inlay_hints_style: make_inlay_hints_style(cx),
+                inlay_hints_style: make_inlay_hints_style(model, cx),
                 suggestions_style: HighlightStyle {
                     color: Some(cx.theme().status().predictive),
                     ..HighlightStyle::default()

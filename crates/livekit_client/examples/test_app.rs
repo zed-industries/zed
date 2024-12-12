@@ -221,7 +221,7 @@ impl LivekitWindow {
                         output.screen_share_output_view = Some((
                             track.clone(),
                             cx.new_model(|model, cx| {
-                                RemoteVideoTrackView::new(track, model, window, cx)
+                                RemoteVideoTrackView::new(track, model, window.handle(), cx)
                             }),
                         ));
                     }

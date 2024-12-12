@@ -665,7 +665,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
-    let workspace = cx.add_window(|cx| Workspace::test_new(project, model, cx));
+    let workspace = cx.add_window(|cx| Workspace::test_new(project, model, window, cx));
     let pane = workspace
         .update(cx, |workspace, model, _| workspace.active_pane().clone())
         .unwrap();

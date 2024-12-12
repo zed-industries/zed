@@ -5,8 +5,8 @@ use crate::{
 use call::{RemoteVideoTrack, RemoteVideoTrackView};
 use client::{proto::PeerId, User};
 use gpui::{
-    div, AppContext, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, SharedString, Styled, View, VisualContext,
+    div, AnyWindowHandle, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    ParentElement, Render, SharedString, Styled,
 };
 use std::sync::Arc;
 use ui::{prelude::*, Icon, IconName};
@@ -29,9 +29,12 @@ impl SharedScreen {
         peer_id: PeerId,
         user: Arc<User>,
         model: &Model<Self>,
+        mut window_handle: AnyWindowHandle,
         cx: &mut AppContext,
     ) -> Self {
-        let view = cx.new_model(|model, cx| RemoteVideoTrackView::new(track.clone(), cx));
+        let view = cx.new_model(|model, cx| {
+            RemoteVideoTrackView::new(track.clone(), model, window_handle, cx)
+        });
         cx.subscribe(&view, |_, _, ev, cx| match ev {
             call::RemoteVideoTrackViewEvent::Close => model.emit(Event::Close, cx),
         })
@@ -41,7 +44,7 @@ impl SharedScreen {
             peer_id,
             user,
             nav_history: Default::default(),
-            focus: window.focus_handle(),
+            focus: window_handle.focus_handle(),
         }
     }
 }
@@ -78,15 +81,15 @@ impl Item for SharedScreen {
 
     fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if let Some(nav_history) = self.nav_history.as_mut() {
-            nav_history.push::<()>(None, cx);
+            nav_history.push::<()>(None, model, cx);
         }
     }
 
-    fn tab_icon(&self, _window: &Window, cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, cx: &AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::Screen))
     }
 
-    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, cx: &AppContext) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
@@ -102,14 +105,19 @@ impl Item for SharedScreen {
         &self,
         _workspace_id: Option<WorkspaceId>,
         model: &Model<Self>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Model<Self>> {
-        Some(cx.new_model(|model, cx| Self {
-            view: self.view.update(cx, |view, model, cx| view.clone(cx)),
-            peer_id: self.peer_id,
-            user: self.user.clone(),
-            nav_history: Default::default(),
-            focus: window.focus_handle(),
+        Some(cx.new_model(|model, cx| {
+            Self {
+                view: self
+                    .view
+                    .update(cx, |view, model, cx| view.clone(model, window, cx)),
+                peer_id: self.peer_id,
+                user: self.user.clone(),
+                nav_history: Default::default(),
+                focus: window.focus_handle(),
+            }
         }))
     }
 

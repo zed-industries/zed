@@ -21,7 +21,8 @@ use gpui::{
     VisualContext, WeakView,
 };
 use language::{
-    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, Point,
+    Selection, SelectionGoal,
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -119,8 +120,8 @@ impl Render for ProjectDiagnosticsEditor {
 }
 
 impl ProjectDiagnosticsEditor {
-    fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
-        workspace.register_action(Self::deploy);
+    fn register(workspace: &mut Workspace, model: &Model<Workspace>, _: &mut AppContext) {
+        workspace.register_action(model, Self::deploy);
     }
 
     fn new_with_context(
@@ -462,12 +463,19 @@ impl ProjectDiagnosticsEditor {
                                 }
                             }
 
-                            let excerpt_start =
+                            let mut excerpt_start =
                                 Point::new(range.start.row.saturating_sub(self.context), 0);
-                            let excerpt_end = snapshot.clip_point(
+                            let mut excerpt_end = snapshot.clip_point(
                                 Point::new(range.end.row + self.context, u32::MAX),
                                 Bias::Left,
                             );
+
+                            if let Some(ancestor_range) = snapshot.range_for_syntax_ancestor(range)
+                            {
+                                let ancestor_range = ancestor_range.to_point(&snapshot);
+                                excerpt_start = excerpt_start.min(ancestor_range.start);
+                                excerpt_end = excerpt_end.max(ancestor_range.end);
+                            }
 
                             let excerpt_id = excerpts
                                 .insert_excerpts_after(

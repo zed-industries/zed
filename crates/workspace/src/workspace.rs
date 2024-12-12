@@ -506,15 +506,7 @@ impl SerializableItemRegistry {
             )));
         };
 
-        (descriptor.deserialize)(
-            project,
-            workspace,
-            workspace_id,
-            item_item,
-            model,
-            window,
-            cx,
-        )
+        (descriptor.deserialize)(project, workspace, workspace_id, item_item, model, cx)
     }
 
     fn cleanup(
@@ -1003,7 +995,7 @@ impl Workspace {
         let (serializable_items_tx, serializable_items_rx) =
             mpsc::unbounded::<Box<dyn SerializableItemHandle>>();
         let _items_serializer = model.spawn(cx, |this, mut cx| async move {
-            Self::serialize_items(&this, serializable_items_rx, model, &mut cx).await
+            Self::serialize_items(&this, serializable_items_rx, &mut cx).await
         });
 
         let subscriptions = vec![
@@ -1277,7 +1269,7 @@ impl Workspace {
             notify_if_database_failed(window, &mut cx);
             let opened_items = window
                 .update(&mut cx, |_workspace, cx| {
-                    open_items(serialized_workspace, project_paths, model, window, cx)
+                    open_items(serialized_workspace, project_paths, model, cx)
                 })?
                 .await
                 .unwrap_or_default();
@@ -4083,7 +4075,7 @@ impl Workspace {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
         if cx.is_window_active() {
-            let (active_item, panel_id) = self.active_item_for_followers(model, cx);
+            let (active_item, panel_id) = self.active_item_for_followers(model, window, cx);
 
             if let Some(item) = active_item {
                 if item.focus_handle(cx).contains_focused(cx) {
@@ -4300,7 +4292,9 @@ impl Workspace {
             }
         }
 
-        Some(cx.new_model(|model, cx| SharedScreen::new(track, peer_id, user.clone(), model, cx)))
+        Some(cx.new_model(|model, cx| {
+            SharedScreen::new(track, peer_id, user.clone(), model, window.handle(), cx)
+        }))
     }
 
     pub fn on_window_activation_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
@@ -4346,7 +4340,7 @@ impl Workspace {
         match event {
             call::room::Event::ParticipantLocationChanged { participant_id }
             | call::room::Event::RemoteVideoTracksChanged { participant_id } => {
-                self.leader_updated(*participant_id, model, cx);
+                self.leader_updated(*participant_id, model, window, cx);
             }
             _ => {}
         }
@@ -5068,9 +5062,13 @@ fn open_items(
                     let workspace = workspace.clone();
                     cx.spawn(|mut cx| async move {
                         let file_project_path = project_path?;
-                        let abs_path_task = workspace.update(&mut cx, |workspace, cx| {
+                        let abs_path_task = workspace.update(&mut cx, |workspace, _, cx| {
                             workspace.project().update(cx, |project, model, cx| {
-                                project.resolve_abs_path(abs_path.to_string_lossy().as_ref(), cx)
+                                project.resolve_abs_path(
+                                    abs_path.to_string_lossy().as_ref(),
+                                    model,
+                                    cx,
+                                )
                             })
                         });
 
@@ -5174,7 +5172,7 @@ impl Render for Workspace {
         } else {
             (None, None)
         };
-        let ui_font = theme::setup_ui_font(model, cx);
+        let ui_font = theme::setup_ui_font(window, cx);
 
         let theme = cx.theme().clone();
         let colors = theme.colors();
@@ -5216,7 +5214,7 @@ impl Render for Workspace {
                                 .child({
                                     let this = cx.view().clone();
                                     canvas(
-                                        move |bounds, cx| {
+                                        move |bounds, _window, cx| {
                                             this.update(cx, |this, model, cx| {
                                                 let bounds_changed = this.bounds != bounds;
                                                 this.bounds = bounds;
@@ -5248,7 +5246,7 @@ impl Render for Workspace {
                                                 }
                                             })
                                         },
-                                        |_, _, _| {},
+                                        |_, _, _, _| {},
                                     )
                                     .absolute()
                                     .size_full()
@@ -5301,7 +5299,7 @@ impl Render for Workspace {
                                         .children(self.render_dock(
                                             DockPosition::Left,
                                             &self.left_dock,
-                                            model,
+                                            window,
                                             cx,
                                         ))
                                         // Panes
@@ -5334,7 +5332,7 @@ impl Render for Workspace {
                                                 .children(self.render_dock(
                                                     DockPosition::Bottom,
                                                     &self.bottom_dock,
-                                                    model,
+                                                    window,
                                                     cx,
                                                 )),
                                         )
@@ -5342,7 +5340,7 @@ impl Render for Workspace {
                                         .children(self.render_dock(
                                             DockPosition::Right,
                                             &self.right_dock,
-                                            model,
+                                            window,
                                             cx,
                                         )),
                                 )
@@ -5372,7 +5370,7 @@ impl Render for Workspace {
                         .child(self.status_bar.clone())
                         .child(self.modal_layer.clone()),
                 ),
-            model,
+            window,
             cx,
         )
     }
@@ -5381,7 +5379,7 @@ impl Render for Workspace {
 fn resize_bottom_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
-    model: &Model<Self>,
+    model: &Model<Workspace>,
     cx: &mut AppContext,
 ) {
     let size = new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE);
@@ -5393,7 +5391,7 @@ fn resize_bottom_dock(
 fn resize_right_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
-    model: &Model<Self>,
+    model: &Model<Workspace>,
     cx: &mut AppContext,
 ) {
     let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
@@ -5405,7 +5403,7 @@ fn resize_right_dock(
 fn resize_left_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
-    model: &Model<Self>,
+    model: &Model<Workspace>,
     cx: &mut AppContext,
 ) {
     let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
@@ -5458,8 +5456,9 @@ impl WorkspaceStore {
             let mut response = proto::FollowResponse::default();
             this.workspaces.retain(|workspace| {
                 workspace
-                    .update(cx, |workspace, model, cx| {
-                        let handler_response = workspace.handle_follow(follower.project_id, cx);
+                    .update(cx, |workspace, model, _, cx| {
+                        let handler_response =
+                            workspace.handle_follow(follower.project_id, model, cx);
                         if let Some(active_view) = handler_response.active_view.clone() {
                             if workspace.project.read(cx).remote_id() == follower.project_id {
                                 response.active_view = Some(active_view)
@@ -5489,7 +5488,7 @@ impl WorkspaceStore {
                         if update.project_id != project_id && update.project_id.is_some() {
                             return;
                         }
-                        workspace.handle_update_followers(leader_id, update.clone(), cx);
+                        workspace.handle_update_followers(leader_id, update.clone(), model, cx);
                     })
                     .is_ok()
             });
@@ -5635,7 +5634,7 @@ async fn join_channel_internal(
     if should_prompt {
         if let Some(workspace) = requesting_window {
             let answer = workspace
-                .update(cx, |_, model, cx| {
+                .update(cx, |_, model, _, cx| {
                     cx.prompt(
                         PromptLevel::Warning,
                         "Do you want to switch channels?",
@@ -5718,7 +5717,7 @@ async fn join_channel_internal(
                     }
                 });
                 if let Ok(Some(project)) = project {
-                    return Some(cx.spawn(|room, mut cx| async move {
+                    return Some(room.spawn(cx, |room, mut cx| async move {
                         room.update(&mut cx, |room, cx| room.share_project(project, cx))?
                             .await?;
                         Ok(())
@@ -6095,7 +6094,7 @@ pub fn open_ssh_project(
         })?;
 
         window
-            .update(&mut cx, |_, cx| {
+            .update(&mut cx, |model, cx| {
                 cx.activate_window();
 
                 open_items(serialized_workspace, project_paths_to_open, model, cx)
@@ -6553,7 +6552,7 @@ fn join_pane_into_active(
             );
         })
     } else {
-        move_all_items(pane, active_pane, model, cx);
+        move_all_items(pane, active_pane, window, cx);
     }
 }
 
@@ -6913,7 +6912,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
 
         let item1 = cx.new_model(|model, cx| {
             TestItem::new(model, window, cx)
@@ -6950,7 +6949,7 @@ mod tests {
         });
 
         let close_items = pane.update(cx, |pane, model, cx| {
-            pane.activate_item(1, true, true, window, cx);
+            pane.activate_item(1, true, true, model, window, cx);
             assert_eq!(pane.active_item().unwrap().item_id(), item2.item_id());
             let item1_id = item1.item_id();
             let item3_id = item3.item_id();
@@ -7023,7 +7022,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
@@ -7073,7 +7072,7 @@ mod tests {
                 workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
             }
             left_pane.update(cx, |pane, model, cx| {
-                pane.activate_item(2, true, true, window, cx);
+                pane.activate_item(2, true, true, model, window, cx);
             });
 
             let right_pane = workspace
@@ -7081,7 +7080,15 @@ mod tests {
                 .unwrap();
 
             right_pane.update(cx, |pane, model, cx| {
-                pane.add_item(Box::new(item_3_4.clone()), true, true, None, model, cx);
+                pane.add_item(
+                    Box::new(item_3_4.clone()),
+                    true,
+                    true,
+                    None,
+                    model,
+                    window,
+                    cx,
+                );
             });
 
             left_pane
@@ -7135,7 +7142,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         let item = cx.new_model(|model, cx| {
@@ -7261,7 +7268,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
 
         let item = cx.new_model(|model, cx| {
             TestItem::new(model, window, cx)
@@ -7299,7 +7306,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, model, cx| {
-                workspace.go_back(pane.downgrade(), model, cx)
+                workspace.go_back(pane.downgrade(), model, window, cx)
             })
             .await
             .unwrap();
@@ -7318,7 +7325,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
 
         let panel = workspace.update(cx, |workspace, model, cx| {
             let panel = cx.new_model(|model, cx| TestPanel::new(DockPosition::Right, model, cx));
@@ -7334,12 +7341,12 @@ mod tests {
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
         pane.update(cx, |pane, model, cx| {
             let item = cx.new_model(TestItem::new);
-            pane.add_item(Box::new(item), true, true, None, model, cx);
+            pane.add_item(Box::new(item), true, true, None, model, window, cx);
         });
 
         // Transfer focus from center to panel
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(model, cx);
+            workspace.toggle_panel_focus::<TestPanel>(model, window, cx);
         });
 
         workspace.update(cx, |workspace, model, cx| {
@@ -7350,7 +7357,7 @@ mod tests {
 
         // Transfer focus from panel to center
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(model, cx);
+            workspace.toggle_panel_focus::<TestPanel>(model, window, cx);
         });
 
         workspace.update(cx, |workspace, model, cx| {
@@ -7361,7 +7368,7 @@ mod tests {
 
         // Close the dock
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_dock(DockPosition::Right, model, cx);
+            workspace.toggle_dock(DockPosition::Right, model, window, cx);
         });
 
         workspace.update(cx, |workspace, model, cx| {
@@ -7372,7 +7379,7 @@ mod tests {
 
         // Open the dock
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_dock(DockPosition::Right, model, cx);
+            workspace.toggle_dock(DockPosition::Right, model, window, cx);
         });
 
         workspace.update(cx, |workspace, model, cx| {
@@ -7395,7 +7402,7 @@ mod tests {
 
         // Transfer focus to the center closes the dock
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(model, cx);
+            workspace.toggle_panel_focus::<TestPanel>(model, window, cx);
         });
 
         workspace.update(cx, |workspace, model, cx| {
@@ -7406,7 +7413,7 @@ mod tests {
 
         // Transferring focus back to the panel keeps it zoomed
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(model, cx);
+            workspace.toggle_panel_focus::<TestPanel>(model, window, cx);
         });
 
         workspace.update(cx, |workspace, model, cx| {
@@ -7417,7 +7424,7 @@ mod tests {
 
         // Close the dock while it is zoomed
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_dock(DockPosition::Right, model, cx)
+            workspace.toggle_dock(DockPosition::Right, model, window, cx)
         });
 
         workspace.update(cx, |workspace, model, cx| {
@@ -7429,7 +7436,7 @@ mod tests {
 
         // Opening the dock, when it's zoomed, retains focus
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_dock(DockPosition::Right, model, cx)
+            workspace.toggle_dock(DockPosition::Right, model, window, cx)
         });
 
         workspace.update(cx, |workspace, model, cx| {
@@ -7442,15 +7449,15 @@ mod tests {
         // Unzoom and close the panel, zoom the active pane.
         panel.update(cx, |panel, model, cx| panel.set_zoomed(false, model, cx));
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_dock(DockPosition::Right, model, cx)
+            workspace.toggle_dock(DockPosition::Right, model, window, cx)
         });
         pane.update(cx, |pane, model, cx| {
-            pane.toggle_zoom(&Default::default(), model, cx)
+            pane.toggle_zoom(&Default::default(), model, window, cx)
         });
 
         // Opening a dock unzooms the pane.
         workspace.update(cx, |workspace, model, cx| {
-            workspace.toggle_dock(DockPosition::Right, model, cx)
+            workspace.toggle_dock(DockPosition::Right, model, window, cx)
         });
         workspace.update(cx, |workspace, model, cx| {
             let pane = pane.read(cx);
@@ -7469,7 +7476,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
 
         // Let's arrange the panes like this:
         //
@@ -7692,7 +7699,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
 
         add_an_item_to_active_pane(cx, &workspace, 1);
         split_pane(cx, &workspace);
@@ -7766,7 +7773,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
 
         let (panel_1, panel_2) = workspace.update(cx, |workspace, model, cx| {
             let panel_1 = cx.new_model(|model, cx| TestPanel::new(DockPosition::Left, model, cx));
@@ -8000,7 +8007,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new_model(|model, cx| {
@@ -8057,7 +8064,7 @@ mod tests {
         });
 
         pane.update(cx, |pane, model, cx| {
-            pane.activate_item(2, true, true, window, cx);
+            pane.activate_item(2, true, true, model, window, cx);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
                 multi_buffer_with_both_files_id,
@@ -8146,7 +8153,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new_model(|model, cx| {
@@ -8200,7 +8207,7 @@ mod tests {
         });
 
         pane.update(cx, |pane, model, cx| {
-            pane.activate_item(0, true, true, window, cx);
+            pane.activate_item(0, true, true, model, window, cx);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
                 dirty_regular_buffer.item_id(),
@@ -8251,7 +8258,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new_model(|model, cx| {
@@ -8306,7 +8313,7 @@ mod tests {
         });
 
         pane.update(cx, |pane, model, cx| {
-            pane.activate_item(1, true, true, window, cx);
+            pane.activate_item(1, true, true, model, window, cx);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
                 multi_buffer_with_both_files_id,
@@ -8334,7 +8341,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, cx));
+            cx.add_window_view(|model, window, cx| Workspace::test_new(project, model, window, cx));
         let pane = workspace.update(cx, |workspace, model, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new_model(|model, cx| {
@@ -8397,7 +8404,7 @@ mod tests {
         });
 
         pane.update(cx, |pane, model, cx| {
-            pane.activate_item(2, true, true, window, cx);
+            pane.activate_item(2, true, true, model, window, cx);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
                 dirty_multi_buffer.item_id(),

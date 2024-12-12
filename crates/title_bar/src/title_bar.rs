@@ -79,7 +79,7 @@ impl Render for TitleBar {
         cx: &mut AppContext,
     ) -> impl IntoElement {
         let close_action = Box::new(workspace::CloseWindow);
-        let height = Self::height(cx);
+        let height = Self::height(model, cx);
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
         let titlebar_color = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
@@ -140,27 +140,27 @@ impl Render for TitleBar {
                         h_flex()
                             .gap_1()
                             .when_some(self.application_menu.clone(), |this, menu| this.child(menu))
-                            .children(self.render_project_host(cx))
-                            .child(self.render_project_name(cx))
-                            .children(self.render_project_branch(cx))
+                            .children(self.render_project_host(model, cx))
+                            .child(self.render_project_name(model, cx))
+                            .children(self.render_project_branch(model, cx))
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
                     )
-                    .child(self.render_collaborator_list(cx))
+                    .child(self.render_collaborator_list(model, cx))
                     .child(
                         h_flex()
                             .gap_1()
                             .pr_1()
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                            .children(self.render_call_controls(cx))
+                            .children(self.render_call_controls(model, cx))
                             .map(|el| {
                                 let status = self.client.status();
                                 let status = &*status.borrow();
                                 if matches!(status, client::Status::Connected { .. }) {
-                                    el.child(self.render_user_menu_button(cx))
+                                    el.child(self.render_user_menu_button(model, cx))
                                 } else {
                                     el.children(self.render_connection_status(status, model, cx))
-                                        .child(self.render_sign_in_button(cx))
-                                        .child(self.render_user_menu_button(cx))
+                                        .child(self.render_sign_in_button(model, cx))
+                                        .child(self.render_user_menu_button(model, cx))
                                 }
                             }),
                     ),
@@ -345,7 +345,7 @@ impl TitleBar {
         cx: &mut AppContext,
     ) -> Option<AnyElement> {
         if self.project.read(cx).is_via_ssh() {
-            return self.render_ssh_project_host(cx);
+            return self.render_ssh_project_host(model, cx);
         }
 
         if self.project.read(cx).is_disconnected(cx) {
@@ -429,12 +429,9 @@ impl TitleBar {
                 )
             })
             .on_click(model.listener(move |_, _, model, window, cx| {
-                cx.dispatch_action(
-                    OpenRecent {
-                        create_new_window: false,
-                    }
-                    .boxed_clone(),
-                );
+                cx.dispatch_action(Box::new(OpenRecent {
+                    create_new_window: false,
+                }));
             }))
     }
 
@@ -579,7 +576,7 @@ impl TitleBar {
                     client
                         .authenticate_and_connect(true, &cx)
                         .await
-                        .notify_async_err(&mut cx);
+                        .notify_async_err(model, &mut cx);
                 })
                 .detach();
             })
