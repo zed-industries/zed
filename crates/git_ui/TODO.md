@@ -1,0 +1,15 @@
+- [x] Disable staging and committing actions for read-only projects
+- [ ] List
+  - [ ] Git status item
+  - [ ] Directory item
+- [ ] Scrollbar (for list)
+- [ ] Context menu for list items
+  - [ ] Discard Changes
+  - ---
+  - [ ] Ignore
+  - [ ] Ignore directory
+  - ---
+  - [ ] Copy path
+  - [ ] Copy relative path
+  - ---
+  - [ ] Reveal in Finder
