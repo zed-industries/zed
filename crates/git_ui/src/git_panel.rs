@@ -99,7 +99,9 @@ impl GitPanel {
                             .style(ButtonStyle::Filled)
                             .disabled(true),
                     ),
-                ),
+                )
+                .cursor(CursorStyle::OperationNotAllowed)
+                .opacity(0.5),
         )
     }
 }
