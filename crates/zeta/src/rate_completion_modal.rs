@@ -377,16 +377,22 @@ impl RateCompletionModal {
                             .gap_2()
                             .border_y_1()
                             .border_color(border_color)
-                            .flex_wrap()
+
                             .child(
                                 Icon::new(IconName::Info)
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted)
                             )
                             .child(
-                                Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
+                                div()
+                                    .w_full()
+                                    .pr_2()
+                                    .flex_wrap()
+                                    .child(
+                                        Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                    )
                             )
                     )
                 })
@@ -532,8 +538,10 @@ impl Render for RateCompletionModal {
                             .justify_between()
                             .border_b_1()
                             .border_color(border_color)
-                            .child(                                Icon::new(IconName::ZedPredict)
-                                .size(IconSize::Small))
+                            .child(
+                                Icon::new(IconName::ZedPredict)
+                                    .size(IconSize::Small)
+                            )
                             .child(
                                 Label::new("From most recent to oldest")
                                     .color(Color::Muted)
