@@ -476,7 +476,7 @@ time = { version = "0.3", features = [
     "serde-well-known",
     "formatting",
 ] }
-tiny_http = "0.8"
+tiny_http = "0.12"
 toml = "0.8"
 tokio = { version = "1" }
 tower-http = "0.4.4"
