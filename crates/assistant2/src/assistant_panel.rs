@@ -88,13 +88,13 @@ impl AssistantPanel {
             thread: cx.new_view(|cx| {
                 ActiveThread::new(
                     thread.clone(),
-                    workspace,
+                    workspace.clone(),
                     language_registry,
                     tools.clone(),
                     cx,
                 )
             }),
-            message_editor: cx.new_view(|cx| MessageEditor::new(thread.clone(), cx)),
+            message_editor: cx.new_view(|cx| MessageEditor::new(workspace, thread.clone(), cx)),
             tools,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
@@ -123,7 +123,8 @@ impl AssistantPanel {
                 cx,
             )
         });
-        self.message_editor = cx.new_view(|cx| MessageEditor::new(thread, cx));
+        self.message_editor =
+            cx.new_view(|cx| MessageEditor::new(self.workspace.clone(), thread, cx));
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
@@ -145,7 +146,8 @@ impl AssistantPanel {
                 cx,
             )
         });
-        self.message_editor = cx.new_view(|cx| MessageEditor::new(thread, cx));
+        self.message_editor =
+            cx.new_view(|cx| MessageEditor::new(self.workspace.clone(), thread, cx));
         self.message_editor.focus_handle(cx).focus(cx);
     }
 

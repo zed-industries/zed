@@ -28,6 +28,7 @@ editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 handlebars.workspace = true
 language.workspace = true

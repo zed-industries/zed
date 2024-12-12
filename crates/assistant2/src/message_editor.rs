@@ -1,19 +1,19 @@
 use std::rc::Rc;
 
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{AppContext, FocusableView, Model, TextStyle, View};
+use gpui::{AppContext, FocusableView, Model, TextStyle, View, WeakView};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
-use picker::Picker;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, IconButtonShape, KeyBinding,
-    PopoverMenuHandle, Tooltip,
+    PopoverMenu, PopoverMenuHandle, Tooltip,
 };
+use workspace::Workspace;
 
 use crate::context::{Context, ContextId, ContextKind};
-use crate::context_picker::{ContextPicker, ContextPickerDelegate};
+use crate::context_picker::ContextPicker;
 use crate::thread::{RequestKind, Thread};
 use crate::ui::ContextPill;
 use crate::{Chat, ToggleModelSelector};
@@ -23,13 +23,19 @@ pub struct MessageEditor {
     editor: View<Editor>,
     context: Vec<Context>,
     next_context_id: ContextId,
-    pub(crate) context_picker_handle: PopoverMenuHandle<Picker<ContextPickerDelegate>>,
+    context_picker: View<ContextPicker>,
+    pub(crate) context_picker_handle: PopoverMenuHandle<ContextPicker>,
     use_tools: bool,
 }
 
 impl MessageEditor {
-    pub fn new(thread: Model<Thread>, cx: &mut ViewContext<Self>) -> Self {
-        let mut this = Self {
+    pub fn new(
+        workspace: WeakView<Workspace>,
+        thread: Model<Thread>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let weak_self = cx.view().downgrade();
+        Self {
             thread,
             editor: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(80, cx);
@@ -39,18 +45,24 @@ impl MessageEditor {
             }),
             context: Vec::new(),
             next_context_id: ContextId(0),
+            context_picker: cx.new_view(|cx| ContextPicker::new(workspace.clone(), weak_self, cx)),
             context_picker_handle: PopoverMenuHandle::default(),
             use_tools: false,
-        };
+        }
+    }
 
-        this.context.push(Context {
-            id: this.next_context_id.post_inc(),
-            name: "shape.rs".into(),
-            kind: ContextKind::File,
-            text: "```rs\npub enum Shape {\n    Circle,\n    Square,\n    Triangle,\n}".into(),
+    pub fn insert_context(
+        &mut self,
+        kind: ContextKind,
+        name: impl Into<SharedString>,
+        text: impl Into<SharedString>,
+    ) {
+        self.context.push(Context {
+            id: self.next_context_id.post_inc(),
+            name: name.into(),
+            kind,
+            text: text.into(),
         });
-
-        this
     }
 
     fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
@@ -167,6 +179,7 @@ impl Render for MessageEditor {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
         let focus_handle = self.editor.focus_handle(cx);
+        let context_picker = self.context_picker.clone();
 
         v_flex()
             .key_context("MessageEditor")
@@ -179,12 +192,22 @@ impl Render for MessageEditor {
                 h_flex()
                     .flex_wrap()
                     .gap_2()
-                    .child(ContextPicker::new(
-                        cx.view().downgrade(),
-                        IconButton::new("add-context", IconName::Plus)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small),
-                    ))
+                    .child(
+                        PopoverMenu::new("context-picker")
+                            .menu(move |_cx| Some(context_picker.clone()))
+                            .trigger(
+                                IconButton::new("add-context", IconName::Plus)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::Small),
+                            )
+                            .attach(gpui::AnchorCorner::TopLeft)
+                            .anchor(gpui::AnchorCorner::BottomLeft)
+                            .offset(gpui::Point {
+                                x: px(0.0),
+                                y: px(-16.0),
+                            })
+                            .with_handle(self.context_picker_handle.clone()),
+                    )
                     .children(self.context.iter().map(|context| {
                         ContextPill::new(context.clone()).on_remove({
                             let context = context.clone();
