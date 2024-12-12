@@ -28,14 +28,14 @@ impl GitPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
-            workspace.update(&mut cx, |_, cx| cx.new_view(|cx| Self::new(cx)))
+            workspace.update(&mut cx, |_workspace, cx| cx.new_view(|cx| Self::new(cx)))
         })
     }
 
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
-            width: Some(px(400.).into()),
+            width: Some(px(360.)),
         }
     }
 }
