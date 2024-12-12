@@ -3,14 +3,17 @@ use util::TryFutureExt;
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::*;
-use project::Fs;
+use project::{Fs, Project};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use ui::{prelude::*, Checkbox, Divider, DividerColor, ElevationIndex};
+use ui::{prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::settings::GitPanelSettings;
+use crate::{CommitAllChanges, CommitStagedChanges, DiscardAll, StageAll, UnstageAll};
+
+actions!(git_panel, [ToggleFocus]);
 
 const GIT_PANEL_KEY: &str = "GitPanel";
 
@@ -30,14 +33,15 @@ struct SerializedGitPanel {
     width: Option<Pixels>,
 }
 
-actions!(git_panel, [Deploy, ToggleFocus]);
-
 pub struct GitPanel {
     _workspace: WeakView<Workspace>,
-    pending_serialization: Task<Option<()>>,
-    fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
+    fs: Arc<dyn Fs>,
+    pending_serialization: Task<Option<()>>,
+    project: Model<Project>,
     width: Option<Pixels>,
+
+    current_modifiers: Modifiers,
 }
 
 impl GitPanel {
@@ -53,14 +57,19 @@ impl GitPanel {
     }
 
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+        let project = workspace.project().clone();
         let fs = workspace.app_state().fs.clone();
         let weak_workspace = workspace.weak_handle();
 
         cx.new_view(|cx| Self {
-            fs,
             _workspace: weak_workspace,
-            pending_serialization: Task::ready(None),
             focus_handle: cx.focus_handle(),
+            fs,
+            pending_serialization: Task::ready(None),
+            project,
+
+            current_modifiers: cx.modifiers(),
+
             width: Some(px(360.)),
         })
     }
@@ -81,7 +90,84 @@ impl GitPanel {
         );
     }
 
+    fn dispatch_context(&self) -> KeyContext {
+        let mut dispatch_context = KeyContext::new_with_defaults();
+        dispatch_context.add("GitPanel");
+        dispatch_context.add("menu");
+
+        dispatch_context
+    }
+
+    fn handle_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.current_modifiers = event.modifiers;
+        cx.notify();
+    }
+}
+
+impl GitPanel {
+    fn stage_all(&mut self, _: &StageAll, _cx: &mut ViewContext<Self>) {
+        // todo!(): Implement stage all
+        println!("Stage all triggered");
+    }
+
+    fn unstage_all(&mut self, _: &UnstageAll, _cx: &mut ViewContext<Self>) {
+        // todo!(): Implement unstage all
+        println!("Unstage all triggered");
+    }
+
+    fn discard_all(&mut self, _: &DiscardAll, _cx: &mut ViewContext<Self>) {
+        // todo!(): Implement discard all
+        println!("Discard all triggered");
+    }
+
+    /// Commit all staged changes
+    fn commit_staged_changes(&mut self, _: &CommitStagedChanges, _cx: &mut ViewContext<Self>) {
+        // todo!(): Implement commit all staged
+        println!("Commit staged changes triggered");
+    }
+
+    /// Commit all changes, regardless of whether they are staged or not
+    fn commit_all_changes(&mut self, _: &CommitAllChanges, _cx: &mut ViewContext<Self>) {
+        // todo!(): Implement commit all changes
+        println!("Commit all changes triggered");
+    }
+
+    fn all_staged(&self) -> bool {
+        // todo!(): Implement all_staged
+        true
+    }
+}
+
+impl GitPanel {
+    pub fn panel_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+    ) -> Button {
+        let id = id.into().clone();
+        let label = label.into().clone();
+
+        Button::new(id, label)
+            .label_size(LabelSize::Small)
+            .layer(ElevationIndex::ElevatedSurface)
+            .size(ButtonSize::Compact)
+            .style(ButtonStyle::Filled)
+    }
+
+    pub fn render_divider(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .items_center()
+            .h(px(8.))
+            .child(Divider::horizontal_dashed().color(DividerColor::Border))
+    }
+
     pub fn render_panel_header(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx).clone();
+
         h_flex()
             .h(px(32.))
             .items_center()
@@ -99,21 +185,65 @@ impl GitPanel {
                     .gap_2()
                     .child(
                         IconButton::new("discard-changes", IconName::Undo)
+                            .tooltip(move |cx| {
+                                let focus_handle = focus_handle.clone();
+
+                                Tooltip::for_action_in(
+                                    "Discard all changes",
+                                    &DiscardAll,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            })
                             .icon_size(IconSize::Small)
                             .disabled(true),
                     )
-                    .child(
-                        Button::new("stage-all", "Stage All")
-                            .label_size(LabelSize::Small)
-                            .layer(ElevationIndex::ElevatedSurface)
-                            .size(ButtonSize::Compact)
-                            .style(ButtonStyle::Filled)
-                            .disabled(true),
-                    ),
+                    .child(if self.all_staged() {
+                        self.panel_button("unstage-all", "Unstage All").on_click(
+                            cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(DiscardAll))),
+                        )
+                    } else {
+                        self.panel_button("stage-all", "Stage All").on_click(
+                            cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(StageAll))),
+                        )
+                    }),
             )
     }
 
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let focus_handle_1 = self.focus_handle(cx).clone();
+        let focus_handle_2 = self.focus_handle(cx).clone();
+
+        let commit_staged_button = self
+            .panel_button("commit-staged-changes", "Commit")
+            .tooltip(move |cx| {
+                let focus_handle = focus_handle_1.clone();
+                Tooltip::for_action_in(
+                    "Commit all staged changes",
+                    &CommitStagedChanges,
+                    &focus_handle,
+                    cx,
+                )
+            })
+            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
+                this.commit_staged_changes(&CommitStagedChanges, cx)
+            }));
+
+        let commit_all_button = self
+            .panel_button("commit-all-changes", "Commit All")
+            .tooltip(move |cx| {
+                let focus_handle = focus_handle_2.clone();
+                Tooltip::for_action_in(
+                    "Commit all changes, including unstaged changes",
+                    &CommitAllChanges,
+                    &focus_handle,
+                    cx,
+                )
+            })
+            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
+                this.commit_all_changes(&CommitAllChanges, cx)
+            }));
+
         div().w_full().h(px(140.)).px_2().pt_1().pb_2().child(
             v_flex()
                 .h_full()
@@ -126,16 +256,13 @@ impl GitPanel {
                 .child("Add a message")
                 .gap_1()
                 .child(div().flex_grow())
-                .child(
-                    h_flex().child(div().gap_1().flex_grow()).child(
-                        Button::new("commit", "Commit")
-                            .label_size(LabelSize::Small)
-                            .layer(ElevationIndex::ElevatedSurface)
-                            .size(ButtonSize::Compact)
-                            .style(ButtonStyle::Filled)
-                            .disabled(true),
-                    ),
-                )
+                .child(h_flex().child(div().gap_1().flex_grow()).child(
+                    if self.current_modifiers.alt {
+                        commit_all_button
+                    } else {
+                        commit_staged_button
+                    },
+                ))
                 .cursor(CursorStyle::OperationNotAllowed)
                 .opacity(0.5),
         )
@@ -160,29 +287,37 @@ impl GitPanel {
 
 impl Render for GitPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let project = self.project.read(cx);
+
         v_flex()
-            .key_context("GitPanel")
-            .font_buffer(cx)
-            .py_1()
             .id("git_panel")
+            .key_context(self.dispatch_context())
             .track_focus(&self.focus_handle)
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .when(!project.is_read_only(cx), |this| {
+                this.on_action(cx.listener(|this, &StageAll, cx| this.stage_all(&StageAll, cx)))
+                    .on_action(
+                        cx.listener(|this, &UnstageAll, cx| this.unstage_all(&UnstageAll, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, &DiscardAll, cx| this.discard_all(&DiscardAll, cx)),
+                    )
+                    .on_action(cx.listener(|this, &CommitStagedChanges, cx| {
+                        this.commit_staged_changes(&CommitStagedChanges, cx)
+                    }))
+                    .on_action(cx.listener(|this, &CommitAllChanges, cx| {
+                        this.commit_all_changes(&CommitAllChanges, cx)
+                    }))
+            })
             .size_full()
             .overflow_hidden()
+            .font_buffer(cx)
+            .py_1()
             .bg(ElevationIndex::Surface.bg(cx))
             .child(self.render_panel_header(cx))
-            .child(
-                h_flex()
-                    .items_center()
-                    .h(px(8.))
-                    .child(Divider::horizontal_dashed().color(DividerColor::Border)),
-            )
+            .child(self.render_divider(cx))
             .child(self.render_empty_state(cx))
-            .child(
-                h_flex()
-                    .items_center()
-                    .h(px(8.))
-                    .child(Divider::horizontal_dashed().color(DividerColor::Border)),
-            )
+            .child(self.render_divider(cx))
             .child(self.render_commit_editor(cx))
     }
 }
