@@ -426,8 +426,8 @@ impl IconDecorationKind {
 pub struct IconDecoration {
     kind: IconDecorationKind,
     color: Hsla,
-    knockout_hover_color: Hsla,
     knockout_color: Hsla,
+    knockout_hover_color: Hsla,
     position: Point<Pixels>,
     group_name: Option<SharedString>,
 }
@@ -441,8 +441,8 @@ impl IconDecoration {
         Self {
             kind,
             color,
-            knockout_hover_color: color,
             knockout_color,
+            knockout_hover_color: knockout_color,
             position,
             group_name: None,
         }
@@ -460,18 +460,6 @@ impl IconDecoration {
         self
     }
 
-    /// Sets the color of the decoration that is used on hover
-    pub fn knockout_hover_color(mut self, color: Hsla) -> Self {
-        self.knockout_hover_color = color;
-        self
-    }
-
-    /// Sets the name of the group the decoration belongs to
-    pub fn group_name(mut self, name: Option<SharedString>) -> Self {
-        self.group_name = name;
-        self
-    }
-
     /// Sets the color of the decoration's knockout
     ///
     /// Match this to the background of the element
@@ -481,9 +469,21 @@ impl IconDecoration {
         self
     }
 
+    /// Sets the color of the decoration that is used on hover
+    pub fn knockout_hover_color(mut self, color: Hsla) -> Self {
+        self.knockout_hover_color = color;
+        self
+    }
+
     /// Sets the position of the decoration
     pub fn position(mut self, position: Point<Pixels>) -> Self {
         self.position = position;
+        self
+    }
+
+    /// Sets the name of the group the decoration belongs to
+    pub fn group_name(mut self, name: Option<SharedString>) -> Self {
+        self.group_name = name;
         self
     }
 }
