@@ -546,6 +546,7 @@ and then another
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_completion_response(
         output_excerpt: String,
         snapshot: &BufferSnapshot,
