@@ -15,7 +15,7 @@ use util::{ResultExt, TryFutureExt};
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::*;
-use project::{Entry, Fs, Project, ProjectEntryId, WorktreeId};
+use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use ui::{prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, ScrollbarState, Tooltip};
@@ -51,8 +51,16 @@ pub struct GitStatusEntry {}
 struct EntryDetails {
     filename: String,
     path: Arc<Path>,
+    kind: EntryKind,
     depth: usize,
+    is_expanded: bool,
     status: Option<GitFileStatus>,
+}
+
+impl EntryDetails {
+    pub fn is_dir(&self) -> bool {
+        self.kind.is_dir()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -308,6 +316,12 @@ impl GitPanel {
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
                 let root_name = OsStr::new(snapshot.root_name());
+                let expanded_entry_ids = self
+                    .expanded_dir_ids
+                    .get(&snapshot.id())
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 let entries = entries_paths.get_or_init(|| {
                     visible_worktree_entries
@@ -318,6 +332,7 @@ impl GitPanel {
 
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = entry.git_status;
+                    let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
                     let (depth, difference) = Self::calculate_depth_and_difference(entry, entries);
 
@@ -339,6 +354,8 @@ impl GitPanel {
 
                     let details = EntryDetails {
                         filename,
+                        kind: entry.kind,
+                        is_expanded,
                         path: entry.path.clone(),
                         status,
                         depth,
@@ -350,6 +367,7 @@ impl GitPanel {
         }
     }
 
+    // todo!(): Update expanded directory state
     fn update_visible_entries(
         &mut self,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
@@ -374,7 +392,6 @@ impl GitPanel {
             snapshot.propagate_git_statuses(&mut visible_worktree_entries);
             project::sort_worktree_entries(&mut visible_worktree_entries);
 
-            // Only add the worktree if it has visible entries
             if !visible_worktree_entries.is_empty() {
                 self.visible_entries
                     .push((worktree_id, visible_worktree_entries, OnceCell::new()));
@@ -574,24 +591,36 @@ impl GitPanel {
         details: EntryDetails,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
-        let label_color = match details.status {
-            Some(GitFileStatus::Modified) => Color::Modified,
-            Some(GitFileStatus::Added) => Color::Created,
-            Some(GitFileStatus::Conflict) => Color::Conflict,
-            _ => Color::Default,
+        let label_color = if details.is_dir() {
+            Color::Default
+        } else {
+            match details.status {
+                Some(GitFileStatus::Modified) => Color::Modified,
+                Some(GitFileStatus::Added) => Color::Created,
+                Some(GitFileStatus::Conflict) => Color::Conflict,
+                _ => Color::Default,
+            }
         };
 
+        let id = id.to_proto() as usize;
+        let checkbox_id = ElementId::Name(format!("checkbox_{}", id).into());
+        let is_staged = Selection::Selected;
+
         h_flex()
-            .id(id.to_proto() as usize)
+            .id(id)
             .h(px(28.))
             .w_full()
-            .pl(px(12.))
+            .pl(px(12. + 12. * details.depth as f32))
             .pr(px(4.))
             .items_center()
+            .gap_2()
             .text_color(label_color.color(cx))
             .font_buffer(cx)
             .text_ui_sm(cx)
-            .child(details.filename.clone())
+            .when(!details.is_dir(), |this| {
+                this.child(Checkbox::new(checkbox_id, is_staged))
+            })
+            .child(h_flex().gap_1p5().child(details.filename.clone()))
     }
 }
 

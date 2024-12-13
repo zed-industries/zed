@@ -4,6 +4,7 @@
 
 ### List
 
+- [x] Add uniform list
 - [ ] Git status item
 - [ ] Directory item
 - [ ] Scrollbar
@@ -12,6 +13,8 @@
 
 ### List Items
 
+- [ ] Checkbox for staging
+- [ ] Git status icon
 - [ ] Context menu
   - [ ] Discard Changes
   - ---
