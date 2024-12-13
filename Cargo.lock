@@ -472,6 +472,8 @@ dependencies = [
  "fuzzy",
  "gpui",
  "handlebars 4.5.0",
+ "html_to_markdown",
+ "http_client",
  "indoc",
  "language",
  "language_model",

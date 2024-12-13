@@ -23,4 +23,5 @@ pub struct Context {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextKind {
     File,
+    FetchedUrl,
 }
