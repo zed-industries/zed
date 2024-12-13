@@ -9251,33 +9251,30 @@ impl Editor {
             return;
         };
 
-        let url_finder = if head == tail {
-            cx.spawn(|editor, mut cx| async move {
-                if let Some((_, url)) = find_url(&buffer, start_position, cx.clone()) {
-                    editor.update(&mut cx, |_, cx| {
-                        cx.open_url(&url);
-                    })
-                } else {
-                    Ok(())
-                }
-            })
-        } else {
-            let Some((_, end_position)) = self.buffer.read(cx).text_anchor_for_position(tail, cx)
-            else {
+        let end_position = if head != tail {
+            let Some((_, pos)) = self.buffer.read(cx).text_anchor_for_position(tail, cx) else {
                 return;
             };
-            cx.spawn(|editor, mut cx| async move {
-                if let Some(url) =
-                    find_url_from_range(&buffer, start_position..end_position, cx.clone())
-                {
-                    editor.update(&mut cx, |_, cx| {
-                        cx.open_url(&url);
-                    })
-                } else {
-                    Ok(())
-                }
-            })
+            Some(pos)
+        } else {
+            None
         };
+
+        let url_finder = cx.spawn(|editor, mut cx| async move {
+            let url = if let Some(end_pos) = end_position {
+                find_url_from_range(&buffer, start_position..end_pos, cx.clone())
+            } else {
+                find_url(&buffer, start_position, cx.clone()).map(|(_, url)| url)
+            };
+
+            if let Some(url) = url {
+                editor.update(&mut cx, |_, cx| {
+                    cx.open_url(&url);
+                })
+            } else {
+                Ok(())
+            }
+        });
 
         url_finder.detach();
     }
