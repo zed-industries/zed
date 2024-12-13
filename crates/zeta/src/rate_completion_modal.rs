@@ -377,15 +377,22 @@ impl RateCompletionModal {
                             .gap_2()
                             .border_y_1()
                             .border_color(border_color)
+
                             .child(
                                 Icon::new(IconName::Info)
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted)
                             )
                             .child(
-                                Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
+                                div()
+                                    .w_full()
+                                    .pr_2()
+                                    .flex_wrap()
+                                    .child(
+                                        Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                    )
                             )
                     )
                 })
@@ -435,7 +442,7 @@ impl RateCompletionModal {
                                             .size(IconSize::Small)
                                             .color(Color::Warning),
                                     )
-                                    .child(Label::new("Completion wasn't shown because another valid completion was already on screen").color(Color::Warning)),
+                                    .child(Label::new("Completion wasn't shown because another valid one was already on screen.")),
                             )
                         } else {
                             Some(label_container())
@@ -457,7 +464,7 @@ impl RateCompletionModal {
                                         .disabled(rated || feedback_empty)
                                         .when(feedback_empty, |this| {
                                             this.tooltip(|cx| {
-                                                Tooltip::text("Explain why this completion is bad before reporting it", cx)
+                                                Tooltip::text("Explain what's bad about it before reporting it", cx)
                                             })
                                         })
                                         .on_click(cx.listener(move |this, _, cx| {
@@ -517,59 +524,83 @@ impl Render for RateCompletionModal {
             .rounded_lg()
             .shadow_lg()
             .child(
-                div()
-                    .id("completion_list")
+                v_flex()
                     .border_r_1()
                     .border_color(border_color)
                     .w_96()
                     .h_full()
-                    .p_0p5()
-                    .overflow_y_scroll()
+                    .flex_shrink_0()
+                    .overflow_hidden()
                     .child(
-                        List::new()
-                            .empty_message(
-                                div()
-                                    .p_2()
-                                    .child(
-                                            Label::new("No completions yet. Use the editor to generate some and rate them!")
-                                                .color(Color::Muted),
-                                    )
-                                    .into_any_element(),
+                        h_flex()
+                            .px_2()
+                            .py_1()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(border_color)
+                            .child(
+                                Icon::new(IconName::ZedPredict)
+                                    .size(IconSize::Small)
                             )
-                            .children(self.zeta.read(cx).recent_completions().cloned().enumerate().map(
-                                |(index, completion)| {
-                                    let selected =
-                                        self.active_completion.as_ref().map_or(false, |selected| {
-                                            selected.completion.id == completion.id
-                                        });
-                                    let rated =
-                                        self.zeta.read(cx).is_completion_rated(completion.id);
+                            .child(
+                                Label::new("From most recent to oldest")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                    )
+                    .child(
+                        div()
+                            .id("completion_list")
+                            .p_0p5()
+                            .h_full()
+                            .overflow_y_scroll()
+                            .child(
+                                List::new()
+                                    .empty_message(
+                                        div()
+                                            .p_2()
+                                            .child(
+                                                Label::new("No completions yet. Use the editor to generate some and rate them!")
+                                                    .color(Color::Muted),
+                                            )
+                                            .into_any_element(),
+                                    )
+                                    .children(self.zeta.read(cx).recent_completions().cloned().enumerate().map(
+                                        |(index, completion)| {
+                                            let selected =
+                                                self.active_completion.as_ref().map_or(false, |selected| {
+                                                    selected.completion.id == completion.id
+                                                });
+                                            let rated =
+                                                self.zeta.read(cx).is_completion_rated(completion.id);
 
-                                    ListItem::new(completion.id)
-                                        .inset(true)
-                                        .spacing(ListItemSpacing::Sparse)
-                                        .focused(index == self.selected_index)
-                                        .selected(selected)
-                                        .start_slot(if rated {
-                                            Icon::new(IconName::Check).color(Color::Success).size(IconSize::Small)
-                                        } else if completion.edits.is_empty() {
-                                            Icon::new(IconName::File).color(Color::Muted).size(IconSize::Small)
-                                        } else {
-                                            Icon::new(IconName::FileDiff).color(Color::Accent).size(IconSize::Small)
-                                        })
-                                        .child(
-                                            v_flex()
-                                                .child(Label::new(completion.path.to_string_lossy().to_string()).size(LabelSize::Small))
-                                                .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::XSmall)
+                                            ListItem::new(completion.id)
+                                                .inset(true)
+                                                .spacing(ListItemSpacing::Sparse)
+                                                .focused(index == self.selected_index)
+                                                .selected(selected)
+                                                .start_slot(if rated {
+                                                    Icon::new(IconName::Check).color(Color::Success).size(IconSize::Small)
+                                                } else if completion.edits.is_empty() {
+                                                    Icon::new(IconName::File).color(Color::Muted).size(IconSize::Small)
+                                                } else {
+                                                    Icon::new(IconName::FileDiff).color(Color::Accent).size(IconSize::Small)
+                                                })
+                                                .child(
+                                                    v_flex()
+                                                        .pl_1p5()
+                                                        .child(Label::new(completion.path.to_string_lossy().to_string()).size(LabelSize::Small))
+                                                        .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
+                                                            .color(Color::Muted)
+                                                            .size(LabelSize::XSmall)
+                                                        )
                                                 )
-                                        )
-                                        .on_click(cx.listener(move |this, _, cx| {
-                                            this.select_completion(Some(completion.clone()), true, cx);
-                                        }))
-                                },
-                            )),
+                                                .on_click(cx.listener(move |this, _, cx| {
+                                                    this.select_completion(Some(completion.clone()), true, cx);
+                                                }))
+                                        },
+                                    )),
+                            )
                     ),
             )
             .children(self.render_active_completion(cx))
