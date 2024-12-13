@@ -928,7 +928,7 @@ impl PromptLibrary {
                                                     status: cx.theme().status().clone(),
                                                     inlay_hints_style:
                                                         editor::make_inlay_hints_style(cx),
-                                                    suggestion_styles:
+                                                    inline_completion_styles:
                                                         editor::make_suggestion_styles(cx),
                                                     ..EditorStyle::default()
                                                 },

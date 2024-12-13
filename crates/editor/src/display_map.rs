@@ -536,7 +536,7 @@ pub(crate) struct Highlights<'a> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct SuggestionStyles {
+pub struct InlineCompletionStyles {
     pub insertion: HighlightStyle,
     pub whitespace: HighlightStyle,
 }
@@ -544,7 +544,7 @@ pub struct SuggestionStyles {
 #[derive(Default, Debug, Clone, Copy)]
 pub struct HighlightStyles {
     pub inlay_hint: Option<HighlightStyle>,
-    pub suggestion: Option<SuggestionStyles>,
+    pub inline_completion: Option<InlineCompletionStyles>,
 }
 
 #[derive(Clone)]
@@ -865,7 +865,7 @@ impl DisplaySnapshot {
             language_aware,
             HighlightStyles {
                 inlay_hint: Some(editor_style.inlay_hints_style),
-                suggestion: Some(editor_style.suggestion_styles),
+                inline_completion: Some(editor_style.inline_completion_styles),
             },
         )
         .flat_map(|chunk| {
