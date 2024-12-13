@@ -1027,8 +1027,27 @@ impl Item for TerminalView {
     type Event = ItemEvent;
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
-        Some(self.terminal().read(cx).title(false).into())
-    }
+        let terminal = self.terminal().read(cx);
+        let title = terminal.title(false);
+    
+        let pid_getter = terminal.pty_info.get_pid_getter();
+        let pid_text = pid_getter.fallback_pid();
+
+        let pid_info = if pid_text != 0 {
+            format!("Process ID (PID): {}", pid_text)
+        } else {
+            String::from("No Process ID available")
+        };      
+
+        let tooltip_text = format!(
+            "{}\n{}\n{}",
+            title,
+            "-".repeat(30),
+            pid_info
+        );
+    
+        Some(tooltip_text.into())                    
+    }    
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
