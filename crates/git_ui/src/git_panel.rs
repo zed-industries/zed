@@ -187,7 +187,7 @@ impl GitPanel {
         }
     }
 
-    fn should_show_scrollbar(cx: &AppContext) -> bool {
+    fn should_show_scrollbar(_cx: &AppContext) -> bool {
         // todo!(): plug into settings
         true
     }
