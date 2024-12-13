@@ -9,7 +9,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
     MultiBufferSnapshot, ToOffset, ToPoint,
 };
-use project::{buffer_store::BufferChangeSet, Project};
+use project::buffer_store::BufferChangeSet;
 use std::{ops::Range, sync::Arc};
 use sum_tree::TreeMap;
 use text::OffsetRangeExt;
@@ -80,10 +80,10 @@ impl DiffMap {
         self.snapshot.clone()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn add_change_set_with_project(
         &mut self,
-        project: Model<Project>,
+        project: Model<project::Project>,
         change_set: Model<BufferChangeSet>,
         cx: &mut ViewContext<Editor>,
     ) {
