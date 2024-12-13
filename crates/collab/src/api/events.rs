@@ -326,17 +326,23 @@ pub async fn post_panic(
         let payload = slack::WebhookBody::new(|w| {
             w.add_section(|s| s.text(slack::Text::markdown("Panic request".to_string())))
                 .add_section(|s| {
-                    s.add_field(slack::Text::markdown(format!(
-                        "*Version:*\n {} ",
-                        panic.app_version
-                    )))
-                    .add_field({
-                        slack::Text::markdown(format!(
-                            "*OS:*\n{} {}",
-                            panic.os_name,
-                            panic.os_version.unwrap_or_default()
-                        ))
-                    })
+                    let s = s
+                        .add_field(slack::Text::markdown(format!(
+                            "*Version:*\n {} ",
+                            panic.app_version
+                        )))
+                        .add_field({
+                            slack::Text::markdown(format!(
+                                "*OS:*\n{} {}",
+                                panic.os_name,
+                                panic.os_version.unwrap_or_default()
+                            ))
+                        });
+                    if let Some(context) = panic.context.as_ref() {
+                        s.add_field(slack::Text::markdown(format!("*Context:* {context}")))
+                    } else {
+                        s
+                    }
                 })
                 .add_rich_text(|r| r.add_preformatted(|p| p.add_text(backtrace_with_summary)))
         });

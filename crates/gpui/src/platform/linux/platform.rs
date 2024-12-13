@@ -490,11 +490,19 @@ impl<P: LinuxClient + 'static> Platform for P {
                         .get("username")
                         .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
                     // oo7 panics if the retrieved secret can't be decrypted due to
-                    // unexpected padding.
-                    let secret = AssertUnwindSafe(item.secret())
-                        .catch_unwind()
-                        .await
-                        .map_err(|_| anyhow!("oo7 panicked while trying to read credentials"))??;
+                    // unexpected padding. Gather a little bit of extra information
+                    // to understand what's up. Don't Debug-print here since that includes secrets!
+                    let backend = match keyring {
+                        oo7::Keyring::File { .. } => "file",
+                        oo7::Keyring::DBus { .. } => "DBus",
+                    };
+                    let is_sandboxed = oo7::is_sandboxed().await;
+                    let secret = reliability::hook_fn(move |_| {
+                        format!("oo7 backend: {backend}, sandboxed: {is_sandboxed}")
+                    })
+                    .catch_unwind_future(item.secret())
+                    .await
+                    .map_err(|_| anyhow!("oo7 panicked while trying to read credentials"))??;
 
                     // we lose the zeroizing capabilities at this boundary,
                     // a current limitation GPUI's credentials api

@@ -89,6 +89,7 @@ project_symbols.workspace = true
 proto.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
+reliability.workspace = true
 remote.workspace = true
 repl.workspace = true
 reqwest_client.workspace = true
