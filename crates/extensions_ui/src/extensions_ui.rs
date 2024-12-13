@@ -23,7 +23,7 @@ use project::DirectoryLister;
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
+use ui::{prelude::*, ToggleWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     item::{Item, ItemEvent},
@@ -994,7 +994,7 @@ impl ExtensionsPage {
                 .docs_url("https://zed.dev/docs/git#git-integrations"),
                 Feature::Vim => FeatureUpsell::new(telemetry, "Vim support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/vim")
-                    .child(CheckboxWithLabel::new(
+                    .child(ToggleWithLabel::new(
                         "enable-vim",
                         Label::new("Enable vim mode"),
                         if VimModeSetting::get_global(cx).0 {

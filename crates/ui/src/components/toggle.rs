@@ -17,6 +17,38 @@ pub fn switch(id: impl Into<ElementId>, toggle_state: ToggleState) -> Switch {
     Switch::new(id, toggle_state)
 }
 
+/// Creates a new checkbox with a label
+///
+/// [`ToggleWithLabel`] with [`ToggleKind::Checkbox`]
+pub fn labeled_checkbox(
+    id: impl Into<ElementId>,
+    label: Label,
+    toggle_state: ToggleState,
+    on_click: impl Fn(&ToggleState, &mut WindowContext) + 'static,
+) -> ToggleWithLabel {
+    ToggleWithLabel::new(id, label, toggle_state, on_click).kind(ToggleKind::Checkbox)
+}
+
+/// Creates a new switch with a label
+///
+/// [`ToggleWithLabel`] with [`ToggleKind::Switch`]
+pub fn labeled_switch(
+    id: impl Into<ElementId>,
+    label: Label,
+    toggle_state: ToggleState,
+    on_click: impl Fn(&ToggleState, &mut WindowContext) + 'static,
+) -> ToggleWithLabel {
+    ToggleWithLabel::new(id, label, toggle_state, on_click).kind(ToggleKind::Switch)
+}
+
+/// The types of toggles, defaulting to [`Checkbox`]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToggleKind {
+    #[default]
+    Checkbox,
+    Switch,
+}
+
 /// # Checkbox
 ///
 /// Checkboxes are used for multiple choices, not for mutually exclusive choices.
@@ -132,14 +164,15 @@ impl RenderOnce for Checkbox {
 
 /// A [`Checkbox`] that has a [`Label`].
 #[derive(IntoElement)]
-pub struct CheckboxWithLabel {
+pub struct ToggleWithLabel {
     id: ElementId,
     label: Label,
+    kind: ToggleKind,
     checked: ToggleState,
     on_click: Arc<dyn Fn(&ToggleState, &mut WindowContext) + 'static>,
 }
 
-impl CheckboxWithLabel {
+impl ToggleWithLabel {
     pub fn new(
         id: impl Into<ElementId>,
         label: Label,
@@ -149,22 +182,38 @@ impl CheckboxWithLabel {
         Self {
             id: id.into(),
             label,
+            kind: ToggleKind::default(),
             checked,
             on_click: Arc::new(on_click),
         }
     }
+
+    pub fn kind(mut self, kind: ToggleKind) -> Self {
+        self.kind = kind;
+        self
+    }
 }
 
-impl RenderOnce for CheckboxWithLabel {
+impl RenderOnce for ToggleWithLabel {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .child(Checkbox::new(self.id.clone(), self.checked).on_click({
-                let on_click = self.on_click.clone();
-                move |checked, cx| {
-                    (on_click)(checked, cx);
-                }
-            }))
+            .when(self.kind == ToggleKind::Checkbox, |this| {
+                this.child(Checkbox::new(self.id.clone(), self.checked).on_click({
+                    let on_click = self.on_click.clone();
+                    move |checked, cx| {
+                        (on_click)(checked, cx);
+                    }
+                }))
+            })
+            .when(self.kind == ToggleKind::Switch, |this| {
+                this.child(Switch::new(self.id.clone(), self.checked).on_click({
+                    let on_click = self.on_click.clone();
+                    move |checked, cx| {
+                        (on_click)(checked, cx);
+                    }
+                }))
+            })
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
@@ -370,40 +419,70 @@ impl ComponentPreview for Switch {
     }
 }
 
-impl ComponentPreview for CheckboxWithLabel {
+impl ComponentPreview for ToggleWithLabel {
     fn description() -> impl Into<Option<&'static str>> {
-        "A checkbox with an associated label, allowing users to select an option while providing a descriptive text."
+        "A toggle with an associated label, allowing users to select an option while providing a descriptive text. By default, the toggle is presented as a checkbox, but can also render a switch."
     }
 
     fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        vec![example_group(vec![
-            single_example(
-                "Unselected",
-                CheckboxWithLabel::new(
-                    "checkbox_with_label_unselected",
-                    Label::new("Always save on quit"),
-                    ToggleState::Unselected,
-                    |_, _| {},
-                ),
+        vec![
+            example_group_with_title(
+                "Checkbox",
+                vec![
+                    single_example(
+                        "Unselected",
+                        ToggleWithLabel::new(
+                            "checkbox_with_label_unselected",
+                            Label::new("Always save on quit"),
+                            ToggleState::Unselected,
+                            |_, _| {},
+                        ),
+                    ),
+                    single_example(
+                        "Indeterminate",
+                        ToggleWithLabel::new(
+                            "checkbox_with_label_indeterminate",
+                            Label::new("Always save on quit"),
+                            ToggleState::Indeterminate,
+                            |_, _| {},
+                        ),
+                    ),
+                    single_example(
+                        "Selected",
+                        ToggleWithLabel::new(
+                            "checkbox_with_label_selected",
+                            Label::new("Always save on quit"),
+                            ToggleState::Selected,
+                            |_, _| {},
+                        ),
+                    ),
+                ],
             ),
-            single_example(
-                "Indeterminate",
-                CheckboxWithLabel::new(
-                    "checkbox_with_label_indeterminate",
-                    Label::new("Always save on quit"),
-                    ToggleState::Indeterminate,
-                    |_, _| {},
-                ),
+            example_group_with_title(
+                "Switch",
+                vec![
+                    single_example(
+                        "Off",
+                        ToggleWithLabel::new(
+                            "switch_with_label_off",
+                            Label::new("Dark mode"),
+                            ToggleState::Unselected,
+                            |_, _| {},
+                        )
+                        .kind(ToggleKind::Switch),
+                    ),
+                    single_example(
+                        "On",
+                        ToggleWithLabel::new(
+                            "switch_with_label_on",
+                            Label::new("Dark mode"),
+                            ToggleState::Selected,
+                            |_, _| {},
+                        )
+                        .kind(ToggleKind::Switch),
+                    ),
+                ],
             ),
-            single_example(
-                "Selected",
-                CheckboxWithLabel::new(
-                    "checkbox_with_label_selected",
-                    Label::new("Always save on quit"),
-                    ToggleState::Selected,
-                    |_, _| {},
-                ),
-            ),
-        ])]
+        ]
     }
 }

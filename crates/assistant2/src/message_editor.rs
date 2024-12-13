@@ -7,7 +7,7 @@ use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopove
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, IconButtonShape, KeyBinding,
+    prelude::*, ButtonLike, ToggleWithLabel, ElevationIndex, IconButtonShape, KeyBinding,
     PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use workspace::Workspace;
@@ -262,7 +262,7 @@ impl Render for MessageEditor {
             .child(
                 h_flex()
                     .justify_between()
-                    .child(h_flex().gap_2().child(CheckboxWithLabel::new(
+                    .child(h_flex().gap_2().child(ToggleWithLabel::new(
                         "use-tools",
                         Label::new("Tools"),
                         self.use_tools.into(),

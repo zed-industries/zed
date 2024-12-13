@@ -5,7 +5,7 @@ use project::project_settings::{InlineBlameSettings, ProjectSettings};
 use settings::{EditableSettingControl, Settings};
 use theme::{FontFamilyCache, ThemeSettings};
 use ui::{
-    prelude::*, CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer,
+    prelude::*, ToggleWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer,
     SettingsGroup,
 };
 
@@ -258,7 +258,7 @@ impl RenderOnce for BufferFontLigaturesControl {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let value = Self::read(cx);
 
-        CheckboxWithLabel::new(
+        ToggleWithLabel::new(
             "buffer-font-ligatures",
             Label::new(self.name()),
             value.into(),
@@ -311,7 +311,7 @@ impl RenderOnce for InlineGitBlameControl {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let value = Self::read(cx);
 
-        CheckboxWithLabel::new(
+        ToggleWithLabel::new(
             "inline-git-blame",
             Label::new(self.name()),
             value.into(),
@@ -364,7 +364,7 @@ impl RenderOnce for LineNumbersControl {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let value = Self::read(cx);
 
-        CheckboxWithLabel::new(
+        ToggleWithLabel::new(
             "line-numbers",
             Label::new(self.name()),
             value.into(),
