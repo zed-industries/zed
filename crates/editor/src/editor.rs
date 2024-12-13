@@ -570,6 +570,7 @@ pub struct Editor {
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
     show_cursor_names: bool,
+    visible_range: Option<Range<Anchor>>,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
     mode: EditorMode,
@@ -1310,6 +1311,7 @@ impl Editor {
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             text_style_refinement: None,
+            visible_range: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -4425,8 +4427,18 @@ impl Editor {
             return None;
         }
 
+        let excerpt_id = cursor.excerpt_id;
+        let visible_range = self.visible_range.as_ref().and_then(|visible_range| {
+            self.buffer
+                .read(cx)
+                .range_to_buffer_ranges(visible_range.clone(), cx)
+                .into_iter()
+                .find(|(_, _, buffer_excerpt_id)| *buffer_excerpt_id == excerpt_id)
+                .map(|(_, range, _)| range)
+        });
+
         self.update_visible_inline_completion(cx);
-        provider.refresh(buffer, cursor_buffer_position, debounce, cx);
+        provider.refresh(buffer, cursor_buffer_position, visible_range, debounce, cx);
         Some(())
     }
 
@@ -10713,6 +10725,10 @@ impl Editor {
             self.gutter_hovered = hovered;
             cx.notify();
         }
+    }
+
+    pub fn set_visible_range(&mut self, range: Range<Anchor>) {
+        self.visible_range = Some(range);
     }
 
     pub fn insert_blocks(

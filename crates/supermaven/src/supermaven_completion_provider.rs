@@ -114,6 +114,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         &mut self,
         buffer_handle: Model<Buffer>,
         cursor_position: Anchor,
+        _visible_range: Option<Range<usize>>,
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {

@@ -29,6 +29,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
         &mut self,
         buffer: Model<Buffer>,
         cursor_position: language::Anchor,
+        visible_range: Option<Range<usize>>,
         debounce: bool,
         cx: &mut ModelContext<Self>,
     );
@@ -61,6 +62,7 @@ pub trait InlineCompletionProviderHandle {
         &self,
         buffer: Model<Buffer>,
         cursor_position: language::Anchor,
+        visible_range: Option<Range<usize>>,
         debounce: bool,
         cx: &mut AppContext,
     );
@@ -102,11 +104,12 @@ where
         &self,
         buffer: Model<Buffer>,
         cursor_position: language::Anchor,
+        visible_range: Option<Range<usize>>,
         debounce: bool,
         cx: &mut AppContext,
     ) {
         self.update(cx, |this, cx| {
-            this.refresh(buffer, cursor_position, debounce, cx)
+            this.refresh(buffer, cursor_position, visible_range, debounce, cx)
         })
     }
 

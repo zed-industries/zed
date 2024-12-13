@@ -7,7 +7,7 @@ use language::{
     Buffer, OffsetRangeExt, ToOffset,
 };
 use settings::Settings;
-use std::{path::Path, time::Duration};
+use std::{ops::Range, path::Path, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -76,6 +76,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         &mut self,
         buffer: Model<Buffer>,
         cursor_position: language::Anchor,
+        _visible_range: Option<Range<usize>>,
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {

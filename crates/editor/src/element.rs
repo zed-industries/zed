@@ -5395,6 +5395,10 @@ impl Element for EditorElement {
                         )
                     };
 
+                    self.editor.update(cx, |editor, _| {
+                        editor.set_visible_range(start_anchor..end_anchor);
+                    });
+
                     let highlighted_rows = self
                         .editor
                         .update(cx, |editor, cx| editor.highlighted_display_rows(cx));

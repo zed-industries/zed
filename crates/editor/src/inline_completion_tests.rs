@@ -330,6 +330,7 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
         &mut self,
         _buffer: gpui::Model<language::Buffer>,
         _cursor_position: language::Anchor,
+        _visible_range: Option<Range<usize>>,
         _debounce: bool,
         _cx: &mut gpui::ModelContext<Self>,
     ) {

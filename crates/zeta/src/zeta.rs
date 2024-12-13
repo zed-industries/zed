@@ -273,6 +273,7 @@ impl Zeta {
         &mut self,
         buffer: &Model<Buffer>,
         position: language::Anchor,
+        visible_range: Option<Range<usize>>,
         cx: &mut ModelContext<Self>,
         perform_predict_edits: F,
     ) -> Task<Result<InlineCompletion>>
@@ -283,7 +284,9 @@ impl Zeta {
         let snapshot = self.report_changes_for_buffer(buffer, cx);
         let point = position.to_point(&snapshot);
         let offset = point.to_offset(&snapshot);
-        let excerpt_range = excerpt_range_for_position(point, &snapshot);
+        let visible_range = visible_range
+            .map(|range| range.start.to_point(&snapshot)..range.end.to_point(&snapshot));
+        let excerpt_range = excerpt_range_for_position(point, visible_range, &snapshot);
         let events = self.events.clone();
         let path = snapshot
             .file()
@@ -491,16 +494,23 @@ and then another
     ) -> Task<Result<InlineCompletion>> {
         use std::future::ready;
 
-        self.request_completion_impl(buffer, position, cx, |_, _, _| ready(Ok(response)))
+        self.request_completion_impl(buffer, position, None, cx, |_, _, _| ready(Ok(response)))
     }
 
     pub fn request_completion(
         &mut self,
         buffer: &Model<Buffer>,
         position: language::Anchor,
+        visible_range: Option<Range<usize>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<InlineCompletion>> {
-        self.request_completion_impl(buffer, position, cx, Self::perform_predict_edits)
+        self.request_completion_impl(
+            buffer,
+            position,
+            visible_range,
+            cx,
+            Self::perform_predict_edits,
+        )
     }
 
     fn perform_predict_edits(
@@ -797,21 +807,33 @@ fn prompt_for_excerpt(
     prompt_excerpt
 }
 
-fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<usize> {
+fn excerpt_range_for_position(
+    point: Point,
+    visible_range: Option<Range<Point>>,
+    snapshot: &BufferSnapshot,
+) -> Range<usize> {
     const CONTEXT_LINES: u32 = 16;
 
-    let mut context_lines_before = CONTEXT_LINES;
-    let mut context_lines_after = CONTEXT_LINES;
-    if point.row < CONTEXT_LINES {
-        context_lines_after += CONTEXT_LINES - point.row;
-    } else if point.row + CONTEXT_LINES > snapshot.max_point().row {
-        context_lines_before += (point.row + CONTEXT_LINES) - snapshot.max_point().row;
+    let (mut excerpt_start_row, mut excerpt_end_row) = if let Some(visible) = visible_range {
+        (visible.start.row, visible.end.row)
+    } else {
+        (point.row, point.row)
+    };
+
+    let point_min_row = point.row.saturating_sub(CONTEXT_LINES);
+    let point_max_row = cmp::min(point.row + CONTEXT_LINES, snapshot.max_point().row);
+
+    if point_min_row < excerpt_start_row {
+        excerpt_start_row = point_min_row;
     }
 
-    let excerpt_start_row = point.row.saturating_sub(context_lines_before);
+    if point_max_row > excerpt_end_row {
+        excerpt_end_row = point_max_row;
+    }
+
     let excerpt_start = Point::new(excerpt_start_row, 0);
-    let excerpt_end_row = cmp::min(point.row + context_lines_after, snapshot.max_point().row);
     let excerpt_end = Point::new(excerpt_end_row, snapshot.line_len(excerpt_end_row));
+
     excerpt_start.to_offset(snapshot)..excerpt_end.to_offset(snapshot)
 }
 
@@ -941,6 +963,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         &mut self,
         buffer: Model<Buffer>,
         position: language::Anchor,
+        visible_range: Option<Range<usize>>,
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
@@ -952,7 +975,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
             let completion_request = this.update(&mut cx, |this, cx| {
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_completion(&buffer, position, cx)
+                    zeta.request_completion(&buffer, position, visible_range, cx)
                 })
             });
 
@@ -1238,8 +1261,9 @@ mod tests {
         let zeta = cx.new_model(|cx| Zeta::new(client, cx));
         let buffer = cx.new_model(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
-        let completion_task =
-            zeta.update(cx, |zeta, cx| zeta.request_completion(&buffer, cursor, cx));
+        let completion_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_completion(&buffer, cursor, None, cx)
+        });
 
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
         server.respond(
