@@ -174,7 +174,7 @@ impl PickerDelegate for ContextPickerDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Dense)
-                .selected(selected)
+                .toggle_state(selected)
                 .tooltip({
                     let description = entry.description.clone();
                     move |cx| cx.new_view(|_cx| Tooltip::new(description.clone())).into()

@@ -11,9 +11,9 @@ use gpui::{
 
 use crate::prelude::*;
 
-pub trait PopoverTrigger: IntoElement + Clickable + Selectable + 'static {}
+pub trait PopoverTrigger: IntoElement + Clickable + Toggleable + 'static {}
 
-impl<T: IntoElement + Clickable + Selectable + 'static> PopoverTrigger for T {}
+impl<T: IntoElement + Clickable + Toggleable + 'static> PopoverTrigger for T {}
 
 pub struct PopoverMenuHandle<M>(Rc<RefCell<Option<PopoverMenuHandleState<M>>>>);
 
@@ -129,7 +129,7 @@ impl<M: ManagedView> PopoverMenu<M> {
     pub fn trigger<T: PopoverTrigger>(mut self, t: T) -> Self {
         self.child_builder = Some(Box::new(|menu, builder| {
             let open = menu.borrow().is_some();
-            t.selected(open)
+            t.toggle_state(open)
                 .when_some(builder, |el, builder| {
                     el.on_click(move |_, cx| show_menu(&builder, &menu, cx))
                 })

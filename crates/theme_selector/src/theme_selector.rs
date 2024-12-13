@@ -285,7 +285,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(HighlightedLabel::new(
                     theme_match.string.clone(),
                     theme_match.positions.clone(),

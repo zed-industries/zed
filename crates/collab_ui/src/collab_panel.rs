@@ -841,7 +841,7 @@ impl CollabPanel {
         ListItem::new(SharedString::from(user.github_login.clone()))
             .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(Label::new(user.github_login.clone()))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .end_slot(if is_pending {
                 Label::new("Calling").color(Color::Muted).into_any_element()
             } else if is_current_user {
@@ -894,7 +894,7 @@ impl CollabPanel {
         .into();
 
         ListItem::new(project_id as usize)
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
                 this.workspace
                     .update(cx, |workspace, cx| {
@@ -924,7 +924,7 @@ impl CollabPanel {
         let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
 
         ListItem::new(("screen", id))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .start_slot(
                 h_flex()
                     .gap_1()
@@ -964,7 +964,7 @@ impl CollabPanel {
         let channel_store = self.channel_store.read(cx);
         let has_channel_buffer_changed = channel_store.has_channel_buffer_changed(channel_id);
         ListItem::new("channel-notes")
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
                 this.open_channel_notes(channel_id, cx);
             }))
@@ -996,7 +996,7 @@ impl CollabPanel {
         let channel_store = self.channel_store.read(cx);
         let has_messages_notification = channel_store.has_new_messages(channel_id);
         ListItem::new("channel-chat")
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
                 this.join_channel_chat(channel_id, cx);
             }))
@@ -2253,7 +2253,7 @@ impl CollabPanel {
                 })
                 .inset(true)
                 .end_slot::<AnyElement>(button)
-                .selected(is_selected),
+                .toggle_state(is_selected),
         )
     }
 
@@ -2270,7 +2270,7 @@ impl CollabPanel {
         let item = ListItem::new(github_login.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .child(
                 h_flex()
                     .w_full()
@@ -2381,7 +2381,7 @@ impl CollabPanel {
         ListItem::new(github_login.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .child(
                 h_flex()
                     .w_full()
@@ -2425,7 +2425,7 @@ impl CollabPanel {
         ];
 
         ListItem::new(("channel-invite", channel.id.0 as usize))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .child(
                 h_flex()
                     .w_full()
@@ -2448,7 +2448,7 @@ impl CollabPanel {
         ListItem::new("contact-placeholder")
             .child(Icon::new(IconName::Plus))
             .child(Label::new("Add a Contact"))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
     }
 
@@ -2547,7 +2547,7 @@ impl CollabPanel {
                     // Add one level of depth for the disclosure arrow.
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
-                    .selected(is_selected || is_active)
+                    .toggle_state(is_selected || is_active)
                     .toggle(disclosed)
                     .on_toggle(
                         cx.listener(move |this, _, cx| {

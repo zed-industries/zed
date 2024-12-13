@@ -89,15 +89,15 @@ impl ChannelModal {
         cx.notify()
     }
 
-    fn set_channel_visibility(&mut self, selection: &Selection, cx: &mut ViewContext<Self>) {
+    fn set_channel_visibility(&mut self, selection: &ToggleState, cx: &mut ViewContext<Self>) {
         self.channel_store.update(cx, |channel_store, cx| {
             channel_store
                 .set_channel_visibility(
                     self.channel_id,
                     match selection {
-                        Selection::Unselected => ChannelVisibility::Members,
-                        Selection::Selected => ChannelVisibility::Public,
-                        Selection::Indeterminate => return,
+                        ToggleState::Unselected => ChannelVisibility::Members,
+                        ToggleState::Selected => ChannelVisibility::Public,
+                        ToggleState::Indeterminate => return,
                     },
                     cx,
                 )
@@ -159,9 +159,9 @@ impl Render for ChannelModal {
                                 "is-public",
                                 Label::new("Public").size(LabelSize::Small),
                                 if visibility == ChannelVisibility::Public {
-                                    ui::Selection::Selected
+                                    ui::ToggleState::Selected
                                 } else {
-                                    ui::Selection::Unselected
+                                    ui::ToggleState::Unselected
                                 },
                                 cx.listener(Self::set_channel_visibility),
                             ))
@@ -386,7 +386,7 @@ impl PickerDelegate for ChannelModalDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
                 .child(Label::new(user.github_login.clone()))
                 .end_slot(h_flex().gap_2().map(|slot| {

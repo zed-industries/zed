@@ -726,7 +726,7 @@ impl Editor {
                                                             .shape(IconButtonShape::Square)
                                                             .icon_size(IconSize::Small)
                                                             .style(ButtonStyle::Subtle)
-                                                            .selected(
+                                                            .toggle_state(
                                                                 hunk_controls_menu_handle
                                                                     .is_deployed(),
                                                             )

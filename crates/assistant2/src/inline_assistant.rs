@@ -1623,7 +1623,7 @@ impl Render for PromptEditor {
                                 v_flex()
                                     .child(
                                         IconButton::new("rate-limit-error", IconName::XCircle)
-                                            .selected(self.show_rate_limit_notice)
+                                            .toggle_state(self.show_rate_limit_notice)
                                             .shape(IconButtonShape::Square)
                                             .icon_size(IconSize::Small)
                                             .on_click(cx.listener(Self::toggle_rate_limit_notice)),
@@ -2065,15 +2065,15 @@ impl PromptEditor {
                             "dont-show-again",
                             Label::new("Don't show again"),
                             if dismissed_rate_limit_notice() {
-                                ui::Selection::Selected
+                                ui::ToggleState::Selected
                             } else {
-                                ui::Selection::Unselected
+                                ui::ToggleState::Unselected
                             },
                             |selection, cx| {
                                 let is_dismissed = match selection {
-                                    ui::Selection::Unselected => false,
-                                    ui::Selection::Indeterminate => return,
-                                    ui::Selection::Selected => true,
+                                    ui::ToggleState::Unselected => false,
+                                    ui::ToggleState::Indeterminate => return,
+                                    ui::ToggleState::Selected => true,
                                 };
 
                                 set_rate_limit_notice_dismissed(is_dismissed, cx)

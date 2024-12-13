@@ -395,7 +395,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         Some(
             ListItem::new(ix)
-                .selected(selected)
+                .toggle_state(selected)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .child(

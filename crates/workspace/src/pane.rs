@@ -481,7 +481,7 @@ impl Pane {
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
                             .icon_size(IconSize::Small)
-                            .selected(zoomed)
+                            .toggle_state(zoomed)
                             .selected_icon(IconName::Minimize)
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&crate::ToggleZoom, cx);
@@ -2038,7 +2038,7 @@ impl Pane {
                 ClosePosition::Left => ui::TabCloseSide::Start,
                 ClosePosition::Right => ui::TabCloseSide::End,
             })
-            .selected(is_active)
+            .toggle_state(is_active)
             .on_click(
                 cx.listener(move |pane: &mut Self, _, cx| pane.activate_item(ix, true, true, cx)),
             )
@@ -3273,7 +3273,7 @@ impl Render for DraggedTab {
             cx,
         );
         Tab::new("")
-            .selected(self.is_active)
+            .toggle_state(self.is_active)
             .child(label)
             .render(cx)
             .font(ui_font)

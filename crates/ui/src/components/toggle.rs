@@ -3,7 +3,12 @@
 use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
 
 use crate::prelude::*;
-use crate::{Color, Icon, IconName, Selection};
+use crate::{Color, Icon, IconName, ToggleState};
+
+/// Creates a new checkbox
+pub fn checkbox(id: impl Into<ElementId>, toggle_state: ToggleState) -> Checkbox {
+    Checkbox::new(id, toggle_state.into())
+}
 
 /// # Checkbox
 ///
@@ -13,16 +18,16 @@ use crate::{Color, Icon, IconName, Selection};
 #[derive(IntoElement)]
 pub struct Checkbox {
     id: ElementId,
-    checked: Selection,
+    toggle_state: ToggleState,
     disabled: bool,
-    on_click: Option<Box<dyn Fn(&Selection, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ToggleState, &mut WindowContext) + 'static>>,
 }
 
 impl Checkbox {
-    pub fn new(id: impl Into<ElementId>, checked: Selection) -> Self {
+    pub fn new(id: impl Into<ElementId>, checked: ToggleState) -> Self {
         Self {
             id: id.into(),
-            checked,
+            toggle_state: checked,
             disabled: false,
             on_click: None,
         }
@@ -33,7 +38,10 @@ impl Checkbox {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&Selection, &mut WindowContext) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ToggleState, &mut WindowContext) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -43,15 +51,15 @@ impl RenderOnce for Checkbox {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
-        let icon = match self.checked {
-            Selection::Selected => Some(Icon::new(IconName::Check).size(IconSize::Small).color(
+        let icon = match self.toggle_state {
+            ToggleState::Selected => Some(Icon::new(IconName::Check).size(IconSize::Small).color(
                 if self.disabled {
                     Color::Disabled
                 } else {
                     Color::Selected
                 },
             )),
-            Selection::Indeterminate => Some(
+            ToggleState::Indeterminate => Some(
                 Icon::new(IconName::Dash)
                     .size(IconSize::Small)
                     .color(if self.disabled {
@@ -60,11 +68,11 @@ impl RenderOnce for Checkbox {
                         Color::Selected
                     }),
             ),
-            Selection::Unselected => None,
+            ToggleState::Unselected => None,
         };
 
-        let selected =
-            self.checked == Selection::Selected || self.checked == Selection::Indeterminate;
+        let selected = self.toggle_state == ToggleState::Selected
+            || self.toggle_state == ToggleState::Indeterminate;
 
         let (bg_color, border_color) = match (self.disabled, selected) {
             (true, _) => (
@@ -108,7 +116,9 @@ impl RenderOnce for Checkbox {
             )
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
-                |this, on_click| this.on_click(move |_, cx| on_click(&self.checked.inverse(), cx)),
+                |this, on_click| {
+                    this.on_click(move |_, cx| on_click(&self.toggle_state.inverse(), cx))
+                },
             )
     }
 }
@@ -125,15 +135,15 @@ impl ComponentPreview for Checkbox {
                 vec![
                     single_example(
                         "Unselected",
-                        Checkbox::new("checkbox_unselected", Selection::Unselected),
+                        Checkbox::new("checkbox_unselected", ToggleState::Unselected),
                     ),
                     single_example(
                         "Indeterminate",
-                        Checkbox::new("checkbox_indeterminate", Selection::Indeterminate),
+                        Checkbox::new("checkbox_indeterminate", ToggleState::Indeterminate),
                     ),
                     single_example(
                         "Selected",
-                        Checkbox::new("checkbox_selected", Selection::Selected),
+                        Checkbox::new("checkbox_selected", ToggleState::Selected),
                     ),
                 ],
             ),
@@ -142,17 +152,20 @@ impl ComponentPreview for Checkbox {
                 vec![
                     single_example(
                         "Unselected",
-                        Checkbox::new("checkbox_disabled_unselected", Selection::Unselected)
+                        Checkbox::new("checkbox_disabled_unselected", ToggleState::Unselected)
                             .disabled(true),
                     ),
                     single_example(
                         "Indeterminate",
-                        Checkbox::new("checkbox_disabled_indeterminate", Selection::Indeterminate)
-                            .disabled(true),
+                        Checkbox::new(
+                            "checkbox_disabled_indeterminate",
+                            ToggleState::Indeterminate,
+                        )
+                        .disabled(true),
                     ),
                     single_example(
                         "Selected",
-                        Checkbox::new("checkbox_disabled_selected", Selection::Selected)
+                        Checkbox::new("checkbox_disabled_selected", ToggleState::Selected)
                             .disabled(true),
                     ),
                 ],
@@ -168,16 +181,16 @@ use std::sync::Arc;
 pub struct CheckboxWithLabel {
     id: ElementId,
     label: Label,
-    checked: Selection,
-    on_click: Arc<dyn Fn(&Selection, &mut WindowContext) + 'static>,
+    checked: ToggleState,
+    on_click: Arc<dyn Fn(&ToggleState, &mut WindowContext) + 'static>,
 }
 
 impl CheckboxWithLabel {
     pub fn new(
         id: impl Into<ElementId>,
         label: Label,
-        checked: Selection,
-        on_click: impl Fn(&Selection, &mut WindowContext) + 'static,
+        checked: ToggleState,
+        on_click: impl Fn(&ToggleState, &mut WindowContext) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -221,7 +234,7 @@ impl ComponentPreview for CheckboxWithLabel {
                 CheckboxWithLabel::new(
                     "checkbox_with_label_unselected",
                     Label::new("Always save on quit"),
-                    Selection::Unselected,
+                    ToggleState::Unselected,
                     |_, _| {},
                 ),
             ),
@@ -230,7 +243,7 @@ impl ComponentPreview for CheckboxWithLabel {
                 CheckboxWithLabel::new(
                     "checkbox_with_label_indeterminate",
                     Label::new("Always save on quit"),
-                    Selection::Indeterminate,
+                    ToggleState::Indeterminate,
                     |_, _| {},
                 ),
             ),
@@ -239,7 +252,7 @@ impl ComponentPreview for CheckboxWithLabel {
                 CheckboxWithLabel::new(
                     "checkbox_with_label_selected",
                     Label::new("Always save on quit"),
-                    Selection::Selected,
+                    ToggleState::Selected,
                     |_, _| {},
                 ),
             ),

@@ -272,7 +272,7 @@ impl Render for BufferSearchBar {
                             .on_click(cx.listener(|this, _: &ClickEvent, cx| {
                                 this.toggle_replace(&ToggleReplace, cx);
                             }))
-                            .selected(self.replace_enabled)
+                            .toggle_state(self.replace_enabled)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
                                 move |cx| {
@@ -300,7 +300,7 @@ impl Render for BufferSearchBar {
                             .on_click(cx.listener(|this, _: &ClickEvent, cx| {
                                 this.toggle_selection(&ToggleSelection, cx);
                             }))
-                            .selected(self.selection_search_enabled)
+                            .toggle_state(self.selection_search_enabled)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
                                 move |cx| {

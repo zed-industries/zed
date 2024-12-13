@@ -150,7 +150,7 @@ impl PickerDelegate for KernelPickerDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(
                     h_flex()
                         .w_full()

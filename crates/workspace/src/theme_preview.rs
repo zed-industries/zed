@@ -394,7 +394,7 @@ impl ThemePreview {
                         this.current_page = p;
                         cx.notify();
                     }))
-                    .selected(p == self.current_page)
+                    .toggle_state(p == self.current_page)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
             }))
     }

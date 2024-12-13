@@ -283,7 +283,7 @@ impl PickerDelegate for OpenPathDelegate {
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(LabelLike::new().child(candidate.string.clone())),
         )
     }

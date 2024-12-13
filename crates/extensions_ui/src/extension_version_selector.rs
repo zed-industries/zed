@@ -210,7 +210,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .disabled(disabled)
                 .child(
                     HighlightedLabel::new(

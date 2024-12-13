@@ -322,7 +322,7 @@ impl TitleBar {
                 })
                 .style(ButtonStyle::Subtle)
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .selected(is_shared)
+                .toggle_state(is_shared)
                 .label_size(LabelSize::Small)
                 .on_click(cx.listener(move |this, _, cx| {
                     if is_shared {
@@ -380,7 +380,7 @@ impl TitleBar {
                 })
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
-                .selected(is_muted)
+                .toggle_state(is_muted)
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                 .on_click(move |_, cx| {
                     toggle_mute(&Default::default(), cx);
@@ -400,7 +400,7 @@ impl TitleBar {
                 .style(ButtonStyle::Subtle)
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                 .icon_size(IconSize::Small)
-                .selected(is_deafened)
+                .toggle_state(is_deafened)
                 .tooltip(move |cx| {
                     if is_deafened {
                         let label = "Unmute Audio";
@@ -430,7 +430,7 @@ impl TitleBar {
                 IconButton::new("screen-share", ui::IconName::Screen)
                     .style(ButtonStyle::Subtle)
                     .icon_size(IconSize::Small)
-                    .selected(is_screen_sharing)
+                    .toggle_state(is_screen_sharing)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .tooltip(move |cx| {
                         Tooltip::text(
