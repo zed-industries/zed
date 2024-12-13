@@ -372,7 +372,9 @@ impl CompletionsMenu {
         } else if self.selected_item == self.entries.len() - 1 {
             self.entries.len().saturating_sub(visible_count)..self.entries.len()
         } else {
-            last_rendered_range.unwrap_or_else(|| self.selected_item..self.selected_item + 1)
+            last_rendered_range.map_or(0..0, |range| {
+                min(range.start, self.entries.len())..min(range.end, self.entries.len())
+            })
         };
 
         // Expand the range to resolve more completions than are predicted to be visible, to reduce
