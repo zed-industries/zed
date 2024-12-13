@@ -45,7 +45,7 @@ pub fn init(cx: &mut AppContext) {
 
 impl TabSwitcher {
     fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
-        workspace.register_action(|workspace, action: &Toggle, cx| {
+        workspace.register_action(model, |workspace, action: &Toggle, cx| {
             let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
                 Self::open(action, workspace, cx);
                 return;

@@ -69,8 +69,7 @@ impl Vector {
 }
 
 impl RenderOnce for Vector {
-    fn render(self, window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
-        let _ = window;
+    fn render(self, _window: &mut gpui::Window, cx: &mut AppContext) -> impl IntoElement {
         let width = self.size.width;
         let height = self.size.height;
 

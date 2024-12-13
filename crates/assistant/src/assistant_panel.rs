@@ -100,7 +100,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_models(
         |workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext| {
             workspace
-                .register_action(cx, |workspace, _: &ToggleFocus, cx| {
+                .register_action(model, |workspace, _: &ToggleFocus, cx| {
                     let settings = AssistantSettings::get_global(cx);
                     if !settings.enabled {
                         return;

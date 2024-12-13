@@ -18,14 +18,17 @@ use workspace::{
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext| {
-            workspace.register_action(|workspace, _: &workspace::ToggleProjectSymbols, cx| {
-                let project = workspace.project().clone();
-                let handle = model.downgrade();
-                workspace.toggle_modal(cx, move |cx| {
-                    let delegate = ProjectSymbolsDelegate::new(handle, project);
-                    Picker::uniform_list(delegate, cx).width(rems(34.))
-                })
-            });
+            workspace.register_action(
+                model,
+                |workspace, _: &workspace::ToggleProjectSymbols, cx| {
+                    let project = workspace.project().clone();
+                    let handle = model.downgrade();
+                    workspace.toggle_modal(cx, move |cx| {
+                        let delegate = ProjectSymbolsDelegate::new(handle, project);
+                        Picker::uniform_list(delegate, cx).width(rems(34.))
+                    })
+                },
+            );
         },
     )
     .detach();

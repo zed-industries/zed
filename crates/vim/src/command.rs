@@ -162,7 +162,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
         |vim, action: &YankCommand, window, cx| {
             vim.update_editor(cx, |vim, editor, cx| {
                 let snapshot = editor.snapshot(model, cx);
-                if let Ok(range) = action.range.buffer_range(vim, editor, model, cx) {
+                if let Ok(range) = action.range.buffer_range(vim, editor, model, window, cx) {
                     let end = if range.end < snapshot.buffer_snapshot.max_row() {
                         Point::new(range.end.0 + 1, 0)
                     } else {
@@ -188,7 +188,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
         cx,
         |_, action: &WithCount, model, window, cx| {
             for _ in 0..action.count {
-                cx.dispatch_action(Box::new(action.action))
+                cx.dispatch_action(action.action.0)
             }
         },
     );
@@ -200,17 +200,17 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
         cx,
         |vim, action: &WithRange, model, window, cx| {
             let result = vim.update_editor(cx, |vim, editor, cx| {
-                action.range.buffer_range(vim, editor, cx)
+                action.range.buffer_range(vim, editor, model, cx)
             });
 
             let range = match result {
                 None => return,
                 Some(e @ Err(_)) => {
-                    let Some(workspace) = vim.workspace(cx) else {
+                    let Some(workspace) = vim.workspace(model, cx) else {
                         return;
                     };
                     workspace.update(cx, |workspace, model, cx| {
-                        e.notify_err(workspace, cx);
+                        e.notify_err(workspace, model, cx);
                     });
                     return;
                 }
@@ -218,7 +218,7 @@ pub fn register(editor: &mut Editor, model: &Model<Vim>, cx: &mut AppContext) {
             };
 
             let previous_selections = vim
-                .update_editor(cx, |_, editor, cx| {
+                .update_editor(model, cx, |_, editor, cx| {
                     let selections = action
                         .restore_selection
                         .then(|| editor.selections.disjoint_anchor_ranges());

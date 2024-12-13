@@ -2312,7 +2312,6 @@ impl Editor {
     ) {
         Self::new_in_workspace(workspace, model, cx).detach_and_prompt_err(
             "Failed to create buffer",
-            model,
             cx,
             |e, _| match e.error_code() {
                 ErrorCode::RemoteUpgradeRequired => Some(format!(
@@ -6801,8 +6800,7 @@ impl Editor {
         let Some(project) = self.project.clone() else {
             return;
         };
-        self.reload(project, model, cx)
-            .detach_and_notify_err(model, cx);
+        self.reload(project, model, cx).detach_and_notify_err(cx);
     }
 
     pub fn revert_selected_hunks(

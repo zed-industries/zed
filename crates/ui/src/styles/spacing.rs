@@ -50,6 +50,6 @@ derive_dynamic_spacing![
 /// Do not use this to calculate spacing values.
 ///
 /// Always use [DynamicSpacing] for spacing values.
-pub fn ui_density(window: &gpui::Window, cx: &gpui::AppContext) -> UiDensity {
+pub fn ui_density(cx: &gpui::AppContext) -> UiDensity {
     ThemeSettings::get_global(cx).ui_density
 }

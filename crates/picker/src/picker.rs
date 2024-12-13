@@ -555,9 +555,9 @@ impl<D: PickerDelegate> Picker<D> {
     ) {
         if let Head::Editor(ref editor) = &self.head {
             editor.update(cx, |editor, model, cx| {
-                editor.set_text(query, cx);
+                editor.set_text(query, model, cx);
                 let editor_offset = editor.buffer().read(cx).len(cx);
-                editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+                editor.change_selections(Some(Autoscroll::Next), model, cx, |s| {
                     s.select_ranges(Some(editor_offset..editor_offset))
                 });
             });

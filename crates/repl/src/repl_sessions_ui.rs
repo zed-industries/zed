@@ -30,7 +30,7 @@ actions!(
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext| {
-            workspace.register_action(|workspace, _: &Sessions, cx| {
+            workspace.register_action(model, |workspace, _: &Sessions, cx| {
                 let existing = workspace
                     .active_pane()
                     .read(cx)
@@ -51,7 +51,7 @@ pub fn init(cx: &mut AppContext) {
                 }
             });
 
-            workspace.register_action(|_workspace, _: &RefreshKernelspecs, cx| {
+            workspace.register_action(model, |_workspace, _: &RefreshKernelspecs, cx| {
                 let store = ReplStore::global(cx);
                 store.update(cx, |store, model, cx| {
                     store.refresh_kernelspecs(cx).detach();

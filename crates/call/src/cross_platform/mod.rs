@@ -100,7 +100,7 @@ impl ActiveCall {
         client: Arc<Client>,
         user_store: Model<UserStore>,
         model: &Model<Self>,
-        cx: &mut AppContext,
+        _: &mut AppContext,
     ) -> Self {
         Self {
             room: None,
@@ -260,7 +260,7 @@ impl ActiveCall {
         model.spawn(cx, move |this, mut cx| async move {
             let result = invite.await;
             if result.is_ok() {
-                this.update(&mut cx, |this, model, cx| {
+                this.update(&mut cx, |this, _model, cx| {
                     this.report_call_event("invite", cx)
                 })?;
             } else {
@@ -279,7 +279,7 @@ impl ActiveCall {
     pub fn cancel_invite(
         &mut self,
         called_user_id: u64,
-        model: &Model<Self>,
+        _: &Model<Self>,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
         let room_id = if let Some(room) = self.room() {

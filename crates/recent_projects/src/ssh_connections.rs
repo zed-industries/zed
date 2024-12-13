@@ -320,7 +320,7 @@ pub(crate) struct SshConnectionHeader {
 }
 
 impl RenderOnce for SshConnectionHeader {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let theme = cx.theme();
 
         let mut header_color = theme.colors().text;

@@ -40,7 +40,7 @@ impl Selectable for ListSubHeader {
 }
 
 impl RenderOnce for ListSubHeader {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .flex_1()
             .w_full()

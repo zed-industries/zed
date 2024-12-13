@@ -102,8 +102,8 @@ impl Toolbar {
 impl Render for Toolbar {
     fn render(
         &mut self,
-        model: &Model<Self>,
-        window: &mut gpui::Window,
+        _model: &Model<Self>,
+        _window: &mut gpui::Window,
         cx: &mut AppContext,
     ) -> impl IntoElement {
         if !self.has_any_visible_items() {

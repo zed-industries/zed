@@ -39,7 +39,7 @@ pub struct Popover {
 }
 
 impl RenderOnce for Popover {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         div()
             .flex()
             .gap_1()

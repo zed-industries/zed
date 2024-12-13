@@ -19,7 +19,7 @@ actions!(debug, [OpenSyntaxTreeView]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, _: &OpenSyntaxTreeView, cx| {
+        workspace.register_action(model, |workspace, _: &OpenSyntaxTreeView, cx| {
             let active_item = workspace.active_item(cx);
             let workspace_handle = workspace.weak_handle();
             let syntax_tree_view = cx.new_model(|model, cx| {

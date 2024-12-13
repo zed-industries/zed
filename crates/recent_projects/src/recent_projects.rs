@@ -88,7 +88,7 @@ impl RecentProjects {
     }
 
     fn register(workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext) {
-        workspace.register_action(|workspace, open_recent: &OpenRecent, cx| {
+        workspace.register_action(model, |workspace, open_recent: &OpenRecent, cx| {
             let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
                 Self::open(workspace, open_recent.create_new_window, cx);
                 return;

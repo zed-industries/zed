@@ -81,7 +81,7 @@ impl Element for Surface {
         #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        window: &mut Window,
+        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] window: &mut Window,
         #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] _cx: &mut AppContext,
     ) {
         match &self.source {

@@ -25,7 +25,7 @@ impl NavigableEntry {
         }
     }
     /// Create a new [NavigableEntry] that cannot be scrolled to.
-    pub fn focusable(window: &Window, cx: &AppContext) -> Self {
+    pub fn focusable(window: &Window, _cx: &AppContext) -> Self {
         Self {
             focus_handle: window.focus_handle(),
             scroll_anchor: None,
@@ -62,8 +62,8 @@ impl Navigable {
 impl RenderOnce for Navigable {
     fn render(
         self,
-        window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::AppContext,
     ) -> impl crate::IntoElement {
         div()
             .on_action({

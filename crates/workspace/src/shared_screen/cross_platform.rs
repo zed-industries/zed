@@ -29,13 +29,12 @@ impl SharedScreen {
         peer_id: PeerId,
         user: Arc<User>,
         model: &Model<Self>,
-        mut window_handle: AnyWindowHandle,
+        window: &mut Window,
         cx: &mut AppContext,
     ) -> Self {
-        let view = cx.new_model(|model, cx| {
-            RemoteVideoTrackView::new(track.clone(), model, window_handle, cx)
-        });
-        cx.subscribe(&view, |_, _, ev, cx| match ev {
+        let view =
+            cx.new_model(|model, cx| RemoteVideoTrackView::new(track.clone(), model, window, cx));
+        cx.subscribe(view, |_, ev, cx| match ev {
             call::RemoteVideoTrackViewEvent::Close => model.emit(Event::Close, cx),
         })
         .detach();
@@ -44,7 +43,7 @@ impl SharedScreen {
             peer_id,
             user,
             nav_history: Default::default(),
-            focus: window_handle.focus_handle(),
+            focus: window.focus_handle(),
         }
     }
 }
@@ -59,8 +58,8 @@ impl FocusableView for SharedScreen {
 impl Render for SharedScreen {
     fn render(
         &mut self,
-        model: &Model<Self>,
-        window: &mut gpui::Window,
+        _model: &Model<Self>,
+        _window: &mut gpui::Window,
         cx: &mut AppContext,
     ) -> impl IntoElement {
         div()
@@ -79,9 +78,9 @@ impl Item for SharedScreen {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
-    fn deactivated(&mut self, model: &Model<Self>, cx: &mut AppContext) {
+    fn deactivated(&mut self, window: &mut gpui::Window, cx: &mut AppContext) {
         if let Some(nav_history) = self.nav_history.as_mut() {
-            nav_history.push::<()>(None, model, cx);
+            nav_history.push::<()>(None, window, cx);
         }
     }
 

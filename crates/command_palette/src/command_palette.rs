@@ -56,8 +56,9 @@ fn trim_consecutive_whitespaces(input: &str) -> String {
 
 impl CommandPalette {
     fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
-        workspace
-            .register_action(|workspace, _: &Toggle, cx| Self::toggle(workspace, "", model, cx));
+        workspace.register_action(model, |workspace, _: &Toggle, cx| {
+            Self::toggle(workspace, "", model, cx)
+        });
     }
 
     pub fn toggle(

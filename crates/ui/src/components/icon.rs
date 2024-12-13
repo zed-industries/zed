@@ -41,7 +41,7 @@ impl From<AnimationElement<Icon>> for AnyIcon {
 }
 
 impl RenderOnce for AnyIcon {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         match self {
             Self::Icon(icon) => icon.into_any_element(),
             Self::AnimatedIcon(animated_icon) => animated_icon.into_any_element(),
@@ -358,7 +358,7 @@ impl Icon {
 }
 
 impl RenderOnce for Icon {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         svg()
             .with_transformation(self.transformation)
             .size(self.size)
@@ -497,7 +497,7 @@ impl RenderOnce for IconDecoration {
 }
 
 impl ComponentPreview for IconDecoration {
-    fn examples(window: &Window, cx: &AppContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &Window, cx: &AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
 
         let examples = all_kinds
@@ -539,7 +539,7 @@ impl RenderOnce for DecoratedIcon {
 }
 
 impl ComponentPreview for DecoratedIcon {
-    fn examples(window: &Window, cx: &AppContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &Window, cx: &AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let icon_1 = Icon::new(IconName::FileDoc);
         let icon_2 = Icon::new(IconName::FileDoc);
         let icon_3 = Icon::new(IconName::FileDoc);
@@ -658,7 +658,7 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl ComponentPreview for Icon {
-    fn examples(_cx: &Window, cx2: &AppContext) -> Vec<ComponentExampleGroup<Icon>> {
+    fn examples(_window: &Window, _cx: &AppContext) -> Vec<ComponentExampleGroup<Icon>> {
         let arrow_icons = vec![
             IconName::ArrowDown,
             IconName::ArrowLeft,

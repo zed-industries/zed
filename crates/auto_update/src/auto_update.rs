@@ -130,9 +130,9 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     AutoUpdateSetting::register(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
-        workspace.register_action(|_, action: &Check, cx| check(action, model, cx));
+        workspace.register_action(model, |_, action: &Check, cx| check(action, model, cx));
 
-        workspace.register_action(|_, action, cx| {
+        workspace.register_action(model, |_, action, cx| {
             view_release_notes(action, cx);
         });
     })

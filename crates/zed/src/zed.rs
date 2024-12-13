@@ -308,24 +308,24 @@ pub fn initialize_workspace(
         .detach();
 
         workspace
-            .register_action(about)
-            .register_action(|_, _: &Minimize, cx| {
+            .register_action(model, about)
+            .register_action(model, |_, _: &Minimize, cx| {
                 cx.minimize_window();
             })
-            .register_action(|_, _: &Zoom, cx| {
+            .register_action(model, |_, _: &Zoom, cx| {
                 cx.zoom_window();
             })
-            .register_action(|_, _: &ToggleFullScreen, cx| {
+            .register_action(model, |_, _: &ToggleFullScreen, cx| {
                 cx.toggle_fullscreen();
             })
-            .register_action(|_, action: &OpenZedUrl, cx| {
+            .register_action(model, |_, action: &OpenZedUrl, cx| {
                 OpenListener::global(cx).open_urls(vec![action.url.clone()])
             })
-            .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
-            .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+            .register_action(model, |_, action: &OpenBrowser, cx| cx.open_url(&action.url))
+            .register_action(model, move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
                 theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
             })
-            .register_action(|workspace, _: &workspace::Open, cx| {
+            .register_action(model, |workspace, _: &workspace::Open, cx| {
                     workspace.client()
                         .telemetry()
                         .report_app_event("open project".to_string());
@@ -359,31 +359,31 @@ pub fn initialize_workspace(
                     })
                     .detach()
             })
-            .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+            .register_action(model, move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
                 theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
             })
-            .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+            .register_action(model, move |_, _: &zed_actions::ResetBufferFontSize, cx| {
                 theme::reset_buffer_font_size(cx)
             })
-            .register_action(move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
+            .register_action(model, move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
                 theme::adjust_ui_font_size(cx, |size| *size += px(1.0))
             })
-            .register_action(move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
+            .register_action(model, move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
                 theme::adjust_ui_font_size(cx, |size| *size -= px(1.0))
             })
-            .register_action(move |_, _: &zed_actions::ResetUiFontSize, cx| {
+            .register_action(model, move |_, _: &zed_actions::ResetUiFontSize, cx| {
                 theme::reset_ui_font_size(cx)
             })
-            .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+            .register_action(model, move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
                 theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
             })
-            .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+            .register_action(model, move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
                 theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
             })
-            .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+            .register_action(model, move |_, _: &zed_actions::ResetBufferFontSize, cx| {
                 theme::reset_buffer_font_size(cx)
             })
-            .register_action(|_, _: &install_cli::Install, cx| {
+            .register_action(model, |_, _: &install_cli::Install, cx| {
                 cx.spawn(|workspace, mut cx| async move {
                     if cfg!(any(target_os = "linux", target_os = "freebsd")) {
                         let prompt = cx.prompt(
@@ -419,7 +419,7 @@ pub fn initialize_workspace(
                 })
                 .detach_and_prompt_err("Error installing zed cli", cx, |_, _| None);
             })
-            .register_action(|_, _: &install_cli::RegisterZedScheme, cx| {
+            .register_action(model, |_, _: &install_cli::RegisterZedScheme, cx| {
                 cx.spawn(|workspace, mut cx| async move {
                     register_zed_scheme(&cx).await?;
                     workspace.update(&mut cx, |workspace, cx| {
@@ -444,10 +444,10 @@ pub fn initialize_workspace(
                     |_, _| None,
                 );
             })
-            .register_action(|workspace, _: &OpenLog, cx| {
+            .register_action(model, |workspace, _: &OpenLog, cx| {
                 open_log_file(workspace, cx);
             })
-            .register_action(|workspace, _: &zed_actions::OpenLicenses, cx| {
+            .register_action(model, |workspace, _: &zed_actions::OpenLicenses, cx| {
                 open_bundled_file(
                     workspace,
                     asset_str::<Assets>("licenses.md"),
@@ -457,21 +457,21 @@ pub fn initialize_workspace(
                     cx,
                 );
             })
-            .register_action(
+            .register_action(model,
                 move |workspace: &mut Workspace,
                       _: &zed_actions::OpenTelemetryLog,
                       model: &Model<Workspace>, cx: &mut AppContext| {
                     open_telemetry_log_file(workspace, cx);
                 },
             )
-            .register_action(
+            .register_action(model,
                 move |_: &mut Workspace,
                       _: &zed_actions::OpenKeymap,
                       model: &Model<Workspace>, cx: &mut AppContext| {
                     open_settings_file(paths::keymap_file(), || settings::initial_keymap_content().as_ref().into(), cx);
                 },
             )
-            .register_action(
+            .register_action(model,
                 move |_: &mut Workspace, _: &OpenSettings, model: &Model<Workspace>, cx: &mut AppContext| {
                     open_settings_file(
                         paths::settings_file(),
@@ -481,12 +481,12 @@ pub fn initialize_workspace(
                     );
                 },
             )
-            .register_action(
+            .register_action(model,
                 |_: &mut Workspace, _: &OpenAccountSettings, model: &Model<Workspace>, cx: &mut AppContext| {
                     cx.open_url(&zed_urls::account_url(cx));
                 },
             )
-            .register_action(
+            .register_action(model,
                 move |_: &mut Workspace, _: &OpenTasks, model: &Model<Workspace>, cx: &mut AppContext| {
                     open_settings_file(
                         paths::tasks_file(),
@@ -496,9 +496,9 @@ pub fn initialize_workspace(
                     );
                 },
             )
-            .register_action(open_project_settings_file)
-            .register_action(open_project_tasks_file)
-            .register_action(
+            .register_action(model, open_project_settings_file)
+            .register_action(model, open_project_tasks_file)
+            .register_action(model,
                 move |workspace: &mut Workspace,
                       _: &zed_actions::OpenDefaultKeymap,
                       model: &Model<Workspace>, cx: &mut AppContext| {
@@ -512,7 +512,7 @@ pub fn initialize_workspace(
                     );
                 },
             )
-            .register_action(
+            .register_action(model,
                 move |workspace: &mut Workspace,
                       _: &OpenDefaultSettings,
                       model: &Model<Workspace>, cx: &mut AppContext| {
@@ -526,35 +526,35 @@ pub fn initialize_workspace(
                     );
                 },
             )
-            .register_action(
+            .register_action(model,
                 |workspace: &mut Workspace,
                  _: &project_panel::ToggleFocus,
                  model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace.toggle_panel_focus::<ProjectPanel>(cx);
                 },
             )
-            .register_action(
+            .register_action(model,
                 |workspace: &mut Workspace,
                  _: &outline_panel::ToggleFocus,
                  model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace.toggle_panel_focus::<OutlinePanel>(cx);
                 },
             )
-            .register_action(
+            .register_action(model,
                 |workspace: &mut Workspace,
                  _: &collab_ui::collab_panel::ToggleFocus,
                  model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(cx);
                 },
             )
-            .register_action(
+            .register_action(model,
                 |workspace: &mut Workspace,
                  _: &collab_ui::chat_panel::ToggleFocus,
                  model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(cx);
                 },
             )
-            .register_action(
+            .register_action(model,
                 |workspace: &mut Workspace,
                  _: &collab_ui::notification_panel::ToggleFocus,
                  model: &Model<Workspace>, cx: &mut AppContext| {
@@ -562,14 +562,14 @@ pub fn initialize_workspace(
                         .toggle_panel_focus::<collab_ui::notification_panel::NotificationPanel>(cx);
                 },
             )
-            .register_action(
+            .register_action(model,
                 |workspace: &mut Workspace,
                  _: &terminal_panel::ToggleFocus,
                  model: &Model<Workspace>, cx: &mut AppContext| {
                     workspace.toggle_panel_focus::<TerminalPanel>(cx);
                 },
             )
-            .register_action({
+            .register_action(model, {
                 let app_state = Arc::downgrade(&app_state);
                 move |_, _: &NewWindow, cx| {
                     if let Some(app_state) = app_state.upgrade() {
@@ -580,7 +580,7 @@ pub fn initialize_workspace(
                     }
                 }
             })
-            .register_action({
+            .register_action(model, {
                 let app_state = Arc::downgrade(&app_state);
                 move |_, _: &NewFile, cx| {
                     if let Some(app_state) = app_state.upgrade() {
@@ -592,7 +592,7 @@ pub fn initialize_workspace(
                 }
             });
         if workspace.project().read(cx).is_via_ssh() {
-            workspace.register_action({
+            workspace.register_action(model, {
                 move |workspace, _: &OpenServerSettings, cx| {
                     let open_server_settings = workspace.project().update(cx, |project, model, cx| {
                         project.open_server_settings(cx)
@@ -3303,10 +3303,10 @@ mod tests {
         });
         workspace
             .update(cx, |workspace, model, cx| {
-                workspace.register_action(|_, _: &A, _cx| {});
-                workspace.register_action(|_, _: &B, _cx| {});
-                workspace.register_action(|_, _: &ActivatePreviousPane, _cx| {});
-                workspace.register_action(|_, _: &ActivatePrevItem, _cx| {});
+                workspace.register_action(model, |_, _: &A, _cx| {});
+                workspace.register_action(model, |_, _: &B, _cx| {});
+                workspace.register_action(model, |_, _: &ActivatePreviousPane, _cx| {});
+                workspace.register_action(model, |_, _: &ActivatePrevItem, _cx| {});
                 model.notify(cx);
             })
             .unwrap();
@@ -3375,9 +3375,9 @@ mod tests {
 
         workspace
             .update(cx, |workspace, model, _| {
-                workspace.register_action(|_, _: &A, _cx| {});
-                workspace.register_action(|_, _: &B, _cx| {});
-                workspace.register_action(|_, _: &Deploy, _cx| {});
+                workspace.register_action(model, |_, _: &A, _cx| {});
+                workspace.register_action(model, |_, _: &B, _cx| {});
+                workspace.register_action(model, |_, _: &Deploy, _cx| {});
             })
             .unwrap();
         app_state

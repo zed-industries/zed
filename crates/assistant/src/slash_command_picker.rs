@@ -252,7 +252,7 @@ impl PickerDelegate for SlashCommandDelegate {
 }
 
 impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let all_models = self
             .working_set
             .featured_command_names(cx)

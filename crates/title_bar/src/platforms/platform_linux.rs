@@ -18,7 +18,7 @@ impl LinuxWindowControls {
 }
 
 impl RenderOnce for LinuxWindowControls {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         h_flex()
             .id("generic-window-controls")
             .px_3()

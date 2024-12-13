@@ -1,8 +1,6 @@
 #![allow(missing_docs)]
 
-use std::rc::Rc;
-
-use gpui::{Action, AnyElement, AnyView, FocusHandle, IntoElement, Model, Render};
+use gpui::{Action, AnyView, FocusHandle, IntoElement, Model, Render};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -91,11 +89,11 @@ impl Tooltip {
 impl Render for Tooltip {
     fn render(
         &mut self,
-        model: &Model<Self>,
-        window: &mut gpui::Window,
+        _model: &Model<Self>,
+        _window: &mut gpui::Window,
         cx: &mut AppContext,
     ) -> impl IntoElement {
-        tooltip_container(model, window, cx, |el, _model, _window, _cx| {
+        tooltip_container(cx, |el, _cx| {
             el.child(
                 h_flex()
                     .gap_4()
@@ -111,11 +109,9 @@ impl Render for Tooltip {
     }
 }
 
-pub fn tooltip_container<V>(
-    model: &Model<V>,
-    window: &mut Window,
+pub fn tooltip_container(
     cx: &mut AppContext,
-    f: impl FnOnce(Div, &Model<V>, &mut Window, &mut AppContext) -> Div,
+    f: impl FnOnce(Div, &mut AppContext) -> Div,
 ) -> impl IntoElement {
     let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
@@ -128,7 +124,7 @@ pub fn tooltip_container<V>(
             .text_color(cx.theme().colors().text)
             .py_1()
             .px_2()
-            .map(|el| f(el, model, window, cx)),
+            .map(|el| f(el, cx)),
     )
 }
 
@@ -159,11 +155,11 @@ impl LinkPreview {
 impl Render for LinkPreview {
     fn render(
         &mut self,
-        model: &Model<Self>,
-        window: &mut gpui::Window,
+        _model: &Model<Self>,
+        _window: &mut gpui::Window,
         cx: &mut AppContext,
     ) -> impl IntoElement {
-        tooltip_container(model, window, cx, |el, _model, _window, _cx| {
+        tooltip_container(cx, |el, _cx| {
             el.child(
                 Label::new(self.link.clone())
                     .size(LabelSize::XSmall)

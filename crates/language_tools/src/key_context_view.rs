@@ -18,7 +18,7 @@ actions!(debug, [OpenKeyContextView]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, _: &OpenKeyContextView, cx| {
+        workspace.register_action(model, |workspace, _: &OpenKeyContextView, cx| {
             let key_context_view = cx.new_model(KeyContextView::new);
             workspace.add_item_to_active_pane(Box::new(key_context_view), None, true, cx)
         });

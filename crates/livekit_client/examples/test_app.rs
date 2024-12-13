@@ -6,10 +6,9 @@
 use gpui::{
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
-    px, rgb, size, AppContext, AsyncAppContext, Bounds, Context, Flatten, InteractiveElement,
-    KeyBinding, Menu, MenuItem, Model, ParentElement, Pixels, Render, ScreenCaptureStream,
-    SharedString, StatefulInteractiveElement as _, Styled, Task, WindowBounds, WindowHandle,
-    WindowOptions,
+    px, rgb, size, AppContext, AsyncAppContext, Bounds, Context, InteractiveElement, KeyBinding,
+    Menu, MenuItem, Model, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
+    StatefulInteractiveElement as _, Styled, Task, WindowBounds, WindowHandle, WindowOptions,
 };
 #[cfg(not(target_os = "windows"))]
 use livekit_client::{
@@ -221,7 +220,7 @@ impl LivekitWindow {
                         output.screen_share_output_view = Some((
                             track.clone(),
                             cx.new_model(|model, cx| {
-                                RemoteVideoTrackView::new(track, model, window.handle(), cx)
+                                RemoteVideoTrackView::new(track, model, window, cx)
                             }),
                         ));
                     }

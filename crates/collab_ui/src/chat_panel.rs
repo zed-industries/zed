@@ -38,7 +38,7 @@ const CHAT_PANEL_KEY: &str = "ChatPanel";
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+        workspace.register_action(model, |workspace, _: &ToggleFocus, cx| {
             workspace.toggle_panel_focus::<ChatPanel>(cx);
         });
     })
@@ -102,7 +102,7 @@ impl ChatPanel {
                 ListState::new(0, gpui::ListAlignment::Bottom, px(1000.), move |ix, cx| {
                     if let Some(view) = view.upgrade() {
                         view.update(cx, |view, model, cx| {
-                            view.render_message(ix, cx).into_any_element()
+                            view.render_message(ix, model, cx).into_any_element()
                         })
                     } else {
                         div().into_any()
@@ -248,7 +248,7 @@ impl ChatPanel {
             self.markdown_data.clear();
             self.message_list.reset(chat.read(cx).message_count());
             self.message_editor.update(cx, |editor, model, cx| {
-                editor.set_channel_chat(chat.clone(), cx);
+                editor.set_channel_chat(chat.clone(), model, cx);
                 editor.clear_reply_to_message_id();
             });
             let subscription = cx.subscribe(&chat, Self::channel_did_change);

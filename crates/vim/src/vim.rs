@@ -104,7 +104,7 @@ pub fn init(cx: &mut AppContext) {
         .detach();
 
     cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, _: &ToggleVimMode, cx| {
+        workspace.register_action(model, |workspace, _: &ToggleVimMode, cx| {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
             update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
@@ -112,7 +112,7 @@ pub fn init(cx: &mut AppContext) {
             })
         });
 
-        workspace.register_action(|_, _: &OpenDefaultKeymap, cx| {
+        workspace.register_action(model, |_, _: &OpenDefaultKeymap, cx| {
             model.emit(
                 cx,
                 workspace::Event::OpenBundledFile {
@@ -123,11 +123,11 @@ pub fn init(cx: &mut AppContext) {
             );
         });
 
-        workspace.register_action(|workspace, _: &ResetPaneSizes, cx| {
+        workspace.register_action(model, |workspace, _: &ResetPaneSizes, cx| {
             workspace.reset_pane_sizes(cx);
         });
 
-        workspace.register_action(|workspace, _: &MaximizePane, cx| {
+        workspace.register_action(model, |workspace, _: &MaximizePane, cx| {
             let pane = workspace.active_pane();
             let Some(size) = workspace.bounding_box_for_pane(&pane) else {
                 return;
@@ -144,7 +144,7 @@ pub fn init(cx: &mut AppContext) {
             workspace.resize_pane(Axis::Vertical, desired_size - size.size.height, cx)
         });
 
-        workspace.register_action(|workspace, action: &ResizePane, cx| {
+        workspace.register_action(model, |workspace, action: &ResizePane, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
             let Ok(font_id) = cx.text_system().font_id(&theme.buffer_font) else {
@@ -168,7 +168,7 @@ pub fn init(cx: &mut AppContext) {
             workspace.resize_pane(axis, amount * count, cx);
         });
 
-        workspace.register_action(|workspace, _: &SearchSubmit, cx| {
+        workspace.register_action(model, |workspace, _: &SearchSubmit, cx| {
             let vim = workspace
                 .focused_pane(cx)
                 .read(cx)

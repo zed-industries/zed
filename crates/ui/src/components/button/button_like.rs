@@ -148,11 +148,7 @@ pub(crate) struct ButtonLikeStyles {
     pub icon_color: Hsla,
 }
 
-fn element_bg_from_elevation(
-    elevation: Option<ElevationIndex>,
-    window: &mut Window,
-    cx: &mut AppContext,
-) -> Hsla {
+fn element_bg_from_elevation(elevation: Option<ElevationIndex>, cx: &mut AppContext) -> Hsla {
     match elevation {
         Some(ElevationIndex::Background) => cx.theme().colors().element_background,
         Some(ElevationIndex::ElevatedSurface) => cx.theme().colors().elevated_surface_background,
@@ -166,12 +162,11 @@ impl ButtonStyle {
     pub(crate) fn enabled(
         self,
         elevation: Option<ElevationIndex>,
-        window: &mut Window,
         cx: &mut AppContext,
     ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
-                background: element_bg_from_elevation(elevation, window, cx),
+                background: element_bg_from_elevation(elevation, cx),
                 border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -195,12 +190,11 @@ impl ButtonStyle {
     pub(crate) fn hovered(
         self,
         elevation: Option<ElevationIndex>,
-        window: &mut Window,
         cx: &mut AppContext,
     ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => {
-                let mut filled_background = element_bg_from_elevation(elevation, window, cx);
+                let mut filled_background = element_bg_from_elevation(elevation, cx);
                 filled_background.fade_out(0.92);
 
                 ButtonLikeStyles {
@@ -233,7 +227,7 @@ impl ButtonStyle {
         }
     }
 
-    pub(crate) fn active(self, window: &mut Window, cx: &mut AppContext) -> ButtonLikeStyles {
+    pub(crate) fn active(self, cx: &mut AppContext) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_active,
@@ -260,7 +254,7 @@ impl ButtonStyle {
     }
 
     #[allow(unused)]
-    pub(crate) fn focused(self, window: &mut Window, cx: &mut AppContext) -> ButtonLikeStyles {
+    pub(crate) fn focused(self, cx: &mut AppContext) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_background,
@@ -288,7 +282,6 @@ impl ButtonStyle {
     pub(crate) fn disabled(
         self,
         elevation: Option<ElevationIndex>,
-        window: &mut Window,
         cx: &mut AppContext,
     ) -> ButtonLikeStyles {
         match self {
@@ -496,7 +489,7 @@ impl ParentElement for ButtonLike {
 }
 
 impl RenderOnce for ButtonLike {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let style = self
             .selected_style
             .filter(|_| self.selected)
@@ -522,12 +515,12 @@ impl RenderOnce for ButtonLike {
                 }
                 ButtonSize::None => this,
             })
-            .bg(style.enabled(self.layer, window, cx).background)
+            .bg(style.enabled(self.layer, cx).background)
             .when(self.disabled, |this| this.cursor_not_allowed())
             .when(!self.disabled, |this| {
                 this.cursor_pointer()
-                    .hover(|hover| hover.bg(style.hovered(self.layer, window, cx).background))
-                    .active(|active| active.bg(style.active(window, cx).background))
+                    .hover(|hover| hover.bg(style.hovered(self.layer, cx).background))
+                    .active(|active| active.bg(style.active(cx).background))
             })
             .when_some(
                 self.on_click.filter(|_| !self.disabled),

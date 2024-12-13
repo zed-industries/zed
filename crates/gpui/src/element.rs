@@ -261,7 +261,7 @@ pub trait RenderOnce: 'static {
     /// Render this component into an element tree. Note that this method
     /// takes ownership of self, as compared to [`Render::render()`] method
     /// which takes a mutable reference.
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement;
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement;
 }
 
 /// This is a helper trait to provide a uniform interface for constructing elements that

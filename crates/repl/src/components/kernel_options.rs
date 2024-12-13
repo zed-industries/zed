@@ -236,7 +236,7 @@ impl PickerDelegate for KernelPickerDelegate {
 }
 
 impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let store = ReplStore::global(cx).read(cx);
 
         let all_kernels: Vec<KernelSpecification> = store

@@ -32,12 +32,13 @@ pub fn init(cx: &mut AppContext) {
     BaseKeymap::register(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
-        workspace.register_action(|workspace, _: &Welcome, cx| {
+        workspace.register_action(model, |workspace, _: &Welcome, cx| {
             let welcome_page = WelcomePage::new(workspace, cx);
             workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, model, cx)
         });
-        workspace
-            .register_action(|_workspace, _: &ResetHints, cx| MultibufferHint::set_count(0, cx));
+        workspace.register_action(model, |_workspace, _: &ResetHints, cx| {
+            MultibufferHint::set_count(0, cx)
+        });
     })
     .detach();
 

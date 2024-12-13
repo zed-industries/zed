@@ -33,7 +33,7 @@ impl WindowsWindowControls {
 }
 
 impl RenderOnce for WindowsWindowControls {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let close_button_hover_color = Rgba {
             r: 232.0 / 255.0,
             g: 17.0 / 255.0,

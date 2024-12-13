@@ -1,7 +1,6 @@
 #![allow(missing_docs)]
 
 use gpui::{relative, AnyElement, FontWeight, StyleRefinement, Styled, UnderlineStyle};
-use settings::Settings;
 use smallvec::SmallVec;
 use theme::ThemeSettings;
 
@@ -158,7 +157,7 @@ impl ParentElement for LabelLike {
 }
 
 impl RenderOnce for LabelLike {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         use settings::Settings;
         let settings = ThemeSettings::get_global(cx);
 

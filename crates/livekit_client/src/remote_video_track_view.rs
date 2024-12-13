@@ -4,6 +4,7 @@ use futures::StreamExt as _;
 use gpui::{
     AnyWindowHandle, AppContext, Context, Empty, EventEmitter, IntoElement, Model, Render, Task,
 };
+use util::ResultExt;
 
 pub struct RemoteVideoTrackView {
     track: RemoteVideoTrack,
@@ -24,10 +25,10 @@ impl RemoteVideoTrackView {
     pub fn new(
         track: RemoteVideoTrack,
         model: &Model<Self>,
-        mut window_handle: AnyWindowHandle,
+        window: &mut gpui::Window,
         cx: &mut AppContext,
     ) -> Self {
-        window_handle.read(cx, |window, _| window.focus_handle());
+        let window_handle = window.handle();
         let frames = super::play_remote_video_track(&track);
 
         Self {
@@ -41,23 +42,26 @@ impl RemoteVideoTrackView {
                         model.notify(cx);
                     })?;
                 }
-                window_handle.update(&mut cx, |window, cx| {
-                    this.update(cx, |_this, model, cx| {
-                        #[cfg(not(target_os = "macos"))]
-                        {
-                            use util::ResultExt as _;
-                            if let Some(frame) = _this.previous_rendered_frame.take() {
-                                window.drop_image(frame).log_err();
+                window_handle
+                    .update(&mut cx, |window, cx| {
+                        this.update(cx, |_this, model, cx| {
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                use util::ResultExt as _;
+                                if let Some(frame) = _this.previous_rendered_frame.take() {
+                                    window.drop_image(frame).log_err();
+                                }
+                                // TODO(mgsloan): This might leak the last image of the screenshare if
+                                // render is called after the screenshare ends.
+                                if let Some(frame) = _this.current_rendered_frame.take() {
+                                    window.drop_image(frame).log_err();
+                                }
                             }
-                            // TODO(mgsloan): This might leak the last image of the screenshare if
-                            // render is called after the screenshare ends.
-                            if let Some(frame) = _this.current_rendered_frame.take() {
-                                window.drop_image(frame).log_err();
-                            }
-                        }
-                        model.emit(RemoteVideoTrackViewEvent::Close, cx)
+                            model.emit(RemoteVideoTrackViewEvent::Close, cx)
+                        })
+                        .log_err()
                     })
-                })?;
+                    .log_err();
                 Ok(())
             }),
             #[cfg(not(target_os = "macos"))]
@@ -70,10 +74,10 @@ impl RemoteVideoTrackView {
     pub fn clone(
         &self,
         model: &Model<Self>,
-        mut window_handle: AnyWindowHandle,
+        window: &mut gpui::Window,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.new_model(|model, cx| Self::new(self.track.clone(), model, window_handle, cx))
+        cx.new_model(|model, cx| Self::new(self.track.clone(), model, window, cx))
     }
 }
 

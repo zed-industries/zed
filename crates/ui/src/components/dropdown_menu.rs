@@ -41,7 +41,7 @@ impl Disableable for DropdownMenu {
 }
 
 impl RenderOnce for DropdownMenu {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         PopoverMenu::new(self.id)
             .full_width(self.full_width)
             .menu(move |_window, _cx| Some(self.menu.clone()))
@@ -108,7 +108,7 @@ impl Clickable for DropdownMenuTrigger {
 }
 
 impl RenderOnce for DropdownMenuTrigger {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let disabled = self.disabled;
 
         h_flex()

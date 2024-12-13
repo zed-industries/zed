@@ -18,7 +18,7 @@ actions!(auto_update, [ViewReleaseNotesLocally]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
-        workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, cx| {
+        workspace.register_action(model, |workspace, _: &ViewReleaseNotesLocally, cx| {
             view_release_notes_locally(workspace, model, cx);
         });
     })

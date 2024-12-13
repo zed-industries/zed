@@ -75,20 +75,23 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl FileFinder {
-    fn register(workspace: &mut Workspace, _: &Model<Workspace>, cx: &mut AppContext) {
-        workspace.register_action(cx, |workspace, action: &workspace::ToggleFileFinder, cx| {
-            let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, action.separate_history, model, cx).detach();
-                return;
-            };
+    fn register(workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext) {
+        workspace.register_action(
+            model,
+            |workspace, action: &workspace::ToggleFileFinder, cx| {
+                let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
+                    Self::open(workspace, action.separate_history, model, cx).detach();
+                    return;
+                };
 
-            file_finder.update(cx, |file_finder, model, cx| {
-                file_finder.init_modifiers = Some(cx.modifiers());
-                file_finder.picker.update(cx, |picker, model, cx| {
-                    picker.cycle_selection(cx);
+                file_finder.update(cx, |file_finder, model, cx| {
+                    file_finder.init_modifiers = Some(cx.modifiers());
+                    file_finder.picker.update(cx, |picker, model, cx| {
+                        picker.cycle_selection(cx);
+                    });
                 });
-            });
-        });
+            },
+        );
     }
 
     fn open(
@@ -200,7 +203,7 @@ impl FileFinder {
         self.picker.update(cx, |picker, model, cx| {
             let menu_handle = &picker.delegate.popover_menu_handle;
             if menu_handle.is_deployed() {
-                menu_handle.hide(window, cx);
+                menu_handle.hide(cx);
             } else {
                 menu_handle.show(window, cx);
             }

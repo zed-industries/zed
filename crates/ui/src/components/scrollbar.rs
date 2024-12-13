@@ -213,7 +213,7 @@ impl Element for Scrollbar {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut gpui::Window,
-        cx: &mut gpui::AppContext,
+        _cx: &mut gpui::AppContext,
     ) -> Self::PrepaintState {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.insert_hitbox(bounds, false)
@@ -333,7 +333,7 @@ impl Element for Scrollbar {
             });
             window.on_mouse_event({
                 let scroll = scroll.clone();
-                move |event: &ScrollWheelEvent, phase, window, cx| {
+                move |event: &ScrollWheelEvent, phase, window, _cx| {
                     if phase.bubble() && bounds.contains(&event.position) {
                         let current_offset = scroll.offset();
                         scroll.set_offset(
@@ -344,7 +344,7 @@ impl Element for Scrollbar {
             });
             let state = self.state.clone();
             let kind = self.kind;
-            window.on_mouse_event(move |event: &MouseMoveEvent, _, window, cx| {
+            window.on_mouse_event(move |event: &MouseMoveEvent, _, _window, cx| {
                 if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
                     if let Some(ContentSize {
                         size: item_size, ..
@@ -382,7 +382,7 @@ impl Element for Scrollbar {
                 }
             });
             let state = self.state.clone();
-            window.on_mouse_event(move |_event: &MouseUpEvent, phase, window, cx| {
+            window.on_mouse_event(move |_event: &MouseUpEvent, phase, _window, cx| {
                 if phase.bubble() {
                     state.drag.take();
                     if let Some(id) = state.parent_id {

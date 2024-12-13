@@ -76,7 +76,7 @@ actions!(notification_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+        workspace.register_action(model, |workspace, _: &ToggleFocus, cx| {
             workspace.toggle_panel_focus::<NotificationPanel>(cx);
         });
     })
@@ -116,7 +116,9 @@ impl NotificationPanel {
                 ListState::new(0, ListAlignment::Top, px(1000.), move |ix, cx| {
                     view.upgrade()
                         .and_then(|view| {
-                            view.update(cx, |this, model, cx| this.render_notification(ix, cx))
+                            view.update(cx, |this, model, cx| {
+                                this.render_notification(ix, model, cx)
+                            })
                         })
                         .unwrap_or_else(|| div().into_any())
                 });
@@ -154,12 +156,12 @@ impl NotificationPanel {
                 unseen_notifications: Vec::new(),
             };
 
-            let mut old_dock_position = this.position(model, cx);
+            let mut old_dock_position = this.position(cx);
             this.subscriptions.extend([
                 cx.observe(&this.notification_store, |_, _, cx| model.notify(cx)),
                 cx.subscribe(&this.notification_store, Self::on_notification_event),
                 cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
-                    let new_dock_position = this.position(model, cx);
+                    let new_dock_position = this.position(cx);
                     if new_dock_position != old_dock_position {
                         old_dock_position = new_dock_position;
                         model.emit(Event::DockPositionChanged, cx);
@@ -555,7 +557,7 @@ impl NotificationPanel {
             model.spawn(cx, |this, mut cx| async move {
                 cx.background_executor().timer(TOAST_DURATION).await;
                 this.update(&mut cx, |this, model, cx| {
-                    this.remove_toast(notification_id, cx)
+                    this.remove_toast(notification_id, model, cx)
                 })
                 .ok();
             }),
@@ -693,7 +695,7 @@ impl Panel for NotificationPanel {
         "NotificationPanel"
     }
 
-    fn position(&self, window: &gpui::Window, cx: &gpui::AppContext) -> DockPosition {
+    fn position(&self, cx: &gpui::AppContext) -> DockPosition {
         NotificationPanelSettings::get_global(cx).dock
     }
 
@@ -709,7 +711,7 @@ impl Panel for NotificationPanel {
         );
     }
 
-    fn size(&self, window: &gpui::Window, cx: &gpui::AppContext) -> Pixels {
+    fn size(&self, cx: &gpui::AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| NotificationPanelSettings::get_global(cx).default_width)
     }
@@ -733,7 +735,7 @@ impl Panel for NotificationPanel {
         }
     }
 
-    fn icon(&self, window: &gpui::Window, cx: &gpui::AppContext) -> Option<IconName> {
+    fn icon(&self, cx: &gpui::AppContext) -> Option<IconName> {
         let show_button = NotificationPanelSettings::get_global(cx).button;
         if !show_button {
             return None;
@@ -746,11 +748,11 @@ impl Panel for NotificationPanel {
         Some(IconName::BellDot)
     }
 
-    fn icon_tooltip(&self, _window: &Window, cx: &AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, cx: &AppContext) -> Option<&'static str> {
         Some("Notification Panel")
     }
 
-    fn icon_label(&self, window: &Window, cx: &AppContext) -> Option<String> {
+    fn icon_label(&self, cx: &AppContext) -> Option<String> {
         let count = self.notification_store.read(cx).unread_notification_count();
         if count == 0 {
             None

@@ -52,7 +52,7 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
-            workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+            workspace.register_action(model, |workspace, _: &ToggleFocus, cx| {
                 if workspace
                     .panel::<TerminalPanel>(cx)
                     .as_ref()

@@ -22,7 +22,7 @@ actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        workspace.register_action(|workspace, _: &OpenSettingsEditor, cx| {
+        workspace.register_action(model, |workspace, _: &OpenSettingsEditor, cx| {
             let existing = workspace
                 .active_pane()
                 .read(cx)

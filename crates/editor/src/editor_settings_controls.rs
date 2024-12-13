@@ -80,7 +80,7 @@ impl EditableSettingControl for BufferFontFamilyControl {
 }
 
 impl RenderOnce for BufferFontFamilyControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -139,7 +139,7 @@ impl EditableSettingControl for BufferFontSizeControl {
 }
 
 impl RenderOnce for BufferFontSizeControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -184,7 +184,7 @@ impl EditableSettingControl for BufferFontWeightControl {
 }
 
 impl RenderOnce for BufferFontWeightControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -255,7 +255,7 @@ impl EditableSettingControl for BufferFontLigaturesControl {
 }
 
 impl RenderOnce for BufferFontLigaturesControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         CheckboxWithLabel::new(
@@ -308,7 +308,7 @@ impl EditableSettingControl for InlineGitBlameControl {
 }
 
 impl RenderOnce for InlineGitBlameControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         CheckboxWithLabel::new(
@@ -361,7 +361,7 @@ impl EditableSettingControl for LineNumbersControl {
 }
 
 impl RenderOnce for LineNumbersControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         CheckboxWithLabel::new(
@@ -407,7 +407,7 @@ impl EditableSettingControl for RelativeLineNumbersControl {
 }
 
 impl RenderOnce for RelativeLineNumbersControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         DropdownMenu::new(

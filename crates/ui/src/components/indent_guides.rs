@@ -55,7 +55,7 @@ pub fn indent_guides<V: Render>(
         + 'static,
 ) -> IndentGuides {
     let compute_indents_fn = Box::new(
-        move |range, window: &mut gpui::Window, cx: &mut gpui::AppContext| {
+        move |range, _window: &mut gpui::Window, cx: &mut gpui::AppContext| {
             view.update(cx, |this, model, cx| {
                 compute_indents_fn(this, range, model, cx)
             })

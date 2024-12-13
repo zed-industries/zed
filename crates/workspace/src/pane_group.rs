@@ -352,7 +352,7 @@ impl Member {
                                     |this, (leader_project_id, leader_user_id)| {
                                         this.cursor_pointer().on_mouse_down(
                                             MouseButton::Left,
-                                            model.listener(move |this, _, model, window, cx| {
+                                            model.listener(move |this, _, _model, _window, cx| {
                                                 crate::join_in_room_project(
                                                     leader_project_id,
                                                     leader_user_id,

@@ -321,7 +321,7 @@ impl Mode {
 }
 impl RemoteServerProjects {
     pub fn register(workspace: &mut Workspace, _: &Model<Workspace>, _: &mut AppContext) {
-        workspace.register_action(|workspace, _: &OpenRemote, cx| {
+        workspace.register_action(model, |workspace, _: &OpenRemote, cx| {
             let handle = model.downgrade();
             workspace.toggle_modal(cx, |cx| Self::new(cx, handle))
         });

@@ -3096,7 +3096,7 @@ impl Workspace {
             destination_index,
             activate_pane,
             focus_item,
-            model,
+            window,
             cx,
         );
         item
@@ -3110,7 +3110,7 @@ impl Workspace {
         cx: &mut AppContext,
     ) {
         if let Some(shared_screen) =
-            self.shared_screen_for_peer(peer_id, &self.active_pane, model, cx)
+            self.shared_screen_for_peer(peer_id, &self.active_pane, window, cx)
         {
             self.active_pane.update(cx, |pane, model, cx| {
                 pane.add_item(
@@ -3362,8 +3362,8 @@ impl Workspace {
         }
         self.zoomed_position = None;
         model.emit(Event::ZoomChanged, cx);
-        self.update_active_view_for_followers(model, cx);
-        pane.model.update(cx, |pane, model, _| {
+        self.update_active_view_for_followers(window, cx);
+        pane.update(cx, |pane, model, _| {
             pane.track_alternate_file_items();
         });
 
@@ -3416,7 +3416,7 @@ impl Workspace {
                     cx.invalidate_character_coordinates();
                 });
 
-                pane.model.update(cx, |pane, model, _| {
+                pane.update(cx, |pane, model, _| {
                     pane.track_alternate_file_items();
                 });
                 if *local {
@@ -3424,7 +3424,7 @@ impl Workspace {
                 }
                 if &pane == self.active_pane() {
                     self.active_item_path_changed(model, cx);
-                    self.update_active_view_for_followers(model, cx);
+                    self.update_active_view_for_followers(window, cx);
                 }
             }
             pane::Event::UserSavedItem { item, save_intent } => model.emit(
@@ -3625,7 +3625,7 @@ impl Workspace {
     ) {
         if self.center.remove(&pane).unwrap() {
             self.force_remove_pane(&pane, &focus_on, model, window, cx);
-            self.unfollow_in_pane(&pane, window, cx);
+            self.unfollow_in_pane(&pane, model, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
             for removed_item in pane.read(cx).items() {
                 self.panes_by_item.remove(&removed_item.item_id());
@@ -3746,7 +3746,7 @@ impl Workspace {
                 Ok::<_, anyhow::Error>(())
             })??;
             if let Some(view) = response.active_view {
-                Self::add_view_from_leader(this.clone(), leader_id, &view, model, &mut cx).await?;
+                Self::add_view_from_leader(this.clone(), leader_id, &view, window, &mut cx).await?;
             }
             this.update(&mut cx, |this, model, cx| {
                 this.leader_updated(leader_id, model, window, cx)
@@ -3971,7 +3971,7 @@ impl Workspace {
         model: &Model<Self>,
         cx: &mut AppContext,
     ) -> Option<proto::View> {
-        let (item, panel_id) = self.active_item_for_followers(model, cx);
+        let (item, panel_id) = self.active_item_for_followers(window, cx);
         let item = item?;
         let leader_id = self
             .pane_for(&*item)
@@ -4355,7 +4355,7 @@ impl Workspace {
                 }
             }
         } else if let Some(shared_screen) =
-            self.shared_screen_for_peer(leader_id, &state.center_pane, model, cx)
+            self.shared_screen_for_peer(leader_id, &state.center_pane, window, cx)
         {
             item_to_activate = Some((None, Box::new(shared_screen)));
         }
@@ -4387,7 +4387,7 @@ impl Workspace {
             }
 
             if focus_active_item {
-                pane.focus_active_item(model, cx)
+                pane.focus_active_item(window, cx)
             }
         });
 
@@ -4432,7 +4432,7 @@ impl Workspace {
 
     pub fn on_window_activation_changed(&mut self, model: &Model<Self>, cx: &mut AppContext) {
         if cx.is_window_active() {
-            self.update_active_view_for_followers(model, cx);
+            self.update_active_view_for_followers(window, cx);
 
             if let Some(database_id) = self.database_id {
                 cx.background_executor()
@@ -4443,7 +4443,7 @@ impl Workspace {
             for pane in &self.panes {
                 pane.update(cx, |pane, model, cx| {
                     if let Some(item) = pane.active_item() {
-                        item.workspace_deactivated(model, cx);
+                        item.workspace_deactivated(window, cx);
                     }
                     for item in pane.items() {
                         if matches!(
@@ -4525,7 +4525,7 @@ impl Workspace {
         cx: &mut AppContext,
     ) -> Task<()> {
         self.session_id.take();
-        self.serialize_workspace_internal(model, cx)
+        self.serialize_workspace_internal(window, cx)
     }
 
     fn force_remove_pane(
@@ -4558,7 +4558,7 @@ impl Workspace {
                     .timer(Duration::from_millis(100))
                     .await;
                 this.update(&mut cx, |this, model, cx| {
-                    this.serialize_workspace_internal(model, cx).detach();
+                    this.serialize_workspace_internal(window, cx).detach();
                     this._schedule_serialize.take();
                 })
                 .log_err();
@@ -4861,7 +4861,7 @@ impl Workspace {
                             item_kind,
                             serialized_workspace.id,
                             loaded_items,
-                            model,
+                            window,
                             cx,
                         )
                         .log_err()
@@ -4898,7 +4898,7 @@ impl Workspace {
             .on_action(
                 model.listener(|workspace, _: &Unfollow, model, window, cx| {
                     let pane = workspace.active_pane().clone();
-                    workspace.unfollow_in_pane(&pane, window, cx);
+                    workspace.unfollow_in_pane(&pane, model, cx);
                 }),
             )
             .on_action(
@@ -4922,7 +4922,7 @@ impl Workspace {
             .on_action(model.listener(|workspace, _: &SaveAs, model, window, cx| {
                 workspace
                     .save_active_item(SaveIntent::SaveAs, window, cx)
-                    .detach_and_prompt_err("Failed to save", window, cx, |_, _| None);
+                    .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
             }))
             .on_action(
                 model.listener(|workspace, _: &ActivatePreviousPane, model, window, cx| {
@@ -5064,6 +5064,7 @@ impl Workspace {
         &mut self,
         _: &ToggleCenteredLayout,
         model: &Model<Self>,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) {
         self.centered_layout = !self.centered_layout;
@@ -6178,7 +6179,14 @@ pub fn create_and_open_local_file(
         let mut items = workspace
             .update(&mut cx, |workspace, model, cx| {
                 workspace.with_local_workspace(model, cx, |workspace, model, cx| {
-                    workspace.open_paths(vec![path.to_path_buf()], OpenVisible::None, None, cx)
+                    workspace.open_paths(
+                        vec![path.to_path_buf()],
+                        OpenVisible::None,
+                        None,
+                        model,
+                        window,
+                        cx,
+                    )
                 })
             })?
             .await?
@@ -6283,10 +6291,16 @@ pub fn open_ssh_project(
         })?;
 
         window
-            .update(&mut cx, |_, model, cx| {
+            .update(&mut cx, |_, model, window, cx| {
                 cx.activate_window();
 
-                open_items(serialized_workspace, project_paths_to_open, model, cx)
+                open_items(
+                    serialized_workspace,
+                    project_paths_to_open,
+                    model,
+                    window,
+                    cx,
+                )
             })?
             .await?;
 
@@ -6387,7 +6401,7 @@ pub fn join_in_room_project(
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
-                cx.open_window(options, |cx| {
+                cx.open_window(options, |_, window, cx| {
                     cx.new_model(|model, cx| {
                         Workspace::new(
                             Default::default(),
@@ -6402,7 +6416,7 @@ pub fn join_in_room_project(
             })??
         };
 
-        workspace.update(&mut cx, |workspace, model, cx| {
+        workspace.update(&mut cx, |workspace, model, window, cx| {
             cx.activate(true);
             cx.activate_window();
 
@@ -6449,7 +6463,7 @@ pub fn reload(reload: &Reload, cx: &mut AppContext) {
     let mut prompt = None;
     if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
         prompt = window
-            .update(cx, |_, model, cx| {
+            .update(cx, |_, model, window, cx| {
                 cx.prompt(
                     PromptLevel::Info,
                     "Are you sure you want to restart?",
@@ -6471,7 +6485,7 @@ pub fn reload(reload: &Reload, cx: &mut AppContext) {
 
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
-            if let Ok(should_close) = window.update(&mut cx, |workspace, model, cx| {
+            if let Ok(should_close) = window.update(&mut cx, |workspace, model, window, cx| {
                 workspace.prepare_to_close(CloseIntent::Quit, cx)
             }) {
                 if !should_close.await? {
@@ -6544,7 +6558,7 @@ pub fn client_side_decorations(
                 .when(!tiling.right, |div| {
                     div.pr(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
-                .on_mouse_move(move |e, cx| {
+                .on_mouse_move(move |e, window, cx| {
                     let size = cx.window_bounds().get_bounds().size;
                     let pos = e.position;
 
@@ -6560,7 +6574,7 @@ pub fn client_side_decorations(
                             .ok();
                     }
                 })
-                .on_mouse_down(MouseButton::Left, move |e, cx| {
+                .on_mouse_down(MouseButton::Left, move |e, window, cx| {
                     let size = cx.window_bounds().get_bounds().size;
                     let pos = e.position;
 
@@ -6734,10 +6748,10 @@ fn join_pane_into_active(
     } else if pane.read(cx).items_len() == 0 {
         pane.update(cx, |_, model, cx| {
             model.emit(
-                cx,
                 pane::Event::Remove {
                     focus_on_pane: None,
                 },
+                cx,
             );
         })
     } else {
@@ -7094,7 +7108,7 @@ mod tests {
             w.add_item_to_active_pane(Box::new(item2.clone()), None, true, window, cx);
         });
         let task = workspace.update(cx, |w, model, cx| {
-            w.prepare_to_close(CloseIntent::CloseWindow, model, cx)
+            w.prepare_to_close(CloseIntent::CloseWindow, model, window, cx)
         });
         assert!(task.await.unwrap());
     }
@@ -7523,7 +7537,7 @@ mod tests {
             workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
             let toolbar_notification_count = toolbar_notify_count.clone();
             model
-                .observe(&toolbar, move |_, _, model, _| {
+                .observe(&toolbar, cx, move |_, _, model, _| {
                     *toolbar_notification_count.borrow_mut() += 1
                 })
                 .detach();

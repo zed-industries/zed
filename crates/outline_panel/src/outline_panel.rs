@@ -578,7 +578,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     file_icons::init(assets, cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+        workspace.register_action(model, |workspace, _: &ToggleFocus, cx| {
             workspace.toggle_panel_focus::<OutlinePanel>(cx);
         });
     })

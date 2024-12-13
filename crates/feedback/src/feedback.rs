@@ -36,7 +36,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
         feedback_modal::FeedbackModal::register(workspace, cx);
         workspace
-            .register_action(|_, _: &CopySystemSpecsIntoClipboard, cx| {
+            .register_action(model, |_, _: &CopySystemSpecsIntoClipboard, cx| {
                 let specs = SystemSpecs::new(cx);
 
                 cx.spawn(|_, mut cx| async move {
@@ -56,7 +56,7 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .detach();
             })
-            .register_action(|_, _: &RequestFeature, cx| {
+            .register_action(model, |_, _: &RequestFeature, cx| {
                 cx.open_url(request_feature_url());
             })
             .register_action(move |_, _: &FileBugReport, cx| {

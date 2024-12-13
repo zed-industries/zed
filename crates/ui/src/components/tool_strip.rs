@@ -35,7 +35,7 @@ impl ToolStrip {
 }
 
 impl RenderOnce for ToolStrip {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let group = format!("tool_strip_{}", self.id.clone());
 
         div()

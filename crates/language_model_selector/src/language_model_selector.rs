@@ -308,7 +308,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 }
 
 impl<T: PopoverTrigger> RenderOnce for LanguageModelSelector<T> {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let selected_provider = LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map(|m| m.id());

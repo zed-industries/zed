@@ -91,7 +91,7 @@ impl ParentElement for TabBar {
 }
 
 impl RenderOnce for TabBar {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         div()
             .id(self.id)
             .group("tab_bar")

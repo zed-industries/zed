@@ -81,7 +81,7 @@ impl Selectable for ListHeader {
 }
 
 impl RenderOnce for ListHeader {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let ui_density = ThemeSettings::get_global(cx).ui_density;
 
         h_flex()

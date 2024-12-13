@@ -5,8 +5,7 @@ use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, Future, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Entity, EventEmitter, Model, SharedString, SharedUri, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, EventEmitter, Model, SharedString, SharedUri, Task, WeakModel,
 };
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};

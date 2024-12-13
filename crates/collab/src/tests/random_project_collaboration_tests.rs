@@ -508,7 +508,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                 log::info!("{}: accepting incoming call", client.username);
                 active_call
-                    .update(cx, |call, model, cx| call.accept_incoming(cx))
+                    .update(cx, |call, model, cx| call.accept_incoming(model, cx))
                     .await?;
             }
 
@@ -519,7 +519,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 }
 
                 log::info!("{}: declining incoming call", client.username);
-                active_call.update(cx, |call, model, cx| call.decline_incoming(cx))?;
+                active_call.update(cx, |call, model, cx| call.decline_incoming(model, cx))?;
             }
 
             ClientOperation::LeaveCall => {
@@ -530,7 +530,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                 log::info!("{}: hanging up", client.username);
                 active_call
-                    .update(cx, |call, model, cx| call.hang_up(cx))
+                    .update(cx, |call, model, cx| call.hang_up(model, cx))
                     .await?;
             }
 
@@ -540,7 +540,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 log::info!("{}: inviting {}", client.username, user_id,);
                 active_call
                     .update(cx, |call, model, cx| {
-                        call.invite(user_id.to_proto(), None, cx)
+                        call.invite(user_id.to_proto(), None, model, cx)
                     })
                     .await
                     .log_err();
@@ -585,7 +585,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 }
                 project
                     .update(cx, |project, model, cx| {
-                        project.find_or_create_worktree(&new_root_path, true, cx)
+                        project.find_or_create_worktree(&new_root_path, true, model, cx)
                     })
                     .await
                     .unwrap();
@@ -635,6 +635,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                 project_id,
                                 client.language_registry().clone(),
                                 FakeFs::new(cx.background_executor().clone()),
+                                model,
                                 cx,
                             )
                         }))
@@ -674,7 +675,9 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                 ensure_project_shared(&project, client, cx).await;
                 project
-                    .update(cx, |p, model, cx| p.create_entry(project_path, is_dir, cx))
+                    .update(cx, |p, model, cx| {
+                        p.create_entry(project_path, is_dir, model, cx)
+                    })
                     .await?;
             }
 
@@ -699,7 +702,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 ensure_project_shared(&project, client, cx).await;
                 let buffer = project
                     .update(cx, |project, model, cx| {
-                        project.open_buffer(project_path, cx)
+                        project.open_buffer(project_path, model, cx)
                     })
                     .await?;
                 client.buffers_for_project(&project).insert(buffer);
@@ -735,6 +738,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             (start..end, text)
                         }),
                         None,
+                        model,
                         cx,
                     );
                 });
@@ -788,7 +792,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 ensure_project_shared(&project, client, cx).await;
                 let requested_version = buffer.read_with(cx, |buffer, _| buffer.version());
                 let save = project.update(cx, |project, model, cx| {
-                    project.save_buffer(buffer.clone(), cx)
+                    project.save_buffer(buffer.clone(), model, cx)
                 });
                 let save = cx.spawn(|cx| async move {
                     save.await
@@ -834,23 +838,23 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                 let process_lsp_request = project.update(cx, |project, model, cx| match kind {
                     LspRequestKind::Rename => project
-                        .prepare_rename(buffer, offset, cx)
+                        .prepare_rename(buffer, offset, model, cx)
                         .map_ok(|_| ())
                         .boxed(),
                     LspRequestKind::Completion => project
-                        .completions(&buffer, offset, DEFAULT_COMPLETION_CONTEXT, cx)
+                        .completions(&buffer, offset, DEFAULT_COMPLETION_CONTEXT, model, cx)
                         .map_ok(|_| ())
                         .boxed(),
                     LspRequestKind::CodeAction => project
-                        .code_actions(&buffer, offset..offset, None, cx)
+                        .code_actions(&buffer, offset..offset, None, model, cx)
                         .map(|_| Ok(()))
                         .boxed(),
                     LspRequestKind::Definition => project
-                        .definition(&buffer, offset, cx)
+                        .definition(&buffer, offset, model, cx)
                         .map_ok(|_| ())
                         .boxed(),
                     LspRequestKind::Highlights => project
-                        .document_highlights(&buffer, offset, cx)
+                        .document_highlights(&buffer, offset, model, cx)
                         .map_ok(|_| ())
                         .boxed(),
                 });
@@ -892,6 +896,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             None,
                         )
                         .unwrap(),
+                        model,
                         cx,
                     )
                 });
@@ -1581,7 +1586,7 @@ async fn ensure_project_shared(
     {
         match active_call
             .update(cx, |call, model, cx| {
-                call.share_project(project.clone(), cx)
+                call.share_project(project.clone(), model, cx)
             })
             .await
         {

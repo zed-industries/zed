@@ -76,7 +76,7 @@ impl EditableSettingControl for ThemeControl {
 }
 
 impl RenderOnce for ThemeControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         DropdownMenu::new(
@@ -137,7 +137,7 @@ impl EditableSettingControl for ThemeModeControl {
 }
 
 impl RenderOnce for ThemeModeControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -194,7 +194,7 @@ impl EditableSettingControl for UiFontFamilyControl {
 }
 
 impl RenderOnce for UiFontFamilyControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -253,7 +253,7 @@ impl EditableSettingControl for UiFontSizeControl {
 }
 
 impl RenderOnce for UiFontSizeControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -298,7 +298,7 @@ impl EditableSettingControl for UiFontWeightControl {
 }
 
 impl RenderOnce for UiFontWeightControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -365,7 +365,7 @@ impl EditableSettingControl for UiFontLigaturesControl {
 }
 
 impl RenderOnce for UiFontLigaturesControl {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         CheckboxWithLabel::new(

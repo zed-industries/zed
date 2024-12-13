@@ -205,8 +205,8 @@ impl Render for Markdown {
     fn render(
         &mut self,
         model: &Model<Self>,
-        window: &mut gpui::Window,
-        cx: &mut AppContext,
+        _window: &mut gpui::Window,
+        _cx: &mut AppContext,
     ) -> impl IntoElement {
         MarkdownElement::new(
             model.clone(),

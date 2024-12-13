@@ -25,7 +25,7 @@ use crate::{NewThread, OpenHistory, ToggleFocus, ToggleModelSelector};
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, model: &Model<Workspace>, _cx: &mut AppContext| {
-            workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+            workspace.register_action(model, |workspace, _: &ToggleFocus, cx| {
                 workspace.toggle_panel_focus::<AssistantPanel>(cx);
             });
         },
