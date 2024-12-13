@@ -5385,9 +5385,21 @@ impl Element for EditorElement {
                         )
                     };
 
-                    let highlighted_rows = self
+                    let mut highlighted_rows = self
                         .editor
                         .update(cx, |editor, cx| editor.highlighted_display_rows(cx));
+
+                    for (ix, row_info) in row_infos.iter().enumerate() {
+                        let color = match row_info.diff_status {
+                            Some(DiffHunkStatus::Added) => style.status.created_background,
+                            Some(DiffHunkStatus::Removed) => style.status.deleted_background,
+                            _ => continue,
+                        };
+                        highlighted_rows
+                            .entry(start_row + DisplayRow(ix as u32))
+                            .or_insert(color);
+                    }
+
                     let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(
                         start_anchor..end_anchor,
                         &snapshot.display_snapshot,
