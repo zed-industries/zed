@@ -50,6 +50,7 @@ pub struct GitStatusEntry {}
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct EntryDetails {
     filename: String,
+    display_name: String,
     path: Arc<Path>,
     kind: EntryKind,
     depth: usize,
@@ -352,8 +353,11 @@ impl GitPanel {
                             .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
                     };
 
+                    let display_name = entry.path.to_string_lossy().into_owned();
+
                     let details = EntryDetails {
                         filename,
+                        display_name,
                         kind: entry.kind,
                         is_expanded,
                         path: entry.path.clone(),
@@ -620,7 +624,7 @@ impl GitPanel {
             .when(!details.is_dir(), |this| {
                 this.child(Checkbox::new(checkbox_id, is_staged))
             })
-            .child(h_flex().gap_1p5().child(details.filename.clone()))
+            .child(h_flex().gap_1p5().child(details.display_name.clone()))
     }
 }
 
