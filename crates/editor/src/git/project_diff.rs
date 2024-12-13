@@ -1353,7 +1353,7 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(hunks.len(), edit_hunks.len());
             for edit_hunk in edit_hunks {
-                assert!(hunks.iter().find(|hunk| hunk == &&edit_hunk).is_some());
+                assert!(hunks.iter().any(|hunk| hunk == &edit_hunk));
             }
 
             let mut hunks = hunks.into_iter().peekable();
