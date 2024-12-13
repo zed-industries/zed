@@ -519,6 +519,7 @@ impl BlockMap {
         if edits.is_empty() {
             return;
         }
+
         let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::default();
         let mut cursor = transforms.cursor::<WrapRow>(&());
@@ -589,6 +590,7 @@ impl BlockMap {
                 // Seek to the transform starting at or after the end of the edit
                 cursor.seek(&old_end, Bias::Left, &());
                 cursor.next(&());
+
                 // Extend edit to the end of the discarded transform so it is reconstructed in full
                 let transform_rows_after_edit = cursor.start().0 - old_end.0;
                 old_end.0 += transform_rows_after_edit;
@@ -1083,6 +1085,7 @@ impl<'a> BlockMapWriter<'a> {
             if let BlockPlacement::Replace(_) = &block.placement {
                 debug_assert!(block.height > 0);
             }
+
             let id = CustomBlockId(self.0.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
 
@@ -3195,8 +3198,8 @@ mod tests {
             log::info!("wrapped text: {:?}", wraps_snapshot.text());
             log::info!("blocks text: {:?}", blocks_snapshot.text());
 
-            let mut sorted_blocks = Vec::new();
-            sorted_blocks.extend(block_map.custom_blocks.iter().filter_map(|block| {
+            let mut expected_blocks = Vec::new();
+            expected_blocks.extend(block_map.custom_blocks.iter().filter_map(|block| {
                 Some((
                     block.placement.to_wrap_row(&wraps_snapshot)?,
                     Block::Custom(block.clone()),
@@ -3204,7 +3207,7 @@ mod tests {
             }));
 
             // Note that this needs to be synced with the related section in BlockMap::sync
-            sorted_blocks.extend(BlockMap::header_and_footer_blocks(
+            expected_blocks.extend(BlockMap::header_and_footer_blocks(
                 true,
                 excerpt_footer_height,
                 buffer_start_header_height,
@@ -3215,9 +3218,9 @@ mod tests {
                 &wraps_snapshot,
             ));
 
-            BlockMap::sort_blocks(&mut sorted_blocks);
+            BlockMap::sort_blocks(&mut expected_blocks);
 
-            for (placement, block) in &sorted_blocks {
+            for (placement, block) in &expected_blocks {
                 log::info!(
                     "Block {:?} placement: {:?} Height: {:?}",
                     block.id(),
@@ -3226,7 +3229,8 @@ mod tests {
                 );
             }
 
-            let mut sorted_blocks_iter = sorted_blocks.into_iter().peekable();
+            let mut sorted_blocks_iter = expected_blocks.into_iter().peekable();
+
             let input_buffer_rows = buffer_snapshot
                 .buffer_rows(MultiBufferRow(0))
                 .collect::<Vec<_>>();
@@ -3346,7 +3350,7 @@ mod tests {
 
             let expected_lines = expected_text.split('\n').collect::<Vec<_>>();
             let expected_row_count = expected_lines.len();
-            log::info!("expected text: {:?}", expected_text);
+            log::info!("expected text: {expected_text:?}");
 
             assert_eq!(
                 blocks_snapshot.max_point().row + 1,

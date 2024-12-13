@@ -6987,7 +6987,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         json!({
             "main.rs": sample_text_1,
             "other.rs": sample_text_2,
-            "lisecond.rs": sample_text_3,
+            "lib.rs": sample_text_3,
         }),
     )
     .await;
@@ -7030,7 +7030,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         .unwrap();
     let buffer_3 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "lisecond.rs"), cx)
+            project.open_buffer((worktree_id, "lib.rs"), cx)
         })
         .await
         .unwrap();
@@ -11764,7 +11764,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
         json!({
             "main.rs": sample_text_1,
             "other.rs": sample_text_2,
-            "lisecond.rs": sample_text_3,
+            "lib.rs": sample_text_3,
         }),
     )
     .await;
