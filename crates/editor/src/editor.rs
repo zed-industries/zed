@@ -6135,29 +6135,7 @@ impl Editor {
         });
     }
 
-    pub fn duplicate_selection(&mut self, _: &DuplicateSelection, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = &display_map.buffer_snapshot;
-        let selections = self.selections.all::<Point>(cx);
-
-        let mut edits = Vec::new();
-        for selection in selections.iter() {
-            let start = selection.start;
-            let end = selection.end;
-            let text = buffer.text_for_range(start..end).collect::<String>();
-            edits.push((selection.end..selection.end, text));
-        }
-
-        self.transact(cx, |this, cx| {
-            this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
-            });
-
-            this.request_autoscroll(Autoscroll::fit(), cx);
-        });
-    }
-
-    pub fn duplicate_line(&mut self, upwards: bool, cx: &mut ViewContext<Self>) {
+    pub fn duplicate(&mut self, upwards: bool, whole_lines: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let selections = self.selections.all::<Point>(cx);
@@ -6165,36 +6143,44 @@ impl Editor {
         let mut edits = Vec::new();
         let mut selections_iter = selections.iter().peekable();
         while let Some(selection) = selections_iter.next() {
-            // Avoid duplicating the same lines twice.
             let mut rows = selection.spanned_rows(false, &display_map);
-
-            while let Some(next_selection) = selections_iter.peek() {
-                let next_rows = next_selection.spanned_rows(false, &display_map);
-                if next_rows.start < rows.end {
-                    rows.end = next_rows.end;
-                    selections_iter.next().unwrap();
-                } else {
-                    break;
+            // duplicate line-wise
+            if whole_lines || selection.start == selection.end {
+                // Avoid duplicating the same lines twice.
+                while let Some(next_selection) = selections_iter.peek() {
+                    let next_rows = next_selection.spanned_rows(false, &display_map);
+                    if next_rows.start < rows.end {
+                        rows.end = next_rows.end;
+                        selections_iter.next().unwrap();
+                    } else {
+                        break;
+                    }
                 }
-            }
 
-            // Copy the text from the selected row region and splice it either at the start
-            // or end of the region.
-            let start = Point::new(rows.start.0, 0);
-            let end = Point::new(
-                rows.end.previous_row().0,
-                buffer.line_len(rows.end.previous_row()),
-            );
-            let text = buffer
-                .text_for_range(start..end)
-                .chain(Some("\n"))
-                .collect::<String>();
-            let insert_location = if upwards {
-                Point::new(rows.end.0, 0)
+                // Copy the text from the selected row region and splice it either at the start
+                // or end of the region.
+                let start = Point::new(rows.start.0, 0);
+                let end = Point::new(
+                    rows.end.previous_row().0,
+                    buffer.line_len(rows.end.previous_row()),
+                );
+                let text = buffer
+                    .text_for_range(start..end)
+                    .chain(Some("\n"))
+                    .collect::<String>();
+                let insert_location = if upwards {
+                    Point::new(rows.end.0, 0)
+                } else {
+                    start
+                };
+                edits.push((insert_location..insert_location, text));
             } else {
-                start
-            };
-            edits.push((insert_location..insert_location, text));
+                // duplicate character-wise
+                let start = selection.start;
+                let end = selection.end;
+                let text = buffer.text_for_range(start..end).collect::<String>();
+                edits.push((selection.end..selection.end, text));
+            }
         }
 
         self.transact(cx, |this, cx| {
@@ -6207,11 +6193,15 @@ impl Editor {
     }
 
     pub fn duplicate_line_up(&mut self, _: &DuplicateLineUp, cx: &mut ViewContext<Self>) {
-        self.duplicate_line(true, cx);
+        self.duplicate(true, true, cx);
     }
 
     pub fn duplicate_line_down(&mut self, _: &DuplicateLineDown, cx: &mut ViewContext<Self>) {
-        self.duplicate_line(false, cx);
+        self.duplicate(false, true, cx);
+    }
+
+    pub fn duplicate_selection(&mut self, _: &DuplicateSelection, cx: &mut ViewContext<Self>) {
+        self.duplicate(false, false, cx);
     }
 
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
