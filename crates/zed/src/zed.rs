@@ -1050,7 +1050,7 @@ fn open_telemetry_log_file(
     model: &Model<Workspace>,
     cx: &mut AppContext,
 ) {
-    workspace.with_local_workspace(cx, move |workspace, cx| {
+    workspace.with_local_workspace(model, cx, move |workspace, cx| {
         let app_state = workspace.app_state().clone();
         cx.spawn(|workspace, mut cx| async move {
             async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {

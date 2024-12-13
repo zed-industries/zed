@@ -6368,7 +6368,7 @@ pub fn join_in_room_project(
         let existing_workspace = windows.into_iter().find_map(|window| {
             window.downcast::<Workspace>().and_then(|window| {
                 window
-                    .update(&mut cx, |workspace, model, cx| {
+                    .update(&mut cx, |workspace, _, model, cx| {
                         if workspace.project().read(cx).remote_id() == Some(project_id) {
                             Some(window)
                         } else {
@@ -6486,7 +6486,7 @@ pub fn reload(reload: &Reload, cx: &mut AppContext) {
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
             if let Ok(should_close) = window.update(&mut cx, |workspace, model, window, cx| {
-                workspace.prepare_to_close(CloseIntent::Quit, cx)
+                workspace.prepare_to_close(CloseIntent::Quit, model, window, cx)
             }) {
                 if !should_close.await? {
                     return Ok(());
@@ -6519,7 +6519,7 @@ pub fn client_side_decorations(
     cx: &mut AppContext,
 ) -> Stateful<Div> {
     const BORDER_SIZE: Pixels = px(1.0);
-    let decorations = cx.window_decorations();
+    let decorations = window.decorations();
 
     if matches!(decorations, Decorations::Client { .. }) {
         cx.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
@@ -6629,7 +6629,7 @@ pub fn client_side_decorations(
                             }])
                         }),
                 })
-                .on_mouse_move(|_e, cx| {
+                .on_mouse_move(|_e, _window, cx| {
                     cx.stop_propagation();
                 })
                 .size_full()
@@ -6639,7 +6639,7 @@ pub fn client_side_decorations(
             Decorations::Server => div,
             Decorations::Client { tiling, .. } => div.child(
                 canvas(
-                    |_bounds, cx| {
+                    |_bounds, _window, cx| {
                         window.insert_hitbox(
                             Bounds::new(
                                 point(px(0.0), px(0.0)),
@@ -6755,7 +6755,7 @@ fn join_pane_into_active(
             );
         })
     } else {
-        move_all_items(pane, active_pane, model, cx);
+        move_all_items(pane, active_pane, window, cx);
     }
 }
 
