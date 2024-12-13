@@ -57,7 +57,7 @@ use lsp::{
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
@@ -2868,15 +2868,14 @@ impl Project {
         })
     }
 
-    pub fn resolve_completions(
+    pub fn resolve_completion(
         &self,
         buffer: Model<Buffer>,
-        completion_indices: Vec<usize>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completion: Completion,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Option<Completion>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.resolve_completions(buffer, completion_indices, completions, cx)
+            lsp_store.resolve_completion(buffer, completion, cx)
         })
     }
 

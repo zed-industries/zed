@@ -3704,7 +3704,7 @@ impl Editor {
                         show_completion_documentation,
                         position,
                         buffer.clone(),
-                        completions.into(),
+                        completions,
                         aside_was_displayed,
                     );
                     menu.filter(query.as_deref(), cx.background_executor().clone())
@@ -3790,8 +3790,7 @@ impl Editor {
             .matches
             .get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let buffer_handle = completions_menu.buffer;
-        let completions = completions_menu.completions.read();
-        let completion = completions.get(mat.candidate_id)?;
+        let completion = completions_menu.completions.get(mat.candidate_id)?;
         cx.stop_propagation();
 
         let snippet;
@@ -13178,13 +13177,12 @@ pub trait CompletionProvider {
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<Completion>>>;
 
-    fn resolve_completions(
+    fn resolve_completion(
         &self,
         buffer: Model<Buffer>,
-        completion_indices: Vec<usize>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completion: Completion,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<bool>>;
+    ) -> Task<Result<Option<Completion>>>;
 
     fn apply_additional_edits_for_completion(
         &self,
@@ -13408,15 +13406,14 @@ impl CompletionProvider for Model<Project> {
         })
     }
 
-    fn resolve_completions(
+    fn resolve_completion(
         &self,
         buffer: Model<Buffer>,
-        completion_indices: Vec<usize>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completion: Completion,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Option<Completion>>> {
         self.update(cx, |project, cx| {
-            project.resolve_completions(buffer, completion_indices, completions, cx)
+            project.resolve_completion(buffer, completion, cx)
         })
     }
 

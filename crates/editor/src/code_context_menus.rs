@@ -11,7 +11,6 @@ use language::{CodeLabel, Documentation};
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
-use parking_lot::RwLock;
 use project::{CodeAction, Completion, TaskSourceKind};
 use task::ResolvedTask;
 use ui::{
@@ -137,7 +136,7 @@ pub struct CompletionsMenu {
     sort_completions: bool,
     pub initial_position: Anchor,
     pub buffer: Model<Buffer>,
-    pub completions: Arc<RwLock<Box<[Completion]>>>,
+    pub completions: Vec<Completion>,
     match_candidates: Arc<[StringMatchCandidate]>,
     pub matches: Arc<[StringMatch]>,
     pub selected_item: usize,
@@ -154,7 +153,7 @@ impl CompletionsMenu {
         show_completion_documentation: bool,
         initial_position: Anchor,
         buffer: Model<Buffer>,
-        completions: Box<[Completion]>,
+        completions: Vec<Completion>,
         aside_was_displayed: bool,
     ) -> Self {
         let match_candidates = completions
@@ -174,7 +173,7 @@ impl CompletionsMenu {
             initial_position,
             buffer,
             show_completion_documentation,
-            completions: Arc::new(RwLock::new(completions)),
+            completions: completions,
             match_candidates,
             matches: Vec::new().into(),
             selected_item: 0,
@@ -228,7 +227,7 @@ impl CompletionsMenu {
             sort_completions,
             initial_position: selection.start,
             buffer,
-            completions: Arc::new(RwLock::new(completions)),
+            completions: completions,
             match_candidates,
             matches,
             selected_item: 0,
@@ -308,16 +307,28 @@ impl CompletionsMenu {
         };
 
         let completion_index = self.matches[self.selected_item].candidate_id;
-        let resolve_task = provider.resolve_completions(
-            self.buffer.clone(),
-            vec![completion_index],
-            self.completions.clone(),
-            cx,
-        );
+        let completion = self.completions[completion_index].clone();
+        let resolve_task = provider.resolve_completion(self.buffer.clone(), completion.clone(), cx);
 
         cx.spawn(move |editor, mut cx| async move {
-            if let Some(true) = resolve_task.await.log_err() {
-                editor.update(&mut cx, |_, cx| cx.notify()).ok();
+            if let Some(new_completion) = resolve_task.await.log_err().flatten() {
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        let mut menu = editor.context_menu.write();
+                        match menu.as_mut() {
+                            Some(CodeContextMenu::Completions(menu)) => {
+                                if menu.completions.len() > completion_index
+                                    && menu.completions[completion_index].new_text
+                                        == completion.new_text
+                                {
+                                    menu.completions[completion_index] = new_completion;
+                                }
+                            }
+                            _ => {}
+                        }
+                        cx.notify()
+                    })
+                    .ok();
             }
         })
         .detach();
@@ -340,12 +351,10 @@ impl CompletionsMenu {
             .iter()
             .enumerate()
             .max_by_key(|(_, mat)| {
-                let completions = self.completions.read();
-                let completion = &completions[mat.candidate_id];
-                let documentation = &completion.documentation;
+                let completion = &self.completions[mat.candidate_id];
 
                 let mut len = completion.label.text.chars().count();
-                if let Some(Documentation::SingleLine(text)) = documentation {
+                if let Some(Documentation::SingleLine(text)) = &completion.documentation {
                     if show_completion_documentation {
                         len += text.chars().count();
                     }
@@ -362,7 +371,7 @@ impl CompletionsMenu {
 
         let multiline_docs = if show_completion_documentation {
             let mat = &self.matches[selected_item];
-            match &self.completions.read()[mat.candidate_id].documentation {
+            match &self.completions[mat.candidate_id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
@@ -412,7 +421,6 @@ impl CompletionsMenu {
             matches.len(),
             move |_editor, range, cx| {
                 let start_ix = range.start;
-                let completions_guard = completions.read();
 
                 matches[range]
                     .iter()
@@ -420,7 +428,7 @@ impl CompletionsMenu {
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
-                        let completion = &completions_guard[candidate_id];
+                        let completion = &completions[candidate_id];
 
                         let documentation = if show_completion_documentation {
                             &completion.documentation
@@ -547,7 +555,7 @@ impl CompletionsMenu {
             }
         }
 
-        let completions = self.completions.read();
+        let completions = &self.completions;
         if self.sort_completions {
             matches.sort_unstable_by_key(|mat| {
                 // We do want to strike a balance here between what the language server tells us
@@ -607,7 +615,6 @@ impl CompletionsMenu {
                 *position += completion.label.filter_range.start;
             }
         }
-        drop(completions);
 
         self.matches = matches.into();
         self.selected_item = 0;

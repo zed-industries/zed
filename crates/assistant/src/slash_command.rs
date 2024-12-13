@@ -322,14 +322,13 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         }
     }
 
-    fn resolve_completions(
+    fn resolve_completion(
         &self,
         _: Model<Buffer>,
-        _: Vec<usize>,
-        _: Arc<RwLock<Box<[project::Completion]>>>,
+        _: Completion,
         _: &mut ViewContext<Editor>,
-    ) -> Task<Result<bool>> {
-        Task::ready(Ok(true))
+    ) -> Task<Result<Option<Completion>>> {
+        Task::ready(Ok(None))
     }
 
     fn apply_additional_edits_for_completion(

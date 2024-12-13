@@ -34,25 +34,24 @@ use language::{
     language_settings::{
         language_settings, FormatOnSave, Formatter, LanguageSettings, SelectedFormatter,
     },
-    markdown, point_to_lsp, prepare_completion_documentation,
+    point_to_lsp, prepare_completion_documentation,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
-    DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language, LanguageName,
-    LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile, LspAdapter,
-    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    range_from_lsp, Bias, Buffer, CachedLspAdapter, CodeLabel, Diagnostic, DiagnosticEntry,
+    DiagnosticSet, Diff, Documentation, File as _, Language, LanguageName, LanguageRegistry,
+    LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate,
+    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
     DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter,
     FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
-    InsertTextFormat, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
-    LanguageServerId, LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
-    RenameFilesParams, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url,
-    WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
+    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
+    LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams,
+    ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url, WillRenameFiles,
+    WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use postage::watch;
 use rand::prelude::*;
 
@@ -4133,237 +4132,128 @@ impl LspStore {
         }
     }
 
-    pub fn resolve_completions(
+    pub fn resolve_completion(
         &self,
         buffer: Model<Buffer>,
-        completion_indices: Vec<usize>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        // server_id: u64,
+        mut completion: Completion,
+        // completion_indices: Vec<usize>,
+        // completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Option<Completion>>> {
         let client = self.upstream_client();
         let language_registry = self.languages.clone();
 
         let buffer_id = buffer.read(cx).remote_id();
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let snapshot = buffer.read(cx).snapshot();
 
         cx.spawn(move |this, cx| async move {
-            let mut did_resolve = false;
-            if let Some((client, project_id)) = client {
-                for completion_index in completion_indices {
-                    let (server_id, completion) = {
-                        let completions_guard = completions.read();
-                        let completion = &completions_guard[completion_index];
-                        did_resolve = true;
-                        let server_id = completion.server_id;
-                        let completion = completion.lsp_completion.clone();
+            let server_id = completion.server_id;
 
-                        (server_id, completion)
-                    };
+            let (completion_item, new_label) = if let Some((client, project_id)) = client {
+                let request = proto::ResolveCompletionDocumentation {
+                    project_id,
+                    language_server_id: server_id.0 as u64,
+                    lsp_completion: serde_json::to_string(&completion.lsp_completion)
+                        .unwrap()
+                        .into_bytes(),
+                    buffer_id: buffer_id.into(),
+                };
 
-                    Self::resolve_completion_remote(
-                        project_id,
-                        server_id,
-                        buffer_id,
-                        completions.clone(),
-                        completion_index,
-                        completion,
-                        client.clone(),
-                        language_registry.clone(),
-                    )
-                    .await;
-                }
+                let response = client
+                    .request(request)
+                    .await
+                    .context("completion documentation resolve proto request")?;
+                let completion_item = serde_json::from_slice(&response.lsp_completion)?;
+
+                // todo! support for new_label?
+                (completion_item, None)
             } else {
-                for completion_index in completion_indices {
-                    let (server_id, completion) = {
-                        let completions_guard = completions.read();
-                        let completion = &completions_guard[completion_index];
-                        let server_id = completion.server_id;
-                        let completion = completion.lsp_completion.clone();
+                let server_id = completion.server_id;
+                let server_and_adapter = this
+                    .read_with(&cx, |lsp_store, _| {
+                        let server = lsp_store.language_server_for_id(server_id)?;
+                        let adapter =
+                            lsp_store.language_server_adapter_for_id(server.server_id())?;
+                        Some((server, adapter))
+                    })
+                    .ok()
+                    .flatten();
+                let Some((server, adapter)) = server_and_adapter else {
+                    anyhow::bail!("Language server not found for ID {}", server_id);
+                };
 
-                        (server_id, completion)
-                    };
+                let can_resolve = server
+                    .capabilities()
+                    .completion_provider
+                    .as_ref()
+                    .and_then(|options| options.resolve_provider)
+                    .unwrap_or(false);
+                if !can_resolve {
+                    return Ok(None);
+                }
 
-                    let server_and_adapter = this
-                        .read_with(&cx, |lsp_store, _| {
-                            let server = lsp_store.language_server_for_id(server_id)?;
-                            let adapter =
-                                lsp_store.language_server_adapter_for_id(server.server_id())?;
-                            Some((server, adapter))
-                        })
-                        .ok()
-                        .flatten();
-                    let Some((server, adapter)) = server_and_adapter else {
-                        continue;
-                    };
+                let request = server
+                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion);
+                let completion_item = request.await?;
 
-                    did_resolve = true;
-                    Self::resolve_completion_local(
-                        server,
-                        adapter,
-                        &buffer_snapshot,
-                        completions.clone(),
-                        completion_index,
-                        completion,
-                        language_registry.clone(),
+                // NB: Zed does not have `details` inside the completion resolve capabilities, but
+                // certain language servers violate the spec and do not return `details`
+                // immediately, e.g. https://github.com/yioneko/vtsls/issues/213 So we have to
+                // update the label here anyway...
+                let new_label = match snapshot.language() {
+                    Some(language) => adapter
+                        .labels_for_completions(&[completion_item.clone()], language)
+                        .await
+                        .log_err()
+                        .unwrap_or_default(),
+                    None => Vec::new(),
+                }
+                .pop()
+                .flatten()
+                .unwrap_or_else(|| {
+                    CodeLabel::plain(
+                        completion_item.label.clone(),
+                        completion_item.filter_text.as_deref(),
                     )
-                    .await;
+                });
+
+                (completion_item, Some(new_label))
+            };
+
+            if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
+                let documentation = language::prepare_completion_documentation(
+                    lsp_documentation,
+                    &language_registry,
+                    snapshot.language().cloned(),
+                )
+                .await;
+
+                completion.documentation = Some(documentation);
+            } else {
+                completion.documentation = Some(Documentation::Undocumented);
+            }
+
+            if let Some(text_edit) = completion_item.text_edit.as_ref() {
+                // Technically we don't have to parse the whole `text_edit`, since the only
+                // language server we currently use that does update `text_edit` in `completionItem/resolve`
+                // is `typescript-language-server` and they only update `text_edit.new_text`.
+                // But we should not rely on that.
+                let edit = parse_completion_text_edit(text_edit, &snapshot);
+
+                if let Some((old_range, mut new_text)) = edit {
+                    LineEnding::normalize(&mut new_text);
+                    completion.new_text = new_text;
+                    completion.old_range = old_range;
                 }
             }
 
-            Ok(did_resolve)
+            completion.lsp_completion = completion_item;
+            if let Some(new_label) = new_label {
+                completion.label = new_label;
+            };
+            Ok(Some(completion))
         })
-    }
-
-    async fn resolve_completion_local(
-        server: Arc<lsp::LanguageServer>,
-        adapter: Arc<CachedLspAdapter>,
-        snapshot: &BufferSnapshot,
-        completions: Arc<RwLock<Box<[Completion]>>>,
-        completion_index: usize,
-        completion: lsp::CompletionItem,
-        language_registry: Arc<LanguageRegistry>,
-    ) {
-        let can_resolve = server
-            .capabilities()
-            .completion_provider
-            .as_ref()
-            .and_then(|options| options.resolve_provider)
-            .unwrap_or(false);
-        if !can_resolve {
-            return;
-        }
-
-        let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-        let Some(completion_item) = request.await.log_err() else {
-            return;
-        };
-
-        if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
-            let documentation = language::prepare_completion_documentation(
-                lsp_documentation,
-                &language_registry,
-                snapshot.language().cloned(),
-            )
-            .await;
-
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(documentation);
-        } else {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
-
-        if let Some(text_edit) = completion_item.text_edit.as_ref() {
-            // Technically we don't have to parse the whole `text_edit`, since the only
-            // language server we currently use that does update `text_edit` in `completionItem/resolve`
-            // is `typescript-language-server` and they only update `text_edit.new_text`.
-            // But we should not rely on that.
-            let edit = parse_completion_text_edit(text_edit, snapshot);
-
-            if let Some((old_range, mut new_text)) = edit {
-                LineEnding::normalize(&mut new_text);
-
-                let mut completions = completions.write();
-                let completion = &mut completions[completion_index];
-
-                completion.new_text = new_text;
-                completion.old_range = old_range;
-            }
-        }
-        if completion_item.insert_text_format == Some(InsertTextFormat::SNIPPET) {
-            // vtsls might change the type of completion after resolution.
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            if completion_item.insert_text_format != completion.lsp_completion.insert_text_format {
-                completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
-            }
-        }
-
-        // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
-        // So we have to update the label here anyway...
-        let new_label = match snapshot.language() {
-            Some(language) => adapter
-                .labels_for_completions(&[completion_item.clone()], language)
-                .await
-                .log_err()
-                .unwrap_or_default(),
-            None => Vec::new(),
-        }
-        .pop()
-        .flatten()
-        .unwrap_or_else(|| {
-            CodeLabel::plain(
-                completion_item.label.clone(),
-                completion_item.filter_text.as_deref(),
-            )
-        });
-
-        let mut completions = completions.write();
-        let completion = &mut completions[completion_index];
-        completion.lsp_completion = completion_item;
-        completion.label = new_label;
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn resolve_completion_remote(
-        project_id: u64,
-        server_id: LanguageServerId,
-        buffer_id: BufferId,
-        completions: Arc<RwLock<Box<[Completion]>>>,
-        completion_index: usize,
-        completion: lsp::CompletionItem,
-        client: AnyProtoClient,
-        language_registry: Arc<LanguageRegistry>,
-    ) {
-        let request = proto::ResolveCompletionDocumentation {
-            project_id,
-            language_server_id: server_id.0 as u64,
-            lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
-            buffer_id: buffer_id.into(),
-        };
-
-        let Some(response) = client
-            .request(request)
-            .await
-            .context("completion documentation resolve proto request")
-            .log_err()
-        else {
-            return;
-        };
-        let Some(lsp_completion) = serde_json::from_slice(&response.lsp_completion).log_err()
-        else {
-            return;
-        };
-
-        let documentation = if response.documentation.is_empty() {
-            Documentation::Undocumented
-        } else if response.documentation_is_markdown {
-            Documentation::MultiLineMarkdown(
-                markdown::parse_markdown(&response.documentation, &language_registry, None).await,
-            )
-        } else if response.documentation.lines().count() <= 1 {
-            Documentation::SingleLine(response.documentation)
-        } else {
-            Documentation::MultiLinePlainText(response.documentation)
-        };
-
-        let mut completions = completions.write();
-        let completion = &mut completions[completion_index];
-        completion.documentation = Some(documentation);
-        completion.lsp_completion = lsp_completion;
-
-        let old_range = response
-            .old_start
-            .and_then(deserialize_anchor)
-            .zip(response.old_end.and_then(deserialize_anchor));
-        if let Some((old_start, old_end)) = old_range {
-            if !response.new_text.is_empty() {
-                completion.new_text = response.new_text;
-                completion.old_range = old_start..old_end;
-            }
-        }
     }
 
     pub fn apply_additional_edits_for_completion(
