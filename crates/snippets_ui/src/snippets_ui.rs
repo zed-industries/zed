@@ -219,7 +219,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(HighlightedLabel::new(label, mat.positions.clone())),
         )
     }

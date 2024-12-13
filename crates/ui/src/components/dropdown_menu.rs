@@ -85,8 +85,8 @@ impl Disableable for DropdownMenuTrigger {
     }
 }
 
-impl Selectable for DropdownMenuTrigger {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for DropdownMenuTrigger {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }

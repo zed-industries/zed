@@ -26,7 +26,7 @@ use terminal::{
     Terminal,
 };
 use ui::{
-    prelude::*, ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Selectable,
+    prelude::*, ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable,
     Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
@@ -201,7 +201,7 @@ impl TerminalPanel {
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
                             .icon_size(IconSize::Small)
-                            .selected(zoomed)
+                            .toggle_state(zoomed)
                             .selected_icon(IconName::Minimize)
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&workspace::ToggleZoom, cx);

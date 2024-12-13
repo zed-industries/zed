@@ -16,8 +16,8 @@ use project::{CodeAction, Completion, TaskSourceKind};
 use task::ResolvedTask;
 use ui::{
     h_flex, ActiveTheme as _, Color, FluentBuilder as _, InteractiveElement as _, IntoElement,
-    Label, LabelCommon as _, LabelSize, ListItem, ParentElement as _, Popover, Selectable as _,
-    StatefulInteractiveElement as _, Styled, StyledExt as _,
+    Label, LabelCommon as _, LabelSize, ListItem, ParentElement as _, Popover,
+    StatefulInteractiveElement as _, Styled, StyledExt as _, Toggleable as _,
 };
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -473,7 +473,7 @@ impl CompletionsMenu {
                         div().min_w(px(220.)).max_w(px(540.)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
-                                .selected(item_ix == selected_item)
+                                .toggle_state(item_ix == selected_item)
                                 .on_click(cx.listener(move |editor, _event, cx| {
                                     cx.stop_propagation();
                                     if let Some(task) = editor.confirm_completion(

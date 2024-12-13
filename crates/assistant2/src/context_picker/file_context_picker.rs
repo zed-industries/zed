@@ -260,7 +260,7 @@ impl PickerDelegate for FileContextPickerDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(mat.path.to_string_lossy().to_string()),
         )
     }

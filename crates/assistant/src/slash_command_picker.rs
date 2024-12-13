@@ -176,7 +176,7 @@ impl PickerDelegate for SlashCommandDelegate {
                 ListItem::new(ix)
                     .inset(true)
                     .spacing(ListItemSpacing::Dense)
-                    .selected(selected)
+                    .toggle_state(selected)
                     .tooltip({
                         let description = info.description.clone();
                         move |cx| cx.new_view(|_| Tooltip::new(description.clone())).into()
@@ -229,7 +229,7 @@ impl PickerDelegate for SlashCommandDelegate {
                 ListItem::new(ix)
                     .inset(true)
                     .spacing(ListItemSpacing::Dense)
-                    .selected(selected)
+                    .toggle_state(selected)
                     .child(renderer(cx)),
             ),
         }

@@ -156,8 +156,8 @@ impl Disableable for ListItem {
     }
 }
 
-impl Selectable for ListItem {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ListItem {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }

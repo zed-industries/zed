@@ -232,13 +232,13 @@ impl PickerDelegate for PromptPickerDelegate {
         let element = ListItem::new(ix)
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
-            .selected(selected)
+            .toggle_state(selected)
             .child(h_flex().h_5().line_height(relative(1.)).child(Label::new(
                 prompt.title.clone().unwrap_or("Untitled".into()),
             )))
             .end_slot::<IconButton>(default.then(|| {
                 IconButton::new("toggle-default-prompt", IconName::SparkleFilled)
-                    .selected(true)
+                    .toggle_state(true)
                     .icon_color(Color::Accent)
                     .shape(IconButtonShape::Square)
                     .tooltip(move |cx| Tooltip::text("Remove from Default Prompt", cx))
@@ -274,7 +274,7 @@ impl PickerDelegate for PromptPickerDelegate {
                     })
                     .child(
                         IconButton::new("toggle-default-prompt", IconName::Sparkle)
-                            .selected(default)
+                            .toggle_state(default)
                             .selected_icon(IconName::SparkleFilled)
                             .icon_color(if default { Color::Accent } else { Color::Muted })
                             .shape(IconButtonShape::Square)
@@ -1053,7 +1053,7 @@ impl PromptLibrary {
                                                         IconName::Sparkle,
                                                     )
                                                     .style(ButtonStyle::Transparent)
-                                                    .selected(prompt_metadata.default)
+                                                    .toggle_state(prompt_metadata.default)
                                                     .selected_icon(IconName::SparkleFilled)
                                                     .icon_color(if prompt_metadata.default {
                                                         Color::Accent

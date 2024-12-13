@@ -345,7 +345,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(HighlightedLabel::new(label, name_highlights))
                 .child(
                     HighlightedLabel::new(path, path_highlights)

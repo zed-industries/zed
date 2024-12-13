@@ -284,7 +284,7 @@ impl PickerDelegate for BranchListDelegate {
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .map(|parent| match hit {
                     BranchEntry::Branch(branch) => {
                         let highlights: Vec<_> = branch

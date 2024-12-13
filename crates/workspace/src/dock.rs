@@ -781,7 +781,7 @@ impl Render for PanelButtons {
                         .trigger(
                             IconButton::new(name, icon)
                                 .icon_size(IconSize::Small)
-                                .selected(is_active_button)
+                                .toggle_state(is_active_button)
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, cx| cx.dispatch_action(action.boxed_clone())

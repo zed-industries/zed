@@ -268,8 +268,8 @@ impl Render for MessageEditor {
                         self.use_tools.into(),
                         cx.listener(|this, selection, _cx| {
                             this.use_tools = match selection {
-                                Selection::Selected => true,
-                                Selection::Unselected | Selection::Indeterminate => false,
+                                ToggleState::Selected => true,
+                                ToggleState::Unselected | ToggleState::Indeterminate => false,
                             };
                         }),
                     )))

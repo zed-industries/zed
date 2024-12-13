@@ -4811,7 +4811,7 @@ impl Editor {
                     .shape(ui::IconButtonShape::Square)
                     .icon_size(IconSize::XSmall)
                     .icon_color(Color::Muted)
-                    .selected(is_active)
+                    .toggle_state(is_active)
                     .tooltip({
                         let focus_handle = self.focus_handle.clone();
                         move |cx| {
@@ -4988,7 +4988,7 @@ impl Editor {
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Muted)
-            .selected(is_active)
+            .toggle_state(is_active)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
                 editor.toggle_code_actions(
@@ -13772,7 +13772,7 @@ impl EditorSnapshot {
         if folded || (is_foldable && (row_contains_cursor || self.gutter_hovered)) {
             Some(
                 Disclosure::new(("gutter_crease", buffer_row.0), !folded)
-                    .selected(folded)
+                    .toggle_state(folded)
                     .on_click(cx.listener_for(&editor, move |this, _e, cx| {
                         if folded {
                             this.unfold_at(&UnfoldAt { buffer_row }, cx);
