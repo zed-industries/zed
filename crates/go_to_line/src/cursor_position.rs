@@ -9,6 +9,7 @@ use ui::{
     div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ParentElement,
     Render, Tooltip, ViewContext,
 };
+use unicode_segmentation::UnicodeSegmentation;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
@@ -53,7 +54,7 @@ impl CursorPosition {
 
             editor
                 .update(&mut cx, |editor, cx| {
-                    let is_markdown = is_markdown_file(editor, cx);
+                    let is_markdown_or_plaintext = is_markdown_or_plaintext(editor, cx);
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     cursor_position.update(cx, |cursor_position, cx| {
                         cursor_position.selected_count = SelectionStats::default();
@@ -65,11 +66,11 @@ impl CursorPosition {
                                 .map(|t| t.chars().count())
                                 .sum::<usize>();
 
-                            if is_markdown {
+                            if is_markdown_or_plaintext {
                                 let mut words = 0;
                                 words += buffer
                                     .text_for_range(selection.start..selection.end)
-                                    .map(|t| t.split_whitespace().count())
+                                    .map(|t| t.unicode_word_indices().count())
                                     .sum::<usize>();
 
                                 if let Some(current_words) = cursor_position.selected_count.words {
@@ -106,12 +107,12 @@ impl CursorPosition {
                 .flatten();
         });
 
-        // copied from crates/markdown_preview/src/markdown_preview_view.rs
-        pub fn is_markdown_file<V>(editor: &Editor, cx: &mut ViewContext<V>) -> bool {
+        pub fn is_markdown_or_plaintext<V>(editor: &Editor, cx: &mut ViewContext<V>) -> bool {
             let buffer = editor.buffer().read(cx);
             if let Some(buffer) = buffer.as_singleton() {
                 if let Some(language) = buffer.read(cx).language() {
-                    return language.name() == "Markdown".into();
+                    return language.name() == "Markdown".into()
+                        || language.name() == "Plain Text".into();
                 }
             }
             false
@@ -139,16 +140,15 @@ impl CursorPosition {
         let lines = (lines > 1).then_some((lines, "line"));
         let selections = (selections > 1).then_some((selections, "selection"));
         let characters = (characters > 0).then_some((characters, "character"));
-        let words = if words.is_some() {
-            let words = words.unwrap();
-            if words > 0 {
-                Some((words, "word"))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let words = words
+            .map(|words| {
+                if words > 0 {
+                    Some((words, "word"))
+                } else {
+                    None
+                }
+            })
+            .flatten();
         if (None, None, None) == (characters, selections, lines) {
             // Nothing to display.
             return;
