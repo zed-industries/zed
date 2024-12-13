@@ -451,21 +451,9 @@ impl WorkspaceDb {
 
         let local_paths = local_paths?;
         let location = match local_paths_order {
-            Some(order) => {
-                println!(
-                    "A local_paths.paths().len() = {}, order.order().len() = {}",
-                    local_paths.paths().len(),
-                    order.order().len()
-                );
-                SerializedWorkspaceLocation::Local(local_paths, order)
-            }
+            Some(order) => SerializedWorkspaceLocation::Local(local_paths, order),
             None => {
                 let order = LocalPathsOrder::default_for_paths(&local_paths);
-                println!(
-                    "B local_paths.paths().len() = {}, order.order().len() = {}",
-                    local_paths.paths().len(),
-                    order.order().len()
-                );
                 SerializedWorkspaceLocation::Local(local_paths, order)
             }
         };
