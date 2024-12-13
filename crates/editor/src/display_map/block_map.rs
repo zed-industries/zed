@@ -1827,7 +1827,11 @@ impl<'a> Iterator for BlockBufferRows<'a> {
         let transform = self.transforms.item()?;
         if let Some(block) = transform.block.as_ref() {
             if block.is_replacement() && self.transforms.start().0 == self.output_row {
-                Some(self.input_buffer_rows.next().unwrap())
+                if matches!(block, Block::FoldedBuffer { .. }) {
+                    Some(None)
+                } else {
+                    Some(self.input_buffer_rows.next().unwrap())
+                }
             } else {
                 Some(None)
             }
@@ -2540,6 +2544,35 @@ mod tests {
             blocks_snapshot.text(),
             "\n\n\n111\n\n\n\n\n222\n\n\n333\n\n\n444\n\n\n\n\n555\n\n\n666\n"
         );
+        assert_eq!(
+            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            vec![
+                None,
+                None,
+                None,
+                Some(0),
+                None,
+                None,
+                None,
+                None,
+                Some(1),
+                None,
+                None,
+                Some(2),
+                None,
+                None,
+                Some(3),
+                None,
+                None,
+                None,
+                None,
+                Some(4),
+                None,
+                None,
+                Some(5),
+                None,
+            ]
+        );
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         let excerpt_blocks_2 = writer.insert(vec![
@@ -2587,6 +2620,40 @@ mod tests {
             blocks_snapshot.text(),
             "\n\n\n111\n\n\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n\n\n555\n\n\n666\n\n"
         );
+        assert_eq!(
+            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            vec![
+                None,
+                None,
+                None,
+                Some(0),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(1),
+                None,
+                None,
+                None,
+                Some(2),
+                None,
+                None,
+                Some(3),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(4),
+                None,
+                None,
+                Some(5),
+                None,
+                None,
+            ]
+        );
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
@@ -2628,6 +2695,37 @@ mod tests {
             blocks_snapshot.text(),
             "\n\n\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n\n\n555\n\n\n666\n\n"
         );
+        assert_eq!(
+            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            vec![
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(1),
+                None,
+                None,
+                None,
+                Some(2),
+                None,
+                None,
+                Some(3),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(4),
+                None,
+                None,
+                Some(5),
+                None,
+                None,
+            ]
+        );
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
@@ -2662,6 +2760,25 @@ mod tests {
             "Should have two folded blocks, producing headers"
         );
         assert_eq!(blocks_snapshot.text(), "\n\n\n\n\n\n\n\n555\n\n\n666\n\n");
+        assert_eq!(
+            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            vec![
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(4),
+                None,
+                None,
+                Some(5),
+                None,
+                None,
+            ]
+        );
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
@@ -2697,6 +2814,29 @@ mod tests {
             "\n\n\n\n111\n\n\n\n\n\n\n\n555\n\n\n666\n\n",
             "Should have extra newline for 111 buffer, due to a new block added when it was folded"
         );
+        assert_eq!(
+            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            vec![
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(4),
+                None,
+                None,
+                Some(5),
+                None,
+                None,
+            ]
+        );
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
@@ -2727,6 +2867,21 @@ mod tests {
             blocks_snapshot.text(),
             "\n\n\n\n111\n\n\n\n\n",
             "Should have a single, first buffer left after folding"
+        );
+        assert_eq!(
+            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            vec![
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
         );
     }
 
@@ -2783,6 +2938,11 @@ mod tests {
             "Should have one folded block, prodicing a header of the second buffer"
         );
         assert_eq!(blocks_snapshot.text(), "\n");
+        assert_eq!(
+            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            vec![None, None],
+            "When fully folded, should be no buffer rows"
+        );
     }
 
     #[gpui::test(iterations = 100)]
@@ -3121,7 +3281,12 @@ mod tests {
                         is_in_replace_block = true;
 
                         if wrap_row == replace_range.start.0 {
-                            expected_buffer_rows.push(input_buffer_rows[multibuffer_row as usize]);
+                            if matches!(block, Block::FoldedBuffer { .. }) {
+                                expected_buffer_rows.push(None);
+                            } else {
+                                expected_buffer_rows
+                                    .push(input_buffer_rows[multibuffer_row as usize]);
+                            }
                         }
 
                         if wrap_row == replace_range.end.0 {
@@ -3181,16 +3346,13 @@ mod tests {
 
             let expected_lines = expected_text.split('\n').collect::<Vec<_>>();
             let expected_row_count = expected_lines.len();
+            log::info!("expected text: {:?}", expected_text);
 
             assert_eq!(
                 blocks_snapshot.max_point().row + 1,
                 expected_row_count as u32,
-                "Expected lines count does not match with the blocks latest row, block_snapshot text: {}\nexpected_lines: {}",
-                blocks_snapshot.text().replace("\n", "\\n"),
-                expected_lines.iter().join("\\n"),
+                "Expected lines count does not match with the blocks latest row",
             );
-
-            log::info!("expected text: {:?}", expected_text);
 
             for start_row in 0..expected_row_count {
                 let end_row = rng.gen_range(start_row + 1..=expected_row_count);
