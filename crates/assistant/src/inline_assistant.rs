@@ -1460,13 +1460,13 @@ impl Render for PromptEditor {
                         )
                         .into_any_element(),
                     IconButton::new("restart", IconName::RotateCw)
-                        .icon_color(Color::Info)
+                        .icon_color(Color::Muted)
                         .shape(IconButtonShape::Square)
                         .tooltip(|cx| {
                             Tooltip::with_meta(
-                                "Restart Transformation",
+                                "Regenerate Transformation",
                                 Some(restart_key),
-                                "Changes will be discarded",
+                                "Current change will be discarded",
                                 cx,
                             )
                         })
