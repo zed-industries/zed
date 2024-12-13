@@ -375,7 +375,7 @@ impl ContextProvider for PythonContextProvider {
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
-                            PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace()
+                            PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace(),
                         ],
                         tags: vec![
                             "python-unittest-class".to_owned(),
