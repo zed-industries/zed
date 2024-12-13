@@ -22,8 +22,8 @@ use std::iter;
 use task::ResolvedTask;
 use ui::{
     h_flex, ActiveTheme as _, Color, FluentBuilder as _, InteractiveElement as _, IntoElement,
-    Label, LabelCommon as _, LabelSize, ListItem, ParentElement as _, Popover, Toggleable as _,
-    StatefulInteractiveElement as _, Styled, StyledExt as _,
+    Label, LabelCommon as _, LabelSize, ListItem, ParentElement as _, Popover,
+    StatefulInteractiveElement as _, Styled, StyledExt as _, Toggleable as _,
 };
 use util::ResultExt as _;
 use workspace::Workspace;
