@@ -1635,7 +1635,7 @@ impl BufferStore {
                         .log_err();
                 }
 
-                // todo!(max): do something
+                // TODO(max): do something
                 // client
                 //     .send(proto::UpdateStagedText {
                 //         project_id,
