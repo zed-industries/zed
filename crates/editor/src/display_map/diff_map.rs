@@ -1447,7 +1447,9 @@ mod tests {
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
         let (diff_map, _) =
             cx.update(|cx| DiffMap::new(inlay_snapshot.clone(), multibuffer.clone(), cx));
-        diff_map.update(cx, |diff_map, cx| diff_map.add_change_set(change_set, cx));
+        diff_map.update(cx, |diff_map, cx| {
+            diff_map.add_change_set(change_set.clone(), cx)
+        });
         cx.run_until_parked();
 
         let (mut snapshot, _) = diff_map.update(cx, |diff_map, cx| {
@@ -1578,6 +1580,35 @@ mod tests {
             ),
         );
 
+        diff_map.update(cx, |diff_map, cx| {
+            diff_map.expand_diff_hunks(
+                vec![
+                    multibuffer_snapshot.anchor_before(Point::new(3, 0))
+                        ..multibuffer_snapshot.anchor_before(Point::new(4, 0)),
+                ],
+                cx,
+            )
+        });
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(inlay_snapshot.clone(), vec![], cx)
+        });
+        assert_new_snapshot(
+            &mut snapshot,
+            sync,
+            indoc!(
+                "
+                  ZERO
+                  one
+                - two
+                + TWO
+                  three
+                - four
+                - five
+                  six
+                "
+            ),
+        );
+
         buffer.update(cx, |buffer, cx| {
             buffer.edit_via_marked_text(
                 indoc!(
@@ -1600,7 +1631,9 @@ mod tests {
             multibuffer_snapshot,
             multibuffer_edits.consume().into_inner(),
         );
-        let sync = diff_map.update(cx, |diff_map, cx| diff_map.sync(inlay_snapshot, edits, cx));
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(inlay_snapshot.clone(), edits, cx)
+        });
 
         assert_new_snapshot(
             &mut snapshot,
@@ -1613,6 +1646,34 @@ mod tests {
                 - two
                 + TWO
                   three
+                - four
+                - five
+                  six
+                "
+            ),
+        );
+
+        let _ = change_set.update(cx, |change_set, cx| {
+            change_set.recalculate_diff(buffer.read(cx).text_snapshot(), cx)
+        });
+        cx.run_until_parked();
+
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(inlay_snapshot.clone(), Vec::new(), cx)
+        });
+
+        assert_new_snapshot(
+            &mut snapshot,
+            sync,
+            indoc!(
+                "
+                  ZERO
+                  one hundred
+                    thousand
+                  TWO
+                  three
+                - four
+                - five
                   six
                 "
             ),
