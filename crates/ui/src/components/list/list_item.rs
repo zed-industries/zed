@@ -39,6 +39,7 @@ pub struct ListItem {
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
     overflow_x: bool,
+    focused: Option<bool>,
 }
 
 impl ListItem {
@@ -62,6 +63,7 @@ impl ListItem {
             children: SmallVec::new(),
             selectable: true,
             overflow_x: false,
+            focused: None,
         }
     }
 
@@ -140,6 +142,11 @@ impl ListItem {
         self.overflow_x = true;
         self
     }
+
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = Some(focused);
+        self
+    }
 }
 
 impl Disableable for ListItem {
@@ -177,9 +184,14 @@ impl RenderOnce for ListItem {
                 this
                     // TODO: Add focus state
                     // .when(self.state == InteractionState::Focused, |this| {
-                    //     this.border_1()
-                    //         .border_color(cx.theme().colors().border_focused)
-                    // })
+                    .when_some(self.focused, |this, focused| {
+                        if focused {
+                            this.border_1()
+                                .border_color(cx.theme().colors().border_focused)
+                        } else {
+                            this.border_1()
+                        }
+                    })
                     .when(self.selectable, |this| {
                         this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
@@ -204,10 +216,15 @@ impl RenderOnce for ListItem {
                     .when(self.inset && !self.disabled, |this| {
                         this
                             // TODO: Add focus state
-                            // .when(self.state == InteractionState::Focused, |this| {
-                            //     this.border_1()
-                            //         .border_color(cx.theme().colors().border_focused)
-                            // })
+                            //.when(self.state == InteractionState::Focused, |this| {
+                            .when_some(self.focused, |this, focused| {
+                                if focused {
+                                    this.border_1()
+                                        .border_color(cx.theme().colors().border_focused)
+                                } else {
+                                    this.border_1()
+                                }
+                            })
                             .when(self.selectable, |this| {
                                 this.hover(|style| {
                                     style.bg(cx.theme().colors().ghost_element_hover)

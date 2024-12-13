@@ -93,6 +93,7 @@ impl Display for AssistantPhase {
 pub enum Event {
     Editor(EditorEvent),
     InlineCompletion(InlineCompletionEvent),
+    InlineCompletionRating(InlineCompletionRatingEvent),
     Call(CallEvent),
     Assistant(AssistantEvent),
     Cpu(CpuEvent),
@@ -128,6 +129,21 @@ pub struct InlineCompletionEvent {
     pub provider: String,
     pub suggestion_accepted: bool,
     pub file_extension: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum InlineCompletionRating {
+    Positive,
+    Negative,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InlineCompletionRatingEvent {
+    pub rating: InlineCompletionRating,
+    pub input_events: Arc<str>,
+    pub input_excerpt: Arc<str>,
+    pub output_excerpt: Arc<str>,
+    pub feedback: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

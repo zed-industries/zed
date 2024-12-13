@@ -82,7 +82,7 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -434,7 +434,7 @@ impl DisplayMap {
         style: HighlightStyle,
     ) {
         self.text_highlights
-            .insert(Some(type_id), Arc::new((style, ranges)));
+            .insert(type_id, Arc::new((style, ranges)));
     }
 
     pub(crate) fn highlight_inlays(
@@ -457,11 +457,11 @@ impl DisplayMap {
     }
 
     pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
-        let highlights = self.text_highlights.get(&Some(type_id))?;
+        let highlights = self.text_highlights.get(&type_id)?;
         Some((highlights.0, &highlights.1))
     }
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
-        let mut cleared = self.text_highlights.remove(&Some(type_id)).is_some();
+        let mut cleared = self.text_highlights.remove(&type_id).is_some();
         cleared |= self.inlay_highlights.remove(&type_id).is_some();
         cleared
     }
@@ -1125,6 +1125,12 @@ impl DisplaySnapshot {
         DisplayRow(self.block_snapshot.longest_row())
     }
 
+    pub fn longest_row_in_range(&self, range: Range<DisplayRow>) -> DisplayRow {
+        let block_range = BlockRow(range.start.0)..BlockRow(range.end.0);
+        let longest_row = self.block_snapshot.longest_row_in_range(block_range);
+        DisplayRow(longest_row.0)
+    }
+
     pub fn starts_indent(&self, buffer_row: MultiBufferRow) -> bool {
         let max_row = self.buffer_snapshot.max_row();
         if buffer_row >= max_row {
@@ -1239,7 +1245,7 @@ impl DisplaySnapshot {
         &self,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
         let type_id = TypeId::of::<Tag>();
-        self.text_highlights.get(&Some(type_id)).cloned()
+        self.text_highlights.get(&type_id).cloned()
     }
 
     #[allow(unused)]

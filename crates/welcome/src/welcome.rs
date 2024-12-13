@@ -11,7 +11,7 @@ use gpui::{
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use ui::{prelude::*, CheckboxWithLabel};
+use ui::{prelude::*, CheckboxWithLabel, Tooltip};
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     dock::DockPosition,
@@ -266,24 +266,34 @@ impl Render for WelcomePage {
                     .child(
                         v_group()
                             .gap_2()
-                            .child(CheckboxWithLabel::new(
-                                "enable-vim",
-                                Label::new("Enable Vim Mode"),
-                                if VimModeSetting::get_global(cx).0 {
-                                    ui::Selection::Selected
-                                } else {
-                                    ui::Selection::Unselected
-                                },
-                                cx.listener(move |this, selection, cx| {
-                                    this.telemetry
-                                        .report_app_event("welcome page: toggle vim".to_string());
-                                    this.update_settings::<VimModeSetting>(
-                                        selection,
-                                        cx,
-                                        |setting, value| *setting = Some(value),
-                                    );
-                                }),
-                            ))
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .child(CheckboxWithLabel::new(
+                                        "enable-vim",
+                                        Label::new("Enable Vim Mode"),
+                                        if VimModeSetting::get_global(cx).0 {
+                                            ui::Selection::Selected
+                                        } else {
+                                            ui::Selection::Unselected
+                                        },
+                                        cx.listener(move |this, selection, cx| {
+                                            this.telemetry
+                                                .report_app_event("welcome page: toggle vim".to_string());
+                                            this.update_settings::<VimModeSetting>(
+                                                selection,
+                                                cx,
+                                                |setting, value| *setting = Some(value),
+                                            );
+                                        }),
+                                    ))
+                                    .child(
+                                        IconButton::new("vim-mode", IconName::Info)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .tooltip(|cx| Tooltip::text("You can also toggle Vim Mode via the command palette or Editor Controls menu.", cx)),
+                                    )
+                            )
                             .child(CheckboxWithLabel::new(
                                 "enable-crash",
                                 Label::new("Send Crash Reports"),

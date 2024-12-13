@@ -1,14 +1,11 @@
 mod authorization;
 pub mod db;
-mod telemetry;
 mod token;
 
 use crate::api::events::SnowflakeRow;
 use crate::api::CloudflareIpCountryHeader;
 use crate::build_kinesis_client;
-use crate::{
-    build_clickhouse_client, db::UserId, executor::Executor, Cents, Config, Error, Result,
-};
+use crate::{db::UserId, executor::Executor, Cents, Config, Error, Result};
 use anyhow::{anyhow, Context as _};
 use authorization::authorize_access_to_language_model;
 use axum::routing::get;
@@ -29,7 +26,10 @@ use reqwest_client::ReqwestClient;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
 };
-use rpc::{ListModelsResponse, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME};
+use rpc::{
+    ListModelsResponse, PredictEditsParams, PredictEditsResponse,
+    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
+};
 use serde_json::json;
 use std::{
     pin::Pin,
@@ -37,7 +37,6 @@ use std::{
     task::{Context, Poll},
 };
 use strum::IntoEnumIterator;
-use telemetry::{report_llm_rate_limit, report_llm_usage, LlmRateLimitEventRow, LlmUsageEventRow};
 use tokio::sync::RwLock;
 use util::ResultExt;
 
@@ -49,7 +48,6 @@ pub struct LlmState {
     pub db: Arc<LlmDatabase>,
     pub http_client: ReqwestClient,
     pub kinesis_client: Option<aws_sdk_kinesis::Client>,
-    pub clickhouse_client: Option<clickhouse::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
 }
@@ -86,10 +84,6 @@ impl LlmState {
             } else {
                 None
             },
-            clickhouse_client: config
-                .clickhouse_url
-                .as_ref()
-                .and_then(|_| build_clickhouse_client(&config).log_err()),
             active_user_count_by_model: RwLock::new(HashMap::default()),
             config,
         };
@@ -126,6 +120,7 @@ pub fn routes() -> Router<(), Body> {
     Router::new()
         .route("/models", get(list_models))
         .route("/completion", post(perform_completion))
+        .route("/predict_edits", post(predict_edits))
         .layer(middleware::from_fn(validate_api_token))
 }
 
@@ -439,6 +434,59 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
     }
 }
 
+async fn predict_edits(
+    Extension(state): Extension<Arc<LlmState>>,
+    Extension(claims): Extension<LlmTokenClaims>,
+    _country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
+    Json(params): Json<PredictEditsParams>,
+) -> Result<impl IntoResponse> {
+    if !claims.is_staff {
+        return Err(anyhow!("not found"))?;
+    }
+
+    let api_url = state
+        .config
+        .prediction_api_url
+        .as_ref()
+        .context("no PREDICTION_API_URL configured on the server")?;
+    let api_key = state
+        .config
+        .prediction_api_key
+        .as_ref()
+        .context("no PREDICTION_API_KEY configured on the server")?;
+    let model = state
+        .config
+        .prediction_model
+        .as_ref()
+        .context("no PREDICTION_MODEL configured on the server")?;
+    let prompt = include_str!("./llm/prediction_prompt.md")
+        .replace("<events>", &params.input_events)
+        .replace("<excerpt>", &params.input_excerpt);
+    let mut response = open_ai::complete_text(
+        &state.http_client,
+        api_url,
+        api_key,
+        open_ai::CompletionRequest {
+            model: model.to_string(),
+            prompt: prompt.clone(),
+            max_tokens: 1024,
+            temperature: 0.,
+            prediction: Some(open_ai::Prediction::Content {
+                content: params.input_excerpt,
+            }),
+            rewrite_speculation: Some(true),
+        },
+    )
+    .await?;
+    let choice = response
+        .choices
+        .pop()
+        .context("no output from completion response")?;
+    Ok(Json(PredictEditsResponse {
+        output_excerpt: choice.text,
+    }))
+}
+
 /// The maximum monthly spending an individual user can reach on the free tier
 /// before they have to pay.
 pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(10);
@@ -573,34 +621,6 @@ async fn check_usage_limit(
             .await
             .log_err();
 
-            if let Some(client) = state.clickhouse_client.as_ref() {
-                report_llm_rate_limit(
-                    client,
-                    LlmRateLimitEventRow {
-                        time: Utc::now().timestamp_millis(),
-                        user_id: claims.user_id as i32,
-                        is_staff: claims.is_staff,
-                        plan: match claims.plan {
-                            Plan::Free => "free".to_string(),
-                            Plan::ZedPro => "zed_pro".to_string(),
-                        },
-                        model: model.name.clone(),
-                        provider: provider.to_string(),
-                        usage_measure: resource.to_string(),
-                        requests_this_minute: usage.requests_this_minute as u64,
-                        tokens_this_minute: usage.tokens_this_minute as u64,
-                        tokens_this_day: usage.tokens_this_day as u64,
-                        users_in_recent_minutes: users_in_recent_minutes as u64,
-                        users_in_recent_days: users_in_recent_days as u64,
-                        max_requests_per_minute: per_user_max_requests_per_minute as u64,
-                        max_tokens_per_minute: per_user_max_tokens_per_minute as u64,
-                        max_tokens_per_day: per_user_max_tokens_per_day as u64,
-                    },
-                )
-                .await
-                .log_err();
-            }
-
             return Err(Error::http(
                 StatusCode::TOO_MANY_REQUESTS,
                 format!("Rate limit exceeded. Maximum {} reached.", resource),
@@ -687,6 +707,8 @@ impl<S> Drop for TokenCountingStream<S> {
                 );
 
                 let properties = json!({
+                    "has_llm_subscription": claims.has_llm_subscription,
+                    "max_monthly_spend_in_cents": claims.max_monthly_spend_in_cents,
                     "plan": match claims.plan {
                         Plan::Free => "free".to_string(),
                         Plan::ZedPro => "zed_pro".to_string(),
@@ -706,44 +728,6 @@ impl<S> Drop for TokenCountingStream<S> {
                 .write(&state.kinesis_client, &state.config.kinesis_stream)
                 .await
                 .log_err();
-
-                if let Some(clickhouse_client) = state.clickhouse_client.as_ref() {
-                    report_llm_usage(
-                        clickhouse_client,
-                        LlmUsageEventRow {
-                            time: Utc::now().timestamp_millis(),
-                            user_id: claims.user_id as i32,
-                            is_staff: claims.is_staff,
-                            plan: match claims.plan {
-                                Plan::Free => "free".to_string(),
-                                Plan::ZedPro => "zed_pro".to_string(),
-                            },
-                            model,
-                            provider: provider.to_string(),
-                            input_token_count: tokens.input as u64,
-                            cache_creation_input_token_count: tokens.input_cache_creation as u64,
-                            cache_read_input_token_count: tokens.input_cache_read as u64,
-                            output_token_count: tokens.output as u64,
-                            requests_this_minute: usage.requests_this_minute as u64,
-                            tokens_this_minute: usage.tokens_this_minute as u64,
-                            tokens_this_day: usage.tokens_this_day as u64,
-                            input_tokens_this_month: usage.tokens_this_month.input as u64,
-                            cache_creation_input_tokens_this_month: usage
-                                .tokens_this_month
-                                .input_cache_creation
-                                as u64,
-                            cache_read_input_tokens_this_month: usage
-                                .tokens_this_month
-                                .input_cache_read
-                                as u64,
-                            output_tokens_this_month: usage.tokens_this_month.output as u64,
-                            spending_this_month: usage.spending_this_month.0 as u64,
-                            lifetime_spending: usage.lifetime_spending.0 as u64,
-                        },
-                    )
-                    .await
-                    .log_err();
-                }
             }
         })
     }

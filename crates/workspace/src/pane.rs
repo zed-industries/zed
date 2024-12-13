@@ -306,6 +306,7 @@ pub struct Pane {
     pub split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
+    zoom_out_on_close: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -507,6 +508,7 @@ impl Pane {
             new_item_context_menu_handle: Default::default(),
             pinned_tab_count: 0,
             diagnostics: Default::default(),
+            zoom_out_on_close: true,
         }
     }
 
@@ -1504,6 +1506,7 @@ impl Pane {
             self.pinned_tab_count -= 1;
         }
         if item_index == self.active_item_index {
+            let left_neighbour_index = || item_index.min(self.items.len()).saturating_sub(1);
             let index_to_activate = match activate_on_close {
                 ActivateOnClose::History => self
                     .activation_history
@@ -1515,7 +1518,7 @@ impl Pane {
                     })
                     // We didn't have a valid activation history entry, so fallback
                     // to activating the item to the left
-                    .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1)),
+                    .unwrap_or_else(left_neighbour_index),
                 ActivateOnClose::Neighbour => {
                     self.activation_history.pop();
                     if item_index + 1 < self.items.len() {
@@ -1523,6 +1526,10 @@ impl Pane {
                     } else {
                         item_index.saturating_sub(1)
                     }
+                }
+                ActivateOnClose::LeftNeighbour => {
+                    self.activation_history.pop();
+                    left_neighbour_index()
                 }
             };
 
@@ -1586,7 +1593,7 @@ impl Pane {
                 .remove(&item.item_id());
         }
 
-        if self.items.is_empty() && close_pane_if_empty && self.zoomed {
+        if self.zoom_out_on_close && self.items.is_empty() && close_pane_if_empty && self.zoomed {
             cx.emit(Event::ZoomOut);
         }
 
@@ -2000,12 +2007,8 @@ impl Pane {
 
         let icon = if decorated_icon.is_none() {
             match item_diagnostic {
-                Some(&DiagnosticSeverity::ERROR) => {
-                    Some(Icon::new(IconName::X).color(Color::Error))
-                }
-                Some(&DiagnosticSeverity::WARNING) => {
-                    Some(Icon::new(IconName::Triangle).color(Color::Warning))
-                }
+                Some(&DiagnosticSeverity::ERROR) => None,
+                Some(&DiagnosticSeverity::WARNING) => None,
                 _ => item.tab_icon(cx).map(|icon| icon.color(Color::Muted)),
             }
             .map(|icon| icon.size(IconSize::Small))
@@ -2142,13 +2145,17 @@ impl Pane {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(if let Some(decorated_icon) = decorated_icon {
-                        div().child(decorated_icon.into_any_element())
-                    } else if let Some(icon) = icon {
-                        div().mt(px(2.5)).child(icon.into_any_element())
-                    } else {
-                        div()
-                    })
+                    .items_center()
+                    .children(
+                        std::iter::once(if let Some(decorated_icon) = decorated_icon {
+                            Some(div().child(decorated_icon.into_any_element()))
+                        } else if let Some(icon) = icon {
+                            Some(div().child(icon.into_any_element()))
+                        } else {
+                            None
+                        })
+                        .flatten(),
+                    )
                     .child(label),
             );
 
@@ -2786,6 +2793,10 @@ impl Pane {
 
     pub fn drag_split_direction(&self) -> Option<SplitDirection> {
         self.drag_split_direction
+    }
+
+    pub fn set_zoom_out_on_close(&mut self, zoom_out_on_close: bool) {
+        self.zoom_out_on_close = zoom_out_on_close;
     }
 }
 
@@ -3658,6 +3669,69 @@ mod tests {
         .await
         .unwrap();
         assert_item_labels(&pane, ["A*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_remove_item_ordering_left_neighbour(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update_global::<SettingsStore, ()>(|s, cx| {
+            s.update_user_settings::<ItemSettings>(cx, |s| {
+                s.activate_on_close = Some(ActivateOnClose::LeftNeighbour);
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(1, false, false, cx));
+        add_labeled_item(&pane, "1", false, cx);
+        assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(0, false, false, cx));
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["B*", "C"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["C*"], cx);
     }
 
     #[gpui::test]

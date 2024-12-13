@@ -169,6 +169,7 @@ pub enum IconName {
     Ellipsis,
     EllipsisVertical,
     Envelope,
+    Eraser,
     Escape,
     ExpandVertical,
     Exit,
@@ -177,6 +178,7 @@ pub enum IconName {
     File,
     FileCode,
     FileDoc,
+    FileDiff,
     FileGeneric,
     FileGit,
     FileLock,
@@ -198,10 +200,12 @@ pub enum IconName {
     GenericRestore,
     Github,
     Globe,
+    GitBranch,
     Hash,
     HistoryRerun,
     Indicator,
     IndicatorX,
+    Info,
     InlayHint,
     Keyboard,
     Library,
@@ -221,6 +225,8 @@ pub enum IconName {
     Option,
     PageDown,
     PageUp,
+    PanelLeft,
+    PanelRight,
     Pencil,
     Person,
     PhoneIncoming,
@@ -264,6 +270,9 @@ pub enum IconName {
     SparkleFilled,
     Spinner,
     Split,
+    SquareDot,
+    SquareMinus,
+    SquarePlus,
     Star,
     StarFilled,
     Stop,
@@ -276,6 +285,8 @@ pub enum IconName {
     Tab,
     Terminal,
     TextSnippet,
+    ThumbsUp,
+    ThumbsDown,
     Trash,
     TrashAlt,
     Triangle,
@@ -292,6 +303,7 @@ pub enum IconName {
     XCircle,
     ZedAssistant,
     ZedAssistantFilled,
+    ZedPredict,
     ZedXCopilot,
 }
 
@@ -492,7 +504,7 @@ impl RenderOnce for IconDecoration {
 }
 
 impl ComponentPreview for IconDecoration {
-    fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
 
         let examples = all_kinds
@@ -534,7 +546,7 @@ impl RenderOnce for DecoratedIcon {
 }
 
 impl ComponentPreview for DecoratedIcon {
-    fn examples(cx: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         let icon_1 = Icon::new(IconName::FileDoc);
         let icon_2 = Icon::new(IconName::FileDoc);
         let icon_3 = Icon::new(IconName::FileDoc);
@@ -653,7 +665,7 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl ComponentPreview for Icon {
-    fn examples(_cx: &WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
+    fn examples(_cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
         let arrow_icons = vec![
             IconName::ArrowDown,
             IconName::ArrowLeft,

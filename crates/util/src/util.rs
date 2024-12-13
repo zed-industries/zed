@@ -8,6 +8,7 @@ pub mod test;
 
 use futures::Future;
 
+use itertools::Either;
 use regex::Regex;
 use std::sync::OnceLock;
 use std::{
@@ -199,6 +200,35 @@ pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
     }
 }
 
+pub fn iterate_expanded_and_wrapped_usize_range(
+    range: Range<usize>,
+    additional_before: usize,
+    additional_after: usize,
+    wrap_length: usize,
+) -> impl Iterator<Item = usize> {
+    let start_wraps = range.start < additional_before;
+    let end_wraps = wrap_length < range.end + additional_after;
+    if start_wraps && end_wraps {
+        Either::Left(0..wrap_length)
+    } else if start_wraps {
+        let wrapped_start = (range.start + wrap_length).saturating_sub(additional_before);
+        if wrapped_start <= range.end {
+            Either::Left(0..wrap_length)
+        } else {
+            Either::Right((0..range.end + additional_after).chain(wrapped_start..wrap_length))
+        }
+    } else if end_wraps {
+        let wrapped_end = range.end + additional_after - wrap_length;
+        if range.start <= wrapped_end {
+            Either::Left(0..wrap_length)
+        } else {
+            Either::Right((0..wrapped_end).chain(range.start - additional_before..wrap_length))
+        }
+    } else {
+        Either::Left((range.start - additional_before)..(range.end + additional_after))
+    }
+}
+
 pub trait ResultExt<E> {
     type Ok;
 
@@ -206,6 +236,9 @@ pub trait ResultExt<E> {
     /// Assert that this result should never be an error in development or tests.
     fn debug_assert_ok(self, reason: &str) -> Self;
     fn warn_on_err(self) -> Option<Self::Ok>;
+    fn anyhow(self) -> anyhow::Result<Self::Ok>
+    where
+        E: Into<anyhow::Error>;
 }
 
 impl<T, E> ResultExt<E> for Result<T, E>
@@ -242,6 +275,13 @@ where
                 None
             }
         }
+    }
+
+    fn anyhow(self) -> anyhow::Result<T>
+    where
+        E: Into<anyhow::Error>,
+    {
+        self.map_err(Into::into)
     }
 }
 
@@ -721,6 +761,50 @@ Line 2
             r#"Line 1
 Line 2
 Line 3"#
+        );
+    }
+
+    #[test]
+    fn test_iterate_expanded_and_wrapped_usize_range() {
+        // Neither wrap
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
+            (1..5).collect::<Vec<usize>>()
+        );
+        // Start wraps
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
+            ((0..5).chain(7..8)).collect::<Vec<usize>>()
+        );
+        // Start wraps all the way around
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // Start wraps all the way around and past 0
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // End wraps
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
+            (0..1).chain(2..8).collect::<Vec<usize>>()
+        );
+        // End wraps all the way around
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // End wraps all the way around and past the end
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // Both start and end wrap
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
         );
     }
 }

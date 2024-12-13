@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
 
+use crate::context::{Context, ContextKind};
+
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
     Chat,
@@ -62,6 +64,7 @@ pub struct Thread {
     pending_summary: Task<Option<()>>,
     messages: Vec<Message>,
     next_message_id: MessageId,
+    context_by_message: HashMap<MessageId, Vec<Context>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     tools: Arc<ToolWorkingSet>,
@@ -79,6 +82,7 @@ impl Thread {
             pending_summary: Task::ready(None),
             messages: Vec::new(),
             next_message_id: MessageId(0),
+            context_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
             tools,
@@ -125,12 +129,22 @@ impl Thread {
         &self.tools
     }
 
+    pub fn context_for_message(&self, id: MessageId) -> Option<&Vec<Context>> {
+        self.context_by_message.get(&id)
+    }
+
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn insert_user_message(&mut self, text: impl Into<String>, cx: &mut ModelContext<Self>) {
-        self.insert_message(Role::User, text, cx)
+    pub fn insert_user_message(
+        &mut self,
+        text: impl Into<String>,
+        context: Vec<Context>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let message_id = self.insert_message(Role::User, text, cx);
+        self.context_by_message.insert(message_id, context);
     }
 
     pub fn insert_message(
@@ -138,7 +152,7 @@ impl Thread {
         role: Role,
         text: impl Into<String>,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> MessageId {
         let id = self.next_message_id.post_inc();
         self.messages.push(Message {
             id,
@@ -147,6 +161,7 @@ impl Thread {
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
+        id
     }
 
     pub fn to_completion_request(
@@ -174,6 +189,29 @@ impl Thread {
                         .content
                         .push(MessageContent::ToolResult(tool_result.clone()));
                 }
+            }
+
+            if let Some(context) = self.context_for_message(message.id) {
+                let mut file_context = String::new();
+
+                for context in context.iter() {
+                    match context.kind {
+                        ContextKind::File => {
+                            file_context.push_str(&context.text);
+                            file_context.push_str("\n");
+                        }
+                    }
+                }
+
+                let mut context_text = String::new();
+                if !file_context.is_empty() {
+                    context_text.push_str("The following files are available:\n");
+                    context_text.push_str(&file_context);
+                }
+
+                request_message
+                    .content
+                    .push(MessageContent::Text(context_text))
             }
 
             if !message.text.is_empty() {

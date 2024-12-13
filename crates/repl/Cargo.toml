@@ -16,6 +16,7 @@ doctest = false
 alacritty_terminal.workspace = true
 anyhow.workspace = true
 async-dispatcher.workspace = true
+async-tungstenite = { workspace = true, features = ["async-std", "async-tls"] }
 base64.workspace = true
 client.workspace = true
 collections.workspace = true

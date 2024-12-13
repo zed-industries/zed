@@ -38,6 +38,7 @@ pub struct WindowsWindowState {
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
+    pub is_minimized: Option<bool>,
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
@@ -93,7 +94,7 @@ impl WindowsWindowState {
             size: logical_size,
         };
         let border_offset = WindowBorderOffset::default();
-        let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
+        let is_minimized = None;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let system_key_handled = false;
@@ -110,6 +111,7 @@ impl WindowsWindowState {
             fullscreen_restore_bounds,
             border_offset,
             scale_factor,
+            is_minimized,
             callbacks,
             input_handler,
             system_key_handled,
@@ -1070,7 +1072,7 @@ unsafe extern "system" fn wnd_proc(
         let weak = Box::new(Rc::downgrade(creation_result.as_ref().unwrap()));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
         ctx.inner = Some(creation_result);
-        return LRESULT(1);
+        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
     let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowStatePtr>;
     if ptr.is_null() {

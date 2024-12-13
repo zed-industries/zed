@@ -426,8 +426,10 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     executor.run_until_parked();
 
     // Opens the buffer and formats it
-    let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx))
+    let (buffer_b, _handle) = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "a.ts"), cx)
+        })
         .await
         .expect("user B opens buffer for formatting");
 
