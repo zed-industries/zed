@@ -272,8 +272,8 @@ impl TabSnapshot {
         }
     }
 
-    pub fn buffer_rows(&self, row: u32) -> fold_map::FoldBufferRows<'_> {
-        self.fold_snapshot.buffer_rows(row)
+    pub fn rows(&self, row: u32) -> fold_map::FoldRows<'_> {
+        self.fold_snapshot.row_infos(row)
     }
 
     #[cfg(test)]

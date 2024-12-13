@@ -30,8 +30,8 @@ use crate::{
     hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
 };
 pub use block_map::{
-    Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap,
-    BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+    Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, RenderBlock,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
@@ -39,6 +39,7 @@ pub use crease_map::*;
 use diff_map::{DiffMap, DiffMapSnapshot};
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
+use git::diff::DiffHunkStatus;
 use gpui::{
     AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
@@ -77,6 +78,12 @@ use wrap_map::{WrapMap, WrapSnapshot};
 pub enum FoldStatus {
     Folded,
     Foldable,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct RowInfo {
+    pub buffer_row: Option<u32>,
+    pub diff_status: Option<DiffHunkStatus>,
 }
 
 pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
@@ -747,13 +754,8 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows(
-        &self,
-        start_row: DisplayRow,
-    ) -> impl Iterator<Item = Option<MultiBufferRow>> + '_ {
-        self.block_snapshot
-            .buffer_rows(BlockRow(start_row.0))
-            .map(|row| row.map(MultiBufferRow))
+    pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
+        self.block_snapshot.row_infos(BlockRow(start_row.0))
     }
 
     pub fn widest_line_number(&self) -> u32 {

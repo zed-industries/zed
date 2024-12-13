@@ -9,6 +9,7 @@ use editor::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
         ToggleCodeActions, Undo,
     },
+    display_map::RowInfo,
     test::editor_test_context::{AssertionContextManager, EditorTestContext},
     Editor,
 };
@@ -20,7 +21,6 @@ use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
     FakeLspAdapter,
 };
-use multi_buffer::MultiBufferRow;
 use project::{
     project_settings::{InlineBlameSettings, ProjectSettings},
     SERVER_PROGRESS_THROTTLE_TIMEOUT,
@@ -2075,7 +2075,15 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
+                .blame_for_rows(
+                    &(0..4)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    cx,
+                )
                 .collect::<Vec<_>>()
         });
 
@@ -2114,7 +2122,15 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
+                .blame_for_rows(
+                    &(0..4)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    cx,
+                )
                 .collect::<Vec<_>>()
         });
 
@@ -2141,7 +2157,15 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
+                .blame_for_rows(
+                    &(0..4)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    cx,
+                )
                 .collect::<Vec<_>>()
         });
 

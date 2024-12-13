@@ -21,8 +21,8 @@ use crate::{
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
-    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowInfo, RowRangeExt, SelectPhase,
+    Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -1416,7 +1416,7 @@ impl EditorElement {
     fn layout_inline_blame(
         &self,
         display_row: DisplayRow,
-        display_snapshot: &DisplaySnapshot,
+        row_info: &RowInfo,
         line_layout: &LineWithInvisibles,
         crease_trailer: Option<&CreaseTrailerLayout>,
         em_width: Pixels,
@@ -1439,13 +1439,10 @@ impl EditorElement {
             .as_ref()
             .map(|(w, _)| w.clone());
 
-        let display_point = DisplayPoint::new(display_row, 0);
-        let buffer_row = MultiBufferRow(display_point.to_point(display_snapshot).row);
-
         let blame = self.editor.read(cx).blame.clone()?;
         let blame_entry = blame
             .update(cx, |blame, cx| {
-                blame.blame_for_rows([Some(buffer_row)], cx).next()
+                blame.blame_for_rows(&[*row_info], cx).next()
             })
             .flatten()?;
 
@@ -1485,7 +1482,7 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn layout_blame_entries(
         &self,
-        buffer_rows: impl Iterator<Item = Option<MultiBufferRow>>,
+        buffer_rows: &[RowInfo],
         em_width: Pixels,
         scroll_position: gpui::Point<f32>,
         line_height: Pixels,
@@ -1813,7 +1810,7 @@ impl EditorElement {
         let end = rows.end.max(relative_to);
 
         let buffer_rows = snapshot
-            .buffer_rows(start)
+            .row_infos(start)
             .take(1 + end.minus(start) as usize)
             .collect::<Vec<_>>();
 
@@ -1821,7 +1818,7 @@ impl EditorElement {
         let mut delta = 1;
         let mut i = head_idx + 1;
         while i < buffer_rows.len() as u32 {
-            if buffer_rows[i as usize].is_some() {
+            if buffer_rows[i as usize].buffer_row.is_some() {
                 if rows.contains(&DisplayRow(i + start.0)) {
                     relative_rows.insert(DisplayRow(i + start.0), delta);
                 }
@@ -1831,13 +1828,13 @@ impl EditorElement {
         }
         delta = 1;
         i = head_idx.min(buffer_rows.len() as u32 - 1);
-        while i > 0 && buffer_rows[i as usize].is_none() {
+        while i > 0 && buffer_rows[i as usize].buffer_row.is_none() {
             i -= 1;
         }
 
         while i > 0 {
             i -= 1;
-            if buffer_rows[i as usize].is_some() {
+            if buffer_rows[i as usize].buffer_row.is_some() {
                 if rows.contains(&DisplayRow(i + start.0)) {
                     relative_rows.insert(DisplayRow(i + start.0), delta);
                 }
@@ -1851,7 +1848,7 @@ impl EditorElement {
     fn layout_line_numbers(
         &self,
         rows: Range<DisplayRow>,
-        buffer_rows: impl Iterator<Item = Option<MultiBufferRow>>,
+        buffer_rows: &[RowInfo],
         active_rows: &BTreeMap<DisplayRow, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
@@ -1893,8 +1890,7 @@ impl EditorElement {
         buffer_rows
             .into_iter()
             .enumerate()
-            .map(|(ix, multibuffer_row)| {
-                let multibuffer_row = multibuffer_row?;
+            .map(|(ix, row_info)| {
                 let display_row = DisplayRow(rows.start.0 + ix as u32);
                 let color = if active_rows.contains_key(&display_row) {
                     cx.theme().colors().editor_active_line_number
@@ -1902,7 +1898,7 @@ impl EditorElement {
                     cx.theme().colors().editor_line_number
                 };
                 line_number.clear();
-                let default_number = multibuffer_row.0 + 1;
+                let default_number = row_info.buffer_row? + 1;
                 let number = relative_rows
                     .get(&DisplayRow(ix as u32 + rows.start.0))
                     .unwrap_or(&default_number);
@@ -1927,7 +1923,7 @@ impl EditorElement {
     fn layout_crease_toggles(
         &self,
         rows: Range<DisplayRow>,
-        buffer_rows: impl IntoIterator<Item = Option<MultiBufferRow>>,
+        row_infos: &[RowInfo],
         active_rows: &BTreeMap<DisplayRow, bool>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
@@ -1936,22 +1932,21 @@ impl EditorElement {
             && snapshot.mode == EditorMode::Full
             && self.editor.read(cx).is_singleton(cx);
         if include_fold_statuses {
-            buffer_rows
+            row_infos
                 .into_iter()
                 .enumerate()
-                .map(|(ix, row)| {
-                    if let Some(multibuffer_row) = row {
-                        let display_row = DisplayRow(rows.start.0 + ix as u32);
-                        let active = active_rows.contains_key(&display_row);
-                        snapshot.render_crease_toggle(
-                            multibuffer_row,
-                            active,
-                            self.editor.clone(),
-                            cx,
-                        )
-                    } else {
-                        None
-                    }
+                .map(|(ix, info)| {
+                    let row = info.buffer_row?;
+                    let display_row = DisplayRow(rows.start.0 + ix as u32);
+                    let active = active_rows.contains_key(&display_row);
+
+                    // todo(max): Retrieve the multibuffer row correctly
+                    snapshot.render_crease_toggle(
+                        MultiBufferRow(row),
+                        active,
+                        self.editor.clone(),
+                        cx,
+                    )
                 })
                 .collect()
         } else {
@@ -1961,15 +1956,16 @@ impl EditorElement {
 
     fn layout_crease_trailers(
         &self,
-        buffer_rows: impl IntoIterator<Item = Option<MultiBufferRow>>,
+        buffer_rows: impl IntoIterator<Item = RowInfo>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<Option<AnyElement>> {
         buffer_rows
             .into_iter()
-            .map(|row| {
-                if let Some(multibuffer_row) = row {
-                    snapshot.render_crease_trailer(multibuffer_row, cx)
+            .map(|row_info| {
+                // FIXME: These are not really MultiBufferRow?!
+                if let Some(row) = row_info.buffer_row {
+                    snapshot.render_crease_trailer(MultiBufferRow(row), cx)
                 } else {
                     None
                 }
@@ -5364,12 +5360,15 @@ impl Element for EditorElement {
                     );
                     let end_row = DisplayRow(end_row);
 
-                    let buffer_rows = snapshot
-                        .buffer_rows(start_row)
+                    let row_infos = snapshot
+                        .row_infos(start_row)
                         .take((start_row..end_row).len())
-                        .collect::<Vec<_>>();
-                    let is_row_soft_wrapped =
-                        |row| buffer_rows.get(row).copied().flatten().is_none();
+                        .collect::<Vec<RowInfo>>();
+                    let is_row_soft_wrapped = |row: usize| {
+                        row_infos
+                            .get(row)
+                            .map_or(true, |info| info.buffer_row.is_none())
+                    };
 
                     let start_anchor = if start_row == Default::default() {
                         Anchor::min()
@@ -5428,7 +5427,7 @@ impl Element for EditorElement {
 
                     let line_numbers = self.layout_line_numbers(
                         start_row..end_row,
-                        buffer_rows.iter().copied(),
+                        &row_infos,
                         &active_rows,
                         newest_selection_head,
                         &snapshot,
@@ -5438,14 +5437,14 @@ impl Element for EditorElement {
                     let mut crease_toggles = cx.with_element_namespace("crease_toggles", |cx| {
                         self.layout_crease_toggles(
                             start_row..end_row,
-                            buffer_rows.iter().copied(),
+                            &row_infos,
                             &active_rows,
                             &snapshot,
                             cx,
                         )
                     });
                     let crease_trailers = cx.with_element_namespace("crease_trailers", |cx| {
-                        self.layout_crease_trailers(buffer_rows.iter().copied(), &snapshot, cx)
+                        self.layout_crease_trailers(row_infos.iter().copied(), &snapshot, cx)
                     });
 
                     let display_hunks = self.layout_gutter_git_hunks(
@@ -5576,11 +5575,12 @@ impl Element for EditorElement {
                         let display_row = newest_selection_head.row();
                         if (start_row..end_row).contains(&display_row) {
                             let line_ix = display_row.minus(start_row) as usize;
+                            let row_info = &row_infos[line_ix];
                             let line_layout = &line_layouts[line_ix];
                             let crease_trailer_layout = crease_trailers[line_ix].as_ref();
                             inline_blame = self.layout_inline_blame(
                                 display_row,
-                                &snapshot.display_snapshot,
+                                row_info,
                                 line_layout,
                                 crease_trailer_layout,
                                 em_width,
@@ -5593,7 +5593,7 @@ impl Element for EditorElement {
                     }
 
                     let blamed_display_rows = self.layout_blame_entries(
-                        buffer_rows.into_iter(),
+                        &row_infos,
                         em_width,
                         scroll_position,
                         line_height,
@@ -6679,7 +6679,12 @@ mod tests {
             .update_window(*window, |_, cx| {
                 element.layout_line_numbers(
                     DisplayRow(0)..DisplayRow(6),
-                    (0..6).map(MultiBufferRow).map(Some),
+                    &(0..6)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
                     &Default::default(),
                     Some(DisplayPoint::new(DisplayRow(0), 0)),
                     &snapshot,

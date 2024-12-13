@@ -1,7 +1,7 @@
+use crate::RowInfo;
+
 use super::{
-    diff_map::{
-        DiffEdit, DiffMapBufferRows, DiffMapChunks, DiffMapSnapshot, DiffOffset, DiffPoint,
-    },
+    diff_map::{DiffEdit, DiffMapChunks, DiffMapRows, DiffMapSnapshot, DiffOffset, DiffPoint},
     Highlights,
 };
 use gpui::{AnyElement, ElementId, WindowContext};
@@ -747,7 +747,7 @@ impl FoldSnapshot {
         (line_end - line_start) as u32
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> FoldBufferRows {
+    pub fn row_infos(&self, start_row: u32) -> FoldRows {
         if start_row > self.transforms.summary().output.lines.row {
             panic!("invalid display row {}", start_row);
         }
@@ -758,11 +758,11 @@ impl FoldSnapshot {
 
         let overshoot = fold_point.0 - cursor.start().0 .0;
         let diff_point = DiffPoint(cursor.start().1 .0 + overshoot);
-        let input_buffer_rows = self.diff_map_snapshot.buffer_rows(diff_point.0.row);
+        let input_rows = self.diff_map_snapshot.row_infos(diff_point.0.row);
 
-        FoldBufferRows {
+        FoldRows {
             fold_point,
-            input_buffer_rows,
+            input_rows,
             cursor,
         }
     }
@@ -1208,25 +1208,25 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
 }
 
 #[derive(Clone)]
-pub struct FoldBufferRows<'a> {
+pub struct FoldRows<'a> {
     cursor: Cursor<'a, Transform, (FoldPoint, DiffPoint)>,
-    input_buffer_rows: DiffMapBufferRows<'a>,
+    input_rows: DiffMapRows<'a>,
     fold_point: FoldPoint,
 }
 
-impl<'a> FoldBufferRows<'a> {
+impl<'a> FoldRows<'a> {
     pub(crate) fn seek(&mut self, row: u32) {
         let fold_point = FoldPoint::new(row, 0);
         self.cursor.seek(&fold_point, Bias::Left, &());
         let overshoot = fold_point.0 - self.cursor.start().0 .0;
         let diff_point = DiffPoint(self.cursor.start().1 .0 + overshoot);
-        self.input_buffer_rows.seek(diff_point.0.row);
+        self.input_rows.seek(diff_point.0.row);
         self.fold_point = fold_point;
     }
 }
 
-impl<'a> Iterator for FoldBufferRows<'a> {
-    type Item = Option<u32>;
+impl<'a> Iterator for FoldRows<'a> {
+    type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut traversed_fold = false;
@@ -1240,11 +1240,11 @@ impl<'a> Iterator for FoldBufferRows<'a> {
 
         if self.cursor.item().is_some() {
             if traversed_fold {
-                self.input_buffer_rows.seek(self.cursor.start().1 .0.row);
-                self.input_buffer_rows.next();
+                self.input_rows.seek(self.cursor.start().1 .0.row);
+                self.input_rows.next();
             }
             *self.fold_point.row_mut() += 1;
-            self.input_buffer_rows.next().map(|info| info.row)
+            self.input_rows.next()
         } else {
             None
         }
@@ -1878,7 +1878,10 @@ mod tests {
             let mut fold_row = 0;
             while fold_row < expected_buffer_rows.len() as u32 {
                 assert_eq!(
-                    snapshot.buffer_rows(fold_row).collect::<Vec<_>>(),
+                    snapshot
+                        .row_infos(fold_row)
+                        .map(|row_info| row_info.buffer_row)
+                        .collect::<Vec<_>>(),
                     expected_buffer_rows[(fold_row as usize)..],
                     "wrong buffer rows starting at fold row {}",
                     fold_row,
@@ -1985,10 +1988,19 @@ mod tests {
         let (snapshot, _) = map.read(diff_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee\nffffff\n");
         assert_eq!(
-            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            snapshot
+                .row_infos(0)
+                .map(|row_info| row_info.buffer_row)
+                .collect::<Vec<_>>(),
             [Some(0), Some(3), Some(5), Some(6)]
         );
-        assert_eq!(snapshot.buffer_rows(3).collect::<Vec<_>>(), [Some(6)]);
+        assert_eq!(
+            snapshot
+                .row_infos(3)
+                .map(|row_info| row_info.buffer_row)
+                .collect::<Vec<_>>(),
+            [Some(6)]
+        );
     }
 
     fn init_test(cx: &mut gpui::AppContext) {

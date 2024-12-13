@@ -2,7 +2,7 @@ use super::{
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
     Highlights,
 };
-use crate::{EditorStyle, GutterDimensions};
+use crate::{EditorStyle, GutterDimensions, RowInfo};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, EntityId, Pixels, WindowContext};
 use language::{Chunk, Patch, Point};
@@ -398,9 +398,9 @@ pub struct BlockChunks<'a> {
 }
 
 #[derive(Clone)]
-pub struct BlockBufferRows<'a> {
+pub struct BlockRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
-    input_buffer_rows: wrap_map::WrapBufferRows<'a>,
+    input_rows: wrap_map::WrapRows<'a>,
     output_row: BlockRow,
     started: bool,
 }
@@ -1239,7 +1239,7 @@ impl BlockSnapshot {
         }
     }
 
-    pub(super) fn buffer_rows(&self, start_row: BlockRow) -> BlockBufferRows {
+    pub(super) fn row_infos(&self, start_row: BlockRow) -> BlockRows {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&start_row, Bias::Right, &());
         let (output_start, input_start) = cursor.start();
@@ -1252,9 +1252,9 @@ impl BlockSnapshot {
             0
         };
         let input_start_row = input_start.0 + overshoot;
-        BlockBufferRows {
+        BlockRows {
             transforms: cursor,
-            input_buffer_rows: self.wrap_snapshot.buffer_rows(input_start_row),
+            input_rows: self.wrap_snapshot.row_infos(input_start_row),
             output_row: start_row,
             started: false,
         }
@@ -1645,8 +1645,8 @@ impl<'a> Iterator for BlockChunks<'a> {
     }
 }
 
-impl<'a> Iterator for BlockBufferRows<'a> {
-    type Item = Option<u32>;
+impl<'a> Iterator for BlockRows<'a> {
+    type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.started {
@@ -1675,19 +1675,19 @@ impl<'a> Iterator for BlockBufferRows<'a> {
                 .as_ref()
                 .map_or(true, |block| block.is_replacement())
             {
-                self.input_buffer_rows.seek(self.transforms.start().1 .0);
+                self.input_rows.seek(self.transforms.start().1 .0);
             }
         }
 
         let transform = self.transforms.item()?;
         if let Some(block) = transform.block.as_ref() {
             if block.is_replacement() && self.transforms.start().0 == self.output_row {
-                Some(self.input_buffer_rows.next().unwrap())
+                Some(self.input_rows.next().unwrap())
             } else {
-                Some(None)
+                Some(RowInfo::default())
             }
         } else {
-            Some(self.input_buffer_rows.next().unwrap())
+            Some(self.input_rows.next().unwrap())
         }
     }
 }
@@ -1964,7 +1964,10 @@ mod tests {
         );
 
         assert_eq!(
-            snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            snapshot
+                .row_infos(BlockRow(0))
+                .map(|row_info| row_info.buffer_row)
+                .collect::<Vec<_>>(),
             &[
                 Some(0),
                 None,
@@ -2715,7 +2718,8 @@ mod tests {
                 );
                 assert_eq!(
                     blocks_snapshot
-                        .buffer_rows(BlockRow(start_row as u32))
+                        .row_infos(BlockRow(start_row as u32))
+                        .map(|row_info| row_info.buffer_row)
                         .collect::<Vec<_>>(),
                     &expected_buffer_rows[start_row..],
                     "incorrect buffer_rows starting at row {:?}",

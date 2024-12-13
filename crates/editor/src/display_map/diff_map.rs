@@ -1,5 +1,5 @@
 use super::inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlaySnapshot};
-use crate::{Highlights, InlayOffset, InlayPoint};
+use crate::{Highlights, InlayOffset, InlayPoint, RowInfo};
 use collections::HashMap;
 use git::diff::DiffHunkStatus;
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
@@ -85,7 +85,7 @@ pub struct DiffMapChunks<'a> {
 }
 
 #[derive(Clone)]
-pub struct DiffMapBufferRows<'a> {
+pub struct DiffMapRows<'a> {
     cursor: Cursor<'a, DiffTransform, (DiffPoint, InlayPoint)>,
     diff_point: DiffPoint,
     input_buffer_rows: InlayBufferRows<'a>,
@@ -980,7 +980,7 @@ impl DiffMapSnapshot {
         }
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> DiffMapBufferRows {
+    pub fn row_infos(&self, start_row: u32) -> DiffMapRows {
         if start_row > self.transforms.summary().diff_map.lines.row {
             panic!("invalid diff map row {}", start_row);
         }
@@ -1000,7 +1000,7 @@ impl DiffMapSnapshot {
             .inlay_snapshot
             .buffer_rows(inlay_transform_start.row() + overshoot);
 
-        DiffMapBufferRows {
+        DiffMapRows {
             diff_point,
             input_buffer_rows,
             cursor,
@@ -1114,7 +1114,7 @@ impl<'a> Iterator for DiffMapChunks<'a> {
     }
 }
 
-impl<'a> DiffMapBufferRows<'a> {
+impl<'a> DiffMapRows<'a> {
     pub fn seek(&mut self, row: u32) {
         self.diff_point = DiffPoint::new(row, 0);
         self.cursor.seek(&self.diff_point, Bias::Right, &());
@@ -1132,27 +1132,21 @@ impl<'a> DiffMapBufferRows<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct LineInfo {
-    pub row: Option<u32>,
-    pub diff_status: Option<DiffHunkStatus>,
-}
-
-impl<'a> Iterator for DiffMapBufferRows<'a> {
-    type Item = LineInfo;
+impl<'a> Iterator for DiffMapRows<'a> {
+    type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         let result = match self.cursor.item() {
-            Some(DiffTransform::DeletedHunk { .. }) => Some(LineInfo {
-                row: None,
+            Some(DiffTransform::DeletedHunk { .. }) => Some(RowInfo {
+                buffer_row: None,
                 diff_status: Some(DiffHunkStatus::Removed),
             }),
             Some(DiffTransform::BufferContent {
                 is_inserted_hunk, ..
             }) => {
                 let row = self.input_buffer_rows.next();
-                row.map(|row| LineInfo {
-                    row,
+                row.map(|row| RowInfo {
+                    buffer_row: row,
                     diff_status: if *is_inserted_hunk {
                         Some(DiffHunkStatus::Added)
                     } else {
@@ -1160,8 +1154,8 @@ impl<'a> Iterator for DiffMapBufferRows<'a> {
                     },
                 })
             }
-            None => self.input_buffer_rows.next().map(|row| LineInfo {
-                row,
+            None => self.input_buffer_rows.next().map(|row| RowInfo {
+                buffer_row: row,
                 diff_status: None,
             }),
         };
@@ -1420,8 +1414,8 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .buffer_rows(0)
-                .map(|info| info.row)
+                .row_infos(0)
+                .map(|info| info.buffer_row)
                 .collect::<Vec<_>>(),
             vec![
                 Some(0),
@@ -1732,8 +1726,8 @@ mod tests {
 
         assert_eq!(
             diff_snapshot
-                .buffer_rows(0)
-                .map(|info| info.row)
+                .row_infos(0)
+                .map(|info| info.buffer_row)
                 .collect::<Vec<_>>(),
             [Some(0)]
         );
@@ -1746,7 +1740,7 @@ mod tests {
         expected_diff: &str,
     ) {
         let actual_text = new_snapshot.text();
-        let line_infos = new_snapshot.buffer_rows(0).collect::<Vec<_>>();
+        let line_infos = new_snapshot.row_infos(0).collect::<Vec<_>>();
         let has_diff = line_infos.iter().any(|info| info.diff_status.is_some());
         let actual_diff = actual_text
             .split('\n')
@@ -1833,9 +1827,9 @@ mod tests {
 
     #[track_caller]
     fn assert_consistent_line_numbers(snapshot: &DiffMapSnapshot) {
-        let all_line_numbers = snapshot.buffer_rows(0).collect::<Vec<_>>();
+        let all_line_numbers = snapshot.row_infos(0).collect::<Vec<_>>();
         for start_row in 1..all_line_numbers.len() {
-            let line_numbers = snapshot.buffer_rows(start_row as u32).collect::<Vec<_>>();
+            let line_numbers = snapshot.row_infos(start_row as u32).collect::<Vec<_>>();
             assert_eq!(
                 line_numbers,
                 all_line_numbers[start_row..],
@@ -1843,7 +1837,7 @@ mod tests {
             );
 
             for seek_row in 0..all_line_numbers.len() {
-                let mut numbers = snapshot.buffer_rows(start_row as u32);
+                let mut numbers = snapshot.row_infos(start_row as u32);
                 numbers.seek(seek_row as u32);
                 let line_numbers = numbers.collect::<Vec<_>>();
                 assert_eq!(
