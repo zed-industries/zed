@@ -135,6 +135,10 @@ impl VariableName {
     pub fn template_value(&self) -> String {
         format!("${self}")
     }
+    /// Generates a `"$VARIABLE"`-like string, to be used instead of `Self::template_value` when expanded value could contain spaces or special characters.
+    pub fn template_value_with_whitespace(&self) -> String {
+        format!("\"${self}\"")
+    }
 }
 
 impl FromStr for VariableName {
