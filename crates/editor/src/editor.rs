@@ -1402,6 +1402,15 @@ impl Editor {
             key_context.add("inline_completion");
         }
 
+        if !self
+            .selections
+            .disjoint
+            .iter()
+            .all(|selection| selection.start == selection.end)
+        {
+            key_context.add("selection");
+        }
+
         key_context
     }
 
