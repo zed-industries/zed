@@ -798,7 +798,7 @@ fn prompt_for_excerpt(
 }
 
 fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<usize> {
-    const CONTEXT_LINES: u32 = 16;
+    const CONTEXT_LINES: u32 = 32;
 
     let mut context_lines_before = CONTEXT_LINES;
     let mut context_lines_after = CONTEXT_LINES;
