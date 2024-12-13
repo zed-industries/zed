@@ -1109,7 +1109,7 @@ impl DisplaySnapshot {
     }
 
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
-        self.block_snapshot.is_line_replaced_or_folded(buffer_row)
+        self.block_snapshot.is_line_replaced(buffer_row)
             || self.fold_snapshot.is_line_folded(buffer_row)
     }
 

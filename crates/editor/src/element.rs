@@ -1897,9 +1897,6 @@ impl EditorElement {
             .enumerate()
             .map(|(ix, multibuffer_row)| {
                 let multibuffer_row = multibuffer_row?;
-                if snapshot.is_line_folded(multibuffer_row) {
-                    return None;
-                }
                 let display_row = DisplayRow(rows.start.0 + ix as u32);
                 let color = if active_rows.contains_key(&display_row) {
                     cx.theme().colors().editor_active_line_number

@@ -1561,7 +1561,7 @@ impl BlockSnapshot {
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
-    pub(super) fn is_line_replaced_or_folded(&self, row: MultiBufferRow) -> bool {
+    pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
         let wrap_point = self
             .wrap_snapshot
             .make_wrap_point(Point::new(row.0, 0), Bias::Left);
@@ -3379,7 +3379,7 @@ mod tests {
             for buffer_row in 0..=buffer_snapshot.max_point().row {
                 let buffer_row = MultiBufferRow(buffer_row);
                 assert_eq!(
-                    blocks_snapshot.is_line_replaced_or_folded(buffer_row),
+                    blocks_snapshot.is_line_replaced(buffer_row),
                     expected_replaced_buffer_rows.contains(&buffer_row),
                     "incorrect is_line_replaced({buffer_row:?}), expected replaced rows: {expected_replaced_buffer_rows:?}",
                 );
