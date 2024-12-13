@@ -65,7 +65,6 @@ impl FetchContextPickerDelegate {
         workspace: WeakView<Workspace>,
         message_editor: WeakView<MessageEditor>,
     ) -> Self {
-        // workspace.update()
         FetchContextPickerDelegate {
             context_picker,
             workspace,
@@ -212,7 +211,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(self.url.clone()),
         )
     }
