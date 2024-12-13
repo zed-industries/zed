@@ -1441,10 +1441,15 @@ impl Render for PromptEditor {
                 ]
             }
             CodegenStatus::Error(_) | CodegenStatus::Done => {
-                let must_rerun = self.edited_since_done || matches!(status, CodegenStatus::Error(_));
+                let must_rerun =
+                    self.edited_since_done || matches!(status, CodegenStatus::Error(_));
                 // when accept button isn't visible, then restart maps to confirm
                 // when accept button is visible, then restart must be mapped to an alternate keyboard shortcut
-                let restart_key: &dyn gpui::Action = if must_rerun { &menu::Confirm } else { &menu::Restart };
+                let restart_key: &dyn gpui::Action = if must_rerun {
+                    &menu::Confirm
+                } else {
+                    &menu::Restart
+                };
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
@@ -1469,7 +1474,7 @@ impl Render for PromptEditor {
                             cx.emit(PromptEditorEvent::StartRequested);
                         }))
                         .into_any_element(),
-                    if ! must_rerun {
+                    if !must_rerun {
                         IconButton::new("confirm", IconName::Check)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
