@@ -9,12 +9,12 @@ use crate::{Color, Icon, IconName, ToggleState};
 
 /// Creates a new checkbox
 pub fn checkbox(id: impl Into<ElementId>, toggle_state: ToggleState) -> Checkbox {
-    Checkbox::new(id, toggle_state.into())
+    Checkbox::new(id, toggle_state)
 }
 
 /// Creates a new switch
 pub fn switch(id: impl Into<ElementId>, toggle_state: ToggleState) -> Switch {
-    Switch::new(id, toggle_state.into())
+    Switch::new(id, toggle_state)
 }
 
 /// # Checkbox
@@ -213,15 +213,22 @@ impl Switch {
 
 impl RenderOnce for Switch {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let adjust_ratio = if is_light(cx) { 1.5 } else { 1. };
         let is_on = self.toggle_state == ToggleState::Selected;
-        let group_id = format!("switch_group_{:?}", self.id);
+        let adjust_ratio = if is_light(cx) { 1.5 } else { 1.0 };
         let base_color = cx.theme().colors().text;
-        let bg_color = cx.theme().colors().element_background;
-        let active_bg = bg_color.blend(base_color.opacity(0.08));
+
+        let bg_color = if is_on {
+            cx.theme()
+                .colors()
+                .element_background
+                .blend(base_color.opacity(0.08))
+        } else {
+            cx.theme().colors().element_background
+        };
         let thumb_color = base_color.opacity(0.8);
         let thumb_hover_color = base_color;
         let border_color = cx.theme().colors().border_variant;
+        // Lighter themes need higher contrast borders
         let border_hover_color = if is_on {
             border_color.blend(base_color.opacity(0.16 * adjust_ratio))
         } else {
@@ -233,29 +240,28 @@ impl RenderOnce for Switch {
             (false, false) => 0.5,
         };
 
+        let group_id = format!("switch_group_{:?}", self.id);
+
         h_flex()
             .id(self.id)
-            .items_center()
             .items_center()
             .w(DynamicSpacing::Base32.rems(cx))
             .h(DynamicSpacing::Base20.rems(cx))
             .group(group_id.clone())
             .child(
                 h_flex()
-                    .justify_between()
+                    .when(is_on, |on| on.justify_end())
+                    .when(!is_on, |off| off.justify_start())
                     .items_center()
-                    .w_full()
-                    .h_full()
-                    .px(DynamicSpacing::Base02.px(cx))
+                    .size_full()
                     .rounded_full()
-                    .bg(if is_on { active_bg } else { bg_color })
+                    .px(DynamicSpacing::Base02.px(cx))
+                    .bg(bg_color)
                     .border_1()
                     .border_color(border_color)
                     .when(!self.disabled, |this| {
                         this.group_hover(group_id.clone(), |el| el.border_color(border_hover_color))
                     })
-                    .when(is_on, |on| on.justify_end())
-                    .when(!is_on, |off| off.justify_start())
                     .child(
                         div()
                             .size(DynamicSpacing::Base12.rems(cx))
