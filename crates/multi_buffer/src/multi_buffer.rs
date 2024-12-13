@@ -115,6 +115,8 @@ pub struct MultiBufferDiffHunk {
     pub row_range: Range<MultiBufferRow>,
     /// The buffer ID that this hunk belongs to.
     pub buffer_id: BufferId,
+    /// The ID of the excerpt where this hunk appears.
+    pub excerpt_id: ExcerptId,
     /// The range of the underlying buffer that this hunk corresponds to.
     pub buffer_range: Range<text::Anchor>,
     /// The range within the buffer's diff base that this hunk corresponds to.
@@ -251,7 +253,7 @@ struct Excerpt {
 ///
 /// Contains methods for getting the [`Buffer`] of the excerpt,
 /// as well as mapping offsets to/from buffer and multibuffer coordinates.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MultiBufferExcerpt<'a> {
     excerpt: &'a Excerpt,
     excerpt_offset: usize,
@@ -3446,17 +3448,13 @@ impl MultiBufferSnapshot {
 
         let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
         cursor.seek(&range.start, Bias::Right, &());
-        cursor.prev(&());
-
         iter::from_fn(move || {
+            let item = cursor.item()?;
+            let hit =
+                cursor.start().0 < range.end || (range.is_empty() && cursor.start().0 == range.end);
+            let excerpt = hit.then(|| MultiBufferExcerpt::new(item, *cursor.start()));
             cursor.next(&());
-            if cursor.start().0 < range.end {
-                cursor
-                    .item()
-                    .map(|item| MultiBufferExcerpt::new(item, *cursor.start()))
-            } else {
-                None
-            }
+            excerpt
         })
     }
 

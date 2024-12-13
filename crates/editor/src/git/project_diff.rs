@@ -1096,136 +1096,290 @@ impl Render for ProjectDiffEditor {
 
 #[cfg(test)]
 mod tests {
+    use futures::future::join_all;
     use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
     use project::buffer_store::BufferChangeSet;
+    use rand::{
+        distributions::{Alphanumeric, DistString},
+        prelude::*,
+    };
     use serde_json::json;
     use settings::SettingsStore;
     use std::{
-        ops::Deref as _,
+        ffi::OsString,
+        ops::Not,
         path::{Path, PathBuf},
     };
+    use text::{Edit, Patch, Rope};
 
     use super::*;
 
-    // TODO finish
-    // #[gpui::test]
-    // async fn randomized_tests(cx: &mut TestAppContext) {
-    //     // Create a new project (how?? temp fs?),
-    //     let fs = FakeFs::new(cx.executor());
-    //     let project = Project::test(fs, [], cx).await;
+    struct TestFile {
+        name: OsString,
+        staged_text: String,
+        buffer: text::BufferSnapshot,
+        editor: View<Editor>,
+        patch: Patch<usize>,
+    }
 
-    //     // create random files with random content
-
-    //     // Commit it into git somehow (technically can do with "real" fs in a temp dir)
-    //     //
-    //     // Apply randomized changes to the project: select a random file, random change and apply to buffers
-    // }
-
-    #[gpui::test(iterations = 30)]
-    async fn simple_edit_test(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
+    #[gpui::test(iterations = 100)]
+    async fn random_edits(cx: &mut TestAppContext, mut rng: StdRng) {
         init_test(cx);
+        let rng = &mut rng;
 
-        let fs = fs::FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                ".git": {},
-                "file_a": "This is file_a",
-                "file_b": "This is file_b",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [Path::new("/root")], cx).await;
+        let names = ["file0", "file1", "file2", "file3", "file4"].map(str::to_owned);
+        let fs = {
+            let fs = fs::FakeFs::new(cx.executor().clone());
+            let mut files = json!(names
+                .clone()
+                .into_iter()
+                .zip(std::iter::repeat_with(|| gen_file(rng).into()))
+                .collect::<serde_json::Map<_, _>>());
+            files
+                .as_object_mut()
+                .unwrap()
+                .insert(".git".to_owned(), json!({}));
+            fs.insert_tree("/project", files).await;
+            fs
+        };
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-        let file_a_editor = workspace
+        let (file_editors, project_diff_editor) = workspace
             .update(cx, |workspace, cx| {
-                let file_a_editor =
-                    workspace.open_abs_path(PathBuf::from("/root/file_a"), true, cx);
+                let file_editors = names.clone().map(|name| {
+                    workspace.open_abs_path(PathBuf::from(format!("/project/{}", name)), true, cx)
+                });
                 ProjectDiffEditor::deploy(workspace, &Deploy, cx);
-                file_a_editor
-            })
-            .unwrap()
-            .await
-            .expect("did not open an item at all")
-            .downcast::<Editor>()
-            .expect("did not open an editor for file_a");
-        let project_diff_editor = workspace
-            .update(cx, |workspace, cx| {
-                workspace
+                let project_diff_editor = workspace
                     .active_pane()
                     .read(cx)
                     .items()
                     .find_map(|item| item.downcast::<ProjectDiffEditor>())
+                    .expect("Didn't open project diff editor");
+                (file_editors, project_diff_editor)
             })
-            .unwrap()
-            .expect("did not find a ProjectDiffEditor");
-        project_diff_editor.update(cx, |project_diff_editor, cx| {
-            assert!(
-                project_diff_editor.editor.read(cx).text(cx).is_empty(),
-                "Should have no changes after opening the diff on no git changes"
-            );
-        });
-
-        let old_text = file_a_editor.update(cx, |editor, cx| editor.text(cx));
-        let change = "an edit after git add";
-        file_a_editor
-            .update(cx, |file_a_editor, cx| {
-                file_a_editor.insert(change, cx);
-                file_a_editor.save(false, project.clone(), cx)
-            })
+            .unwrap();
+        let file_editors = join_all(file_editors)
             .await
-            .expect("failed to save a file");
-        file_a_editor.update(cx, |file_a_editor, cx| {
-            let change_set = cx.new_model(|cx| {
-                BufferChangeSet::new_with_base_text(
-                    old_text.clone(),
-                    file_a_editor
-                        .buffer()
-                        .read(cx)
-                        .as_singleton()
-                        .unwrap()
-                        .read(cx)
-                        .text_snapshot(),
-                    cx,
-                )
-            });
-            file_a_editor
-                .diff_map
-                .add_change_set(change_set.clone(), cx);
-            project.update(cx, |project, cx| {
-                project.buffer_store().update(cx, |buffer_store, cx| {
-                    buffer_store.set_change_set(
-                        file_a_editor
+            .into_iter()
+            .map(|result| {
+                result
+                    .expect("Failed to open file editor")
+                    .downcast::<Editor>()
+                    .expect("Unexpected non-editor")
+            })
+            .collect::<Vec<_>>();
+        for file_editor in &file_editors {
+            file_editor
+                .update(cx, |editor, cx| editor.save(false, project.clone(), cx))
+                .await
+                .expect("Failed to save file");
+        }
+        let buffers = file_editors.clone().into_iter().map(|file_editor| {
+            file_editor.update(cx, |editor, cx| {
+                editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap()
+                    .read(cx)
+                    .text_snapshot()
+            })
+        });
+        let mut files = names
+            .into_iter()
+            .zip(file_editors)
+            .zip(buffers)
+            .map(|((name, editor), buffer)| {
+                let staged_text = buffer.text();
+                TestFile {
+                    name: name.into(),
+                    editor,
+                    buffer,
+                    staged_text,
+                    patch: Patch::new(Vec::new()),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        check(project_diff_editor.clone(), &files, cx);
+        for _ in 0..10 {
+            let file = files.choose_mut(rng).unwrap();
+            match rng.gen_range(0..5) {
+                0..3 => {
+                    let old_text = file.buffer.as_rope().clone();
+                    let new_edits = gen_edits(rng, &old_text);
+                    file.editor
+                        .update(cx, |editor, cx| {
+                            editor.edit(
+                                new_edits
+                                    .clone()
+                                    .into_iter()
+                                    .map(|(old, _, content)| (old, content)),
+                                cx,
+                            );
+                            editor.save(false, project.clone(), cx)
+                        })
+                        .await
+                        .expect("Failed to save file");
+                    let snapshot = file.editor.update(cx, |editor, cx| {
+                        editor
                             .buffer()
                             .read(cx)
                             .as_singleton()
                             .unwrap()
                             .read(cx)
-                            .remote_id(),
-                        change_set,
-                    );
-                });
-            });
-        });
-        fs.set_status_for_repo_via_git_operation(
-            Path::new("/root/.git"),
-            &[(Path::new("file_a"), GitFileStatus::Modified)],
-        );
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
+                            .text_snapshot()
+                    });
+                    let diff = file
+                        .editor
+                        .update(cx, |editor, cx| {
+                            let change_set = cx.new_model(|cx| {
+                                BufferChangeSet::new_with_base_text(
+                                    old_text.to_string(),
+                                    snapshot.clone(),
+                                    cx,
+                                )
+                            });
+                            editor.diff_map.add_change_set_with_project(
+                                project.clone(),
+                                change_set,
+                                cx,
+                            );
+                            let diff = BufferDiff::build(&old_text, &snapshot);
+                            diff
+                        })
+                        .await;
+                    let patch = std::mem::take(&mut file.patch);
+                    file.patch = patch.compose(diff.hunks(&snapshot).map(|hunk| {
+                        let new = hunk.buffer_range.to_offset(&snapshot);
+                        let old = if hunk.diff_base_byte_range == (0..0) {
+                            new_edits
+                                .iter()
+                                .find_map(|(old, edit_new, _)| (edit_new == &new).then_some(old))
+                                .cloned()
+                                .unwrap()
+                        } else {
+                            hunk.diff_base_byte_range
+                        };
+                        Edit { old, new }
+                    }));
+                    file.buffer = snapshot;
+                }
+                3 => {
+                    file.staged_text = file.buffer.text();
+                    file.patch = Patch::new(Vec::new());
+                }
+                4 => {
+                    file.editor
+                        .update(cx, |editor, cx| {
+                            editor.set_text(file.staged_text.as_str(), cx);
+                            editor.save(false, project.clone(), cx)
+                        })
+                        .await
+                        .expect("Failed to save file");
+                    file.buffer = file.editor.update(cx, |editor, cx| {
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .as_singleton()
+                            .unwrap()
+                            .read(cx)
+                            .text_snapshot()
+                    });
+                    file.patch = Patch::new(Vec::new());
+                }
+                _ => unreachable!(),
+            }
 
-        project_diff_editor.update(cx, |project_diff_editor, cx| {
-            assert_eq!(
-                // TODO assert it better: extract added text (based on the background changes) and deleted text (based on the deleted blocks added)
-                project_diff_editor.editor.read(cx).text(cx),
-                format!("{change}{old_text}"),
-                "Should have a new change shown in the beginning, and the old text shown as deleted text afterwards"
+            fs.set_status_for_repo_via_git_operation(
+                Path::new("/project/.git"),
+                &files
+                    .iter()
+                    .filter_map(|file| {
+                        file.patch
+                            .is_empty()
+                            .not()
+                            .then_some((file.name.as_ref(), GitFileStatus::Modified))
+                    })
+                    .collect::<Vec<_>>(),
             );
+            cx.executor()
+                .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+            cx.run_until_parked();
+            check(project_diff_editor.clone(), &files, cx);
+        }
+    }
+
+    fn check(
+        project_diff_editor: View<ProjectDiffEditor>,
+        files: &[TestFile],
+        cx: &mut VisualTestContext,
+    ) {
+        for file in files {
+            assert_eq!(
+                file.patch.is_empty(),
+                file.staged_text == file.buffer.text(),
+            )
+        }
+        project_diff_editor.update(cx, |project_diff_editor, cx| {
+            let snapshot = project_diff_editor
+                .editor
+                .update(cx, |editor, cx| editor.snapshot(cx));
+            let hunks = snapshot
+                .diff_map
+                .diff_hunks(&snapshot.buffer_snapshot)
+                .map(|hunk| {
+                    let buffer_snapshot = snapshot
+                        .buffer_snapshot
+                        .buffer_for_excerpt(hunk.excerpt_id)
+                        .unwrap();
+                    (
+                        hunk.buffer_id,
+                        hunk.diff_base_byte_range,
+                        hunk.buffer_range.to_offset(buffer_snapshot),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let edit_hunks = files
+                .iter()
+                .flat_map(|file| {
+                    file.patch.edits().iter().map(|Edit { old, new }| {
+                        (file.buffer.remote_id(), old.clone(), new.clone())
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(hunks.len(), edit_hunks.len());
+            for edit_hunk in edit_hunks {
+                assert!(hunks.iter().find(|hunk| hunk == &&edit_hunk).is_some());
+            }
+
+            let mut hunks = hunks.into_iter().peekable();
+            for excerpt in snapshot.buffer_snapshot.all_excerpts() {
+                let Some((buffer_id, _, new)) = hunks.next() else {
+                    panic!("Excerpt without a hunk")
+                };
+                let excerpt_buffer_id = excerpt.buffer().remote_id();
+                let excerpt_range = excerpt.buffer_range().to_offset(excerpt.buffer());
+                assert!(excerpt_buffer_id == buffer_id);
+                assert!(excerpt_range.start <= new.start);
+                assert!(excerpt_range.end >= new.end);
+                while let Some((_, _, new)) = hunks.peek().map_or(None, |hunk @ (id, _, new)| {
+                    (id == &excerpt_buffer_id
+                        && (excerpt_range.end > new.start
+                            || (new.is_empty() && excerpt_range.end == new.start)))
+                        .then_some(hunk)
+                }) {
+                    assert!(excerpt_range.start <= new.start);
+                    assert!(excerpt_range.end >= new.end);
+                    hunks.next();
+                }
+            }
+            if let Some(hunk) = hunks.next() {
+                panic!("Hunk without an excerpt: {hunk:?}")
+            }
         });
     }
 
@@ -1247,5 +1401,72 @@ mod tests {
             crate::init(cx);
             cx.set_staff(true);
         });
+    }
+
+    fn gen_line(rng: &mut StdRng) -> String {
+        let len = rng.gen_range(0..20);
+        let mut s = Alphanumeric.sample_string(rng, len);
+        s.push('\n');
+        s
+    }
+
+    fn gen_file(rng: &mut StdRng) -> String {
+        let line_count = rng.gen_range(0..10);
+        (0..line_count).map(|_| gen_line(rng)).collect()
+    }
+
+    fn gen_edits(rng: &mut StdRng, old: &Rope) -> Vec<(Range<usize>, Range<usize>, String)> {
+        let mut old_lines = {
+            let mut old_lines = Vec::new();
+            let mut old_lines_iter = old.chunks().lines();
+            while let Some(line) = old_lines_iter.next() {
+                assert!(!line.ends_with("\n"));
+                old_lines.push(line.to_owned());
+            }
+            if old_lines.last().is_some_and(|line| line.is_empty()) {
+                old_lines.pop();
+            }
+            old_lines.into_iter()
+        };
+        let mut edits = Vec::new();
+        let unchanged_count = rng.gen_range(0..=old_lines.len());
+        let mut old_offset = old_lines
+            .by_ref()
+            .take(unchanged_count)
+            .map(|line| line.len() + 1)
+            .sum::<usize>();
+        let mut new_offset = old_offset;
+        while old_lines.len() > 0 {
+            let deleted_count = rng.gen_range(0..=old_lines.len());
+            let advance = old_lines
+                .by_ref()
+                .take(deleted_count)
+                .map(|line| line.len() + 1)
+                .sum::<usize>();
+            let deleted_range = old_offset..old_offset + advance;
+            old_offset += advance;
+            let minimum_added = if deleted_count == 0 { 1 } else { 0 };
+            let added_count = rng.gen_range(minimum_added..=5);
+            let addition = (0..added_count).map(|_| gen_line(rng)).collect::<String>();
+            let added_range = new_offset..new_offset + addition.len();
+            new_offset += addition.len();
+            edits.push((deleted_range, added_range, addition));
+
+            if old_lines.len() > 0 {
+                let blank_lines = old_lines.clone().take_while(|line| line.is_empty()).count();
+                if blank_lines == old_lines.len() {
+                    break;
+                };
+                let unchanged_count = rng.gen_range((blank_lines + 1).max(1)..=old_lines.len());
+                let advance = old_lines
+                    .by_ref()
+                    .take(unchanged_count)
+                    .map(|line| line.len() + 1)
+                    .sum::<usize>();
+                old_offset += advance;
+                new_offset += advance;
+            }
+        }
+        edits
     }
 }

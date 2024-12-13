@@ -74,16 +74,23 @@ impl BufferDiff {
         }
     }
 
-    pub async fn build(diff_base: &str, buffer: &text::BufferSnapshot) -> Self {
+    pub async fn build(diff_base: &Rope, buffer: &text::BufferSnapshot) -> Self {
         let mut tree = SumTree::new(buffer);
 
-        let buffer_text = buffer.as_rope().to_string();
-        let patch = Self::diff(diff_base, &buffer_text);
+        let base_text = diff_base.to_string();
+        let buffer_text = buffer.text();
+        let patch = Self::diff(&base_text, &buffer_text);
 
         if let Some(patch) = patch {
             let mut divergence = 0;
             for hunk_index in 0..patch.num_hunks() {
-                let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
+                let hunk = Self::process_patch_hunk(
+                    &patch,
+                    hunk_index,
+                    diff_base,
+                    buffer,
+                    &mut divergence,
+                );
                 tree.push(hunk, buffer);
             }
         }
@@ -187,11 +194,11 @@ impl BufferDiff {
     }
 
     pub async fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
-        *self = Self::build(&diff_base.to_string(), buffer).await;
+        *self = Self::build(diff_base, buffer).await;
     }
 
-    #[cfg(test)]
-    fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk> {
         let start = text.anchor_before(Point::new(0, 0));
         let end = text.anchor_after(Point::new(u32::MAX, u32::MAX));
         self.hunks_intersecting_range(start..end, text)
@@ -222,6 +229,7 @@ impl BufferDiff {
     fn process_patch_hunk(
         patch: &GitPatch<'_>,
         hunk_index: usize,
+        diff_base: &Rope,
         buffer: &text::BufferSnapshot,
         buffer_row_divergence: &mut i64,
     ) -> InternalDiffHunk {
@@ -231,51 +239,59 @@ impl BufferDiff {
         let mut first_deletion_buffer_row: Option<u32> = None;
         let mut buffer_row_range: Option<Range<u32>> = None;
         let mut diff_base_byte_range: Option<Range<usize>> = None;
+        let mut first_addition_old_row: Option<u32> = None;
 
         for line_index in 0..line_item_count {
             let line = patch.line_in_hunk(hunk_index, line_index).unwrap();
             let kind = line.origin_value();
             let content_offset = line.content_offset() as isize;
             let content_len = line.content().len() as isize;
+            match kind {
+                GitDiffLineType::Addition => {
+                    if first_addition_old_row.is_none() {
+                        first_addition_old_row = Some(
+                            (line.new_lineno().unwrap() as i64 - *buffer_row_divergence - 1) as u32,
+                        );
+                    }
+                    *buffer_row_divergence += 1;
+                    let row = line.new_lineno().unwrap().saturating_sub(1);
 
-            if kind == GitDiffLineType::Addition {
-                *buffer_row_divergence += 1;
-                let row = line.new_lineno().unwrap().saturating_sub(1);
-
-                match &mut buffer_row_range {
-                    Some(buffer_row_range) => buffer_row_range.end = row + 1,
-                    None => buffer_row_range = Some(row..row + 1),
+                    match &mut buffer_row_range {
+                        Some(Range { end, .. }) => *end = row + 1,
+                        None => buffer_row_range = Some(row..row + 1),
+                    }
                 }
-            }
+                GitDiffLineType::Deletion => {
+                    let end = content_offset + content_len;
 
-            if kind == GitDiffLineType::Deletion {
-                let end = content_offset + content_len;
+                    match &mut diff_base_byte_range {
+                        Some(head_byte_range) => head_byte_range.end = end as usize,
+                        None => diff_base_byte_range = Some(content_offset as usize..end as usize),
+                    }
 
-                match &mut diff_base_byte_range {
-                    Some(head_byte_range) => head_byte_range.end = end as usize,
-                    None => diff_base_byte_range = Some(content_offset as usize..end as usize),
+                    if first_deletion_buffer_row.is_none() {
+                        let old_row = line.old_lineno().unwrap().saturating_sub(1);
+                        let row = old_row as i64 + *buffer_row_divergence;
+                        first_deletion_buffer_row = Some(row as u32);
+                    }
+
+                    *buffer_row_divergence -= 1;
                 }
-
-                if first_deletion_buffer_row.is_none() {
-                    let old_row = line.old_lineno().unwrap().saturating_sub(1);
-                    let row = old_row as i64 + *buffer_row_divergence;
-                    first_deletion_buffer_row = Some(row as u32);
-                }
-
-                *buffer_row_divergence -= 1;
+                _ => {}
             }
         }
 
-        //unwrap_or deletion without addition
         let buffer_row_range = buffer_row_range.unwrap_or_else(|| {
-            //we cannot have an addition-less hunk without deletion(s) or else there would be no hunk
+            // Pure deletion hunk without addition.
             let row = first_deletion_buffer_row.unwrap();
             row..row
         });
-
-        //unwrap_or addition without deletion
-        let diff_base_byte_range = diff_base_byte_range.unwrap_or(0..0);
-
+        let diff_base_byte_range = diff_base_byte_range.unwrap_or_else(|| {
+            // Pure addition hunk without deletion.
+            let row = first_addition_old_row.unwrap();
+            let offset = diff_base.point_to_offset(Point::new(row, 0));
+            offset..offset
+        });
         let start = Point::new(buffer_row_range.start, 0);
         let end = Point::new(buffer_row_range.end, 0);
         let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);

@@ -9,7 +9,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
     MultiBufferSnapshot, ToOffset, ToPoint,
 };
-use project::buffer_store::BufferChangeSet;
+use project::{buffer_store::BufferChangeSet, Project};
 use std::{ops::Range, sync::Arc};
 use sum_tree::TreeMap;
 use text::OffsetRangeExt;
@@ -78,6 +78,40 @@ pub enum DisplayDiffHunk {
 impl DiffMap {
     pub fn snapshot(&self) -> DiffMapSnapshot {
         self.snapshot.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn add_change_set_with_project(
+        &mut self,
+        project: Model<Project>,
+        change_set: Model<BufferChangeSet>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let buffer_id = change_set.read(cx).buffer_id;
+        self.snapshot
+            .0
+            .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
+        Editor::sync_expanded_diff_hunks(self, buffer_id, cx);
+        self.diff_bases.insert(
+            buffer_id,
+            DiffBaseState {
+                last_version: None,
+                _subscription: cx.observe(&change_set, move |editor, change_set, cx| {
+                    editor
+                        .diff_map
+                        .snapshot
+                        .0
+                        .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
+                    Editor::sync_expanded_diff_hunks(&mut editor.diff_map, buffer_id, cx);
+                }),
+                change_set: change_set.clone(),
+            },
+        );
+        project.update(cx, |project, cx| {
+            project.buffer_store().update(cx, |buffer_store, _cx| {
+                buffer_store.set_change_set(buffer_id, change_set);
+            });
+        });
     }
 
     pub fn add_change_set(
@@ -149,6 +183,7 @@ impl DiffMapSnapshot {
                             let end =
                                 excerpt.map_point_from_buffer(Point::new(hunk.row_range.end, 0));
                             MultiBufferDiffHunk {
+                                excerpt_id: excerpt.id(),
                                 row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
                                 buffer_id,
                                 buffer_range: hunk.buffer_range.clone(),
@@ -185,6 +220,7 @@ impl DiffMapSnapshot {
                                 .map_point_from_buffer(Point::new(hunk.row_range.end, 0))
                                 .row;
                             MultiBufferDiffHunk {
+                                excerpt_id: excerpt.id(),
                                 row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
                                 buffer_id,
                                 buffer_range: hunk.buffer_range.clone(),
@@ -1112,6 +1148,7 @@ pub(crate) fn to_diff_hunk(
         .multi_buffer_range
         .to_point(multi_buffer_snapshot);
     Some(MultiBufferDiffHunk {
+        excerpt_id: hovered_hunk.multi_buffer_range.start.excerpt_id,
         row_range: MultiBufferRow(point_range.start.row)..MultiBufferRow(point_range.end.row),
         buffer_id,
         buffer_range,
