@@ -10329,6 +10329,7 @@ dependencies = [
  "project",
  "proto",
  "release_channel",
+ "reliability",
  "remote",
  "reqwest_client",
  "rpc",
