@@ -1,3 +1,4 @@
+mod fetch_context_picker;
 mod file_context_picker;
 
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
 
+use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::message_editor::MessageEditor;
 
@@ -18,6 +20,7 @@ use crate::message_editor::MessageEditor;
 enum ContextPickerMode {
     Default,
     File(View<FileContextPicker>),
+    Fetch(View<FetchContextPicker>),
 }
 
 pub(super) struct ContextPicker {
@@ -47,7 +50,7 @@ impl ContextPicker {
                     icon: IconName::File,
                 },
                 ContextPickerEntry {
-                    name: "web".into(),
+                    name: "fetch".into(),
                     description: "Fetch content from URL".into(),
                     icon: IconName::Globe,
                 },
@@ -77,16 +80,21 @@ impl FocusableView for ContextPicker {
         match &self.mode {
             ContextPickerMode::Default => self.picker.focus_handle(cx),
             ContextPickerMode::File(file_picker) => file_picker.focus_handle(cx),
+            ContextPickerMode::Fetch(fetch_picker) => fetch_picker.focus_handle(cx),
         }
     }
 }
 
 impl Render for ContextPicker {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex().min_w(px(400.)).map(|parent| match &self.mode {
-            ContextPickerMode::Default => parent.child(self.picker.clone()),
-            ContextPickerMode::File(file_picker) => parent.child(file_picker.clone()),
-        })
+        v_flex()
+            .w(px(400.))
+            .min_w(px(400.))
+            .map(|parent| match &self.mode {
+                ContextPickerMode::Default => parent.child(self.picker.clone()),
+                ContextPickerMode::File(file_picker) => parent.child(file_picker.clone()),
+                ContextPickerMode::Fetch(fetch_picker) => parent.child(fetch_picker.clone()),
+            })
     }
 }
 
@@ -144,6 +152,16 @@ impl PickerDelegate for ContextPickerDelegate {
                                 )
                             }));
                         }
+                        "fetch" => {
+                            this.mode = ContextPickerMode::Fetch(cx.new_view(|cx| {
+                                FetchContextPicker::new(
+                                    self.context_picker.clone(),
+                                    self.workspace.clone(),
+                                    self.message_editor.clone(),
+                                    cx,
+                                )
+                            }));
+                        }
                         _ => {}
                     }
 
@@ -157,7 +175,7 @@ impl PickerDelegate for ContextPickerDelegate {
         self.context_picker
             .update(cx, |this, cx| match this.mode {
                 ContextPickerMode::Default => cx.emit(DismissEvent),
-                ContextPickerMode::File(_) => {}
+                ContextPickerMode::File(_) | ContextPickerMode::Fetch(_) => {}
             })
             .log_err();
     }

@@ -193,12 +193,19 @@ impl Thread {
 
             if let Some(context) = self.context_for_message(message.id) {
                 let mut file_context = String::new();
+                let mut fetch_context = String::new();
 
                 for context in context.iter() {
                     match context.kind {
                         ContextKind::File => {
                             file_context.push_str(&context.text);
-                            file_context.push_str("\n");
+                            file_context.push('\n');
+                        }
+                        ContextKind::FetchedUrl => {
+                            fetch_context.push_str(&context.name);
+                            fetch_context.push('\n');
+                            fetch_context.push_str(&context.text);
+                            fetch_context.push('\n');
                         }
                     }
                 }
@@ -207,6 +214,11 @@ impl Thread {
                 if !file_context.is_empty() {
                     context_text.push_str("The following files are available:\n");
                     context_text.push_str(&file_context);
+                }
+
+                if !fetch_context.is_empty() {
+                    context_text.push_str("The following fetched results are available\n");
+                    context_text.push_str(&fetch_context);
                 }
 
                 request_message

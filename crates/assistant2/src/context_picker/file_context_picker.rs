@@ -245,7 +245,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 this.reset_mode();
                 cx.emit(DismissEvent);
             })
-            .log_err();
+            .ok();
     }
 
     fn render_match(
