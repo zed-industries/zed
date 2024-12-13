@@ -357,8 +357,9 @@ impl DiffMap {
 
         let mut changes = changes.into_iter().peekable();
         while let Some((mut edit, mut is_inlay_edit, mut multibuffer_range)) = changes.next() {
-            new_transforms.append(cursor.slice(&edit.old.start, Bias::Left, &()), &());
+            new_transforms.append(cursor.slice(&edit.old.start, Bias::Right, &()), &());
 
+            let mut delta = 0_isize;
             let mut end_of_current_insert = InlayOffset(0);
             loop {
                 let old_overshoot = (edit.old.start - cursor.start().0).0;
@@ -424,15 +425,20 @@ impl DiffMap {
                                 end_of_current_insert,
                             );
 
-                            while cursor.end(&()).0 <= hunk_start_inlay_offset {
+                            while cursor.end(&()).0 < hunk_start_inlay_offset
+                                || (cursor.end(&()).0 == hunk_start_inlay_offset
+                                    && cursor.start().0 < hunk_start_inlay_offset)
+                            {
                                 let Some(item) = cursor.item() else {
                                     break;
                                 };
                                 if let DiffTransform::DeletedHunk { .. } = item {
+                                    let old_range = cursor.start().1..cursor.end(&()).1;
                                     let new_offset =
-                                        DiffOffset(new_transforms.summary().diff_map.len);
+                                        DiffOffset((old_range.start.0 as isize + delta) as usize);
+                                    delta -= (old_range.end - old_range.start).0 as isize;
                                     let edit = Edit {
-                                        old: cursor.start().1..cursor.end(&()).1,
+                                        old: old_range,
                                         new: new_offset..new_offset,
                                     };
                                     edits.push(edit);
@@ -441,18 +447,14 @@ impl DiffMap {
                             }
 
                             let mut was_previously_expanded = false;
-                            if let Some(item) = cursor.item() {
-                                if let DiffTransform::DeletedHunk {
-                                    base_text_byte_range,
-                                    ..
-                                } = item
-                                {
-                                    if cursor.start().0 == hunk_start_inlay_offset
-                                        && *base_text_byte_range == hunk.diff_base_byte_range
-                                    {
-                                        was_previously_expanded = true;
-                                    }
-                                }
+                            if cursor.start().0 == hunk_start_inlay_offset {
+                                was_previously_expanded = match cursor.item() {
+                                    Some(DiffTransform::DeletedHunk { .. }) => true,
+                                    Some(DiffTransform::BufferContent {
+                                        is_inserted_hunk, ..
+                                    }) => *is_inserted_hunk,
+                                    None => false,
+                                };
                             }
 
                             let mut should_expand_hunk =
@@ -482,6 +484,7 @@ impl DiffMap {
                                             DiffOffset(new_transforms.summary().diff_map.len);
                                         let new_end =
                                             new_start + DiffOffset(hunk.diff_base_byte_range.len());
+                                        delta += hunk.diff_base_byte_range.len() as isize;
                                         let edit = Edit {
                                             old: old_offset..old_offset,
                                             new: new_start..new_end,
@@ -518,16 +521,10 @@ impl DiffMap {
                                         .to_inlay_offset(hunk_end_multibuffer_offset);
                                     end_of_current_insert = hunk_end_inlay_offset;
                                 }
-                            } else if was_previously_expanded {
-                                let old_start = cursor.start().1;
-                                let new_offset = DiffOffset(new_transforms.summary().diff_map.len);
-                                let edit = Edit {
-                                    old: old_start
-                                        ..old_start + DiffOffset(hunk.diff_base_byte_range.len()),
-                                    new: new_offset..new_offset,
-                                };
-                                edits.push(edit);
-                                cursor.next(&());
+
+                                if was_previously_expanded {
+                                    cursor.next(&());
+                                }
                             }
                         }
                     }
@@ -538,9 +535,11 @@ impl DiffMap {
                         break;
                     };
                     if let DiffTransform::DeletedHunk { .. } = item {
-                        let new_offset = DiffOffset(new_transforms.summary().diff_map.len);
+                        let old_range = cursor.start().1..cursor.end(&()).1;
+                        let new_offset = DiffOffset((old_range.start.0 as isize + delta) as usize);
+                        delta -= (old_range.end - old_range.start).0 as isize;
                         let edit = Edit {
-                            old: cursor.start().1..cursor.end(&()).1,
+                            old: old_range,
                             new: new_offset..new_offset,
                         };
                         edits.push(edit);
@@ -548,12 +547,12 @@ impl DiffMap {
                     cursor.next(&());
                 }
 
-                let old_overshoot = (edit.old.end - cursor.start().0).0;
                 self.push_buffer_content_transform(
                     &mut new_transforms,
                     edit.new.end,
                     end_of_current_insert,
                 );
+                let old_overshoot = (edit.old.end - cursor.start().0).0;
                 let diff_edit_old_end = cursor.start().1 + DiffOffset(old_overshoot);
                 let diff_edit_new_end = DiffOffset(new_transforms.summary().diff_map.len);
 
@@ -1634,7 +1633,6 @@ mod tests {
         let sync = diff_map.update(cx, |diff_map, cx| {
             diff_map.sync(inlay_snapshot.clone(), edits, cx)
         });
-
         assert_new_snapshot(
             &mut snapshot,
             sync,
@@ -1657,11 +1655,9 @@ mod tests {
             change_set.recalculate_diff(buffer.read(cx).text_snapshot(), cx)
         });
         cx.run_until_parked();
-
         let sync = diff_map.update(cx, |diff_map, cx| {
             diff_map.sync(inlay_snapshot.clone(), Vec::new(), cx)
         });
-
         assert_new_snapshot(
             &mut snapshot,
             sync,
