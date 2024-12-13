@@ -32,7 +32,6 @@ impl ProcessIdGetter {
         Some(Pid::from_u32(pid as u32))
     }
 
-    pub fn fallback_pid(&self) -> u32 {
         self.fallback_pid
     }
 }
