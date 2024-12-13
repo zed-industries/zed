@@ -447,6 +447,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
+        git_ui::git_panel::init(cx);
         outline_panel::init(Assets, cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
@@ -462,6 +463,7 @@ fn main() {
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
+        git_ui::init(cx);
         vcs_menu::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);

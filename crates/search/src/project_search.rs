@@ -1595,6 +1595,7 @@ impl Render for ProjectSearchBar {
 
         let input_base_styles = || {
             h_flex()
+                .min_w_32()
                 .w(input_width)
                 .h_8()
                 .px_2()

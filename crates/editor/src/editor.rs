@@ -176,7 +176,7 @@ use workspace::{
 };
 use workspace::{Item as WorkspaceItem, OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
-use crate::hover_links::find_url;
+use crate::hover_links::{find_url, find_url_from_range};
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
@@ -190,8 +190,6 @@ const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
-#[doc(hidden)]
-pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -261,14 +259,14 @@ pub fn render_parsed_markdown(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum InlayId {
-    Suggestion(usize),
+    InlineCompletion(usize),
     Hint(usize),
 }
 
 impl InlayId {
     fn id(&self) -> usize {
         match self {
-            Self::Suggestion(id) => *id,
+            Self::InlineCompletion(id) => *id,
             Self::Hint(id) => *id,
         }
     }
@@ -407,7 +405,7 @@ pub struct EditorStyle {
     pub syntax: Arc<SyntaxTheme>,
     pub status: StatusColors,
     pub inlay_hints_style: HighlightStyle,
-    pub suggestions_style: HighlightStyle,
+    pub inline_completion_styles: InlineCompletionStyles,
     pub unnecessary_code_fade: f32,
 }
 
@@ -424,7 +422,10 @@ impl Default for EditorStyle {
             // style and retrieve them directly from the theme.
             status: StatusColors::dark(),
             inlay_hints_style: HighlightStyle::default(),
-            suggestions_style: HighlightStyle::default(),
+            inline_completion_styles: InlineCompletionStyles {
+                insertion: HighlightStyle::default(),
+                whitespace: HighlightStyle::default(),
+            },
             unnecessary_code_fade: Default::default(),
         }
     }
@@ -439,6 +440,19 @@ pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
         color: Some(cx.theme().status().hint),
         background_color: show_background.then(|| cx.theme().status().hint_background),
         ..HighlightStyle::default()
+    }
+}
+
+pub fn make_suggestion_styles(cx: &WindowContext) -> InlineCompletionStyles {
+    InlineCompletionStyles {
+        insertion: HighlightStyle {
+            color: Some(cx.theme().status().predictive),
+            ..HighlightStyle::default()
+        },
+        whitespace: HighlightStyle {
+            background_color: Some(cx.theme().status().created_background),
+            ..HighlightStyle::default()
+        },
     }
 }
 
@@ -1402,6 +1416,15 @@ impl Editor {
         if self.has_active_inline_completion() {
             key_context.add("copilot_suggestion");
             key_context.add("inline_completion");
+        }
+
+        if !self
+            .selections
+            .disjoint
+            .iter()
+            .all(|selection| selection.start == selection.end)
+        {
+            key_context.add("selection");
         }
 
         key_context
@@ -4311,10 +4334,10 @@ impl Editor {
         if cursor_buffer != tail_buffer {
             return None;
         }
-
+        let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce;
         self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
             cx.background_executor()
-                .timer(DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT)
+                .timer(Duration::from_millis(debounce))
                 .await;
 
             let highlights = if let Some(highlights) = cx
@@ -4728,7 +4751,7 @@ impl Editor {
             {
                 let mut inlays = Vec::new();
                 for (range, new_text) in &edits {
-                    let inlay = Inlay::suggestion(
+                    let inlay = Inlay::inline_completion(
                         post_inc(&mut self.next_inlay_id),
                         range.start,
                         new_text.as_str(),
@@ -6106,6 +6129,28 @@ impl Editor {
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
+    pub fn duplicate_selection(&mut self, _: &DuplicateSelection, cx: &mut ViewContext<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        let selections = self.selections.all::<Point>(cx);
+
+        let mut edits = Vec::new();
+        for selection in selections.iter() {
+            let start = selection.start;
+            let end = selection.end;
+            let text = buffer.text_for_range(start..end).collect::<String>();
+            edits.push((selection.end..selection.end, text));
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
             });
 
             this.request_autoscroll(Autoscroll::fit(), cx);
@@ -9264,23 +9309,42 @@ impl Editor {
     }
 
     pub fn open_url(&mut self, _: &OpenUrl, cx: &mut ViewContext<Self>) {
-        let position = self.selections.newest_anchor().head();
-        let Some((buffer, buffer_position)) =
-            self.buffer.read(cx).text_anchor_for_position(position, cx)
+        let selection = self.selections.newest_anchor();
+        let head = selection.head();
+        let tail = selection.tail();
+
+        let Some((buffer, start_position)) =
+            self.buffer.read(cx).text_anchor_for_position(head, cx)
         else {
             return;
         };
 
-        cx.spawn(|editor, mut cx| async move {
-            if let Some((_, url)) = find_url(&buffer, buffer_position, cx.clone()) {
+        let end_position = if head != tail {
+            let Some((_, pos)) = self.buffer.read(cx).text_anchor_for_position(tail, cx) else {
+                return;
+            };
+            Some(pos)
+        } else {
+            None
+        };
+
+        let url_finder = cx.spawn(|editor, mut cx| async move {
+            let url = if let Some(end_pos) = end_position {
+                find_url_from_range(&buffer, start_position..end_pos, cx.clone())
+            } else {
+                find_url(&buffer, start_position, cx.clone()).map(|(_, url)| url)
+            };
+
+            if let Some(url) = url {
                 editor.update(&mut cx, |_, cx| {
                     cx.open_url(&url);
                 })
             } else {
                 Ok(())
             }
-        })
-        .detach();
+        });
+
+        url_finder.detach();
     }
 
     pub fn open_file(&mut self, _: &OpenFile, cx: &mut ViewContext<Self>) {
@@ -9853,10 +9917,9 @@ impl Editor {
                                                     font_weight: Some(FontWeight::BOLD),
                                                     ..make_inlay_hints_style(cx)
                                                 },
-                                                suggestions_style: HighlightStyle {
-                                                    color: Some(cx.theme().status().predictive),
-                                                    ..HighlightStyle::default()
-                                                },
+                                                inline_completion_styles: make_suggestion_styles(
+                                                    cx,
+                                                ),
                                                 ..EditorStyle::default()
                                             },
                                         ))
@@ -13857,10 +13920,7 @@ impl Render for Editor {
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
                 inlay_hints_style: make_inlay_hints_style(cx),
-                suggestions_style: HighlightStyle {
-                    color: Some(cx.theme().status().predictive),
-                    ..HighlightStyle::default()
-                },
+                inline_completion_styles: make_suggestion_styles(cx),
                 unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
             },
         )

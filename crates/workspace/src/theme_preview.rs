@@ -108,147 +108,6 @@ impl ThemePreview {
         cx.theme().colors().editor_background
     }
 
-    fn render_avatars(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .gap_1()
-            .child(
-                Headline::new("Avatars")
-                    .size(HeadlineSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap_4()
-                    .child(Avatar::new(AVATAR_URL).size(px(24.)))
-                    .child(Avatar::new(AVATAR_URL).size(px(24.)).grayscale(true))
-                    .child(
-                        Avatar::new(AVATAR_URL)
-                            .size(px(24.))
-                            .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Muted)),
-                    )
-                    .child(
-                        Avatar::new(AVATAR_URL)
-                            .size(px(24.))
-                            .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Deafened)),
-                    )
-                    .child(
-                        Avatar::new(AVATAR_URL)
-                            .size(px(24.))
-                            .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
-                    )
-                    .child(
-                        Avatar::new(AVATAR_URL)
-                            .size(px(24.))
-                            .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
-                    )
-                    .child(
-                        Facepile::empty()
-                            .child(
-                                Avatar::new(AVATAR_URL)
-                                    .border_color(Self::preview_bg(cx))
-                                    .size(px(22.))
-                                    .into_any_element(),
-                            )
-                            .child(
-                                Avatar::new(AVATAR_URL)
-                                    .border_color(Self::preview_bg(cx))
-                                    .size(px(22.))
-                                    .into_any_element(),
-                            )
-                            .child(
-                                Avatar::new(AVATAR_URL)
-                                    .border_color(Self::preview_bg(cx))
-                                    .size(px(22.))
-                                    .into_any_element(),
-                            )
-                            .child(
-                                Avatar::new(AVATAR_URL)
-                                    .border_color(Self::preview_bg(cx))
-                                    .size(px(22.))
-                                    .into_any_element(),
-                            ),
-                    ),
-            )
-    }
-
-    fn render_buttons(&self, layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .gap_1()
-            .child(
-                Headline::new("Buttons")
-                    .size(HeadlineSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap_px()
-                    .child(
-                        IconButton::new("icon_button_transparent", IconName::Check)
-                            .style(ButtonStyle::Transparent),
-                    )
-                    .child(
-                        IconButton::new("icon_button_subtle", IconName::Check)
-                            .style(ButtonStyle::Subtle),
-                    )
-                    .child(
-                        IconButton::new("icon_button_filled", IconName::Check)
-                            .style(ButtonStyle::Filled),
-                    )
-                    .child(
-                        IconButton::new("icon_button_selected_accent", IconName::Check)
-                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                            .selected(true),
-                    )
-                    .child(IconButton::new("icon_button_selected", IconName::Check).selected(true))
-                    .child(
-                        IconButton::new("icon_button_positive", IconName::Check)
-                            .style(ButtonStyle::Tinted(TintColor::Positive)),
-                    )
-                    .child(
-                        IconButton::new("icon_button_warning", IconName::Check)
-                            .style(ButtonStyle::Tinted(TintColor::Warning)),
-                    )
-                    .child(
-                        IconButton::new("icon_button_negative", IconName::Check)
-                            .style(ButtonStyle::Tinted(TintColor::Negative)),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_px()
-                    .child(
-                        Button::new("button_transparent", "Transparent")
-                            .style(ButtonStyle::Transparent),
-                    )
-                    .child(Button::new("button_subtle", "Subtle").style(ButtonStyle::Subtle))
-                    .child(Button::new("button_filled", "Filled").style(ButtonStyle::Filled))
-                    .child(
-                        Button::new("button_selected", "Selected")
-                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                            .selected(true),
-                    )
-                    .child(
-                        Button::new("button_selected_tinted", "Selected (Tinted)")
-                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                            .selected(true),
-                    )
-                    .child(
-                        Button::new("button_positive", "Tint::Positive")
-                            .style(ButtonStyle::Tinted(TintColor::Positive)),
-                    )
-                    .child(
-                        Button::new("button_warning", "Tint::Warning")
-                            .style(ButtonStyle::Tinted(TintColor::Warning)),
-                    )
-                    .child(
-                        Button::new("button_negative", "Tint::Negative")
-                            .style(ButtonStyle::Tinted(TintColor::Negative)),
-                    ),
-            )
-    }
-
     fn render_text(&self, layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
         let bg = layer.bg(cx);
 
@@ -502,7 +361,7 @@ impl ThemePreview {
             )
     }
 
-    fn render_components_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn render_components_page(&self, cx: &mut WindowContext) -> impl IntoElement {
         let layer = ElevationIndex::Surface;
 
         v_flex()
@@ -520,8 +379,6 @@ impl ThemePreview {
             .child(Indicator::render_component_previews(cx))
             .child(Icon::render_component_previews(cx))
             .child(Table::render_component_previews(cx))
-            .child(self.render_avatars(cx))
-            .child(self.render_buttons(layer, cx))
     }
 
     fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {

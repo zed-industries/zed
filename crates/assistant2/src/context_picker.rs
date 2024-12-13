@@ -1,15 +1,93 @@
+mod file_context_picker;
+
 use std::sync::Arc;
 
-use gpui::{DismissEvent, SharedString, Task, WeakView};
-use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip};
+use gpui::{
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, SharedString, Task, View,
+    WeakView,
+};
+use picker::{Picker, PickerDelegate};
+use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
+use util::ResultExt;
+use workspace::Workspace;
 
+use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::message_editor::MessageEditor;
 
-#[derive(IntoElement)]
-pub(super) struct ContextPicker<T: PopoverTrigger> {
-    message_editor: WeakView<MessageEditor>,
-    trigger: T,
+#[derive(Debug, Clone)]
+enum ContextPickerMode {
+    Default,
+    File(View<FileContextPicker>),
+}
+
+pub(super) struct ContextPicker {
+    mode: ContextPickerMode,
+    picker: View<Picker<ContextPickerDelegate>>,
+}
+
+impl ContextPicker {
+    pub fn new(
+        workspace: WeakView<Workspace>,
+        message_editor: WeakView<MessageEditor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let delegate = ContextPickerDelegate {
+            context_picker: cx.view().downgrade(),
+            workspace: workspace.clone(),
+            message_editor: message_editor.clone(),
+            entries: vec![
+                ContextPickerEntry {
+                    name: "directory".into(),
+                    description: "Insert any directory".into(),
+                    icon: IconName::Folder,
+                },
+                ContextPickerEntry {
+                    name: "file".into(),
+                    description: "Insert any file".into(),
+                    icon: IconName::File,
+                },
+                ContextPickerEntry {
+                    name: "web".into(),
+                    description: "Fetch content from URL".into(),
+                    icon: IconName::Globe,
+                },
+            ],
+            selected_ix: 0,
+        };
+
+        let picker = cx.new_view(|cx| {
+            Picker::nonsearchable_uniform_list(delegate, cx).max_height(Some(rems(20.).into()))
+        });
+
+        ContextPicker {
+            mode: ContextPickerMode::Default,
+            picker,
+        }
+    }
+
+    pub fn reset_mode(&mut self) {
+        self.mode = ContextPickerMode::Default;
+    }
+}
+
+impl EventEmitter<DismissEvent> for ContextPicker {}
+
+impl FocusableView for ContextPicker {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        match &self.mode {
+            ContextPickerMode::Default => self.picker.focus_handle(cx),
+            ContextPickerMode::File(file_picker) => file_picker.focus_handle(cx),
+        }
+    }
+}
+
+impl Render for ContextPicker {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex().min_w(px(400.)).map(|parent| match &self.mode {
+            ContextPickerMode::Default => parent.child(self.picker.clone()),
+            ContextPickerMode::File(file_picker) => parent.child(file_picker.clone()),
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -20,26 +98,18 @@ struct ContextPickerEntry {
 }
 
 pub(crate) struct ContextPickerDelegate {
-    all_entries: Vec<ContextPickerEntry>,
-    filtered_entries: Vec<ContextPickerEntry>,
+    context_picker: WeakView<ContextPicker>,
+    workspace: WeakView<Workspace>,
     message_editor: WeakView<MessageEditor>,
+    entries: Vec<ContextPickerEntry>,
     selected_ix: usize,
-}
-
-impl<T: PopoverTrigger> ContextPicker<T> {
-    pub(crate) fn new(message_editor: WeakView<MessageEditor>, trigger: T) -> Self {
-        ContextPicker {
-            message_editor,
-            trigger,
-        }
-    }
 }
 
 impl PickerDelegate for ContextPickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
-        self.filtered_entries.len()
+        self.entries.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -47,7 +117,7 @@ impl PickerDelegate for ContextPickerDelegate {
     }
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
-        self.selected_ix = ix.min(self.filtered_entries.len().saturating_sub(1));
+        self.selected_ix = ix.min(self.entries.len().saturating_sub(1));
         cx.notify();
     }
 
@@ -55,52 +125,41 @@ impl PickerDelegate for ContextPickerDelegate {
         "Select a context source…".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
-        let all_commands = self.all_entries.clone();
-        cx.spawn(|this, mut cx| async move {
-            let filtered_commands = cx
-                .background_executor()
-                .spawn(async move {
-                    if query.is_empty() {
-                        all_commands
-                    } else {
-                        all_commands
-                            .into_iter()
-                            .filter(|model_info| {
-                                model_info
-                                    .name
-                                    .to_lowercase()
-                                    .contains(&query.to_lowercase())
-                            })
-                            .collect()
-                    }
-                })
-                .await;
-
-            this.update(&mut cx, |this, cx| {
-                this.delegate.filtered_entries = filtered_commands;
-                this.delegate.set_selected_index(0, cx);
-                cx.notify();
-            })
-            .ok();
-        })
+    fn update_matches(&mut self, _query: String, _cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+        Task::ready(())
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(entry) = self.filtered_entries.get(self.selected_ix) {
-            self.message_editor
-                .update(cx, |_message_editor, _cx| {
-                    println!("Insert context from {}", entry.name);
+        if let Some(entry) = self.entries.get(self.selected_ix) {
+            self.context_picker
+                .update(cx, |this, cx| {
+                    match entry.name.to_string().as_str() {
+                        "file" => {
+                            this.mode = ContextPickerMode::File(cx.new_view(|cx| {
+                                FileContextPicker::new(
+                                    self.context_picker.clone(),
+                                    self.workspace.clone(),
+                                    self.message_editor.clone(),
+                                    cx,
+                                )
+                            }));
+                        }
+                        _ => {}
+                    }
+
+                    cx.focus_self();
                 })
-                .ok();
-            cx.emit(DismissEvent);
+                .log_err();
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
-
-    fn editor_position(&self) -> PickerEditorPosition {
-        PickerEditorPosition::End
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+        self.context_picker
+            .update(cx, |this, cx| match this.mode {
+                ContextPickerMode::Default => cx.emit(DismissEvent),
+                ContextPickerMode::File(_) => {}
+            })
+            .log_err();
     }
 
     fn render_match(
@@ -109,7 +168,7 @@ impl PickerDelegate for ContextPickerDelegate {
         selected: bool,
         _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let entry = self.filtered_entries.get(ix)?;
+        let entry = &self.entries[ix];
 
         Some(
             ListItem::new(ix)
@@ -146,52 +205,5 @@ impl PickerDelegate for ContextPickerDelegate {
                         ),
                 ),
         )
-    }
-}
-
-impl<T: PopoverTrigger> RenderOnce for ContextPicker<T> {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let entries = vec![
-            ContextPickerEntry {
-                name: "directory".into(),
-                description: "Insert any directory".into(),
-                icon: IconName::Folder,
-            },
-            ContextPickerEntry {
-                name: "file".into(),
-                description: "Insert any file".into(),
-                icon: IconName::File,
-            },
-            ContextPickerEntry {
-                name: "web".into(),
-                description: "Fetch content from URL".into(),
-                icon: IconName::Globe,
-            },
-        ];
-
-        let delegate = ContextPickerDelegate {
-            all_entries: entries.clone(),
-            message_editor: self.message_editor.clone(),
-            filtered_entries: entries,
-            selected_ix: 0,
-        };
-
-        let picker =
-            cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
-
-        let handle = self
-            .message_editor
-            .update(cx, |this, _| this.context_picker_handle.clone())
-            .ok();
-        PopoverMenu::new("context-picker")
-            .menu(move |_cx| Some(picker.clone()))
-            .trigger(self.trigger)
-            .attach(gpui::AnchorCorner::TopLeft)
-            .anchor(gpui::AnchorCorner::BottomLeft)
-            .offset(gpui::Point {
-                x: px(0.0),
-                y: px(-16.0),
-            })
-            .when_some(handle, |this, handle| this.with_handle(handle))
     }
 }

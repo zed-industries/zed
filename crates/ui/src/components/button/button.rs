@@ -445,7 +445,7 @@ impl ComponentPreview for Button {
         "A button allows users to take actions, and make choices, with a single tap."
     }
 
-    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Styles",

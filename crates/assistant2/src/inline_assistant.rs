@@ -2,6 +2,7 @@ use crate::{
     assistant_settings::AssistantSettings,
     prompts::PromptBuilder,
     streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff},
+    terminal_inline_assistant::TerminalInlineAssistant,
     CycleNextInlineAssist, CyclePreviousInlineAssist, ToggleInlineAssist,
 };
 use anyhow::{Context as _, Result};
@@ -30,7 +31,7 @@ use language_model::{
     LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelTextStream, Role,
 };
-use language_model_selector::LanguageModelSelector;
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -207,16 +208,16 @@ impl InlineAssistant {
                 .map_or(false, |provider| provider.is_authenticated(cx))
         };
 
-        let handle_assist = |cx: &mut ViewContext<Workspace>| {
-            match inline_assist_target {
-                InlineAssistTarget::Editor(active_editor) => {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        assistant.assist(&active_editor, Some(cx.view().downgrade()), cx)
-                    })
-                }
-                InlineAssistTarget::Terminal(_active_terminal) => {
-                    // TODO show the terminal inline assistant
-                }
+        let handle_assist = |cx: &mut ViewContext<Workspace>| match inline_assist_target {
+            InlineAssistTarget::Editor(active_editor) => {
+                InlineAssistant::update_global(cx, |assistant, cx| {
+                    assistant.assist(&active_editor, Some(cx.view().downgrade()), cx)
+                })
+            }
+            InlineAssistTarget::Terminal(active_terminal) => {
+                TerminalInlineAssistant::update_global(cx, |assistant, cx| {
+                    assistant.assist(&active_terminal, Some(cx.view().downgrade()), cx)
+                })
             }
         };
 
@@ -1453,8 +1454,8 @@ enum PromptEditorEvent {
 
 struct PromptEditor {
     id: InlineAssistId,
-    fs: Arc<dyn Fs>,
     editor: View<Editor>,
+    language_model_selector: View<LanguageModelSelector>,
     edited_since_done: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     prompt_history: VecDeque<String>,
@@ -1588,43 +1589,27 @@ impl Render for PromptEditor {
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                     .justify_center()
                     .gap_2()
-                    .child(
-                        LanguageModelSelector::new(
-                            {
-                                let fs = self.fs.clone();
-                                move |model, cx| {
-                                    update_settings_file::<AssistantSettings>(
-                                        fs.clone(),
-                                        cx,
-                                        move |settings, _| settings.set_model(model.clone()),
-                                    );
-                                }
-                            },
-                            IconButton::new("context", IconName::SettingsAlt)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .tooltip(move |cx| {
-                                    Tooltip::with_meta(
-                                        format!(
-                                            "Using {}",
-                                            LanguageModelRegistry::read_global(cx)
-                                                .active_model()
-                                                .map(|model| model.name().0)
-                                                .unwrap_or_else(|| "No model selected".into()),
-                                        ),
-                                        None,
-                                        "Change Model",
-                                        cx,
-                                    )
-                                }),
-                        )
-                        .info_text(
-                            "Inline edits use context\n\
-                            from the currently selected\n\
-                            assistant panel tab.",
-                        ),
-                    )
+                    .child(LanguageModelSelectorPopoverMenu::new(
+                        self.language_model_selector.clone(),
+                        IconButton::new("context", IconName::SettingsAlt)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(move |cx| {
+                                Tooltip::with_meta(
+                                    format!(
+                                        "Using {}",
+                                        LanguageModelRegistry::read_global(cx)
+                                            .active_model()
+                                            .map(|model| model.name().0)
+                                            .unwrap_or_else(|| "No model selected".into()),
+                                    ),
+                                    None,
+                                    "Change Model",
+                                    cx,
+                                )
+                            }),
+                    ))
                     .map(|el| {
                         let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx) else {
                             return el;
@@ -1713,6 +1698,19 @@ impl PromptEditor {
         let mut this = Self {
             id,
             editor: prompt_editor,
+            language_model_selector: cx.new_view(|cx| {
+                let fs = fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    cx,
+                )
+            }),
             edited_since_done: false,
             gutter_dimensions,
             prompt_history,
@@ -1721,7 +1719,6 @@ impl PromptEditor {
             _codegen_subscription: cx.observe(&codegen, Self::handle_codegen_changed),
             editor_subscriptions: Vec::new(),
             codegen,
-            fs,
             show_rate_limit_notice: false,
         };
         this.subscribe_to_editor(cx);

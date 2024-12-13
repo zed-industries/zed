@@ -7,6 +7,7 @@ mod inline_assistant;
 mod message_editor;
 mod prompts;
 mod streaming_diff;
+mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
 mod thread_store;
@@ -58,6 +59,12 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mu
     .map(Arc::new)
     .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
     inline_assistant::init(
+        fs.clone(),
+        prompt_builder.clone(),
+        client.telemetry().clone(),
+        cx,
+    );
+    terminal_inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
         client.telemetry().clone(),

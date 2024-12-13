@@ -144,6 +144,9 @@
   // 4. Highlight the full line (default):
   //    "all"
   "current_line_highlight": "all",
+  // The debounce delay before querying highlights from the language
+  // server based on the current cursor location.
+  "lsp_highlight_debounce": 75,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
@@ -470,6 +473,14 @@
     "dock": "right",
     // Default width of the chat panel.
     "default_width": 240
+  },
+  "git_panel": {
+    // Whether to show the git panel button in the status bar.
+    "button": true,
+    // Where to the git panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Default width of the git panel.
+    "default_width": 360
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
