@@ -1,9 +1,4 @@
-use std::{
-    cell::Cell,
-    cmp::{min, Reverse},
-    ops::Range,
-    sync::Arc,
-};
+use std::{cell::Cell, cmp::Reverse, ops::Range, sync::Arc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -16,9 +11,8 @@ use language::{CodeLabel, Documentation};
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use project::{CodeAction, Completion, TaskSourceKind};
-use std::iter;
 use task::ResolvedTask;
 use ui::{
     h_flex, ActiveTheme as _, Color, FluentBuilder as _, InteractiveElement as _, IntoElement,
@@ -151,7 +145,6 @@ pub struct CompletionsMenu {
     resolve_completions: bool,
     pub aside_was_displayed: Cell<bool>,
     show_completion_documentation: bool,
-    last_rendered_range: Arc<Mutex<Option<Range<usize>>>>,
 }
 
 impl CompletionsMenu {
@@ -180,6 +173,7 @@ impl CompletionsMenu {
             sort_completions,
             initial_position,
             buffer,
+            show_completion_documentation,
             completions: Arc::new(RwLock::new(completions)),
             match_candidates,
             matches: Vec::new().into(),
@@ -187,8 +181,6 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
             aside_was_displayed: Cell::new(aside_was_displayed),
-            show_completion_documentation,
-            last_rendered_range: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -244,7 +236,6 @@ impl CompletionsMenu {
             resolve_completions: false,
             aside_was_displayed: Cell::new(false),
             show_completion_documentation: false,
-            last_rendered_range: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -253,7 +244,11 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.update_selection_index(0, provider, cx);
+        self.selected_item = 0;
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+        self.resolve_selected_completion(provider, cx);
+        cx.notify();
     }
 
     fn select_prev(
@@ -261,7 +256,15 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.update_selection_index(self.prev_match_index(), provider, cx);
+        if self.selected_item > 0 {
+            self.selected_item -= 1;
+        } else {
+            self.selected_item = self.matches.len() - 1;
+        }
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+        self.resolve_selected_completion(provider, cx);
+        cx.notify();
     }
 
     fn select_next(
@@ -269,7 +272,15 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.update_selection_index(self.next_match_index(), provider, cx);
+        if self.selected_item + 1 < self.matches.len() {
+            self.selected_item += 1;
+        } else {
+            self.selected_item = 0;
+        }
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+        self.resolve_selected_completion(provider, cx);
+        cx.notify();
     }
 
     fn select_last(
@@ -277,41 +288,14 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.update_selection_index(self.matches.len() - 1, provider, cx);
+        self.selected_item = self.matches.len() - 1;
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+        self.resolve_selected_completion(provider, cx);
+        cx.notify();
     }
 
-    fn update_selection_index(
-        &mut self,
-        match_index: usize,
-        provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        if self.selected_item != match_index {
-            self.selected_item = match_index;
-            self.scroll_handle
-                .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-            self.resolve_visible_completions(provider, cx);
-            cx.notify();
-        }
-    }
-
-    fn prev_match_index(&self) -> usize {
-        if self.selected_item > 0 {
-            self.selected_item - 1
-        } else {
-            self.matches.len() - 1
-        }
-    }
-
-    fn next_match_index(&self) -> usize {
-        if self.selected_item + 1 < self.matches.len() {
-            self.selected_item + 1
-        } else {
-            0
-        }
-    }
-
-    pub fn resolve_visible_completions(
+    pub fn resolve_selected_completion(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
@@ -323,59 +307,10 @@ impl CompletionsMenu {
             return;
         };
 
-        // Attempt to resolve completions for every item that will be displayed. This matters
-        // because single line documentation may be displayed inline with the completion.
-        //
-        // When navigating to the very beginning or end of completions, `last_rendered_range` may
-        // have no overlap with the completions that will be displayed, so instead use a range based
-        // on the last rendered count.
-        const APPROXIMATE_VISIBLE_COUNT: usize = 12;
-        let last_rendered_range = self.last_rendered_range.lock().clone();
-        let visible_count = last_rendered_range
-            .clone()
-            .map_or(APPROXIMATE_VISIBLE_COUNT, |range| range.count());
-        let matches_range = if self.selected_item == 0 {
-            0..min(visible_count, self.matches.len())
-        } else if self.selected_item == self.matches.len() - 1 {
-            self.matches.len().saturating_sub(visible_count)..self.matches.len()
-        } else {
-            last_rendered_range.unwrap_or_else(|| self.selected_item..self.selected_item + 1)
-        };
-
-        // Expand the range to resolve more completions than are predicted to be visible, to reduce
-        // jank on navigation.
-        const EXTRA_TO_RESOLVE: usize = 4;
-        let matches_indices = util::iterate_expanded_and_wrapped_usize_range(
-            matches_range.clone(),
-            EXTRA_TO_RESOLVE,
-            EXTRA_TO_RESOLVE,
-            self.matches.len(),
-        );
-
-        // Avoid work by sometimes filtering out completions that already have documentation.
-        // This filtering doesn't happen if the completions are currently being updated.
-        let candidate_ids = matches_indices.map(|i| self.matches[i].candidate_id);
-        let candidate_ids = match self.completions.try_read() {
-            None => candidate_ids.collect::<Vec<usize>>(),
-            Some(completions) => candidate_ids
-                .filter(|i| completions[*i].documentation.is_none())
-                .collect::<Vec<usize>>(),
-        };
-
-        // Current selection is always resolved even if it already has documentation, to handle
-        // out-of-spec language servers that return more results later.
-        let selected_candidate_id = self.matches[self.selected_item].candidate_id;
-        let candidate_ids = iter::once(selected_candidate_id)
-            .chain(
-                candidate_ids
-                    .into_iter()
-                    .filter(|id| *id != selected_candidate_id),
-            )
-            .collect::<Vec<usize>>();
-
+        let completion_index = self.matches[self.selected_item].candidate_id;
         let resolve_task = provider.resolve_completions(
             self.buffer.clone(),
-            candidate_ids,
+            vec![completion_index],
             self.completions.clone(),
             cx,
         );
@@ -471,14 +406,11 @@ impl CompletionsMenu {
                 .occlude()
         });
 
-        let last_rendered_range = self.last_rendered_range.clone();
-
         let list = uniform_list(
             cx.view().clone(),
             "completions",
             matches.len(),
             move |_editor, range, cx| {
-                last_rendered_range.lock().replace(range.clone());
                 let start_ix = range.start;
                 let completions_guard = completions.read();
 
