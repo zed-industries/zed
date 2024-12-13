@@ -5,9 +5,9 @@
 ### List
 
 - [x] Add uniform list
-- [ ] Git status item
+- [x] Git status item
 - [ ] Directory item
-- [ ] Scrollbar
+- [x] Scrollbar
 - [ ] Add indent size setting
 - [ ] Add tree settings
 
@@ -38,7 +38,7 @@
 
 - [ ] ChangedLineCount (new)
   - takes `lines_added: usize, lines_removed: usize`, returns a added/removed badge
-- [ ] GitStatusIcon (new)
+- [x] GitStatusIcon (new)
 - [ ] Checkbox
   - update checkbox design
 - [ ] ScrollIndicator
