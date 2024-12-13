@@ -5748,6 +5748,7 @@ impl Element for EditorElement {
                         letter_size,
                         &snapshot,
                         longest_line_width,
+                        &style,
                         cx,
                     );
 
@@ -6312,37 +6313,25 @@ impl ScrollbarRangeData {
         letter_size: Size<Pixels>,
         snapshot: &EditorSnapshot,
         longest_line_width: Pixels,
+        style: &EditorStyle,
         cx: &WindowContext,
     ) -> ScrollbarRangeData {
         // TODO: Simplify this function down, it requires a lot of parameters
         let max_row = snapshot.max_point().row();
         let text_bounds_size = size(longest_line_width, max_row.0 as f32 * letter_size.height);
 
-        // TODO: This may come in handy if other settings start to complain.
-        // let right_margin = if snapshot.mode == EditorMode::Full {
-        //     EditorElement::SCROLLBAR_WIDTH
-        // } else {
-        //     px(0.)
-        // };
-
-        let height_in_lines = px(scrollbar_bounds.size.height / letter_size.height);
-        let width_in_chars = px(scrollbar_bounds.size.width / letter_size.width);
+        let scrollbar_width = style.scrollbar_width;
 
         let settings = EditorSettings::get_global(cx);
-        let scroll_beyond_last_line: Size<Pixels> = match settings.scroll_beyond_last_line {
-            ScrollBeyondLastLine::OnePage => size(width_in_chars, height_in_lines),
-            // TODO: Simplify this down, size(px(.))...
-            ScrollBeyondLastLine::Off => size(px(1.), px(1.)),
-            // TODO: This should be ScrollMargin not VerticalScrollMargin
-            ScrollBeyondLastLine::VerticalScrollMargin => size(
-                px(1.0 + settings.horizontal_scroll_margin),
-                px(1.0 + settings.vertical_scroll_margin),
-            ),
+        let scroll_beyond_last_line: Pixels = match settings.scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => px(scrollbar_bounds.size.height / letter_size.height),
+            ScrollBeyondLastLine::Off => px(1.),
+            ScrollBeyondLastLine::VerticalScrollMargin => px(1.0 + settings.vertical_scroll_margin),
         };
 
         let overscroll = size(
-            letter_size.width * scroll_beyond_last_line.width,
-            letter_size.height * scroll_beyond_last_line.height,
+            scrollbar_width + (letter_size.width / 2.0),
+            letter_size.height * scroll_beyond_last_line,
         );
 
         let scroll_range = Bounds {
