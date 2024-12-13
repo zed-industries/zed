@@ -2755,22 +2755,34 @@ impl EditorElement {
 
         match &active_inline_completion.completion {
             InlineCompletion::Move(target_position) => {
-                let container_element = div()
-                    .bg(cx.theme().colors().editor_background)
+                let tab_kbd = h_flex()
+                    .px_0p5()
+                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                    .text_size(TextSize::XSmall.rems(cx))
+                    .text_color(cx.theme().colors().text.opacity(0.8))
+                    .child("tab");
+
+                let icon_container = div().mt(px(2.5)); // For optical alignment
+
+                let container_element = h_flex()
+                    .items_center()
+                    .py_0p5()
+                    .px_1()
+                    .gap_1()
+                    .bg(cx.theme().colors().editor_subheader_background)
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(cx.theme().colors().text_accent.opacity(0.2))
                     .rounded_md()
-                    .px_1();
+                    .shadow_sm();
 
                 let target_display_point = target_position.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
                     let mut element = container_element
+                        .child(tab_kbd)
+                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
                         .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Icon::new(IconName::Tab))
-                                .child(Label::new("Jump to Edit"))
-                                .child(Icon::new(IconName::ArrowUp)),
+                            icon_container
+                                .child(Icon::new(IconName::ArrowUp).size(IconSize::Small)),
                         )
                         .into_any();
                     let size = element.layout_as_root(AvailableSpace::min_size(), cx);
@@ -2779,12 +2791,11 @@ impl EditorElement {
                     Some(element)
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
                     let mut element = container_element
+                        .child(tab_kbd)
+                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
                         .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Icon::new(IconName::Tab))
-                                .child(Label::new("Jump to Edit"))
-                                .child(Icon::new(IconName::ArrowDown)),
+                            icon_container
+                                .child(Icon::new(IconName::ArrowDown).size(IconSize::Small)),
                         )
                         .into_any();
                     let size = element.layout_as_root(AvailableSpace::min_size(), cx);
@@ -2796,12 +2807,8 @@ impl EditorElement {
                     Some(element)
                 } else {
                     let mut element = container_element
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Icon::new(IconName::Tab))
-                                .child(Label::new("Jump to Edit")),
-                        )
+                        .child(tab_kbd)
+                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
                         .into_any();
 
                     let target_line_end = DisplayPoint::new(
