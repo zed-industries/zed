@@ -4,14 +4,17 @@
 
 ### List
 
-- [ ] Git status item
+- [x] Add uniform list
+- [x] Git status item
 - [ ] Directory item
-- [ ] Scrollbar
+- [x] Scrollbar
 - [ ] Add indent size setting
 - [ ] Add tree settings
 
 ### List Items
 
+- [x] Checkbox for staging
+- [x] Git status icon
 - [ ] Context menu
   - [ ] Discard Changes
   - ---
@@ -35,7 +38,7 @@
 
 - [ ] ChangedLineCount (new)
   - takes `lines_added: usize, lines_removed: usize`, returns a added/removed badge
-- [ ] GitStatusIcon (new)
+- [x] GitStatusIcon (new)
 - [ ] Checkbox
   - update checkbox design
 - [ ] ScrollIndicator
