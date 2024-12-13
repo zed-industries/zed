@@ -95,6 +95,7 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let is_minimized = None;
+        let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let system_key_handled = false;
