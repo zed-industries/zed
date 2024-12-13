@@ -259,14 +259,14 @@ pub fn render_parsed_markdown(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum InlayId {
-    Suggestion(usize),
+    InlineCompletion(usize),
     Hint(usize),
 }
 
 impl InlayId {
     fn id(&self) -> usize {
         match self {
-            Self::Suggestion(id) => *id,
+            Self::InlineCompletion(id) => *id,
             Self::Hint(id) => *id,
         }
     }
@@ -405,7 +405,7 @@ pub struct EditorStyle {
     pub syntax: Arc<SyntaxTheme>,
     pub status: StatusColors,
     pub inlay_hints_style: HighlightStyle,
-    pub suggestions_style: HighlightStyle,
+    pub inline_completion_styles: InlineCompletionStyles,
     pub unnecessary_code_fade: f32,
 }
 
@@ -422,7 +422,10 @@ impl Default for EditorStyle {
             // style and retrieve them directly from the theme.
             status: StatusColors::dark(),
             inlay_hints_style: HighlightStyle::default(),
-            suggestions_style: HighlightStyle::default(),
+            inline_completion_styles: InlineCompletionStyles {
+                insertion: HighlightStyle::default(),
+                whitespace: HighlightStyle::default(),
+            },
             unnecessary_code_fade: Default::default(),
         }
     }
@@ -437,6 +440,19 @@ pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
         color: Some(cx.theme().status().hint),
         background_color: show_background.then(|| cx.theme().status().hint_background),
         ..HighlightStyle::default()
+    }
+}
+
+pub fn make_suggestion_styles(cx: &WindowContext) -> InlineCompletionStyles {
+    InlineCompletionStyles {
+        insertion: HighlightStyle {
+            color: Some(cx.theme().status().predictive),
+            ..HighlightStyle::default()
+        },
+        whitespace: HighlightStyle {
+            background_color: Some(cx.theme().status().created_background),
+            ..HighlightStyle::default()
+        },
     }
 }
 
@@ -4735,7 +4751,7 @@ impl Editor {
             {
                 let mut inlays = Vec::new();
                 for (range, new_text) in &edits {
-                    let inlay = Inlay::suggestion(
+                    let inlay = Inlay::inline_completion(
                         post_inc(&mut self.next_inlay_id),
                         range.start,
                         new_text.as_str(),
@@ -9901,10 +9917,9 @@ impl Editor {
                                                     font_weight: Some(FontWeight::BOLD),
                                                     ..make_inlay_hints_style(cx)
                                                 },
-                                                suggestions_style: HighlightStyle {
-                                                    color: Some(cx.theme().status().predictive),
-                                                    ..HighlightStyle::default()
-                                                },
+                                                inline_completion_styles: make_suggestion_styles(
+                                                    cx,
+                                                ),
                                                 ..EditorStyle::default()
                                             },
                                         ))
@@ -13905,10 +13920,7 @@ impl Render for Editor {
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
                 inlay_hints_style: make_inlay_hints_style(cx),
-                suggestions_style: HighlightStyle {
-                    color: Some(cx.theme().status().predictive),
-                    ..HighlightStyle::default()
-                },
+                inline_completion_styles: make_suggestion_styles(cx),
                 unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
             },
         )

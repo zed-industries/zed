@@ -11,8 +11,8 @@ use futures::{
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, point, size, transparent_black, Action, AppContext, BackgroundExecutor, Bounds,
-    EventEmitter, Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
-    TitlebarOptions, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
+    EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TextStyle, TitlebarOptions,
+    UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{
     types::{SerdeBincode, SerdeJson, Str},
@@ -928,10 +928,8 @@ impl PromptLibrary {
                                                     status: cx.theme().status().clone(),
                                                     inlay_hints_style:
                                                         editor::make_inlay_hints_style(cx),
-                                                    suggestions_style: HighlightStyle {
-                                                        color: Some(cx.theme().status().predictive),
-                                                        ..HighlightStyle::default()
-                                                    },
+                                                    inline_completion_styles:
+                                                        editor::make_suggestion_styles(cx),
                                                     ..EditorStyle::default()
                                                 },
                                             )),

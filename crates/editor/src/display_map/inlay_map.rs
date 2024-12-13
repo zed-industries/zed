@@ -62,9 +62,9 @@ impl Inlay {
         }
     }
 
-    pub fn suggestion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn inline_completion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
-            id: InlayId::Suggestion(id),
+            id: InlayId::InlineCompletion(id),
             position,
             text: text.into(),
         }
@@ -346,7 +346,15 @@ impl<'a> Iterator for InlayChunks<'a> {
                 }
 
                 let mut highlight_style = match inlay.id {
-                    InlayId::Suggestion(_) => self.highlight_styles.suggestion,
+                    InlayId::InlineCompletion(_) => {
+                        self.highlight_styles.inline_completion.map(|s| {
+                            if inlay.text.chars().all(|c| c.is_whitespace()) {
+                                s.whitespace
+                            } else {
+                                s.insertion
+                            }
+                        })
+                    }
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                 };
                 let next_inlay_highlight_endpoint;
@@ -693,7 +701,7 @@ impl InlayMap {
                 let inlay_id = if i % 2 == 0 {
                     InlayId::Hint(post_inc(next_inlay_id))
                 } else {
-                    InlayId::Suggestion(post_inc(next_inlay_id))
+                    InlayId::InlineCompletion(post_inc(next_inlay_id))
                 };
                 log::info!(
                     "creating inlay {:?} at buffer offset {} with bias {:?} and text {:?}",
@@ -1389,7 +1397,7 @@ mod tests {
                     text: "|123|".into(),
                 },
                 Inlay {
-                    id: InlayId::Suggestion(post_inc(&mut next_inlay_id)),
+                    id: InlayId::InlineCompletion(post_inc(&mut next_inlay_id)),
                     position: buffer.read(cx).snapshot(cx).anchor_after(3),
                     text: "|456|".into(),
                 },
@@ -1605,7 +1613,7 @@ mod tests {
                     text: "|456|".into(),
                 },
                 Inlay {
-                    id: InlayId::Suggestion(post_inc(&mut next_inlay_id)),
+                    id: InlayId::InlineCompletion(post_inc(&mut next_inlay_id)),
                     position: buffer.read(cx).snapshot(cx).anchor_before(7),
                     text: "\n|567|\n".into(),
                 },

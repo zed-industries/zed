@@ -5030,6 +5030,7 @@ name = "fuzzy"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "log",
  "util",
 ]
 
@@ -16424,6 +16425,7 @@ name = "zeta"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "call",
  "client",
  "clock",
