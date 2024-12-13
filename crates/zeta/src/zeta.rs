@@ -3,6 +3,7 @@ mod rate_completion_modal;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
+use arrayvec::ArrayVec;
 use client::Client;
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
@@ -899,10 +900,15 @@ impl CurrentInlineCompletion {
     }
 }
 
+struct PendingCompletion {
+    id: usize,
+    _task: Task<Result<()>>,
+}
+
 pub struct ZetaInlineCompletionProvider {
     zeta: Model<Zeta>,
-    first_pending_completion: Option<Task<Result<()>>>,
-    last_pending_completion: Option<Task<Result<()>>>,
+    pending_completions: ArrayVec<PendingCompletion, 2>,
+    next_pending_completion_id: usize,
     current_completion: Option<CurrentInlineCompletion>,
 }
 
@@ -912,8 +918,8 @@ impl ZetaInlineCompletionProvider {
     pub fn new(zeta: Model<Zeta>) -> Self {
         Self {
             zeta,
-            first_pending_completion: None,
-            last_pending_completion: None,
+            pending_completions: ArrayVec::new(),
+            next_pending_completion_id: 0,
             current_completion: None,
         }
     }
@@ -944,7 +950,9 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        let is_first = self.first_pending_completion.is_none();
+        let pending_completion_id = self.next_pending_completion_id;
+        self.next_pending_completion_id += 1;
+
         let task = cx.spawn(|this, mut cx| async move {
             if debounce {
                 cx.background_executor().timer(Self::DEBOUNCE_TIMEOUT).await;
@@ -965,9 +973,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             }
 
             this.update(&mut cx, |this, cx| {
-                this.first_pending_completion = None;
-                if !is_first {
-                    this.last_pending_completion = None;
+                if this.pending_completions[0].id == pending_completion_id {
+                    this.pending_completions.remove(0);
+                } else {
+                    this.pending_completions.clear();
                 }
 
                 if let Some(new_completion) = completion {
@@ -993,10 +1002,19 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             })
         });
 
-        if is_first {
-            self.first_pending_completion = Some(task);
-        } else {
-            self.last_pending_completion = Some(task);
+        // We always maintain at most two pending completions. When we already
+        // have two, we replace the newest one.
+        if self.pending_completions.len() <= 1 {
+            self.pending_completions.push(PendingCompletion {
+                id: pending_completion_id,
+                _task: task,
+            });
+        } else if self.pending_completions.len() == 2 {
+            self.pending_completions.pop();
+            self.pending_completions.push(PendingCompletion {
+                id: pending_completion_id,
+                _task: task,
+            });
         }
     }
 
@@ -1011,13 +1029,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     }
 
     fn accept(&mut self, _cx: &mut ModelContext<Self>) {
-        self.first_pending_completion.take();
-        self.last_pending_completion.take();
+        self.pending_completions.clear();
     }
 
     fn discard(&mut self, _cx: &mut ModelContext<Self>) {
-        self.first_pending_completion.take();
-        self.last_pending_completion.take();
+        self.pending_completions.clear();
         self.current_completion.take();
     }
 
