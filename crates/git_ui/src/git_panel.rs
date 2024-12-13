@@ -18,11 +18,13 @@ use gpui::*;
 use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use ui::{prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, ScrollbarState, Tooltip};
+use ui::{
+    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
+};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
-use crate::settings::GitPanelSettings;
+use crate::{git_status_icon, settings::GitPanelSettings};
 use crate::{CommitAllChanges, CommitStagedChanges, DiscardAll, StageAll, UnstageAll};
 
 actions!(git_panel, [ToggleFocus]);
@@ -185,7 +187,12 @@ impl GitPanel {
         }
     }
 
-    fn should_autohide_scrollbar(cx: &AppContext) -> bool {
+    fn should_show_scrollbar(cx: &AppContext) -> bool {
+        // todo!(): plug into settings
+        true
+    }
+
+    fn should_autohide_scrollbar(_cx: &AppContext) -> bool {
         // todo!(): plug into settings
         true
     }
@@ -565,28 +572,82 @@ impl GitPanel {
             )
     }
 
-    fn render_entries(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn render_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
+        if !Self::should_show_scrollbar(cx)
+            || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
+        {
+            return None;
+        }
+        Some(
+            div()
+                .occlude()
+                .id("project-panel-vertical-scroll")
+                .on_mouse_move(cx.listener(|_, _, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, cx| {
+                        if !this.scrollbar_state.is_dragging()
+                            && !this.focus_handle.contains_focused(cx)
+                        {
+                            this.hide_scrollbar(cx);
+                            cx.notify();
+                        }
+
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_scroll_wheel(cx.listener(|_, _, cx| {
+                    cx.notify();
+                }))
+                .h_full()
+                .absolute()
+                .right_1()
+                .top_1()
+                .bottom_1()
+                .w(px(12.))
+                .cursor_default()
+                .children(Scrollbar::vertical(
+                    // percentage as f32..end_offset as f32,
+                    self.scrollbar_state.clone(),
+                )),
+        )
+    }
+
+    fn render_entries(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let item_count = self
             .visible_entries
             .iter()
             .map(|(_, worktree_entries, _)| worktree_entries.len())
             .sum();
-        h_flex().size_full().overflow_hidden().child(
-            uniform_list(cx.view().clone(), "entries", item_count, {
-                |this, range, cx| {
-                    let mut items = Vec::with_capacity(range.end - range.start);
-                    this.for_each_visible_entry(range, cx, |id, details, cx| {
-                        items.push(this.render_entry(id, details, cx));
-                    });
-                    items
-                }
-            })
+        h_flex()
             .size_full()
-            .with_sizing_behavior(ListSizingBehavior::Infer)
-            .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-            // .with_width_from_item(self.max_width_item_index)
-            .track_scroll(self.scroll_handle.clone()),
-        )
+            .overflow_hidden()
+            .child(
+                uniform_list(cx.view().clone(), "entries", item_count, {
+                    |this, range, cx| {
+                        let mut items = Vec::with_capacity(range.end - range.start);
+                        this.for_each_visible_entry(range, cx, |id, details, cx| {
+                            items.push(this.render_entry(id, details, cx));
+                        });
+                        items
+                    }
+                })
+                .size_full()
+                .with_sizing_behavior(ListSizingBehavior::Infer)
+                .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+                // .with_width_from_item(self.max_width_item_index)
+                .track_scroll(self.scroll_handle.clone()),
+            )
+            .children(self.render_scrollbar(cx))
     }
 
     fn render_entry(
@@ -595,17 +656,6 @@ impl GitPanel {
         details: EntryDetails,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
-        let label_color = if details.is_dir() {
-            Color::Default
-        } else {
-            match details.status {
-                Some(GitFileStatus::Modified) => Color::Modified,
-                Some(GitFileStatus::Added) => Color::Created,
-                Some(GitFileStatus::Conflict) => Color::Conflict,
-                _ => Color::Default,
-            }
-        };
-
         let id = id.to_proto() as usize;
         let checkbox_id = ElementId::Name(format!("checkbox_{}", id).into());
         let is_staged = Selection::Selected;
@@ -618,11 +668,13 @@ impl GitPanel {
             .pr(px(4.))
             .items_center()
             .gap_2()
-            .text_color(label_color.color(cx))
             .font_buffer(cx)
             .text_ui_sm(cx)
             .when(!details.is_dir(), |this| {
                 this.child(Checkbox::new(checkbox_id, is_staged))
+            })
+            .when_some(details.status, |this, status| {
+                this.child(git_status_icon(status))
             })
             .child(h_flex().gap_1p5().child(details.display_name.clone()))
     }
