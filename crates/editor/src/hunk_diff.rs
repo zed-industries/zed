@@ -23,8 +23,8 @@ use workspace::Item;
 use crate::{
     editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyAllDiffHunks,
     ApplyDiffHunk, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight,
-    DisplayRow, DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk,
-    RevertFile, RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    DisplayRow, DisplaySnapshot, Editor, EditorElement, GoToHunk, GoToPrevHunk, RevertFile,
+    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -75,50 +75,7 @@ pub enum DisplayDiffHunk {
     },
 }
 
-impl DiffMap {
-    pub fn snapshot(&self) -> DiffMapSnapshot {
-        self.snapshot.clone()
-    }
-
-    pub fn add_change_set(
-        &mut self,
-        change_set: Model<BufferChangeSet>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        let buffer_id = change_set.read(cx).buffer_id;
-        self.snapshot
-            .0
-            .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
-        self.diff_bases.insert(
-            buffer_id,
-            DiffBaseState {
-                last_version: None,
-                _subscription: cx.observe(&change_set, move |editor, change_set, cx| {
-                    editor
-                        .diff_map
-                        .snapshot
-                        .0
-                        .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
-                    Editor::sync_expanded_diff_hunks(&mut editor.diff_map, buffer_id, cx);
-                }),
-                change_set,
-            },
-        );
-        Editor::sync_expanded_diff_hunks(self, buffer_id, cx);
-    }
-
-    pub fn hunks(&self, include_folded: bool) -> impl Iterator<Item = &ExpandedHunk> {
-        self.hunks
-            .iter()
-            .filter(move |hunk| include_folded || !hunk.folded)
-    }
-}
-
 impl DiffMapSnapshot {
-    pub fn is_empty(&self) -> bool {
-        self.0.values().all(|diff| diff.is_empty())
-    }
-
     pub fn diff_hunks<'a>(
         &'a self,
         buffer_snapshot: &'a MultiBufferSnapshot,
@@ -159,42 +116,6 @@ impl DiffMapSnapshot {
             })
             .flatten()
     }
-
-    pub fn diff_hunks_in_range_rev<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-        buffer_snapshot: &'a MultiBufferSnapshot,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
-        let range = range.start.to_offset(buffer_snapshot)..range.end.to_offset(buffer_snapshot);
-        buffer_snapshot
-            .excerpts_for_range_rev(range.clone())
-            .filter_map(move |excerpt| {
-                let buffer = excerpt.buffer();
-                let buffer_id = buffer.remote_id();
-                let diff = self.0.get(&buffer_id)?;
-                let buffer_range = excerpt.map_range_to_buffer(range.clone());
-                let buffer_range =
-                    buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
-                Some(
-                    diff.hunks_intersecting_range_rev(buffer_range, excerpt.buffer())
-                        .map(move |hunk| {
-                            let start_row = excerpt
-                                .map_point_from_buffer(Point::new(hunk.row_range.start, 0))
-                                .row;
-                            let end_row = excerpt
-                                .map_point_from_buffer(Point::new(hunk.row_range.end, 0))
-                                .row;
-                            MultiBufferDiffHunk {
-                                row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
-                                buffer_id,
-                                buffer_range: hunk.buffer_range.clone(),
-                                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                            }
-                        }),
-                )
-            })
-            .flatten()
-    }
 }
 
 impl Editor {
@@ -212,41 +133,6 @@ impl Editor {
             self.toggle_hunks_expanded(vec![diff_hunk], cx);
             self.change_selections(None, cx, |selections| selections.refresh());
         }
-    }
-
-    pub fn expand_all_hunk_diffs(&mut self, _: &ExpandAllHunkDiffs, cx: &mut ViewContext<Self>) {
-        let snapshot = self.snapshot(cx);
-        let display_rows_with_expanded_hunks = self
-            .diff_map
-            .hunks(false)
-            .map(|hunk| &hunk.hunk_range)
-            .map(|anchor_range| {
-                (
-                    anchor_range
-                        .start
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row(),
-                    anchor_range
-                        .end
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row(),
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        let hunks = self
-            .diff_map
-            .snapshot
-            .diff_hunks(&snapshot.display_snapshot.buffer_snapshot)
-            .filter(|hunk| {
-                let hunk_display_row_range = Point::new(hunk.row_range.start.0, 0)
-                    .to_display_point(&snapshot.display_snapshot)
-                    ..Point::new(hunk.row_range.end.0, 0)
-                        .to_display_point(&snapshot.display_snapshot);
-                let row_range_end =
-                    display_rows_with_expanded_hunks.get(&hunk_display_row_range.start.row());
-                row_range_end.is_none() || row_range_end != Some(&hunk_display_row_range.end.row())
-            });
-        self.toggle_hunks_expanded(hunks.collect(), cx);
     }
 
     fn toggle_hunks_expanded(
@@ -904,8 +790,7 @@ impl Editor {
                 .update(&mut cx, |editor, cx| {
                     let snapshot = editor.snapshot(cx);
                     let mut recalculated_hunks = snapshot
-                        .diff_map
-                        .diff_hunks(&snapshot.buffer_snapshot)
+                        .diff_hunks()
                         .filter(|hunk| hunk.buffer_id == buffer_id)
                         .fuse()
                         .peekable();
@@ -1413,7 +1298,9 @@ mod tests {
                             cx,
                         )
                     });
-                    editor.diff_map.add_change_set(change_set, cx)
+                    editor.display_map.update(cx, |display_map, cx| {
+                        display_map.add_change_set(change_set, cx)
+                    });
                 }
             })
             .unwrap();
@@ -1465,8 +1352,7 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .diff_map
-                .diff_hunks_in_range(Point::zero()..Point::new(12, 0), &snapshot.buffer_snapshot)
+                .diff_hunks_in_range(Point::zero()..Point::new(12, 0))
                 .map(|hunk| (hunk_status(&hunk), hunk.row_range))
                 .collect::<Vec<_>>(),
             &expected,
@@ -1474,11 +1360,7 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .diff_map
-                .diff_hunks_in_range_rev(
-                    Point::zero()..Point::new(12, 0),
-                    &snapshot.buffer_snapshot
-                )
+                .diff_hunks_in_range_rev(Point::zero()..Point::new(12, 0))
                 .map(|hunk| (hunk_status(&hunk), hunk.row_range))
                 .collect::<Vec<_>>(),
             expected

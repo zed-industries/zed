@@ -380,7 +380,7 @@ impl EditorElement {
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
         register_action(view, cx, Editor::toggle_hunk_diff);
-        register_action(view, cx, Editor::expand_all_hunk_diffs);
+        register_action(view, cx, Editor::expand_all_diff_hunks);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -1175,7 +1175,7 @@ impl EditorElement {
                 let editor = self.editor.read(cx);
                 let is_singleton = editor.is_singleton(cx);
                 // Git
-                (is_singleton && scrollbar_settings.git_diff && !snapshot.diff_map.is_empty())
+                (is_singleton && scrollbar_settings.git_diff && snapshot.has_diff_hunks())
                     ||
                     // Buffer Search Results
                     (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
@@ -1347,8 +1347,9 @@ impl EditorElement {
             let mut expanded_hunks = expanded_hunks[expanded_hunks_start_ix..].iter().peekable();
 
             let mut display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)> = snapshot
-                .diff_map
-                .diff_hunks_in_range(buffer_start..buffer_end, &buffer_snapshot)
+                .display_snapshot
+                .diff_snapshot()
+                .diff_hunks_in_range(buffer_start..buffer_end)
                 .filter_map(|hunk| {
                     let display_hunk = diff_hunk_to_display(&hunk, snapshot);
 
@@ -3904,32 +3905,29 @@ impl EditorElement {
                             let max_point = snapshot.display_snapshot.buffer_snapshot.max_point();
                             let mut marker_quads = Vec::new();
                             if scrollbar_settings.git_diff {
-                                let marker_row_ranges = snapshot
-                                    .diff_map
-                                    .diff_hunks(&snapshot.buffer_snapshot)
-                                    .map(|hunk| {
-                                        let start_display_row =
-                                            MultiBufferPoint::new(hunk.row_range.start.0, 0)
-                                                .to_display_point(&snapshot.display_snapshot)
-                                                .row();
-                                        let mut end_display_row =
-                                            MultiBufferPoint::new(hunk.row_range.end.0, 0)
-                                                .to_display_point(&snapshot.display_snapshot)
-                                                .row();
-                                        if end_display_row != start_display_row {
-                                            end_display_row.0 -= 1;
-                                        }
-                                        let color = match hunk_status(&hunk) {
-                                            DiffHunkStatus::Added => theme.status().created,
-                                            DiffHunkStatus::Modified => theme.status().modified,
-                                            DiffHunkStatus::Removed => theme.status().deleted,
-                                        };
-                                        ColoredRange {
-                                            start: start_display_row,
-                                            end: end_display_row,
-                                            color,
-                                        }
-                                    });
+                                let marker_row_ranges = snapshot.diff_hunks().map(|hunk| {
+                                    let start_display_row =
+                                        MultiBufferPoint::new(hunk.row_range.start.0, 0)
+                                            .to_display_point(&snapshot.display_snapshot)
+                                            .row();
+                                    let mut end_display_row =
+                                        MultiBufferPoint::new(hunk.row_range.end.0, 0)
+                                            .to_display_point(&snapshot.display_snapshot)
+                                            .row();
+                                    if end_display_row != start_display_row {
+                                        end_display_row.0 -= 1;
+                                    }
+                                    let color = match hunk_status(&hunk) {
+                                        DiffHunkStatus::Added => theme.status().created,
+                                        DiffHunkStatus::Modified => theme.status().modified,
+                                        DiffHunkStatus::Removed => theme.status().deleted,
+                                    };
+                                    ColoredRange {
+                                        start: start_display_row,
+                                        end: end_display_row,
+                                        color,
+                                    }
+                                });
 
                                 marker_quads.extend(
                                     scrollbar_layout
@@ -5695,22 +5693,6 @@ impl Element for EditorElement {
 
                     let gutter_settings = EditorSettings::get_global(cx).gutter;
 
-                    let expanded_add_hunks_by_rows = self.editor.update(cx, |editor, _| {
-                        editor
-                            .diff_map
-                            .hunks(false)
-                            .filter(|hunk| hunk.status == DiffHunkStatus::Added)
-                            .map(|expanded_hunk| {
-                                let start_row = expanded_hunk
-                                    .hunk_range
-                                    .start
-                                    .to_display_point(&snapshot)
-                                    .row();
-                                (start_row, expanded_hunk.clone())
-                            })
-                            .collect::<HashMap<_, _>>()
-                    });
-
                     let rows_with_hunk_bounds = display_hunks
                         .iter()
                         .filter_map(|(hunk, hitbox)| Some((hunk, hitbox.as_ref()?.bounds)))
@@ -5755,35 +5737,26 @@ impl Element for EditorElement {
                             if show_code_actions {
                                 let newest_selection_point =
                                     newest_selection_head.to_point(&snapshot.display_snapshot);
-                                let newest_selection_display_row =
-                                    newest_selection_point.to_display_point(&snapshot).row();
-                                if !expanded_add_hunks_by_rows
-                                    .contains_key(&newest_selection_display_row)
-                                {
-                                    let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
-                                        MultiBufferRow(newest_selection_point.row),
-                                    );
-                                    if let Some((buffer, range)) = buffer {
-                                        let buffer_id = buffer.remote_id();
-                                        let row = range.start.row;
-                                        let has_test_indicator = self
-                                            .editor
-                                            .read(cx)
-                                            .tasks
-                                            .contains_key(&(buffer_id, row));
+                                let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
+                                    MultiBufferRow(newest_selection_point.row),
+                                );
+                                if let Some((buffer, range)) = buffer {
+                                    let buffer_id = buffer.remote_id();
+                                    let row = range.start.row;
+                                    let has_test_indicator =
+                                        self.editor.read(cx).tasks.contains_key(&(buffer_id, row));
 
-                                        if !has_test_indicator {
-                                            code_actions_indicator = self
-                                                .layout_code_actions_indicator(
-                                                    line_height,
-                                                    newest_selection_head,
-                                                    scroll_pixel_position,
-                                                    &gutter_dimensions,
-                                                    &gutter_hitbox,
-                                                    &rows_with_hunk_bounds,
-                                                    cx,
-                                                );
-                                        }
+                                    if !has_test_indicator {
+                                        code_actions_indicator = self
+                                            .layout_code_actions_indicator(
+                                                line_height,
+                                                newest_selection_head,
+                                                scroll_pixel_position,
+                                                &gutter_dimensions,
+                                                &gutter_hitbox,
+                                                &rows_with_hunk_bounds,
+                                                cx,
+                                            );
                                     }
                                 }
                             }

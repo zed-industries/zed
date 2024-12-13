@@ -53,8 +53,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use project::buffer_store::BufferChangeSet;
 use serde::Deserialize;
@@ -750,6 +750,29 @@ impl DisplaySnapshot {
         self.fold_snapshot.fold_count()
     }
 
+    pub fn diff_hunks<'a>(&'a self) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        self.diff_snapshot()
+            .diff_hunks_in_range(0..self.buffer_snapshot.len())
+    }
+
+    pub fn diff_hunks_in_range<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        self.diff_snapshot().diff_hunks_in_range(range)
+    }
+
+    pub fn diff_hunks_in_range_rev<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        self.diff_snapshot().diff_hunks_in_range_rev(range)
+    }
+
+    pub fn has_diff_hunks(&self) -> bool {
+        self.diff_snapshot().has_diff_hunks()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.buffer_snapshot.len() == 0
     }
@@ -1349,7 +1372,7 @@ impl DisplaySnapshot {
         self.block_snapshot.excerpt_header_height
     }
 
-    fn diff_snapshot(&self) -> &DiffMapSnapshot {
+    pub(crate) fn diff_snapshot(&self) -> &DiffMapSnapshot {
         &self.fold_snapshot.diff_map_snapshot
     }
 }

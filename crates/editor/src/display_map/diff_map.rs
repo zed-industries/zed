@@ -4,7 +4,10 @@ use collections::HashMap;
 use git::diff::DiffHunkStatus;
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{BufferChunks, BufferId, Chunk};
-use multi_buffer::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset};
+use multi_buffer::{
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow, MultiBufferSnapshot,
+    ToOffset,
+};
 use project::buffer_store::BufferChangeSet;
 use std::{mem, ops::Range};
 use sum_tree::{Cursor, SumTree, TreeMap};
@@ -677,6 +680,80 @@ impl DiffMap {
 }
 
 impl DiffMapSnapshot {
+    pub fn diff_hunks_in_range<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        let buffer_snapshot = self.buffer();
+        let range = range.start.to_offset(buffer_snapshot)..range.end.to_offset(buffer_snapshot);
+        buffer_snapshot
+            .excerpts_for_range(range.clone())
+            .filter_map(move |excerpt| {
+                let buffer = excerpt.buffer();
+                let buffer_id = buffer.remote_id();
+                let diff = &self.diffs.get(&buffer_id)?.diff;
+                let buffer_range = excerpt.map_range_to_buffer(range.clone());
+                let buffer_range =
+                    buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
+                Some(
+                    diff.hunks_intersecting_range(buffer_range, excerpt.buffer())
+                        .map(move |hunk| {
+                            let start =
+                                excerpt.map_point_from_buffer(Point::new(hunk.row_range.start, 0));
+                            let end =
+                                excerpt.map_point_from_buffer(Point::new(hunk.row_range.end, 0));
+                            MultiBufferDiffHunk {
+                                row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
+                                buffer_id,
+                                buffer_range: hunk.buffer_range.clone(),
+                                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                            }
+                        }),
+                )
+            })
+            .flatten()
+    }
+
+    pub fn diff_hunks_in_range_rev<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        let buffer_snapshot = self.buffer();
+        let range = range.start.to_offset(buffer_snapshot)..range.end.to_offset(buffer_snapshot);
+        buffer_snapshot
+            .excerpts_for_range_rev(range.clone())
+            .filter_map(move |excerpt| {
+                let buffer = excerpt.buffer();
+                let buffer_id = buffer.remote_id();
+                let diff = &self.diffs.get(&buffer_id)?.diff;
+                let buffer_range = excerpt.map_range_to_buffer(range.clone());
+                let buffer_range =
+                    buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
+                Some(
+                    diff.hunks_intersecting_range_rev(buffer_range, excerpt.buffer())
+                        .map(move |hunk| {
+                            let start_row = excerpt
+                                .map_point_from_buffer(Point::new(hunk.row_range.start, 0))
+                                .row;
+                            let end_row = excerpt
+                                .map_point_from_buffer(Point::new(hunk.row_range.end, 0))
+                                .row;
+                            MultiBufferDiffHunk {
+                                row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
+                                buffer_id,
+                                buffer_range: hunk.buffer_range.clone(),
+                                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                            }
+                        }),
+                )
+            })
+            .flatten()
+    }
+
+    pub fn has_diff_hunks(&self) -> bool {
+        self.diffs.values().any(|diff| !diff.diff.is_empty())
+    }
+
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks(DiffOffset(0)..self.len(), false, Highlights::default())

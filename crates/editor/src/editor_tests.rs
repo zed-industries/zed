@@ -3363,8 +3363,7 @@ async fn test_custom_newlines_cause_no_false_positive_diffs(
         let snapshot = editor.snapshot(cx);
         assert_eq!(
             snapshot
-                .diff_map
-                .diff_hunks_in_range(0..snapshot.buffer_snapshot.len(), &snapshot.buffer_snapshot)
+                .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
                 .collect::<Vec<_>>(),
             Vec::new(),
             "Should not have any diffs for files with custom newlines"
@@ -11544,7 +11543,9 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
                     cx,
                 )
             });
-            editor.diff_map.add_change_set(change_set, cx)
+            editor.display_map.update(cx, |display_map, cx| {
+                display_map.add_change_set(change_set, cx)
+            });
         }
     });
     cx.executor().run_until_parked();
@@ -12053,7 +12054,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -12098,7 +12099,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
     );
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -12181,7 +12182,7 @@ async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui:
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
 
@@ -12374,7 +12375,9 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                         cx,
                     )
                 });
-                editor.diff_map.add_change_set(change_set, cx)
+                editor.display_map.update(cx, |display_map, cx| {
+                    display_map.add_change_set(change_set, cx)
+                });
             }
         })
         .unwrap();
@@ -12484,14 +12487,16 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
             let buffer = buffer.read(cx).text_snapshot();
             let change_set = cx
                 .new_model(|cx| BufferChangeSet::new_with_base_text(base.to_string(), buffer, cx));
-            editor.diff_map.add_change_set(change_set, cx)
+            editor.display_map.update(cx, |display_map, cx| {
+                display_map.add_change_set(change_set, cx)
+            })
         })
         .unwrap();
 
     let mut cx = EditorTestContext::for_editor(editor, cx).await;
     cx.run_until_parked();
 
-    cx.update_editor(|editor, cx| editor.expand_all_hunk_diffs(&Default::default(), cx));
+    cx.update_editor(|editor, cx| editor.expand_all_diff_hunks(&Default::default(), cx));
     cx.executor().run_until_parked();
 
     cx.assert_state_with_diff(
@@ -12555,7 +12560,7 @@ async fn test_edits_around_expanded_insertion_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
 
@@ -12746,7 +12751,7 @@ async fn test_edits_around_expanded_deletion_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
 
@@ -12888,7 +12893,7 @@ async fn test_edit_after_expanded_modification_hunk(
     cx.set_diff_base(&diff_base);
     executor.run_until_parked();
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
 
@@ -14012,8 +14017,7 @@ fn assert_hunk_revert(
     let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let reverted_hunk_statuses = snapshot
-            .diff_map
-            .diff_hunks_in_range(0..snapshot.buffer_snapshot.len(), &snapshot.buffer_snapshot)
+            .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
             .map(|hunk| hunk_status(&hunk))
             .collect::<Vec<_>>();
 
