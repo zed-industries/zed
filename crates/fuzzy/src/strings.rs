@@ -61,9 +61,23 @@ impl StringMatch {
         let mut positions = self.positions.iter().peekable();
         iter::from_fn(move || {
             if let Some(start) = positions.next().copied() {
+                if start >= self.string.len() {
+                    log::error!(
+                        "Invariant violation: Index {start} out of range in string {:?}",
+                        self.string
+                    );
+                    return None;
+                }
                 let mut end = start + self.char_len_at_index(start);
                 while let Some(next_start) = positions.peek() {
                     if end == **next_start {
+                        if end >= self.string.len() {
+                            log::error!(
+                                "Invariant violation: Index {end} out of range in string {:?}",
+                                self.string
+                            );
+                            return None;
+                        }
                         end += self.char_len_at_index(end);
                         positions.next();
                     } else {
