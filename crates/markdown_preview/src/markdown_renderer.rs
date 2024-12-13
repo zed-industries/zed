@@ -20,7 +20,7 @@ use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
     h_flex, relative, tooltip_container, v_flex, Checkbox, Clickable, Color, FluentBuilder,
     IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview,
-    ToggleState, StatefulInteractiveElement, StyledExt, StyledImage, ViewContext, VisibleOnHover,
+    StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, ViewContext, VisibleOnHover,
     VisualContext as _,
 };
 use workspace::Workspace;

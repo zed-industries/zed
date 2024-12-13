@@ -51,7 +51,7 @@ use workspace::{
     ui::{
         h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder,
         HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
-        LabelCommon, ListItem, Scrollbar, ScrollbarState, Toggleable, StyledExt, StyledTypography,
+        LabelCommon, ListItem, Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable,
         Tooltip,
     },
     OpenInTerminal, WeakItemHandle, Workspace,

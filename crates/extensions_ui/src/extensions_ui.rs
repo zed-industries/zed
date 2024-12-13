@@ -1118,7 +1118,9 @@ impl Render for ExtensionsPage {
                                         ToggleButton::new("filter-not-installed", "Not Installed")
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Large)
-                                            .toggle_state(self.filter == ExtensionFilter::NotInstalled)
+                                            .toggle_state(
+                                                self.filter == ExtensionFilter::NotInstalled,
+                                            )
                                             .on_click(cx.listener(|this, _event, cx| {
                                                 this.filter = ExtensionFilter::NotInstalled;
                                                 this.filter_extension_entries(cx);
