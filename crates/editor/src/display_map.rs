@@ -535,10 +535,16 @@ pub(crate) struct Highlights<'a> {
     pub styles: HighlightStyles,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SuggestionStyles {
+    pub insertion: HighlightStyle,
+    pub whitespace: HighlightStyle,
+}
+
 #[derive(Default, Debug, Clone, Copy)]
 pub struct HighlightStyles {
     pub inlay_hint: Option<HighlightStyle>,
-    pub suggestion: Option<HighlightStyle>,
+    pub suggestion: Option<SuggestionStyles>,
 }
 
 #[derive(Clone)]
@@ -859,7 +865,7 @@ impl DisplaySnapshot {
             language_aware,
             HighlightStyles {
                 inlay_hint: Some(editor_style.inlay_hints_style),
-                suggestion: Some(editor_style.suggestions_style),
+                suggestion: Some(editor_style.suggestion_styles),
             },
         )
         .flat_map(|chunk| {

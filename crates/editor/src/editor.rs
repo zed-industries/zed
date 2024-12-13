@@ -405,7 +405,7 @@ pub struct EditorStyle {
     pub syntax: Arc<SyntaxTheme>,
     pub status: StatusColors,
     pub inlay_hints_style: HighlightStyle,
-    pub suggestions_style: HighlightStyle,
+    pub suggestion_styles: SuggestionStyles,
     pub unnecessary_code_fade: f32,
 }
 
@@ -422,7 +422,10 @@ impl Default for EditorStyle {
             // style and retrieve them directly from the theme.
             status: StatusColors::dark(),
             inlay_hints_style: HighlightStyle::default(),
-            suggestions_style: HighlightStyle::default(),
+            suggestion_styles: SuggestionStyles {
+                insertion: HighlightStyle::default(),
+                whitespace: HighlightStyle::default(),
+            },
             unnecessary_code_fade: Default::default(),
         }
     }
@@ -437,6 +440,19 @@ pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
         color: Some(cx.theme().status().hint),
         background_color: show_background.then(|| cx.theme().status().hint_background),
         ..HighlightStyle::default()
+    }
+}
+
+pub fn make_suggestion_styles(cx: &WindowContext) -> SuggestionStyles {
+    SuggestionStyles {
+        insertion: HighlightStyle {
+            color: Some(cx.theme().status().predictive),
+            ..HighlightStyle::default()
+        },
+        whitespace: HighlightStyle {
+            background_color: Some(cx.theme().status().created_background),
+            ..HighlightStyle::default()
+        },
     }
 }
 
@@ -9901,10 +9917,7 @@ impl Editor {
                                                     font_weight: Some(FontWeight::BOLD),
                                                     ..make_inlay_hints_style(cx)
                                                 },
-                                                suggestions_style: HighlightStyle {
-                                                    color: Some(cx.theme().status().predictive),
-                                                    ..HighlightStyle::default()
-                                                },
+                                                suggestion_styles: make_suggestion_styles(cx),
                                                 ..EditorStyle::default()
                                             },
                                         ))
@@ -13905,10 +13918,7 @@ impl Render for Editor {
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
                 inlay_hints_style: make_inlay_hints_style(cx),
-                suggestions_style: HighlightStyle {
-                    color: Some(cx.theme().status().predictive),
-                    ..HighlightStyle::default()
-                },
+                suggestion_styles: make_suggestion_styles(cx),
                 unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
             },
         )
