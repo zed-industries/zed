@@ -13974,7 +13974,6 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
- "itertools 0.13.0",
  "log",
  "rand 0.8.5",
  "regex",
