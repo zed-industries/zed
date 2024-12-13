@@ -8,7 +8,7 @@ use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, Wea
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, ListItemSpacing, ViewContext};
+use ui::{prelude::*, ListItem, ViewContext};
 use workspace::Workspace;
 
 use crate::context::ContextKind;
@@ -150,7 +150,15 @@ impl PickerDelegate for FetchContextPickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
-        1
+        if self.url.is_empty() {
+            0
+        } else {
+            1
+        }
+    }
+
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+        "Enter the URL that you would like to fetch".into()
     }
 
     fn selected_index(&self) -> usize {
@@ -210,9 +218,8 @@ impl PickerDelegate for FetchContextPickerDelegate {
         Some(
             ListItem::new(ix)
                 .inset(true)
-                .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(self.url.clone()),
+                .child(Label::new(self.url.clone())),
         )
     }
 }
