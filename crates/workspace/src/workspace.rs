@@ -735,6 +735,7 @@ pub struct Workspace {
     center: PaneGroup,
     left_dock: View<Dock>,
     bottom_dock: View<Dock>,
+    bottom_dock_layout: BottomDockLayout,
     right_dock: View<Dock>,
     panes: Vec<View<Pane>>,
     panes_by_item: HashMap<EntityId, WeakView<Pane>>,
@@ -941,13 +942,7 @@ impl Workspace {
 
         let left_dock = Dock::new(DockPosition::Left, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, cx);
-        bottom_dock.update(cx, |dock, cx| {
-            let settings = WorkspaceSettings::get_global(cx);
-            dock.set_use_full_width(
-                matches!(settings.bottom_dock_layout, BottomDockLayout::Full),
-                cx,
-            );
-        });
+        let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
         let right_dock = Dock::new(DockPosition::Right, cx);
         let left_dock_buttons = cx.new_view(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new_view(|cx| PanelButtons::new(bottom_dock.clone(), cx));
@@ -1054,6 +1049,7 @@ impl Workspace {
             notifications: Default::default(),
             left_dock,
             bottom_dock,
+            bottom_dock_layout,
             right_dock,
             project: project.clone(),
             follower_states: Default::default(),
@@ -1260,16 +1256,14 @@ impl Workspace {
         &self.bottom_dock
     }
 
-    pub fn is_bottom_dock_full_width(workspace: &WeakView<Workspace>, cx: &WindowContext) -> bool {
-        if let Some(workspace) = workspace.upgrade() {
-            workspace
-                .read(cx)
-                .bottom_dock()
-                .read(cx)
-                .is_using_full_width()
-        } else {
-            false
-        }
+    pub fn set_bottom_dock_layout(&mut self, layout: BottomDockLayout, cx: &mut ViewContext<Self>) {
+        self.bottom_dock_layout = layout;
+        cx.notify();
+        self.serialize_workspace(cx);
+    }
+
+    pub fn is_bottom_dock_full_width(&self) -> bool {
+        matches!(self.bottom_dock_layout, BottomDockLayout::Full)
     }
 
     pub fn right_dock(&self) -> &View<Dock> {
@@ -2330,12 +2324,11 @@ impl Workspace {
     }
 
     pub fn toggle_bottom_dock_layout(&mut self, cx: &mut ViewContext<Self>) {
-        self.bottom_dock.update(cx, |dock, cx| {
-            dock.set_use_full_width(!dock.is_using_full_width(), cx);
-        });
-
-        cx.notify();
-        self.serialize_workspace(cx);
+        let new_layout = match self.bottom_dock_layout {
+            BottomDockLayout::Contained => BottomDockLayout::Full,
+            BottomDockLayout::Full => BottomDockLayout::Contained,
+        };
+        self.set_bottom_dock_layout(new_layout, cx);
     }
 
     pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
@@ -4920,7 +4913,7 @@ impl Render for Workspace {
                                     ))
                                 })
                                 .child({
-                                    match self.bottom_dock.read(cx).is_using_full_width() {
+                                    match self.is_bottom_dock_full_width() {
                                         true => {
                                             div()
                                                 .flex()

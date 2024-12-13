@@ -198,10 +198,13 @@ impl TerminalPanel {
                             }),
                     )
                     .child({
-                        let layout = Workspace::is_bottom_dock_full_width(&workspace, cx);
-                        IconButton::new("toggle_extended", IconName::ExpandHorizontal)
+                        let layout = workspace
+                            .update(cx, |workspace, _| workspace.is_bottom_dock_full_width())
+                            .unwrap_or(false);
+                        IconButton::new("toggle_extended", IconName::ChevronsLeftRight)
                             .icon_size(IconSize::Small)
                             .selected(layout)
+                            .selected_icon(IconName::ChevronsRightLeft)
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.dispatch_action(workspace::ToggleBottomDockLayout.boxed_clone());
                             }))
