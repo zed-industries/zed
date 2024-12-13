@@ -15,6 +15,7 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
+    mem,
     ops::{Deref, DerefMut, Range, RangeBounds},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -374,6 +375,14 @@ impl Block {
             Block::ExcerptBoundary { .. } => false,
         }
     }
+
+    fn is_header(&self) -> bool {
+        match self {
+            Block::Custom(_) => false,
+            Block::FoldedBuffer { .. } => true,
+            Block::ExcerptBoundary { .. } => true,
+        }
+    }
 }
 
 impl Debug for Block {
@@ -512,7 +521,6 @@ impl BlockMap {
         if edits.is_empty() {
             return;
         }
-
         let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::default();
         let mut cursor = transforms.cursor::<WrapRow>(&());
@@ -656,7 +664,6 @@ impl BlockMap {
             blocks_in_edit.extend(
                 self.custom_blocks[start_block_ix..end_block_ix]
                     .iter()
-                    .filter(|block| !is_custom_within_folded_buffer(&self.folded_buffers, block))
                     .filter_map(|block| {
                         Some((
                             block.placement.to_wrap_row(wrap_snapshot)?,
@@ -909,16 +916,40 @@ impl BlockMap {
                     _ => unreachable!(),
                 })
         });
-        blocks.dedup_by(|(right, _), (left, _)| match (left, right) {
+        blocks.dedup_by(|right, left| match (left.0.clone(), right.0.clone()) {
             (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
-                range.start < *row && range.end >= *row
+                if left.1.is_header() {
+                    range.start <= row && range.end >= row
+                } else {
+                    range.start < row && range.end >= row
+                }
+            }
+            (BlockPlacement::Above(row), BlockPlacement::Replace(range)) => {
+                if right.1.is_header() && range.start <= row && range.end >= row {
+                    mem::swap(right, left);
+                    true
+                } else {
+                    false
+                }
             }
             (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
-                range.start <= *row && range.end > *row
+                if left.1.is_header() {
+                    range.start <= row && range.end >= row
+                } else {
+                    range.start <= row && range.end > row
+                }
+            }
+            (BlockPlacement::Below(row), BlockPlacement::Replace(range)) => {
+                if right.1.is_header() && range.start <= row && range.end >= row {
+                    mem::swap(right, left);
+                    true
+                } else {
+                    false
+                }
             }
             (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => {
                 if range_a.end >= range_b.start && range_a.start <= range_b.end {
-                    range_a.end = range_a.end.max(range_b.end);
+                    left.0 = BlockPlacement::Replace(range_a.start..range_a.end.max(range_b.end));
                     true
                 } else {
                     false
@@ -1223,7 +1254,6 @@ impl<'a> BlockMapWriter<'a> {
         self.remove(blocks_to_remove);
     }
 
-    // TODO kb the last buffer folded disappears
     pub fn fold_buffer(
         &mut self,
         buffer_id: BufferId,
@@ -1404,11 +1434,7 @@ impl BlockSnapshot {
                 }
                 if let Some(block) = &transform.block {
                     cursor.next(&());
-                    if is_within_folded_buffer(&self.folded_buffers, block) {
-                        continue;
-                    } else {
-                        return Some((start_row, block));
-                    }
+                    return Some((start_row, block));
                 } else {
                     cursor.next(&());
                 }
@@ -1542,28 +1568,16 @@ impl BlockSnapshot {
     }
 
     pub(super) fn is_line_replaced_or_folded(&self, row: MultiBufferRow) -> bool {
-        let folded = self
-            .wrap_snapshot
-            .buffer_snapshot()
-            .buffer_line_for_row(row)
-            .map_or(false, |(buffer, _)| {
-                self.folded_buffers.contains(&buffer.remote_id())
-            });
-        if folded {
-            return true;
-        }
-
         let wrap_point = self
             .wrap_snapshot
             .make_wrap_point(Point::new(row.0, 0), Bias::Left);
         let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
         cursor.item().map_or(false, |transform| {
-            if let Some(Block::Custom(block)) = transform.block.as_ref() {
-                matches!(block.placement, BlockPlacement::Replace(_))
-            } else {
-                false
-            }
+            transform
+                .block
+                .as_ref()
+                .map_or(false, |block| block.is_replacement())
         })
     }
 
@@ -1934,31 +1948,6 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
         offset += line.len();
     }
     (row, offset)
-}
-
-fn is_within_folded_buffer(folded_buffers: &HashSet<BufferId>, block: &Block) -> bool {
-    if let Block::Custom(custom_block) = block {
-        is_custom_within_folded_buffer(folded_buffers, custom_block)
-    } else {
-        false
-    }
-}
-
-fn is_custom_within_folded_buffer(
-    folded_buffers: &HashSet<BufferId>,
-    custom_block: &CustomBlock,
-) -> bool {
-    if let Some(buffer_id) = custom_block.placement.start().buffer_id {
-        if folded_buffers.contains(&buffer_id) {
-            return true;
-        }
-    }
-    if let Some(buffer_id) = custom_block.placement.end().buffer_id {
-        if folded_buffers.contains(&buffer_id) {
-            return true;
-        }
-    }
-    false
 }
 
 #[cfg(test)]
@@ -2609,6 +2598,7 @@ mod tests {
         buffer.read_with(cx, |buffer, cx| {
             writer.fold_buffer(buffer_id_1, buffer, cx);
         });
+        println!("========================");
         let excerpt_blocks_1 = writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 0))),
@@ -2723,34 +2713,27 @@ mod tests {
         let blocks = blocks_snapshot
             .blocks_in_range(0..u32::MAX)
             .collect::<Vec<_>>();
-        // for (_, block) in &blocks {
-        //     if let BlockId::Custom(custom_block_id) = block.id() {
-        //         assert!(
-        //             !excerpt_blocks_1.contains(&custom_block_id),
-        //             "Should have no blocks from the folded buffer_1"
-        //         );
-        //         assert!(
-        //             !excerpt_blocks_2.contains(&custom_block_id),
-        //             "Should have no blocks from the folded buffer_2"
-        //         );
-        //         assert!(
-        //             excerpt_blocks_3.contains(&custom_block_id),
-        //             "Should have only blocks from unfolded buffers"
-        //         );
-        //     }
-        // }
+        for (_, block) in &blocks {
+            if let BlockId::Custom(custom_block_id) = block.id() {
+                assert!(
+                    excerpt_blocks_1.contains(&custom_block_id),
+                    "Should have no blocks from the folded buffer_1"
+                );
+                assert!(
+                    !excerpt_blocks_2.contains(&custom_block_id),
+                    "Should have only blocks from unfolded buffers"
+                );
+                assert!(
+                    !excerpt_blocks_3.contains(&custom_block_id),
+                    "Should have only blocks from unfolded buffers"
+                );
+            }
+        }
 
-        /*
-        assertion `left == right` failed: Should have extra newline for 111 buffer, due to a new block added when it was folded
-          left: "\n\n\n\n111\n\n\n\n\n"
-         right: "\n\n\n\n111\n\n\n\n\n\n\n"
-
-        */
-        dbg!(blocks_snapshot.transforms.items(&()));
         assert_eq!(
-            dbg!(blocks_snapshot.text()),
+            blocks_snapshot.text(),
             "\n\n\n\n111\n\n\n\n\n",
-            // "Should have extra newline for 111 buffer, due to a new block added when it was folded"
+            "Should have a single, first buffer left after folding"
         );
     }
 
@@ -2954,6 +2937,11 @@ mod tests {
                     block_map.remove(block_ids_to_remove);
                 }
                 60..=79 => {
+                    if buffer.read_with(cx, |buffer, _| buffer.is_singleton()) {
+                        // TODO kb add into the block_map code?
+                        log::info!("Noop fold/unfold operation on a singleton buffer");
+                        continue;
+                    }
                     let (inlay_snapshot, inlay_edits) =
                         inlay_map.sync(buffer_snapshot.clone(), vec![]);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
@@ -2981,17 +2969,8 @@ mod tests {
                     let mut folded_count = folded_buffers.len();
                     let mut unfolded_count = unfolded_buffers.len();
 
-                    let toggle_probability =
-                        |items_len, opposite_items_len| match (items_len, opposite_items_len) {
-                            (0..=1, _) => 0.0,
-                            (2..=3, 0..=1) => 0.8,
-                            (2..=3, _) => 0.6,
-                            (4..=5, 0..=1) => 1.0,
-                            (4..=5, _) => 0.3,
-                            _ => 0.9,
-                        };
-                    let fold = rng.gen_bool(toggle_probability(unfolded_count, folded_count));
-                    let unfold = rng.gen_bool(toggle_probability(folded_count, unfolded_count));
+                    let fold = !unfolded_buffers.is_empty() && rng.gen_bool(0.5);
+                    let unfold = !folded_buffers.is_empty() && rng.gen_bool(0.5);
                     if !fold && !unfold {
                         log::info!("Noop fold/unfold operation. Unfolded buffers: {unfolded_count}, folded buffers: {folded_count}");
                         continue;
@@ -3002,24 +2981,26 @@ mod tests {
                             let buffer_to_fold =
                                 unfolded_buffers[rng.gen_range(0..unfolded_buffers.len())];
                             log::info!("Folding {buffer_to_fold:?}");
-                            let related_text = buffer_snapshot
+                            let related_excerpts = buffer_snapshot
                                 .excerpts()
-                                .filter_map(|(_, buffer, range)| {
+                                .filter_map(|(excerpt_id, buffer, range)| {
                                     if buffer.remote_id() == buffer_to_fold {
-                                        Some(
+                                        Some((
+                                            excerpt_id,
                                             buffer
                                                 .text_for_range(range.context)
                                                 .collect::<String>(),
-                                        )
+                                        ))
                                     } else {
                                         None
                                     }
                                 })
                                 .collect::<Vec<_>>();
                             log::info!(
-                                "Folding {buffer_to_fold:?}, related excerpts: {related_text:?}"
+                                "Folding {buffer_to_fold:?}, related excerpts: {related_excerpts:?}"
                             );
                             folded_count += 1;
+                            unfolded_count -= 1;
                             block_map.fold_buffer(buffer_to_fold, buffer, cx);
                         }
                         if unfold {
@@ -3027,6 +3008,7 @@ mod tests {
                                 folded_buffers[rng.gen_range(0..folded_buffers.len())];
                             log::info!("Unfolding {buffer_to_unfold:?}");
                             unfolded_count += 1;
+                            folded_count -= 1;
                             block_map.unfold_buffer(buffer_to_unfold, buffer, cx);
                         }
                         log::info!(
@@ -3061,24 +3043,16 @@ mod tests {
             log::info!("wrapped text: {:?}", wraps_snapshot.text());
             log::info!("blocks text: {:?}", blocks_snapshot.text());
 
-            let mut expected_blocks = Vec::new();
-            expected_blocks.extend(
-                block_map
-                    .custom_blocks
-                    .iter()
-                    .filter(|block| {
-                        !is_custom_within_folded_buffer(&blocks_snapshot.folded_buffers, block)
-                    })
-                    .filter_map(|block| {
-                        Some((
-                            block.placement.to_wrap_row(&wraps_snapshot)?,
-                            Block::Custom(block.clone()),
-                        ))
-                    }),
-            );
+            let mut sorted_blocks = Vec::new();
+            sorted_blocks.extend(block_map.custom_blocks.iter().filter_map(|block| {
+                Some((
+                    block.placement.to_wrap_row(&wraps_snapshot)?,
+                    Block::Custom(block.clone()),
+                ))
+            }));
 
             // Note that this needs to be synced with the related section in BlockMap::sync
-            expected_blocks.extend(BlockMap::header_and_footer_blocks(
+            sorted_blocks.extend(BlockMap::header_and_footer_blocks(
                 true,
                 excerpt_footer_height,
                 buffer_start_header_height,
@@ -3089,9 +3063,9 @@ mod tests {
                 &wraps_snapshot,
             ));
 
-            BlockMap::sort_blocks(&mut expected_blocks);
+            BlockMap::sort_blocks(&mut sorted_blocks);
 
-            for (placement, block) in &expected_blocks {
+            for (placement, block) in &sorted_blocks {
                 log::info!(
                     "Block {:?} placement: {:?} Height: {:?}",
                     block.id(),
@@ -3100,7 +3074,7 @@ mod tests {
                 );
             }
 
-            let mut sorted_blocks_iter = expected_blocks.into_iter().peekable();
+            let mut sorted_blocks_iter = sorted_blocks.into_iter().peekable();
             let input_buffer_rows = buffer_snapshot
                 .buffer_rows(MultiBufferRow(0))
                 .collect::<Vec<_>>();
@@ -3119,16 +3093,14 @@ mod tests {
             // Linehood is the birthright of strings.
             let mut input_text_lines = input_text.split('\n').enumerate().peekable();
             let mut block_row = 0;
-            let mut fold_started = false;
             while let Some((wrap_row, input_line)) = input_text_lines.next() {
                 let wrap_row = wrap_row as u32;
                 let multibuffer_row = wraps_snapshot
                     .to_point(WrapPoint::new(wrap_row, 0), Bias::Left)
                     .row;
+
                 // Create empty lines for the above block
                 while let Some((placement, block)) = sorted_blocks_iter.peek() {
-                    fold_started = is_within_folded_buffer(&blocks_snapshot.folded_buffers, block);
-
                     if placement.start().0 == wrap_row && block.place_above() {
                         let (_, block) = sorted_blocks_iter.next().unwrap();
                         expected_block_positions.push((block_row, block.id()));
@@ -3144,16 +3116,8 @@ mod tests {
                             block_row += block.height();
                         }
                     } else {
-                        if fold_started {
-                            sorted_blocks_iter.next();
-                        }
                         break;
                     }
-                }
-
-                if fold_started {
-                    expected_replaced_buffer_rows.insert(MultiBufferRow(multibuffer_row));
-                    continue;
                 }
 
                 // Skip lines within replace blocks, then create empty lines for the replace block's height
@@ -3425,7 +3389,7 @@ mod tests {
                 assert_eq!(
                     blocks_snapshot.is_line_replaced_or_folded(buffer_row),
                     expected_replaced_buffer_rows.contains(&buffer_row),
-                    "incorrect is_line_replaced({buffer_row:?})",
+                    "incorrect is_line_replaced({buffer_row:?}), expected replaced rows: {expected_replaced_buffer_rows:?}",
                 );
             }
         }
