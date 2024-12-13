@@ -1,7 +1,7 @@
 use super::*;
 use collections::HashMap;
 use editor::{
-    display_map::{Block, BlockContext, DisplayRow, ExcerptBoundaryKind},
+    display_map::{Block, BlockContext, DisplayRow},
     DisplayPoint, GutterDimensions,
 };
 use gpui::{px, AvailableSpace, Stateful, TestAppContext, VisualTestContext};
@@ -1050,11 +1050,16 @@ fn editor_blocks(
                                     .ok()?
                             }
 
-                            Block::ExcerptBoundary { kind, .. } => match kind {
-                                ExcerptBoundaryKind::FoldedBufferBoundary => FILE_HEADER.into(),
-                                ExcerptBoundaryKind::BufferBoundary => FILE_HEADER.into(),
-                                ExcerptBoundaryKind::ExcerptSeparator => EXCERPT_HEADER.into(),
-                            },
+                            Block::FoldedBuffer { .. } => FILE_HEADER.into(),
+                            Block::ExcerptBoundary {
+                                starts_new_buffer, ..
+                            } => {
+                                if *starts_new_buffer {
+                                    FILE_HEADER.into()
+                                } else {
+                                    EXCERPT_HEADER.into()
+                                }
+                            }
                         };
 
                         Some((row, name))

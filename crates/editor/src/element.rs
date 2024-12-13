@@ -2091,7 +2091,7 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let header_padding = px(6.0);
-        let mut element = match dbg!(block) {
+        let mut element = match block {
             Block::Custom(block) => {
                 let block_start = block.start().to_point(&snapshot.buffer_snapshot);
                 let block_end = block.end().to_point(&snapshot.buffer_snapshot);

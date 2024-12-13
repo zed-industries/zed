@@ -42,7 +42,7 @@ pub struct BlockMap {
     buffer_header_height: u32,
     excerpt_header_height: u32,
     excerpt_footer_height: u32,
-    folded_buffers: Arc<HashSet<BufferId>>,
+    folded_buffers: HashSet<BufferId>,
 }
 
 pub struct BlockMapReader<'a> {
@@ -57,7 +57,6 @@ pub struct BlockSnapshot {
     wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
-    folded_buffers: Arc<HashSet<BufferId>>,
     pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
     pub(super) excerpt_footer_height: u32,
@@ -456,7 +455,7 @@ impl BlockMap {
             next_block_id: AtomicUsize::new(0),
             custom_blocks: Vec::new(),
             custom_blocks_by_id: TreeMap::default(),
-            folded_buffers: Arc::default(),
+            folded_buffers: HashSet::default(),
             transforms: RefCell::new(transforms),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             show_excerpt_controls,
@@ -481,7 +480,6 @@ impl BlockMap {
             blocks: &self.custom_blocks,
             snapshot: BlockSnapshot {
                 wrap_snapshot,
-                folded_buffers: Arc::clone(&self.folded_buffers),
                 transforms: self.transforms.borrow().clone(),
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
                 buffer_header_height: self.buffer_header_height,
@@ -1260,9 +1258,7 @@ impl<'a> BlockMapWriter<'a> {
         multi_buffer: &MultiBuffer,
         cx: &AppContext,
     ) {
-        let mut new_buffers = self.0.folded_buffers.as_ref().clone();
-        new_buffers.insert(buffer_id);
-        self.0.folded_buffers = Arc::new(new_buffers);
+        self.0.folded_buffers.insert(buffer_id);
         self.recompute_blocks_for_buffer(buffer_id, multi_buffer, cx);
     }
 
@@ -1272,9 +1268,7 @@ impl<'a> BlockMapWriter<'a> {
         multi_buffer: &MultiBuffer,
         cx: &AppContext,
     ) {
-        let mut new_buffers = self.0.folded_buffers.as_ref().clone();
-        new_buffers.remove(&buffer_id);
-        self.0.folded_buffers = Arc::new(new_buffers);
+        self.0.folded_buffers.remove(&buffer_id);
         self.recompute_blocks_for_buffer(buffer_id, multi_buffer, cx);
     }
 
@@ -2598,7 +2592,6 @@ mod tests {
         buffer.read_with(cx, |buffer, cx| {
             writer.fold_buffer(buffer_id_1, buffer, cx);
         });
-        println!("========================");
         let excerpt_blocks_1 = writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 0))),
@@ -2938,7 +2931,6 @@ mod tests {
                 }
                 60..=79 => {
                     if buffer.read_with(cx, |buffer, _| buffer.is_singleton()) {
-                        // TODO kb add into the block_map code?
                         log::info!("Noop fold/unfold operation on a singleton buffer");
                         continue;
                     }
@@ -3058,7 +3050,7 @@ mod tests {
                 buffer_start_header_height,
                 excerpt_header_height,
                 &buffer_snapshot,
-                &blocks_snapshot.folded_buffers,
+                &block_map.folded_buffers,
                 0..,
                 &wraps_snapshot,
             ));
