@@ -469,6 +469,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.31",
+ "fuzzy",
  "gpui",
  "handlebars 4.5.0",
  "indoc",
@@ -10365,6 +10366,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
+ "async-tungstenite 0.28.1",
  "base64 0.22.1",
  "client",
  "collections",
@@ -16139,7 +16141,7 @@ dependencies = [
 name = "zed_elixir"
 version = "0.1.1"
 dependencies = [
- "zed_extension_api 0.1.0",
+ "zed_extension_api 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -16177,6 +16179,17 @@ dependencies = [
 [[package]]
 name = "zed_extension_api"
 version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "zed_extension_api"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fd16b8b30a9dc920fc1678ff852f696b5bdf5b5843bc745a128be0aac29859e"
 dependencies = [
  "serde",
  "serde_json",

@@ -190,8 +190,6 @@ const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
-#[doc(hidden)]
-pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -1402,6 +1400,15 @@ impl Editor {
         if self.has_active_inline_completion() {
             key_context.add("copilot_suggestion");
             key_context.add("inline_completion");
+        }
+
+        if !self
+            .selections
+            .disjoint
+            .iter()
+            .all(|selection| selection.start == selection.end)
+        {
+            key_context.add("selection");
         }
 
         key_context
@@ -4311,10 +4318,10 @@ impl Editor {
         if cursor_buffer != tail_buffer {
             return None;
         }
-
+        let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce;
         self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
             cx.background_executor()
-                .timer(DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT)
+                .timer(Duration::from_millis(debounce))
                 .await;
 
             let highlights = if let Some(highlights) = cx
@@ -6106,6 +6113,28 @@ impl Editor {
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
+    pub fn duplicate_selection(&mut self, _: &DuplicateSelection, cx: &mut ViewContext<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        let selections = self.selections.all::<Point>(cx);
+
+        let mut edits = Vec::new();
+        for selection in selections.iter() {
+            let start = selection.start;
+            let end = selection.end;
+            let text = buffer.text_for_range(start..end).collect::<String>();
+            edits.push((selection.end..selection.end, text));
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
             });
 
             this.request_autoscroll(Autoscroll::fit(), cx);

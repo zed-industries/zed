@@ -529,6 +529,11 @@ impl BufferSearchBar {
                 this.toggle_whole_word(action, cx);
             }
         }));
+        registrar.register_handler(ForDeployed(|this, action: &ToggleRegex, cx| {
+            if this.supported_options().regex {
+                this.toggle_regex(action, cx);
+            }
+        }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleSelection, cx| {
             if this.supported_options().selection {
                 this.toggle_selection(action, cx);

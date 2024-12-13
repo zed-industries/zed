@@ -281,6 +281,7 @@ impl ProjectPanel {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
             cx.on_focus_out(&focus_handle, |this, _, cx| {
+                this.focus_out(cx);
                 this.hide_scrollbar(cx);
             })
             .detach();
@@ -592,6 +593,12 @@ impl ProjectPanel {
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         if !self.focus_handle.contains_focused(cx) {
             cx.emit(Event::Focus);
+        }
+    }
+
+    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.focus_handle.is_focused(cx) {
+            self.confirm(&Confirm, cx);
         }
     }
 

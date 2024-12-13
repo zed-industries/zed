@@ -359,6 +359,7 @@ fn show_hover(
                         let mut base_text_style = cx.text_style();
                         base_text_style.refine(&TextStyleRefinement {
                             font_family: Some(settings.ui_font.family.clone()),
+                            font_fallbacks: settings.ui_font.fallbacks.clone(),
                             font_size: Some(settings.ui_font_size.into()),
                             color: Some(cx.theme().colors().editor_foreground),
                             background_color: Some(gpui::transparent_black()),
@@ -547,11 +548,14 @@ async fn parse_blocks(
         .new_view(|cx| {
             let settings = ThemeSettings::get_global(cx);
             let ui_font_family = settings.ui_font.family.clone();
+            let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
             let buffer_font_family = settings.buffer_font.family.clone();
+            let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
 
             let mut base_text_style = cx.text_style();
             base_text_style.refine(&TextStyleRefinement {
                 font_family: Some(ui_font_family.clone()),
+                font_fallbacks: ui_font_fallbacks,
                 color: Some(cx.theme().colors().editor_foreground),
                 ..Default::default()
             });
@@ -562,6 +566,7 @@ async fn parse_blocks(
                 inline_code: TextStyleRefinement {
                     background_color: Some(cx.theme().colors().background),
                     font_family: Some(buffer_font_family),
+                    font_fallbacks: buffer_font_fallbacks,
                     ..Default::default()
                 },
                 rule_color: cx.theme().colors().border,

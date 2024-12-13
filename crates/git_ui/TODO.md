@@ -13,8 +13,8 @@
 
 ### List Items
 
-- [ ] Checkbox for staging
-- [ ] Git status icon
+- [x] Checkbox for staging
+- [x] Git status icon
 - [ ] Context menu
   - [ ] Discard Changes
   - ---
