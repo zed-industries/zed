@@ -20,6 +20,7 @@ use crate::{
     ProjectEnvironment,
 };
 
+#[expect(clippy::large_enum_variant)]
 pub enum TaskStore {
     Functional(StoreState),
     Noop,
