@@ -6119,6 +6119,28 @@ impl Editor {
         });
     }
 
+    pub fn duplicate_selection(&mut self, _: &DuplicateSelection, cx: &mut ViewContext<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        let selections = self.selections.all::<Point>(cx);
+
+        let mut edits = Vec::new();
+        for selection in selections.iter() {
+            let start = selection.start;
+            let end = selection.end;
+            let text = buffer.text_for_range(start..end).collect::<String>();
+            edits.push((selection.end..selection.end, text));
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
     pub fn duplicate_line(&mut self, upwards: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
