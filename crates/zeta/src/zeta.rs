@@ -927,7 +927,7 @@ impl ZetaInlineCompletionProvider {
 
 impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvider {
     fn name() -> &'static str {
-        "Zeta"
+        "zeta"
     }
 
     fn is_enabled(

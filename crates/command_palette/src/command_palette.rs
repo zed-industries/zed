@@ -397,7 +397,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(
                     h_flex()
                         .w_full()

@@ -11,7 +11,7 @@ use std::{borrow::Cow, cmp::Reverse, sync::Arc};
 use theme::ActiveTheme;
 use util::ResultExt;
 use workspace::{
-    ui::{v_flex, Color, Label, LabelCommon, LabelLike, ListItem, ListItemSpacing, Selectable},
+    ui::{v_flex, Color, Label, LabelCommon, LabelLike, ListItem, ListItemSpacing, Toggleable},
     Workspace,
 };
 
@@ -240,7 +240,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(
                     v_flex()
                         .child(

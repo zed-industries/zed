@@ -281,7 +281,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .start_slot::<Icon>(language_icon)
                 .child(HighlightedLabel::new(label, mat.positions.clone())),
         )

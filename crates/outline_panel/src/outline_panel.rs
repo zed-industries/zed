@@ -51,7 +51,7 @@ use workspace::{
     ui::{
         h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder,
         HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
-        LabelCommon, ListItem, Scrollbar, ScrollbarState, Selectable, StyledExt, StyledTypography,
+        LabelCommon, ListItem, Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable,
         Tooltip,
     },
     OpenInTerminal, WeakItemHandle, Workspace,
@@ -2045,7 +2045,7 @@ impl OutlinePanel {
                 ListItem::new(item_id)
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
-                    .selected(is_active)
+                    .toggle_state(is_active)
                     .when_some(icon_element, |list_item, icon_element| {
                         list_item.child(h_flex().child(icon_element))
                     })

@@ -578,7 +578,7 @@ impl Render for RateCompletionModal {
                                                 .inset(true)
                                                 .spacing(ListItemSpacing::Sparse)
                                                 .focused(index == self.selected_index)
-                                                .selected(selected)
+                                                .toggle_state(selected)
                                                 .start_slot(if rated {
                                                     Icon::new(IconName::Check).color(Color::Success).size(IconSize::Small)
                                                 } else if completion.edits.is_empty() {

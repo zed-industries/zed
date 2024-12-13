@@ -305,7 +305,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(item),
         )
     }
@@ -442,7 +442,7 @@ impl AssistantPanel {
                             )
                         }
                     })
-                    .selected(
+                    .toggle_state(
                         pane.active_item()
                             .map_or(false, |item| item.downcast::<ContextHistory>().is_some()),
                     );
@@ -4956,7 +4956,7 @@ fn render_slash_command_output_toggle(
         ("slash-command-output-fold-indicator", row.0 as u64),
         !is_folded,
     )
-    .selected(is_folded)
+    .toggle_state(is_folded)
     .on_click(move |_e, cx| fold(!is_folded, cx))
     .into_any_element()
 }
@@ -4971,7 +4971,7 @@ fn fold_toggle(
 ) -> AnyElement {
     move |row, is_folded, fold, _cx| {
         Disclosure::new((name, row.0 as u64), !is_folded)
-            .selected(is_folded)
+            .toggle_state(is_folded)
             .on_click(move |_e, cx| fold(!is_folded, cx))
             .into_any_element()
     }
@@ -5013,7 +5013,7 @@ fn render_quote_selection_output_toggle(
     _cx: &mut WindowContext,
 ) -> AnyElement {
     Disclosure::new(("quote-selection-indicator", row.0 as u64), !is_folded)
-        .selected(is_folded)
+        .toggle_state(is_folded)
         .on_click(move |_e, cx| fold(!is_folded, cx))
         .into_any_element()
 }
@@ -5036,7 +5036,7 @@ fn render_pending_slash_command_gutter_decoration(
             icon = icon.icon_color(Color::Muted);
         }
         PendingSlashCommandStatus::Running { .. } => {
-            icon = icon.selected(true);
+            icon = icon.toggle_state(true);
         }
         PendingSlashCommandStatus::Error(_) => icon = icon.icon_color(Color::Error),
     }

@@ -315,7 +315,10 @@ impl ContextProvider for PythonContextProvider {
                 toolchains
                     .active_toolchain(worktree_id, "Python".into(), &mut cx)
                     .await
-                    .map_or_else(|| "python3".to_owned(), |toolchain| toolchain.path.into())
+                    .map_or_else(
+                        || "python3".to_owned(),
+                        |toolchain| format!("\"{}\"", toolchain.path),
+                    )
             } else {
                 String::from("python3")
             };
@@ -336,14 +339,17 @@ impl ContextProvider for PythonContextProvider {
             TaskTemplate {
                 label: "execute selection".to_owned(),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
-                args: vec!["-c".to_owned(), VariableName::SelectedText.template_value()],
+                args: vec![
+                    "-c".to_owned(),
+                    VariableName::SelectedText.template_value_with_whitespace(),
+                ],
                 ..TaskTemplate::default()
             },
             // Execute an entire file
             TaskTemplate {
                 label: format!("run '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
-                args: vec![VariableName::File.template_value()],
+                args: vec![VariableName::File.template_value_with_whitespace()],
                 ..TaskTemplate::default()
             },
         ];
@@ -358,7 +364,7 @@ impl ContextProvider for PythonContextProvider {
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
-                            VariableName::File.template_value(),
+                            VariableName::File.template_value_with_whitespace(),
                         ],
                         ..TaskTemplate::default()
                     },
@@ -369,7 +375,7 @@ impl ContextProvider for PythonContextProvider {
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
-                            "$ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
+                            PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace()
                         ],
                         tags: vec![
                             "python-unittest-class".to_owned(),
@@ -388,7 +394,7 @@ impl ContextProvider for PythonContextProvider {
                         args: vec![
                             "-m".to_owned(),
                             "pytest".to_owned(),
-                            VariableName::File.template_value(),
+                            VariableName::File.template_value_with_whitespace(),
                         ],
                         ..TaskTemplate::default()
                     },
@@ -399,7 +405,7 @@ impl ContextProvider for PythonContextProvider {
                         args: vec![
                             "-m".to_owned(),
                             "pytest".to_owned(),
-                            "$ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
+                            PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace(),
                         ],
                         tags: vec![
                             "python-pytest-class".to_owned(),

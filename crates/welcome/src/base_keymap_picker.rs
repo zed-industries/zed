@@ -208,7 +208,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(HighlightedLabel::new(
                     keymap_match.string.clone(),
                     keymap_match.positions.clone(),

@@ -14,7 +14,7 @@ use lsp::{
 };
 use project::{search::SearchQuery, Project, WorktreeId};
 use std::{borrow::Cow, sync::Arc};
-use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, Selection};
+use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState};
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
@@ -1251,9 +1251,9 @@ impl Render for LspLogToolbarItemView {
                                                     Checkbox::new(
                                                         "LspLogEnableRpcTrace",
                                                         if rpc_trace_enabled {
-                                                            Selection::Selected
+                                                            ToggleState::Selected
                                                         } else {
-                                                            Selection::Unselected
+                                                            ToggleState::Unselected
                                                         },
                                                     )
                                                     .on_click(cx.listener_for(
@@ -1261,7 +1261,7 @@ impl Render for LspLogToolbarItemView {
                                                         move |view, selection, cx| {
                                                             let enabled = matches!(
                                                                 selection,
-                                                                Selection::Selected
+                                                                ToggleState::Selected
                                                             );
                                                             view.toggle_rpc_logging_for_server(
                                                                 server_id, enabled, cx,

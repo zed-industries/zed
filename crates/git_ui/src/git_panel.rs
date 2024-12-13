@@ -658,7 +658,7 @@ impl GitPanel {
     ) -> impl IntoElement {
         let id = id.to_proto() as usize;
         let checkbox_id = ElementId::Name(format!("checkbox_{}", id).into());
-        let is_staged = Selection::Selected;
+        let is_staged = ToggleState::Selected;
 
         h_flex()
             .id(id)
