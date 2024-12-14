@@ -57,6 +57,26 @@ impl DebugAdapterClient {
         }
     }
 
+    pub async fn reconnect<F>(&mut self, message_handler: F, cx: &mut AsyncAppContext) -> Result<()>
+    where
+        F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
+        let (server_rx, server_tx) = self.transport_delegate.reconnect(cx).await?;
+        log::info!("Successfully reconnected to debug adapter");
+
+        // start handling events/reverse requests
+        cx.update(|cx| {
+            cx.spawn({
+                let server_tx = server_tx.clone();
+                |mut cx| async move {
+                    Self::handle_receive_messages(server_rx, server_tx, message_handler, &mut cx)
+                        .await
+                }
+            })
+            .detach_and_log_err(cx);
+        })
+    }
+
     pub async fn start<F>(&mut self, message_handler: F, cx: &mut AsyncAppContext) -> Result<()>
     where
         F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,

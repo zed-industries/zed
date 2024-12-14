@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use dap_types::{
     messages::{Message, Response},
@@ -87,13 +87,28 @@ impl TransportDelegate {
         }
     }
 
+    pub(crate) async fn reconnect(
+        &mut self,
+        cx: &mut AsyncAppContext,
+    ) -> Result<(Receiver<Message>, Sender<Message>)> {
+        self.start_handlers(self.transport.reconnect(cx).await?, cx)
+            .await
+    }
+
     pub(crate) async fn start(
         &mut self,
         binary: &DebugAdapterBinary,
         cx: &mut AsyncAppContext,
     ) -> Result<(Receiver<Message>, Sender<Message>)> {
-        let mut params = self.transport.start(binary, cx).await?;
+        self.start_handlers(self.transport.start(binary, cx).await?, cx)
+            .await
+    }
 
+    async fn start_handlers(
+        &mut self,
+        mut params: TransportPipe,
+        cx: &mut AsyncAppContext,
+    ) -> Result<(Receiver<Message>, Sender<Message>)> {
         let (client_tx, server_rx) = unbounded::<Message>();
         let (server_tx, client_rx) = unbounded::<Message>();
 
@@ -451,9 +466,13 @@ pub trait Transport: 'static + Send + Sync + Any {
 
     async fn kill(&self) -> Result<()>;
 
+    async fn reconnect(&self, _: &mut AsyncAppContext) -> Result<TransportPipe> {
+        bail!("Cannot reconnect to adapter")
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeTransport {
-        panic!("called as_fake on a real adapter");
+        panic!("Called as_fake on a real adapter");
     }
 }
 
@@ -489,6 +508,44 @@ impl TcpTransport {
 
 #[async_trait(?Send)]
 impl Transport for TcpTransport {
+    async fn reconnect(&self, cx: &mut AsyncAppContext) -> Result<TransportPipe> {
+        let address = SocketAddrV4::new(self.host, self.port);
+
+        let timeout = self.timeout.unwrap_or_else(|| {
+            cx.update(|cx| DebuggerSettings::get_global(cx).timeout)
+                .unwrap_or(2000u64)
+        });
+
+        let (rx, tx) = select! {
+            _ = cx.background_executor().timer(Duration::from_millis(timeout)).fuse() => {
+                return Err(anyhow!(format!("Reconnect to TCP DAP timeout {}:{}", self.host, self.port)))
+            },
+            result = cx.spawn(|cx| async move {
+                loop {
+                    match TcpStream::connect(address).await {
+                        Ok(stream) => return stream.split(),
+                        Err(_) => {
+                            cx.background_executor().timer(Duration::from_millis(100)).await;
+                        }
+                    }
+                }
+            }).fuse() => result
+        };
+
+        log::info!(
+            "Debug adapter has reconnected to TCP server {}:{}",
+            self.host,
+            self.port
+        );
+
+        Ok(TransportPipe::new(
+            Box::new(tx),
+            Box::new(BufReader::new(rx)),
+            None,
+            None,
+        ))
+    }
+
     async fn start(
         &self,
         binary: &DebugAdapterBinary,
