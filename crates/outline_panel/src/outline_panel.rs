@@ -811,6 +811,7 @@ impl OutlinePanel {
         if self.filter_editor.focus_handle(cx).is_focused(cx) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
+            self.toggle_expanded(&selected_entry, cx);
             self.open_entry(&selected_entry, true, false, cx);
         }
     }
@@ -1230,6 +1231,9 @@ impl OutlinePanel {
     }
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
+        let Some(active_editor) = self.active_editor() else {
+            return;
+        };
         let entry_to_expand = match self.selected_entry() {
             Some(PanelEntry::FoldedDirs(worktree_id, dir_entries)) => dir_entries
                 .last()
@@ -1253,9 +1257,24 @@ impl OutlinePanel {
         };
         let expanded = self.collapsed_entries.remove(&collapsed_entry);
         if expanded {
-            if let CollapsedEntry::Dir(worktree_id, dir_entry_id) = collapsed_entry {
-                self.project.update(cx, |project, cx| {
-                    project.expand_entry(worktree_id, dir_entry_id, cx);
+            let buffer_id_to_unfold = match collapsed_entry {
+                CollapsedEntry::Dir(worktree_id, dir_entry_id) => {
+                    let task = self.project.update(cx, |project, cx| {
+                        project.expand_entry(worktree_id, dir_entry_id, cx)
+                    });
+                    if let Some(task) = task {
+                        task.detach_and_log_err(cx);
+                    }
+                    None
+                }
+                CollapsedEntry::File(_, buffer_id) => Some(buffer_id),
+                CollapsedEntry::ExternalFile(buffer_id) => Some(buffer_id),
+                CollapsedEntry::Excerpt(..) => None,
+            };
+            if let Some(buffer_id) = buffer_id_to_unfold {
+                active_editor.update(cx, |editor, cx| {
+                    editor.unfold_buffer(buffer_id, cx);
+                    cx.notify();
                 });
             }
             self.update_cached_entries(None, cx);
@@ -1265,9 +1284,13 @@ impl OutlinePanel {
     }
 
     fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
+        let Some(active_editor) = self.active_editor() else {
+            return;
+        };
         let Some(selected_entry) = self.selected_entry().cloned() else {
             return;
         };
+        let mut buffer_id_to_fold = None;
         match &selected_entry {
             PanelEntry::Fs(FsEntry::Directory(worktree_id, selected_dir_entry)) => {
                 self.collapsed_entries
@@ -1276,14 +1299,22 @@ impl OutlinePanel {
                 self.update_cached_entries(None, cx);
             }
             PanelEntry::Fs(FsEntry::File(worktree_id, _, buffer_id, _)) => {
-                self.collapsed_entries
-                    .insert(CollapsedEntry::File(*worktree_id, *buffer_id));
+                if self
+                    .collapsed_entries
+                    .insert(CollapsedEntry::File(*worktree_id, *buffer_id))
+                {
+                    buffer_id_to_fold = Some(*buffer_id);
+                }
                 self.select_entry(selected_entry, true, cx);
                 self.update_cached_entries(None, cx);
             }
             PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
-                self.collapsed_entries
-                    .insert(CollapsedEntry::ExternalFile(*buffer_id));
+                if self
+                    .collapsed_entries
+                    .insert(CollapsedEntry::ExternalFile(*buffer_id))
+                {
+                    buffer_id_to_fold = Some(*buffer_id);
+                }
                 self.select_entry(selected_entry, true, cx);
                 self.update_cached_entries(None, cx);
             }
@@ -1308,6 +1339,13 @@ impl OutlinePanel {
                 }
             }
             PanelEntry::Search(_) | PanelEntry::Outline(..) => {}
+        };
+
+        if let Some(buffer_id) = buffer_id_to_fold {
+            active_editor.update(cx, |editor, cx| {
+                editor.fold_buffer(buffer_id, cx);
+                cx.notify();
+            });
         }
     }
 
@@ -1376,6 +1414,11 @@ impl OutlinePanel {
     }
 
     fn toggle_expanded(&mut self, entry: &PanelEntry, cx: &mut ViewContext<Self>) {
+        let Some(active_editor) = self.active_editor() else {
+            return;
+        };
+        let mut fold = false;
+        let mut toggle_buffer_fold = None;
         match entry {
             PanelEntry::Fs(FsEntry::Directory(worktree_id, dir_entry)) => {
                 let entry_id = dir_entry.id;
@@ -1395,13 +1438,17 @@ impl OutlinePanel {
                 let collapsed_entry = CollapsedEntry::File(*worktree_id, *buffer_id);
                 if !self.collapsed_entries.remove(&collapsed_entry) {
                     self.collapsed_entries.insert(collapsed_entry);
+                    fold = true;
                 }
+                toggle_buffer_fold = Some(*buffer_id);
             }
             PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
                 let collapsed_entry = CollapsedEntry::ExternalFile(*buffer_id);
                 if !self.collapsed_entries.remove(&collapsed_entry) {
                     self.collapsed_entries.insert(collapsed_entry);
+                    fold = true;
                 }
+                toggle_buffer_fold = Some(*buffer_id);
             }
             PanelEntry::FoldedDirs(worktree_id, dir_entries) => {
                 if let Some(entry_id) = dir_entries.first().map(|entry| entry.id) {
@@ -1429,6 +1476,16 @@ impl OutlinePanel {
 
         self.select_entry(entry.clone(), true, cx);
         self.update_cached_entries(None, cx);
+        if let Some(buffer_id) = toggle_buffer_fold {
+            active_editor.update(cx, |editor, cx| {
+                if fold {
+                    editor.fold_buffer(buffer_id, cx);
+                } else {
+                    editor.unfold_buffer(buffer_id, cx);
+                }
+                cx.notify();
+            });
+        }
     }
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
@@ -2036,7 +2093,9 @@ impl OutlinePanel {
                         return;
                     }
                     let change_focus = event.down.click_count > 1;
-                    outline_panel.toggle_expanded(&clicked_entry, cx);
+                    if change_focus {
+                        outline_panel.toggle_expanded(&clicked_entry, cx);
+                    }
                     outline_panel.open_entry(&clicked_entry, true, change_focus, cx);
                 })
             })
