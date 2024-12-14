@@ -15,14 +15,15 @@ use std::str::FromStr;
 
 pub use task_template::{HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates};
 pub use vscode_format::VsCodeTaskFile;
+pub use zed_actions::RevealTarget;
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 pub struct TaskId(pub String);
 
 /// Contains all information needed by Zed to spawn a new terminal tab for the given task.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnInTerminal {
     /// Id of the task to use when determining task tab affinity.
     pub id: TaskId,
@@ -47,6 +48,8 @@ pub struct SpawnInTerminal {
     pub allow_concurrent_runs: bool,
     /// What to do with the terminal pane and tab, after the command was started.
     pub reveal: RevealStrategy,
+    /// Where to show tasks' terminal output.
+    pub reveal_target: RevealTarget,
     /// What to do with the terminal pane and tab, after the command had finished.
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.
@@ -56,15 +59,6 @@ pub struct SpawnInTerminal {
     /// Whether to show the command line in the task output.
     pub show_command: bool,
 }
-
-/// An action for spawning a specific task
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NewCenterTask {
-    /// The specification of the task to spawn.
-    pub action: SpawnInTerminal,
-}
-
-gpui::impl_actions!(tasks, [NewCenterTask]);
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,9 +78,6 @@ pub struct ResolvedTask {
     /// Further actions that need to take place after the resolved task is spawned,
     /// with all task variables resolved.
     pub resolved: Option<SpawnInTerminal>,
-
-    /// where to sawn the task in the UI, either in the terminal panel or in the center pane
-    pub target: zed_actions::TaskSpawnTarget,
 }
 
 impl ResolvedTask {

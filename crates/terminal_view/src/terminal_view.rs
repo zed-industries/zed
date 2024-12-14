@@ -14,7 +14,6 @@ use gpui::{
 use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
-use task::{NewCenterTask, RevealStrategy};
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -31,7 +30,6 @@ use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
-    notifications::NotifyResultExt,
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
@@ -46,7 +44,7 @@ use zed_actions::InlineAssist;
 
 use std::{
     cmp,
-    ops::{ControlFlow, RangeInclusive},
+    ops::RangeInclusive,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -81,7 +79,6 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(TerminalView::deploy);
-        workspace.register_action(TerminalView::deploy_center_task);
     })
     .detach();
 }
@@ -129,61 +126,6 @@ impl FocusableView for TerminalView {
 }
 
 impl TerminalView {
-    pub fn deploy_center_task(
-        workspace: &mut Workspace,
-        task: &NewCenterTask,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let reveal_strategy: RevealStrategy = task.action.reveal;
-        let mut spawn_task = task.action.clone();
-
-        let is_local = workspace.project().read(cx).is_local();
-
-        if let ControlFlow::Break(_) =
-            TerminalPanel::fill_command(is_local, &task.action, &mut spawn_task)
-        {
-            return;
-        }
-
-        let kind = TerminalKind::Task(spawn_task);
-
-        let project = workspace.project().clone();
-        let database_id = workspace.database_id();
-        cx.spawn(|workspace, mut cx| async move {
-            let terminal = cx
-                .update(|cx| {
-                    let window = cx.window_handle();
-                    project.update(cx, |project, cx| project.create_terminal(kind, window, cx))
-                })?
-                .await?;
-
-            let terminal_view = cx.new_view(|cx| {
-                TerminalView::new(terminal.clone(), workspace.clone(), database_id, cx)
-            })?;
-
-            cx.update(|cx| {
-                let focus_item = match reveal_strategy {
-                    RevealStrategy::Always => true,
-                    RevealStrategy::Never | RevealStrategy::NoFocus => false,
-                };
-
-                workspace.update(cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(
-                        Box::new(terminal_view),
-                        None,
-                        focus_item,
-                        cx,
-                    );
-                })?;
-
-                anyhow::Ok(())
-            })??;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
     ///Create a new Terminal in the current working directory or the user's home directory
     pub fn deploy(
         workspace: &mut Workspace,
@@ -191,38 +133,8 @@ impl TerminalView {
         cx: &mut ViewContext<Workspace>,
     ) {
         let working_directory = default_working_directory(workspace, cx);
-
-        let window = cx.window_handle();
-        let project = workspace.project().downgrade();
-        cx.spawn(move |workspace, mut cx| async move {
-            let terminal = project
-                .update(&mut cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(working_directory), window, cx)
-                })
-                .ok()?
-                .await;
-            let terminal = workspace
-                .update(&mut cx, |workspace, cx| terminal.notify_err(workspace, cx))
-                .ok()
-                .flatten()?;
-
-            workspace
-                .update(&mut cx, |workspace, cx| {
-                    let view = cx.new_view(|cx| {
-                        TerminalView::new(
-                            terminal,
-                            workspace.weak_handle(),
-                            workspace.database_id(),
-                            cx,
-                        )
-                    });
-                    workspace.add_item_to_active_pane(Box::new(view), None, true, cx);
-                })
-                .ok();
-
-            Some(())
-        })
-        .detach()
+        TerminalPanel::add_center_terminal(workspace, TerminalKind::Shell(working_directory), cx)
+            .detach_and_log_err(cx);
     }
 
     pub fn new(
