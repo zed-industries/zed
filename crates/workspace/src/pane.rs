@@ -4025,11 +4025,8 @@ mod tests {
 
         cx.executor().run_until_parked();
         cx.simulate_prompt_answer(2);
-        cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2);
-        cx.executor().run_until_parked();
         save.await.unwrap();
-        assert_item_labels(&pane, ["A*^", "B^", "C^"], cx);
+        assert_item_labels(&pane, [], cx);
     }
 
     #[gpui::test]
