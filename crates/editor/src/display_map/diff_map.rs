@@ -2028,6 +2028,98 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_edit_in_insertion_hunk(cx: &mut TestAppContext) {
+        cx.update(init_test);
+
+        let base_text = indoc!(
+            "
+            one
+            two
+            six
+            seven
+            "
+        );
+        let text = indoc!(
+            "
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            "
+        );
+
+        let (diff_map, mut snapshot, mut deps) = build_diff_map(text, Some(base_text), cx);
+
+        // Expand the hunk
+        diff_map.update(cx, |diff_map, cx| {
+            diff_map.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+        });
+
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(deps.inlay_snapshot.clone(), vec![], cx)
+        });
+        assert_new_snapshot(
+            &mut snapshot,
+            sync,
+            indoc!(
+                "
+                  one
+                  two
+                + three
+                + four
+                + five
+                  six
+                  seven
+                "
+            ),
+        );
+
+        eprintln!(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+
+        let edits = deps.update_buffer(cx, |buffer, cx| {
+            buffer.edit_via_marked_text(
+                indoc!(
+                    "
+                    one
+                    two
+                    three«
+                    !»
+                    four
+                    five
+                    six
+                    seven
+                    "
+                ),
+                None,
+                cx,
+            )
+        });
+
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(deps.inlay_snapshot.clone(), edits, cx)
+        });
+        assert_new_snapshot(
+            &mut snapshot,
+            sync,
+            indoc!(
+                "
+                  one
+                  two
+                + three
+                + !
+                + four
+                + five
+                  six
+                  seven
+                "
+            ),
+        );
+    }
+
     #[track_caller]
     fn assert_new_snapshot(
         snapshot: &mut DiffMapSnapshot,
