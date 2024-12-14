@@ -4135,7 +4135,7 @@ impl LspStore {
     pub fn resolve_completion(
         &self,
         buffer: Model<Buffer>,
-        mut completion: Completion,
+        completion: &Completion,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Completion>>> {
         let client = self.upstream_client();
@@ -4144,16 +4144,15 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
         let snapshot = buffer.read(cx).snapshot();
 
-        cx.spawn(move |this, cx| async move {
-            let server_id = completion.server_id;
+        let server_id = completion.server_id;
+        let lsp_completion = completion.lsp_completion.clone();
 
+        cx.spawn(move |this, cx| async move {
             let (completion_item, new_label) = if let Some((client, project_id)) = client {
                 let request = proto::ResolveCompletionDocumentation {
                     project_id,
                     language_server_id: server_id.0 as u64,
-                    lsp_completion: serde_json::to_string(&completion.lsp_completion)
-                        .unwrap()
-                        .into_bytes(),
+                    lsp_completion: serde_json::to_string(&lsp_completion).unwrap().into_bytes(),
                     buffer_id: buffer_id.into(),
                 };
 
@@ -4166,7 +4165,6 @@ impl LspStore {
                 // todo! support for new_label?
                 (completion_item, None)
             } else {
-                let server_id = completion.server_id;
                 let server_and_adapter = this
                     .read_with(&cx, |lsp_store, _| {
                         let server = lsp_store.language_server_for_id(server_id)?;
@@ -4190,8 +4188,7 @@ impl LspStore {
                     return Ok(None);
                 }
 
-                let request = server
-                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion);
+                let request = server.request::<lsp::request::ResolveCompletionItem>(lsp_completion);
                 let completion_item = request.await?;
 
                 // NB: Zed does not have `details` inside the completion resolve capabilities, but
@@ -4212,6 +4209,7 @@ impl LspStore {
                 (completion_item, new_label)
             };
 
+            /*
             if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
                 let documentation = language::prepare_completion_documentation(
                     lsp_documentation,
@@ -4243,14 +4241,16 @@ impl LspStore {
             if let Some(new_label) = new_label {
                 completion.label = new_label;
             };
-            Ok(Some(completion))
+            */
+
+            Ok(Some(todo!()))
         })
     }
 
     pub fn apply_additional_edits_for_completion(
         &self,
         buffer_handle: Model<Buffer>,
-        completion: Completion,
+        completion: &Completion,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
@@ -4258,6 +4258,7 @@ impl LspStore {
         let buffer_id = buffer.remote_id();
 
         if let Some((client, project_id)) = self.upstream_client() {
+            let completion = completion.clone();
             cx.spawn(move |_, mut cx| async move {
                 let response = client
                     .request(proto::ApplyCompletionAdditionalEdits {
@@ -4296,6 +4297,8 @@ impl LspStore {
                 _ => return Task::ready(Ok(Default::default())),
             };
 
+            let lsp_completion = completion.lsp_completion.clone();
+            let primary = completion.old_range.clone();
             cx.spawn(move |this, mut cx| async move {
                 let can_resolve = lang_server
                     .capabilities()
@@ -4305,11 +4308,11 @@ impl LspStore {
                     .unwrap_or(false);
                 let additional_text_edits = if can_resolve {
                     lang_server
-                        .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
+                        .request::<lsp::request::ResolveCompletionItem>(lsp_completion)
                         .await?
                         .additional_text_edits
                 } else {
-                    completion.lsp_completion.additional_text_edits
+                    lsp_completion.additional_text_edits
                 };
                 if let Some(edits) = additional_text_edits {
                     let edits = this
@@ -4329,7 +4332,6 @@ impl LspStore {
                         buffer.start_transaction();
 
                         for (range, text) in edits {
-                            let primary = &completion.old_range;
                             let start_within = primary.start.cmp(&range.start, buffer).is_le()
                                 && primary.end.cmp(&range.start, buffer).is_ge();
                             let end_within = range.start.cmp(&primary.end, buffer).is_le()
@@ -6671,7 +6673,7 @@ impl LspStore {
         let apply_additional_edits = this.update(&mut cx, |this, cx| {
             this.apply_additional_edits_for_completion(
                 buffer,
-                Completion {
+                &Completion {
                     old_range: completion.old_range,
                     new_text: completion.new_text,
                     lsp_completion: completion.lsp_completion,

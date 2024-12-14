@@ -2871,7 +2871,7 @@ impl Project {
     pub fn resolve_completion(
         &self,
         buffer: Model<Buffer>,
-        completion: Completion,
+        completion: &Completion,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Completion>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
@@ -2882,7 +2882,7 @@ impl Project {
     pub fn apply_additional_edits_for_completion(
         &self,
         buffer_handle: Model<Buffer>,
-        completion: Completion,
+        completion: &Completion,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {

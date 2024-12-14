@@ -127,7 +127,6 @@ pub use multi_buffer::{
 use multi_buffer::{
     ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, ToOffsetUtf16,
 };
-use parking_lot::RwLock;
 use project::{
     lsp_store::{FormatTarget, FormatTrigger, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -3790,7 +3789,7 @@ impl Editor {
             .matches
             .get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let buffer_handle = completions_menu.buffer;
-        let completion = completions_menu.completions.get(mat.candidate_id)?;
+        let completion = &completions_menu.completions.borrow()[mat.candidate_id];
         cx.stop_propagation();
 
         let snippet;
@@ -3934,12 +3933,8 @@ impl Editor {
         }
 
         let provider = self.completion_provider.as_ref()?;
-        let apply_edits = provider.apply_additional_edits_for_completion(
-            buffer_handle,
-            completion.clone(),
-            true,
-            cx,
-        );
+        let apply_edits =
+            provider.apply_additional_edits_for_completion(buffer_handle, completion, true, cx);
 
         let editor_settings = EditorSettings::get_global(cx);
         if editor_settings.show_signature_help_after_edits || editor_settings.auto_signature_help {
@@ -13180,14 +13175,14 @@ pub trait CompletionProvider {
     fn resolve_completion(
         &self,
         buffer: Model<Buffer>,
-        completion: Completion,
+        completion: &Completion,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<Completion>>>;
 
     fn apply_additional_edits_for_completion(
         &self,
         buffer: Model<Buffer>,
-        completion: Completion,
+        completion: &Completion,
         push_to_history: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>>;
@@ -13409,7 +13404,7 @@ impl CompletionProvider for Model<Project> {
     fn resolve_completion(
         &self,
         buffer: Model<Buffer>,
-        completion: Completion,
+        completion: &Completion,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<Completion>>> {
         self.update(cx, |project, cx| {
@@ -13420,7 +13415,7 @@ impl CompletionProvider for Model<Project> {
     fn apply_additional_edits_for_completion(
         &self,
         buffer: Model<Buffer>,
-        completion: Completion,
+        completion: &Completion,
         push_to_history: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {

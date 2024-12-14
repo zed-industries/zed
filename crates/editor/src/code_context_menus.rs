@@ -1,4 +1,5 @@
-use std::mem;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::{cell::Cell, cmp::Reverse, ops::Range, sync::Arc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -137,7 +138,7 @@ pub struct CompletionsMenu {
     sort_completions: bool,
     pub initial_position: Anchor,
     pub buffer: Model<Buffer>,
-    pub completions: Arc<[Completion]>,
+    pub completions: Rc<RefCell<Vec<Completion>>>,
     match_candidates: Arc<[StringMatchCandidate]>,
     pub matches: Arc<[StringMatch]>,
     pub selected_item: usize,
@@ -174,7 +175,7 @@ impl CompletionsMenu {
             initial_position,
             buffer,
             show_completion_documentation,
-            completions: completions.into(),
+            completions: Rc::new(RefCell::new(completions)),
             match_candidates,
             matches: Vec::new().into(),
             selected_item: 0,
@@ -228,7 +229,7 @@ impl CompletionsMenu {
             sort_completions,
             initial_position: selection.start,
             buffer,
-            completions: completions.into(),
+            completions: Rc::new(RefCell::new(completions)),
             match_candidates,
             matches,
             selected_item: 0,
@@ -308,7 +309,7 @@ impl CompletionsMenu {
         };
 
         let completion_index = self.matches[self.selected_item].candidate_id;
-        let completion = self.completions[completion_index].clone();
+        let completion = &self.completions.borrow()[completion_index];
         let resolve_task = provider.resolve_completion(self.buffer.clone(), completion, cx);
         let menu_id = self.id;
 
@@ -316,45 +317,47 @@ impl CompletionsMenu {
             if let Some(new_completion) = resolve_task.await.log_err().flatten() {
                 editor
                     .update(&mut cx, |editor, cx| {
-                        let mut menu = editor.context_menu.write();
+                        let mut menu = editor.context_menu.borrow_mut();
                         match menu.as_mut() {
                             Some(CodeContextMenu::Completions(menu)) if menu.id == menu_id => {
-                                if menu.completions.len() > completion_index {
-                                    let new_completions = menu.completions
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(i, c)| {
-                                            if i == completion_index {
-                                                new_completion.clone()
-                                            } else {
-                                                c.clone()
-                                            }
-                                        })
-                                        .collect();
-                                    let new_match_candidates = menu.match_candidates
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(i, c)| {
-                                            if i == completion_index {
-                                                new_completion.clone()
-                                            } else {
-
-                                            }
-                                        })
-                                        .collect();
-                                    let new_matches = menu
-                                    menu.completions = new_completions.into();
-                                    menu.match_candidates = new_match_candidates.into();
-                                    for mat in menu.matches.iter() {
-                                        if mat.completion_id == completion_index {
-                                            mat
-                                            mat.completion = new_completion.clone();
+                                let completions = menu.completions.borrow_mut();
+                                assert!(completion_index < completions.len());
+                                /*
+                                let new_completions = completions
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, c)| {
+                                        if i == completion_index {
+                                            new_completion.clone()
+                                        } else {
+                                            c.clone()
                                         }
+                                    })
+                                    .collect();
+                                let new_match_candidates = menu.match_candidates
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, c)| {
+                                        if i == completion_index {
+                                            new_completion.clone()
+                                        } else {
+
+                                        }
+                                    })
+                                    .collect();
+                                let new_matches = menu
+                                menu.completions = new_completions.into();
+                                menu.match_candidates = new_match_candidates.into();
+                                for mat in menu.matches.iter() {
+                                    if mat.completion_id == completion_index {
+                                        mat
+                                        mat.completion = new_completion.clone();
                                     }
-                                    self.completions[completion_index] = new_completion;
-                                    self.match_candidates[completion_index] = todo!();
-                                    // we need to update self.matches
                                 }
+                                self.completions[completion_index] = new_completion;
+                                self.match_candidates[completion_index] = todo!();
+                                */
+                                // we need to update self.matches
                             }
                             _ => {}
                         }
@@ -383,7 +386,7 @@ impl CompletionsMenu {
             .iter()
             .enumerate()
             .max_by_key(|(_, mat)| {
-                let completion = &self.completions[mat.candidate_id];
+                let completion = &self.completions.borrow()[mat.candidate_id];
 
                 let mut len = completion.label.text.chars().count();
                 if let Some(Documentation::SingleLine(text)) = &completion.documentation {
@@ -396,14 +399,13 @@ impl CompletionsMenu {
             })
             .map(|(ix, _)| ix);
 
-        let completions = self.completions.clone();
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
         let style = style.clone();
 
         let multiline_docs = if show_completion_documentation {
             let mat = &self.matches[selected_item];
-            match &self.completions[mat.candidate_id].documentation {
+            match &self.completions.borrow()[mat.candidate_id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
@@ -447,6 +449,7 @@ impl CompletionsMenu {
                 .occlude()
         });
 
+        let completions_ref = self.completions.clone();
         let list = uniform_list(
             cx.view().clone(),
             "completions",
@@ -460,7 +463,7 @@ impl CompletionsMenu {
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
-                        let completion = &completions[candidate_id];
+                        let completion = &completions_ref.borrow()[candidate_id];
 
                         let documentation = if show_completion_documentation {
                             &completion.documentation
@@ -587,7 +590,7 @@ impl CompletionsMenu {
             }
         }
 
-        let completions = &self.completions;
+        let completions = self.completions.borrow();
         if self.sort_completions {
             matches.sort_unstable_by_key(|mat| {
                 // We do want to strike a balance here between what the language server tells us
