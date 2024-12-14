@@ -24,7 +24,7 @@ use ui::{
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
-use crate::{git_status_icon, settings::GitPanelSettings};
+use crate::{git_status_icon, settings::GitPanelSettings, GitState};
 use crate::{CommitAllChanges, CommitStagedChanges, DiscardAll, StageAll, UnstageAll};
 
 actions!(git_panel, [ToggleFocus]);
@@ -84,6 +84,7 @@ pub struct GitPanel {
     selected_item: Option<usize>,
     show_scrollbar: bool,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
+    git_state: Model<GitState>,
 
     // The entries that are currently shown in the panel, aka
     // not hidden by folding or such
@@ -104,11 +105,18 @@ impl GitPanel {
     }
 
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+        let git_state = GitState::get_global(cx);
+
         let fs = workspace.app_state().fs.clone();
         let weak_workspace = workspace.weak_handle();
         let project = workspace.project().clone();
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
+            // todo!(): Remove this!
+            git_state.update(cx, |state, _cx| {
+                state.set_message(Some("Test commit message!".to_string().into()))
+            });
+
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
             cx.on_focus_out(&focus_handle, |this, _, cx| {
@@ -142,6 +150,7 @@ impl GitPanel {
                 visible_entries: Vec::new(),
                 current_modifiers: cx.modifiers(),
                 expanded_dir_ids: Default::default(),
+                git_state,
 
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
@@ -499,6 +508,8 @@ impl GitPanel {
     }
 
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let git_state = self.git_state.clone();
+        let commit_message = git_state.read(cx).commit_message.clone();
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();
 
@@ -541,7 +552,8 @@ impl GitPanel {
                 .font_buffer(cx)
                 .text_ui_sm(cx)
                 .text_color(cx.theme().colors().text_muted)
-                .child("Add a message")
+                .when_some(commit_message.clone(), |this, message| this.child(message))
+                .when(commit_message.is_none(), |this| this.child("Add a message"))
                 .gap_1()
                 .child(div().flex_grow())
                 .child(h_flex().child(div().gap_1().flex_grow()).child(
