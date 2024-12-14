@@ -1468,7 +1468,7 @@ impl Pane {
                     // Always propose to save singleton files without any project paths: those cannot be saved via multibuffer, as require a file path selection modal.
                     || cx
                         .update(|cx| {
-                            item_to_close.is_dirty(cx)
+                            item_to_close.can_save(cx) && item_to_close.is_dirty(cx)
                                 && item_to_close.is_singleton(cx)
                                 && item_to_close.project_path(cx).is_none()
                         })
