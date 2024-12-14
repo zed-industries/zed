@@ -401,18 +401,36 @@ impl DisplayMap {
     }
 
     pub fn set_all_hunks_expanded(&mut self, cx: &mut ModelContext<Self>) {
-        self.diff_map
-            .update(cx, |diff_map, cx| diff_map.set_all_hunks_expanded(cx))
+        self.update_diff_map(cx, |diff_map, cx| diff_map.set_all_hunks_expanded(cx))
     }
 
     pub fn expand_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut ModelContext<Self>) {
-        self.diff_map
-            .update(cx, |diff_map, cx| diff_map.expand_diff_hunks(ranges, cx))
+        self.update_diff_map(cx, |diff_map, cx| diff_map.expand_diff_hunks(ranges, cx))
     }
 
     pub fn collapse_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut ModelContext<Self>) {
-        self.diff_map
-            .update(cx, |diff_map, cx| diff_map.collapse_diff_hunks(ranges, cx))
+        self.update_diff_map(cx, |diff_map, cx| diff_map.collapse_diff_hunks(ranges, cx))
+    }
+
+    fn update_diff_map(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+        f: impl FnOnce(&mut DiffMap, &mut ModelContext<DiffMap>),
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.diff_map.update(cx, |diff_map, cx| {
+            f(diff_map, cx);
+            diff_map.sync(snapshot, edits, cx)
+        });
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.write(snapshot, edits);
     }
 
     pub fn insert_blocks(
