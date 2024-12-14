@@ -155,6 +155,30 @@ You can define your own keybindings for your tasks via additional argument to `t
 }
 ```
 
+Note that these tasks can also have a 'target' specified to control where the spawned task should show up.
+This could be useful for launching a terminal application that you want to use in the center area:
+
+```json
+// In tasks.json
+{
+  "label": "start lazygit",
+  "command": "lazygit -p $ZED_WORKTREE_ROOT"
+}
+```
+
+```json
+// In keymap.json
+{
+  "context": "Workspace",
+  "bindings": {
+    "alt-g": [
+      "task::Spawn",
+      { "task_name": "start lazygit", "target": "center" }
+    ]
+  }
+}
+```
+
 ## Binding runnable tags to task templates
 
 Zed supports overriding default action for inline runnable indicators via workspace-local and global `tasks.json` file with the following precedence hierarchy:
