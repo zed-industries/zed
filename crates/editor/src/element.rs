@@ -49,8 +49,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot, ToOffset,
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint,
+    MultiBufferRow, MultiBufferSnapshot, ToOffset,
 };
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -2166,139 +2166,15 @@ impl EditorElement {
                     }
                 }
 
-                let include_root = self
-                    .editor
-                    .read(cx)
-                    .project
-                    .as_ref()
-                    .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                    .unwrap_or_default();
-                let path = first_excerpt.buffer.resolve_file_path(cx, include_root);
-                let filename = path
-                    .as_ref()
-                    .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
-                let parent_path = path
-                    .as_ref()
-                    .and_then(|path| Some(path.parent()?.to_string_lossy().to_string() + "/"));
-                let buffer = &first_excerpt.buffer;
-                let range = &first_excerpt.range;
-                let jump_data = {
-                    let jump_path =
-                        project::File::from_dyn(buffer.file()).map(|file| ProjectPath {
-                            worktree_id: file.worktree_id(cx),
-                            path: file.path.clone(),
-                        });
-                    let jump_anchor = range
-                        .primary
-                        .as_ref()
-                        .map_or(range.context.start, |primary| primary.start);
-
-                    let excerpt_start = range.context.start;
-                    let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-                    let offset_from_excerpt_start = if jump_anchor == excerpt_start {
-                        0
-                    } else {
-                        let excerpt_start_row =
-                            language::ToPoint::to_point(&jump_anchor, buffer).row;
-                        jump_position.row - excerpt_start_row
-                    };
-                    let line_offset_from_top =
-                        block_row_start.0 + *height + offset_from_excerpt_start
-                            - snapshot
-                                .scroll_anchor
-                                .scroll_position(&snapshot.display_snapshot)
-                                .y as u32;
-                    JumpData {
-                        excerpt_id: first_excerpt.id,
-                        anchor: jump_anchor,
-                        position: language::ToPoint::to_point(&jump_anchor, buffer),
-                        path: jump_path,
-                        line_offset_from_top,
-                    }
-                };
-
+                let jump_data = jump_data(snapshot, block_row_start, *height, first_excerpt, cx);
                 result
-                    .child(
-                        div()
-                            .px(header_padding)
-                            .pt(header_padding)
-                            .w_full()
-                            .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
-                            .child(
-                                h_flex()
-                                    .id("path header block")
-                                    .size_full()
-                                    .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
-                                    .px(gpui::px(12.))
-                                    .rounded_md()
-                                    .shadow_md()
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .bg(cx.theme().colors().editor_subheader_background)
-                                    .justify_between()
-                                    .hover(|style| style.bg(cx.theme().colors().element_hover))
-                                    .child(
-                                        h_flex()
-                                            .gap_3()
-                                            .map(|header| {
-                                                let editor = self.editor.clone();
-                                                let buffer_id = first_excerpt.buffer_id;
-                                                let is_folded =
-                                                    matches!(block, Block::FoldedBuffer { .. });
-                                                let toggle_chevron_icon =
-                                                    FileIcons::get_chevron_icon(!is_folded, cx)
-                                                        .map(Icon::from_path);
-                                                header.child(
-                                                    ButtonLike::new("toggle-buffer-fold")
-                                                        .children(toggle_chevron_icon)
-                                                        .on_click(move |_, cx| {
-                                                            if is_folded {
-                                                                editor.update(cx, |editor, cx| {
-                                                                    editor.unfold_buffer(
-                                                                        buffer_id, cx,
-                                                                    );
-                                                                });
-                                                            } else {
-                                                                editor.update(cx, |editor, cx| {
-                                                                    editor
-                                                                        .fold_buffer(buffer_id, cx);
-                                                                });
-                                                            }
-                                                        }),
-                                                )
-                                            })
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(
-                                                        filename
-                                                            .map(SharedString::from)
-                                                            .unwrap_or_else(|| "untitled".into()),
-                                                    )
-                                                    .when_some(parent_path, |then, path| {
-                                                        then.child(div().child(path).text_color(
-                                                            cx.theme().colors().text_muted,
-                                                        ))
-                                                    }),
-                                            ),
-                                    )
-                                    .child(Icon::new(IconName::ArrowUpRight))
-                                    .cursor_pointer()
-                                    .tooltip(|cx| {
-                                        Tooltip::for_action("Jump to File", &OpenExcerpts, cx)
-                                    })
-                                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                                    .on_click(cx.listener_for(&self.editor, {
-                                        move |editor, e: &ClickEvent, cx| {
-                                            editor.open_excerpts_common(
-                                                Some(jump_data.clone()),
-                                                e.down.modifiers.secondary(),
-                                                cx,
-                                            );
-                                        }
-                                    })),
-                            ),
-                    )
+                    .child(self.render_buffer_header(
+                        first_excerpt,
+                        header_padding,
+                        true,
+                        jump_data,
+                        cx,
+                    ))
                     .into_any_element()
             }
             Block::ExcerptBoundary {
@@ -2332,155 +2208,15 @@ impl EditorElement {
                 }
 
                 if let Some(next_excerpt) = next_excerpt {
-                    let buffer = &next_excerpt.buffer;
-                    let range = &next_excerpt.range;
-                    let jump_data = {
-                        let jump_path =
-                            project::File::from_dyn(buffer.file()).map(|file| ProjectPath {
-                                worktree_id: file.worktree_id(cx),
-                                path: file.path.clone(),
-                            });
-                        let jump_anchor = range
-                            .primary
-                            .as_ref()
-                            .map_or(range.context.start, |primary| primary.start);
-
-                        let excerpt_start = range.context.start;
-                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-                        let offset_from_excerpt_start = if jump_anchor == excerpt_start {
-                            0
-                        } else {
-                            let excerpt_start_row =
-                                language::ToPoint::to_point(&jump_anchor, buffer).row;
-                            jump_position.row - excerpt_start_row
-                        };
-                        let line_offset_from_top =
-                            block_row_start.0 + *height + offset_from_excerpt_start
-                                - snapshot
-                                    .scroll_anchor
-                                    .scroll_position(&snapshot.display_snapshot)
-                                    .y as u32;
-                        JumpData {
-                            excerpt_id: next_excerpt.id,
-                            anchor: jump_anchor,
-                            position: language::ToPoint::to_point(&jump_anchor, buffer),
-                            path: jump_path,
-                            line_offset_from_top,
-                        }
-                    };
-
+                    let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt, cx);
                     if *starts_new_buffer {
-                        let include_root = self
-                            .editor
-                            .read(cx)
-                            .project
-                            .as_ref()
-                            .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                            .unwrap_or_default();
-                        let path = buffer.resolve_file_path(cx, include_root);
-                        let filename = path
-                            .as_ref()
-                            .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
-                        let parent_path = path.as_ref().and_then(|path| {
-                            Some(path.parent()?.to_string_lossy().to_string() + "/")
-                        });
-
-                        result = result.child(
-                            div()
-                                .px(header_padding)
-                                .pt(header_padding)
-                                .w_full()
-                                .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
-                                .child(
-                                    h_flex()
-                                        .id("path header block")
-                                        .size_full()
-                                        .flex_basis(Length::Definite(DefiniteLength::Fraction(
-                                            0.667,
-                                        )))
-                                        .px(gpui::px(12.))
-                                        .rounded_md()
-                                        .shadow_md()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .bg(cx.theme().colors().editor_subheader_background)
-                                        .justify_between()
-                                        .hover(|style| style.bg(cx.theme().colors().element_hover))
-                                        .child(
-                                            h_flex()
-                                                .gap_3()
-                                                .map(|header| {
-                                                    let editor = self.editor.clone();
-                                                    let buffer_id = next_excerpt.buffer_id;
-                                                    let is_folded =
-                                                        matches!(block, Block::FoldedBuffer { .. });
-                                                    let toggle_chevron_icon =
-                                                        FileIcons::get_chevron_icon(!is_folded, cx)
-                                                            .map(Icon::from_path);
-                                                    header.child(
-                                                        ButtonLike::new("toggle-buffer-fold")
-                                                            .children(toggle_chevron_icon)
-                                                            .on_click(move |_, cx| {
-                                                                if is_folded {
-                                                                    editor.update(
-                                                                        cx,
-                                                                        |editor, cx| {
-                                                                            editor.unfold_buffer(
-                                                                                buffer_id, cx,
-                                                                            );
-                                                                        },
-                                                                    );
-                                                                } else {
-                                                                    editor.update(
-                                                                        cx,
-                                                                        |editor, cx| {
-                                                                            editor.fold_buffer(
-                                                                                buffer_id, cx,
-                                                                            );
-                                                                        },
-                                                                    );
-                                                                }
-                                                            }),
-                                                    )
-                                                })
-                                                .child(
-                                                    h_flex()
-                                                        .gap_2()
-                                                        .child(
-                                                            filename
-                                                                .map(SharedString::from)
-                                                                .unwrap_or_else(|| {
-                                                                    "untitled".into()
-                                                                }),
-                                                        )
-                                                        .when_some(parent_path, |then, path| {
-                                                            then.child(
-                                                                div().child(path).text_color(
-                                                                    cx.theme().colors().text_muted,
-                                                                ),
-                                                            )
-                                                        }),
-                                                ),
-                                        )
-                                        .child(Icon::new(IconName::ArrowUpRight))
-                                        .cursor_pointer()
-                                        .tooltip(|cx| {
-                                            Tooltip::for_action("Jump to File", &OpenExcerpts, cx)
-                                        })
-                                        .on_mouse_down(MouseButton::Left, |_, cx| {
-                                            cx.stop_propagation()
-                                        })
-                                        .on_click(cx.listener_for(&self.editor, {
-                                            move |editor, e: &ClickEvent, cx| {
-                                                editor.open_excerpts_common(
-                                                    Some(jump_data.clone()),
-                                                    e.down.modifiers.secondary(),
-                                                    cx,
-                                                );
-                                            }
-                                        })),
-                                ),
-                        );
+                        result = result.child(self.render_buffer_header(
+                            next_excerpt,
+                            header_padding,
+                            false,
+                            jump_data,
+                            cx,
+                        ));
                         if *show_excerpt_controls {
                             result = result.child(
                                 h_flex()
@@ -2628,6 +2364,105 @@ impl EditorElement {
         }
 
         (element, final_size)
+    }
+
+    fn render_buffer_header(
+        &self,
+        for_excerpt: &ExcerptInfo,
+        header_padding: Pixels,
+        is_folded: bool,
+        jump_data: JumpData,
+        cx: &mut WindowContext,
+    ) -> Div {
+        let include_root = self
+            .editor
+            .read(cx)
+            .project
+            .as_ref()
+            .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+            .unwrap_or_default();
+        let path = for_excerpt.buffer.resolve_file_path(cx, include_root);
+        let filename = path
+            .as_ref()
+            .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
+        let parent_path = path
+            .as_ref()
+            .and_then(|path| Some(path.parent()?.to_string_lossy().to_string() + "/"));
+
+        div()
+            .px(header_padding)
+            .pt(header_padding)
+            .w_full()
+            .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
+            .child(
+                h_flex()
+                    .id("path header block")
+                    .size_full()
+                    .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
+                    .px(gpui::px(12.))
+                    .rounded_md()
+                    .shadow_md()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_subheader_background)
+                    .justify_between()
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .map(|header| {
+                                let editor = self.editor.clone();
+                                let buffer_id = for_excerpt.buffer_id;
+                                let toggle_chevron_icon =
+                                    FileIcons::get_chevron_icon(!is_folded, cx)
+                                        .map(Icon::from_path);
+                                header.child(
+                                    ButtonLike::new("toggle-buffer-fold")
+                                        .children(toggle_chevron_icon)
+                                        .on_click(move |_, cx| {
+                                            if is_folded {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.unfold_buffer(buffer_id, cx);
+                                                });
+                                            } else {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.fold_buffer(buffer_id, cx);
+                                                });
+                                            }
+                                        }),
+                                )
+                            })
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        filename
+                                            .map(SharedString::from)
+                                            .unwrap_or_else(|| "untitled".into()),
+                                    )
+                                    .when_some(parent_path, |then, path| {
+                                        then.child(
+                                            div()
+                                                .child(path)
+                                                .text_color(cx.theme().colors().text_muted),
+                                        )
+                                    }),
+                            ),
+                    )
+                    .child(Icon::new(IconName::ArrowUpRight))
+                    .cursor_pointer()
+                    .tooltip(|cx| Tooltip::for_action("Jump to File", &OpenExcerpts, cx))
+                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                    .on_click(cx.listener_for(&self.editor, {
+                        move |editor, e: &ClickEvent, cx| {
+                            editor.open_excerpts_common(
+                                Some(jump_data.clone()),
+                                e.down.modifiers.secondary(),
+                                cx,
+                            );
+                        }
+                    })),
+            )
     }
 
     fn render_expand_excerpt_button(
@@ -4513,6 +4348,46 @@ impl EditorElement {
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
         let digit_count = (snapshot.widest_line_number() as f32).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
+    }
+}
+
+fn jump_data(
+    snapshot: &EditorSnapshot,
+    block_row_start: DisplayRow,
+    height: u32,
+    for_excerpt: &ExcerptInfo,
+    cx: &mut WindowContext<'_>,
+) -> JumpData {
+    let range = &for_excerpt.range;
+    let buffer = &for_excerpt.buffer;
+    let jump_path = project::File::from_dyn(buffer.file()).map(|file| ProjectPath {
+        worktree_id: file.worktree_id(cx),
+        path: file.path.clone(),
+    });
+    let jump_anchor = range
+        .primary
+        .as_ref()
+        .map_or(range.context.start, |primary| primary.start);
+
+    let excerpt_start = range.context.start;
+    let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
+    let offset_from_excerpt_start = if jump_anchor == excerpt_start {
+        0
+    } else {
+        let excerpt_start_row = language::ToPoint::to_point(&jump_anchor, buffer).row;
+        jump_position.row - excerpt_start_row
+    };
+    let line_offset_from_top = block_row_start.0 + height + offset_from_excerpt_start
+        - snapshot
+            .scroll_anchor
+            .scroll_position(&snapshot.display_snapshot)
+            .y as u32;
+    JumpData {
+        excerpt_id: for_excerpt.id,
+        anchor: jump_anchor,
+        position: language::ToPoint::to_point(&jump_anchor, buffer),
+        path: jump_path,
+        line_offset_from_top,
     }
 }
 
