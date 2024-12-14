@@ -60,23 +60,18 @@ impl StatusItemView for ImageInfoView {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        // Reset fields
         self.width = None;
         self.height = None;
         self.file_size = None;
         self.color_type = None;
 
-        // Extract metadata if the item is an ImageItem
         if let Some(item) = active_pane_item {
             if let Some(image_model) = item.downcast::<Model<ImageItem>>() {
                 let image_item = image_model.read(cx);
 
-                // Assign the properties
-                self.width = image_item.read(cx).width; // `Option<u32>` is directly assignable
-                self.height = image_item.read(cx).height; // `Option<u32>` is directly assignable
-                self.file_size = image_item.read(cx).file_size; // `Option<u64>` is directly assignable
-
-                // Handle `color_type`
+                self.width = image_item.read(cx).width;
+                self.height = image_item.read(cx).height;
+                self.file_size = image_item.read(cx).file_size;
                 self.color_type = image_item.read(cx).color_type;
             }
         }
