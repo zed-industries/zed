@@ -6,7 +6,7 @@ use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{BufferChunks, BufferId, Chunk};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow, MultiBufferSnapshot,
-    ToOffset,
+    ToOffset, ToPoint,
 };
 use project::buffer_store::BufferChangeSet;
 use std::{mem, ops::Range};
@@ -285,10 +285,8 @@ impl DiffMap {
                     .ranges_for_buffer(buffer_id, cx)
                     .into_iter()
                     .map(|(_, range, _)| {
-                        let multibuffer_start =
-                            ToOffset::to_offset(&range.start, &multibuffer_snapshot);
-                        let multibuffer_end =
-                            ToOffset::to_offset(&range.end, &multibuffer_snapshot);
+                        let multibuffer_start = multibuffer_snapshot.point_to_offset(range.start);
+                        let multibuffer_end = multibuffer_snapshot.point_to_offset(range.end);
                         let inlay_start = self
                             .snapshot
                             .inlay_snapshot
@@ -326,22 +324,31 @@ impl DiffMap {
             | DiffMapOperation::CollapseHunks { ranges } => {
                 let mut changes = Vec::new();
                 for range in ranges.iter() {
-                    let multibuffer_range = range.to_offset(&multibuffer_snapshot);
+                    let multibuffer_start = range.start.to_point(&multibuffer_snapshot);
+                    let multibuffer_start = multibuffer_snapshot
+                        .point_to_offset(Point::new(multibuffer_start.row, 0))
+                        .saturating_sub(1);
+                    let multibuffer_end = range.end.to_point(&multibuffer_snapshot);
+                    let multibuffer_end = multibuffer_snapshot.len().min(
+                        multibuffer_snapshot
+                            .point_to_offset(Point::new(multibuffer_end.row + 1, 0))
+                            + 1,
+                    );
                     let inlay_start = self
                         .snapshot
                         .inlay_snapshot
-                        .to_inlay_offset(multibuffer_range.start);
+                        .to_inlay_offset(multibuffer_start);
                     let inlay_end = self
                         .snapshot
                         .inlay_snapshot
-                        .to_inlay_offset(multibuffer_range.end);
+                        .to_inlay_offset(multibuffer_end);
                     changes.push((
                         InlayEdit {
                             old: inlay_start..inlay_end,
                             new: inlay_start..inlay_end,
                         },
                         false,
-                        multibuffer_range,
+                        multibuffer_start..multibuffer_end,
                     ));
                 }
                 changes
@@ -357,7 +364,8 @@ impl DiffMap {
 
         let mut changes = changes.into_iter().peekable();
         while let Some((mut edit, mut is_inlay_edit, mut multibuffer_range)) = changes.next() {
-            new_transforms.append(cursor.slice(&edit.old.start, Bias::Right, &()), &());
+            let to_skip = cursor.slice(&edit.old.start, Bias::Right, &());
+            self.append_transforms(&mut new_transforms, to_skip);
 
             let mut delta = 0_isize;
             let mut end_of_current_insert = InlayOffset(0);
@@ -381,8 +389,8 @@ impl DiffMap {
                     let diff_state = self.snapshot.diffs.get(&buffer_id);
 
                     let buffer = buffer.read(cx);
-                    let buffer_anchor_range = buffer.anchor_after(buffer_range.start)
-                        ..buffer.anchor_before(buffer_range.end);
+                    let buffer_anchor_range = buffer.anchor_before(buffer_range.start)
+                        ..buffer.anchor_after(buffer_range.end);
                     let change_start_buffer_offset = buffer_range.start;
                     if let Some(diff_state) = diff_state {
                         let diff = &diff_state.diff;
@@ -405,9 +413,7 @@ impl DiffMap {
 
                             let hunk_start_buffer_offset =
                                 hunk.buffer_range.start.to_offset(buffer);
-                            if hunk_start_buffer_offset < change_start_buffer_offset {
-                                continue;
-                            }
+                            let hunk_end_buffer_offset = hunk.buffer_range.end.to_offset(buffer);
 
                             let excerpt_buffer_range_start_offset =
                                 excerpt_buffer_range.start.to_offset(buffer);
@@ -457,24 +463,39 @@ impl DiffMap {
                                 };
                             }
 
+                            let hunk_is_deletion =
+                                hunk_start_buffer_offset == hunk_end_buffer_offset;
+
                             let mut should_expand_hunk =
                                 was_previously_expanded || self.all_hunks_expanded;
                             match &operation {
                                 DiffMapOperation::ExpandHunks { ranges } => {
-                                    should_expand_hunk |= ranges.iter().any(|range| {
-                                        range.overlaps(&hunk_anchor_range, &multibuffer_snapshot)
-                                    })
+                                    if hunk_is_deletion {
+                                        should_expand_hunk = true;
+                                    } else {
+                                        should_expand_hunk |= ranges.iter().any(|range| {
+                                            range
+                                                .overlaps(&hunk_anchor_range, &multibuffer_snapshot)
+                                        })
+                                    }
                                 }
                                 DiffMapOperation::CollapseHunks { ranges } => {
-                                    should_expand_hunk &= !ranges.iter().any(|range| {
-                                        range.overlaps(&hunk_anchor_range, &multibuffer_snapshot)
-                                    })
+                                    if hunk_is_deletion {
+                                        should_expand_hunk = false;
+                                    } else {
+                                        should_expand_hunk &= !ranges.iter().any(|range| {
+                                            range
+                                                .overlaps(&hunk_anchor_range, &multibuffer_snapshot)
+                                        })
+                                    }
                                 }
                                 _ => {}
                             };
 
                             if should_expand_hunk {
-                                if hunk.diff_base_byte_range.len() > 0 {
+                                if hunk.diff_base_byte_range.len() > 0
+                                    && hunk_start_buffer_offset >= change_start_buffer_offset
+                                {
                                     if !was_previously_expanded {
                                         let hunk_overshoot =
                                             (hunk_start_inlay_offset - cursor.start().0).0;
@@ -507,9 +528,6 @@ impl DiffMap {
                                         &(),
                                     );
                                 }
-
-                                let hunk_end_buffer_offset =
-                                    hunk.buffer_range.end.to_offset(buffer);
 
                                 if hunk_end_buffer_offset > hunk_start_buffer_offset {
                                     let hunk_end_multibuffer_offset = excerpt_range.start
@@ -582,9 +600,9 @@ impl DiffMap {
             }
         }
 
+        self.append_transforms(&mut new_transforms, cursor.suffix(&()));
         self.edits_since_sync = self.edits_since_sync.compose(edits);
 
-        new_transforms.append(cursor.suffix(&()), &());
         drop(cursor);
         self.snapshot.transforms = new_transforms;
         self.snapshot.version += 1;
@@ -592,6 +610,31 @@ impl DiffMap {
 
         #[cfg(test)]
         self.check_invariants();
+    }
+
+    fn append_transforms(
+        &self,
+        new_transforms: &mut SumTree<DiffTransform>,
+        subtree: SumTree<DiffTransform>,
+    ) {
+        if let Some(DiffTransform::BufferContent {
+            is_inserted_hunk,
+            summary,
+        }) = subtree.first()
+        {
+            if self.extend_last_buffer_content_transform(
+                new_transforms,
+                *is_inserted_hunk,
+                summary.clone(),
+            ) {
+                let mut cursor = subtree.cursor::<()>(&());
+                cursor.next(&());
+                cursor.next(&());
+                new_transforms.append(cursor.suffix(&()), &());
+                return;
+            }
+        }
+        new_transforms.append(subtree, &());
     }
 
     fn push_buffer_content_transform(
@@ -613,23 +656,11 @@ impl DiffMap {
                 .inlay_snapshot
                 .text_summary_for_range(start_offset..end_offset);
 
-            let mut did_extend = false;
-            new_transforms.update_last(
-                |last_transform| {
-                    if let DiffTransform::BufferContent {
-                        summary,
-                        is_inserted_hunk,
-                    } = last_transform
-                    {
-                        if *is_inserted_hunk == region_is_inserted_hunk {
-                            did_extend = true;
-                            *summary += summary_to_add.clone();
-                        }
-                    }
-                },
-                &(),
-            );
-            if !did_extend {
+            if !self.extend_last_buffer_content_transform(
+                new_transforms,
+                region_is_inserted_hunk,
+                summary_to_add.clone(),
+            ) {
                 new_transforms.push(
                     DiffTransform::BufferContent {
                         summary: summary_to_add,
@@ -639,6 +670,31 @@ impl DiffMap {
                 )
             }
         }
+    }
+
+    fn extend_last_buffer_content_transform(
+        &self,
+        new_transforms: &mut SumTree<DiffTransform>,
+        region_is_inserted_hunk: bool,
+        summary_to_add: TextSummary,
+    ) -> bool {
+        let mut did_extend = false;
+        new_transforms.update_last(
+            |last_transform| {
+                if let DiffTransform::BufferContent {
+                    summary,
+                    is_inserted_hunk,
+                } = last_transform
+                {
+                    if *is_inserted_hunk == region_is_inserted_hunk {
+                        *summary += summary_to_add.clone();
+                        did_extend = true;
+                    }
+                }
+            },
+            &(),
+        );
+        did_extend
     }
 
     #[cfg(test)]
@@ -657,16 +713,18 @@ impl DiffMap {
         for item in snapshot.transforms.iter() {
             if let DiffTransform::BufferContent {
                 summary,
-                is_inserted_hunk: is_new,
+                is_inserted_hunk,
             } = item
             {
                 if let Some(DiffTransform::BufferContent {
-                    is_inserted_hunk: prev_is_new,
+                    is_inserted_hunk: prev_is_inserted_hunk,
                     ..
                 }) = prev_transform
                 {
-                    if *is_new == *prev_is_new {
-                        panic!("multiple adjacent buffer content transforms with the same is_new value");
+                    if *is_inserted_hunk == *prev_is_inserted_hunk {
+                        panic!(
+                            "multiple adjacent buffer content transforms with is_inserted_hunk = {is_inserted_hunk}. transforms: {:+?}",
+                            snapshot.transforms.items(&()));
                     }
                 }
                 if summary.len == 0 && !snapshot.buffer().is_empty() {
@@ -1402,6 +1460,7 @@ mod tests {
     use crate::display_map::inlay_map::InlayMap;
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
+    use language::Buffer;
     use multi_buffer::{Anchor, MultiBuffer};
     use project::Project;
     use settings::SettingsStore;
@@ -1431,29 +1490,7 @@ mod tests {
             "
         );
 
-        let buffer = cx.new_model(|cx| language::Buffer::local(text, cx));
-        let change_set = cx.new_model(|cx| {
-            BufferChangeSet::new_with_base_text(
-                base_text.to_string(),
-                buffer.read(cx).text_snapshot(),
-                cx,
-            )
-        });
-
-        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
-        let (multibuffer_snapshot, multibuffer_edits) =
-            multibuffer.update(cx, |buffer, cx| (buffer.snapshot(cx), buffer.subscribe()));
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
-        let (diff_map, _) =
-            cx.update(|cx| DiffMap::new(inlay_snapshot.clone(), multibuffer.clone(), cx));
-        diff_map.update(cx, |diff_map, cx| {
-            diff_map.add_change_set(change_set.clone(), cx)
-        });
-        cx.run_until_parked();
-
-        let (mut snapshot, _) = diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(inlay_snapshot.clone(), vec![], cx)
-        });
+        let (diff_map, mut snapshot, mut deps) = build_diff_map(text, Some(base_text), cx);
         assert_eq!(
             snapshot.text(),
             indoc!(
@@ -1471,7 +1508,7 @@ mod tests {
             diff_map.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
         });
         let sync = diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(inlay_snapshot.clone(), vec![], cx)
+            diff_map.sync(deps.inlay_snapshot.clone(), vec![], cx)
         });
         assert_new_snapshot(
             &mut snapshot,
@@ -1536,7 +1573,7 @@ mod tests {
             diff_map.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
         });
         let sync = diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(inlay_snapshot.clone(), vec![], cx)
+            diff_map.sync(deps.inlay_snapshot.clone(), vec![], cx)
         });
         assert_new_snapshot(
             &mut snapshot,
@@ -1552,17 +1589,13 @@ mod tests {
             ),
         );
 
+        // Expand the first diff hunk
         diff_map.update(cx, |diff_map, cx| {
-            diff_map.expand_diff_hunks(
-                vec![
-                    multibuffer_snapshot.anchor_before(Point::new(2, 0))
-                        ..multibuffer_snapshot.anchor_before(Point::new(2, 0)),
-                ],
-                cx,
-            )
+            let position = deps.multibuffer_snapshot.anchor_before(Point::new(2, 0));
+            diff_map.expand_diff_hunks(vec![position..position], cx)
         });
         let sync = diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(inlay_snapshot.clone(), vec![], cx)
+            diff_map.sync(deps.inlay_snapshot.clone(), vec![], cx)
         });
         assert_new_snapshot(
             &mut snapshot,
@@ -1579,17 +1612,13 @@ mod tests {
             ),
         );
 
+        // Expand the second diff hunk
         diff_map.update(cx, |diff_map, cx| {
-            diff_map.expand_diff_hunks(
-                vec![
-                    multibuffer_snapshot.anchor_before(Point::new(3, 0))
-                        ..multibuffer_snapshot.anchor_before(Point::new(4, 0)),
-                ],
-                cx,
-            )
+            let position = deps.multibuffer_snapshot.anchor_before(Point::new(3, 0));
+            diff_map.expand_diff_hunks(vec![position..position], cx)
         });
         let sync = diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(inlay_snapshot.clone(), vec![], cx)
+            diff_map.sync(deps.inlay_snapshot.clone(), vec![], cx)
         });
         assert_new_snapshot(
             &mut snapshot,
@@ -1608,7 +1637,8 @@ mod tests {
             ),
         );
 
-        buffer.update(cx, |buffer, cx| {
+        // Edit the buffer before the first hunk
+        let edits = deps.update_buffer(cx, |buffer, cx| {
             buffer.edit_via_marked_text(
                 indoc!(
                     "
@@ -1625,13 +1655,8 @@ mod tests {
             );
         });
 
-        let multibuffer_snapshot = multibuffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        let (inlay_snapshot, edits) = inlay_map.sync(
-            multibuffer_snapshot,
-            multibuffer_edits.consume().into_inner(),
-        );
         let sync = diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(inlay_snapshot.clone(), edits, cx)
+            diff_map.sync(deps.inlay_snapshot.clone(), edits, cx)
         });
         assert_new_snapshot(
             &mut snapshot,
@@ -1651,12 +1676,13 @@ mod tests {
             ),
         );
 
-        let _ = change_set.update(cx, |change_set, cx| {
-            change_set.recalculate_diff(buffer.read(cx).text_snapshot(), cx)
+        // Recalculate the diff, changing the first diff hunk.
+        let _ = deps.change_set.update(cx, |change_set, cx| {
+            change_set.recalculate_diff(deps.buffer.read(cx).text_snapshot(), cx)
         });
         cx.run_until_parked();
         let sync = diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(inlay_snapshot.clone(), Vec::new(), cx)
+            diff_map.sync(deps.inlay_snapshot.clone(), Vec::new(), cx)
         });
         assert_new_snapshot(
             &mut snapshot,
@@ -1681,29 +1707,16 @@ mod tests {
         cx.update(init_test);
 
         let text = "hello world";
-        let buffer = cx.new_model(|cx| language::Buffer::local(text, cx));
 
-        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
-        let (multibuffer_snapshot, multibuffer_edits) =
-            multibuffer.update(cx, |buffer, cx| (buffer.snapshot(cx), buffer.subscribe()));
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
-        let (diff_map, _) =
-            cx.update(|cx| DiffMap::new(inlay_snapshot.clone(), multibuffer.clone(), cx));
-
-        let (mut snapshot, _) = diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(inlay_snapshot.clone(), vec![], cx)
-        });
+        let (diff_map, mut snapshot, mut deps) = build_diff_map(text, None, cx);
         assert_eq!(snapshot.text(), "hello world");
 
-        buffer.update(cx, |buffer, cx| {
+        let edits = deps.update_buffer(cx, |buffer, cx| {
             buffer.edit([(4..5, "a"), (9..11, "k")], None, cx);
         });
-        let multibuffer_snapshot = multibuffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        let (inlay_snapshot, edits) = inlay_map.sync(
-            multibuffer_snapshot,
-            multibuffer_edits.consume().into_inner(),
-        );
-        let sync = diff_map.update(cx, |diff_map, cx| diff_map.sync(inlay_snapshot, edits, cx));
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(deps.inlay_snapshot, edits, cx)
+        });
 
         assert_new_snapshot(&mut snapshot, sync, indoc!("hella work"));
     }
@@ -1728,39 +1741,25 @@ mod tests {
              "
         );
 
-        let buffer = cx.new_model(|cx| language::Buffer::local(text, cx));
-        let change_set = cx.new_model(|cx| {
-            BufferChangeSet::new_with_base_text(
-                base_text.to_string(),
-                buffer.read(cx).text_snapshot(),
-                cx,
-            )
-        });
-
-        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
-        let (multibuffer_snapshot, _) =
-            multibuffer.update(cx, |buffer, cx| (buffer.snapshot(cx), buffer.subscribe()));
-        let (_, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
-        let (diff_map, _) =
-            cx.update(|cx| DiffMap::new(inlay_snapshot.clone(), multibuffer.clone(), cx));
-        diff_map.update(cx, |diff_map, cx| {
-            diff_map.set_all_hunks_expanded(cx);
-            diff_map.add_change_set(change_set, cx);
-        });
+        let (diff_map, mut diff_snapshot, deps) = build_diff_map(text, Some(base_text), cx);
+        diff_map.update(cx, |diff_map, cx| diff_map.set_all_hunks_expanded(cx));
         cx.run_until_parked();
-        let (diff_snapshot, _) =
-            diff_map.update(cx, |diff_map, cx| diff_map.sync(inlay_snapshot, vec![], cx));
 
-        assert_eq!(
-            diff_snapshot.text(),
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(deps.inlay_snapshot, vec![], cx)
+        });
+
+        assert_new_snapshot(
+            &mut diff_snapshot,
+            sync,
             indoc! {"
-            ₀
-            ₁
-            ₂
-            ₃
-            ₄
-            ₅
-        "}
+              ₀
+            - ₁
+            - ₂
+              ₃
+              ₄
+            + ₅
+            "},
         );
 
         for (point, (left, right)) in [
@@ -1847,23 +1846,194 @@ mod tests {
     fn test_empty_diff_map(cx: &mut TestAppContext) {
         cx.update(init_test);
 
-        let text = "";
-
-        let buffer = cx.new_model(|cx| language::Buffer::local(text, cx));
-        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
-        let (multibuffer_snapshot, _multibuffer_edits) =
-            multibuffer.update(cx, |buffer, cx| (buffer.snapshot(cx), buffer.subscribe()));
-        let (_inlay_map, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
-
-        let (_diff_map, diff_snapshot) =
-            cx.update(|cx| DiffMap::new(inlay_snapshot.clone(), multibuffer.clone(), cx));
-
+        let (_diff_map, diff_snapshot, _deps) = build_diff_map("", None, cx);
         assert_eq!(
             diff_snapshot
                 .row_infos(0)
                 .map(|info| info.buffer_row)
                 .collect::<Vec<_>>(),
             [Some(0)]
+        );
+    }
+
+    #[gpui::test]
+    fn test_expand_collapse_hunks(cx: &mut TestAppContext) {
+        cx.update(init_test);
+
+        let base_text = indoc!(
+            "
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            "
+        );
+        let text = indoc!(
+            "
+            one
+            two
+            five
+            six; seven
+            eight
+            "
+        );
+
+        let (diff_map, mut snapshot, deps) = build_diff_map(text, Some(base_text), cx);
+
+        // Expand at the line right right after a deleted hunk.
+        diff_map.update(cx, |diff_map, cx| {
+            let point = deps.multibuffer_snapshot.anchor_before(Point::new(2, 0));
+            diff_map.expand_diff_hunks(vec![point..point], cx)
+        });
+
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(deps.inlay_snapshot.clone(), vec![], cx)
+        });
+        assert_new_snapshot(
+            &mut snapshot,
+            sync,
+            indoc!(
+                "
+                  one
+                  two
+                - three
+                - four
+                  five
+                  six; seven
+                  eight
+                "
+            ),
+        );
+
+        // Expand at the line right right after a deleted hunk.
+        diff_map.update(cx, |diff_map, cx| {
+            let point = deps.multibuffer_snapshot.anchor_before(Point::new(2, 0));
+            diff_map.collapse_diff_hunks(vec![point..point], cx)
+        });
+
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(deps.inlay_snapshot.clone(), vec![], cx)
+        });
+        assert_new_snapshot(
+            &mut snapshot,
+            sync,
+            indoc!(
+                "
+                  one
+                  two
+                  five
+                  six; seven
+                  eight
+                "
+            ),
+        );
+
+        // Expand at the line right right above a deleted hunk.
+        diff_map.update(cx, |diff_map, cx| {
+            let point = deps.multibuffer_snapshot.anchor_before(Point::new(1, 0));
+            diff_map.expand_diff_hunks(vec![point..point], cx)
+        });
+
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(deps.inlay_snapshot.clone(), vec![], cx)
+        });
+        assert_new_snapshot(
+            &mut snapshot,
+            sync,
+            indoc!(
+                "
+                  one
+                  two
+                - three
+                - four
+                  five
+                  six; seven
+                  eight
+                "
+            ),
+        );
+    }
+
+    #[gpui::test]
+    fn test_expand_collapse_insertion_hunk(cx: &mut TestAppContext) {
+        cx.update(init_test);
+
+        let base_text = indoc!(
+            "
+            one
+            two
+            seven
+            eight
+            "
+        );
+        let text = indoc!(
+            "
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            "
+        );
+
+        let (diff_map, mut snapshot, deps) = build_diff_map(text, Some(base_text), cx);
+
+        // Expand at the line right right after a deleted hunk.
+        diff_map.update(cx, |diff_map, cx| {
+            let point = deps.multibuffer_snapshot.anchor_before(Point::new(2, 0));
+            diff_map.expand_diff_hunks(vec![point..point], cx)
+        });
+
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(deps.inlay_snapshot.clone(), vec![], cx)
+        });
+        assert_new_snapshot(
+            &mut snapshot,
+            sync,
+            indoc!(
+                "
+                  one
+                  two
+                + three
+                + four
+                + five
+                + six
+                  seven
+                  eight
+                "
+            ),
+        );
+
+        diff_map.update(cx, |diff_map, cx| {
+            let point = deps.multibuffer_snapshot.anchor_before(Point::new(2, 0));
+            diff_map.collapse_diff_hunks(vec![point..point], cx)
+        });
+
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(deps.inlay_snapshot.clone(), vec![], cx)
+        });
+        assert_new_snapshot(
+            &mut snapshot,
+            sync,
+            indoc!(
+                "
+                one
+                two
+                three
+                four
+                five
+                six
+                seven
+                eight
+                "
+            ),
         );
     }
 
@@ -1980,6 +2150,81 @@ mod tests {
                     "seek_row: {seek_row}, start_row: {start_row}"
                 );
             }
+        }
+    }
+
+    struct DiffMapDeps {
+        buffer: Model<Buffer>,
+        multibuffer: Model<MultiBuffer>,
+        change_set: Model<BufferChangeSet>,
+        inlay_map: InlayMap,
+        multibuffer_snapshot: MultiBufferSnapshot,
+        inlay_snapshot: InlaySnapshot,
+        multibuffer_edits: text::Subscription,
+    }
+
+    fn build_diff_map(
+        text: &str,
+        base_text: Option<&str>,
+        cx: &mut TestAppContext,
+    ) -> (Model<DiffMap>, DiffMapSnapshot, DiffMapDeps) {
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+
+        let change_set = cx.new_model(|cx| {
+            let text_snapshot = buffer.read(cx).text_snapshot();
+            let mut change_set = BufferChangeSet::new(&text_snapshot);
+            if let Some(base_text) = base_text {
+                let _ = change_set.set_base_text(base_text.to_string(), text_snapshot, cx);
+            }
+            change_set
+        });
+
+        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+        let (multibuffer_snapshot, multibuffer_edits) =
+            multibuffer.update(cx, |buffer, cx| (buffer.snapshot(cx), buffer.subscribe()));
+
+        let (inlay_map, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
+
+        let (diff_map, diff_map_snapshot) =
+            cx.update(|cx| DiffMap::new(inlay_snapshot.clone(), multibuffer.clone(), cx));
+        diff_map.update(cx, |diff_map, cx| {
+            diff_map.add_change_set(change_set.clone(), cx)
+        });
+        cx.run_until_parked();
+
+        (
+            diff_map,
+            diff_map_snapshot,
+            DiffMapDeps {
+                buffer,
+                multibuffer,
+                change_set,
+                inlay_map,
+                multibuffer_snapshot,
+                inlay_snapshot,
+                multibuffer_edits,
+            },
+        )
+    }
+
+    impl DiffMapDeps {
+        fn update_buffer(
+            &mut self,
+            cx: &mut TestAppContext,
+            f: impl FnOnce(&mut Buffer, &mut ModelContext<Buffer>),
+        ) -> Vec<InlayEdit> {
+            self.buffer.update(cx, f);
+
+            self.multibuffer_snapshot = self
+                .multibuffer
+                .read_with(cx, |buffer, cx| buffer.snapshot(cx));
+            let (inlay_snapshot, edits) = self.inlay_map.sync(
+                self.multibuffer_snapshot.clone(),
+                self.multibuffer_edits.consume().into_inner(),
+            );
+            self.inlay_snapshot = inlay_snapshot;
+            edits
         }
     }
 
