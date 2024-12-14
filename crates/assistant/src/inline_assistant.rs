@@ -1441,6 +1441,15 @@ impl Render for PromptEditor {
                 ]
             }
             CodegenStatus::Error(_) | CodegenStatus::Done => {
+                let must_rerun =
+                    self.edited_since_done || matches!(status, CodegenStatus::Error(_));
+                // when accept button isn't visible, then restart maps to confirm
+                // when accept button is visible, then restart must be mapped to an alternate keyboard shortcut
+                let restart_key: &dyn gpui::Action = if must_rerun {
+                    &menu::Confirm
+                } else {
+                    &menu::Restart
+                };
                 vec![
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
@@ -1450,23 +1459,22 @@ impl Render for PromptEditor {
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         )
                         .into_any_element(),
-                    if self.edited_since_done || matches!(status, CodegenStatus::Error(_)) {
-                        IconButton::new("restart", IconName::RotateCw)
-                            .icon_color(Color::Info)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(|cx| {
-                                Tooltip::with_meta(
-                                    "Restart Transformation",
-                                    Some(&menu::Confirm),
-                                    "Changes will be discarded",
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(PromptEditorEvent::StartRequested);
-                            }))
-                            .into_any_element()
-                    } else {
+                    IconButton::new("restart", IconName::RotateCw)
+                        .icon_color(Color::Muted)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(|cx| {
+                            Tooltip::with_meta(
+                                "Regenerate Transformation",
+                                Some(restart_key),
+                                "Current change will be discarded",
+                                cx,
+                            )
+                        })
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(PromptEditorEvent::StartRequested);
+                        }))
+                        .into_any_element(),
+                    if !must_rerun {
                         IconButton::new("confirm", IconName::Check)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
@@ -1475,6 +1483,8 @@ impl Render for PromptEditor {
                                 cx.emit(PromptEditorEvent::ConfirmRequested);
                             }))
                             .into_any_element()
+                    } else {
+                        div().into_any_element()
                     },
                 ]
             }
@@ -1491,6 +1501,7 @@ impl Render for PromptEditor {
             .py(cx.line_height() / 2.5)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::restart))
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::move_down))
             .capture_action(cx.listener(Self::cycle_prev))
@@ -1835,6 +1846,10 @@ impl PromptEditor {
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
         }
+    }
+
+    fn restart(&mut self, _: &menu::Restart, cx: &mut ViewContext<Self>) {
+        cx.emit(PromptEditorEvent::StartRequested);
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
