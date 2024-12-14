@@ -913,12 +913,8 @@ impl BlockMap {
             })
         });
         blocks.dedup_by(|right, left| match (left.0.clone(), right.0.clone()) {
-            (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
-                *range.start() <= row && *range.end() >= row
-            }
-            (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
-                *range.start() <= row && *range.end() >= row
-            }
+            (BlockPlacement::Replace(range), BlockPlacement::Above(row))
+            | (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => range.contains(&row),
             (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => {
                 if range_a.end() >= range_b.start() && range_a.start() <= range_b.end() {
                     left.0 = BlockPlacement::Replace(
