@@ -3118,7 +3118,7 @@ impl BackgroundScannerState {
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
 
-        let actual_repo_path = repository.path();
+        let actual_repo_path = repository.dot_git_dir();
 
         let actual_dot_git_dir_abs_path = smol::block_on(find_git_dir(&actual_repo_path, fs))?;
         watcher.add(&actual_repo_path).log_err()?;
