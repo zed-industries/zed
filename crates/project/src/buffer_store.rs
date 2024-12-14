@@ -5,7 +5,7 @@ use crate::{
     ProjectItem as _, ProjectPath,
 };
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
@@ -1213,6 +1213,7 @@ impl BufferStore {
 
         match file.worktree.read(cx) {
             Worktree::Local(worktree) => {
+                let worktree_path = worktree.abs_path().clone();
                 let Some(repo) = worktree.local_git_repo(file.path()) else {
                     return Task::ready(Err(anyhow!("no repository for buffer found")));
                 };
@@ -1236,6 +1237,18 @@ impl BufferStore {
                         parse_git_remote_url(provider_registry, &origin_url)
                             .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
+                    let dot_git_dir = repo.path();
+                    let Some(git_dir) = dot_git_dir.parent() else {
+                        bail!("unexpected bare Git repository");
+                    };
+                    let path = if let Ok(segment) = worktree_path.strip_prefix(git_dir) {
+                        &segment.join(path)
+                    } else if let Ok(segment) = git_dir.strip_prefix(worktree_path) {
+                        path.strip_prefix(segment)
+                            .map_err(|_| anyhow!("file is not a descendant of Git repo dir"))?
+                    } else {
+                        bail!("worktree dir and Git repo dir are cousins")
+                    };
                     let path = path
                         .to_str()
                         .context("failed to convert buffer path to string")?;
