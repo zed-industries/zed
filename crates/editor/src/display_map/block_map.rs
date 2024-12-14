@@ -15,7 +15,6 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
-    mem,
     ops::{Deref, DerefMut, Range, RangeBounds},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -189,43 +188,6 @@ impl BlockPlacement<Anchor> {
     }
 }
 
-impl Ord for BlockPlacement<WrapRow> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (BlockPlacement::Above(row_a), BlockPlacement::Above(row_b))
-            | (BlockPlacement::Below(row_a), BlockPlacement::Below(row_b)) => row_a.cmp(row_b),
-            (BlockPlacement::Above(row_a), BlockPlacement::Below(row_b)) => {
-                row_a.cmp(row_b).then(Ordering::Less)
-            }
-            (BlockPlacement::Below(row_a), BlockPlacement::Above(row_b)) => {
-                row_a.cmp(row_b).then(Ordering::Greater)
-            }
-            (BlockPlacement::Above(row), BlockPlacement::Replace(range)) => {
-                row.cmp(&range.start).then(Ordering::Less)
-            }
-            (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
-                range.start.cmp(row).then(Ordering::Greater)
-            }
-            (BlockPlacement::Below(row), BlockPlacement::Replace(range)) => {
-                row.cmp(&range.start).then(Ordering::Greater)
-            }
-            (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
-                range.start.cmp(row).then(Ordering::Less)
-            }
-            (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => range_a
-                .start
-                .cmp(&range_b.start)
-                .then_with(|| range_b.end.cmp(&range_a.end)),
-        }
-    }
-}
-
-impl PartialOrd for BlockPlacement<WrapRow> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 pub struct CustomBlock {
     id: CustomBlockId,
     placement: BlockPlacement<Anchor>,
@@ -275,6 +237,7 @@ pub struct BlockContext<'a, 'b> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub enum BlockId {
     ExcerptBoundary(Option<ExcerptId>),
+    FoldedBuffer(ExcerptId),
     Custom(CustomBlockId),
 }
 
@@ -286,6 +249,7 @@ impl From<BlockId> for ElementId {
                 Some(id) => ("ExcerptBoundary", EntityId::from(id)).into(),
                 None => "LastExcerptBoundary".into(),
             },
+            BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id)).into(),
         }
     }
 }
@@ -295,6 +259,7 @@ impl std::fmt::Display for BlockId {
         match self {
             Self::Custom(id) => write!(f, "Block({id:?})"),
             Self::ExcerptBoundary(id) => write!(f, "ExcerptHeader({id:?})"),
+            Self::FoldedBuffer(id) => write!(f, "FoldedBuffer({id:?})"),
         }
     }
 }
@@ -331,9 +296,7 @@ impl Block {
             Block::ExcerptBoundary { next_excerpt, .. } => {
                 BlockId::ExcerptBoundary(next_excerpt.as_ref().map(|info| info.id))
             }
-            Block::FoldedBuffer { first_excerpt, .. } => {
-                BlockId::ExcerptBoundary(Some(first_excerpt.id))
-            }
+            Block::FoldedBuffer { first_excerpt, .. } => BlockId::FoldedBuffer(first_excerpt.id),
         }
     }
 
@@ -531,13 +494,20 @@ impl BlockMap {
             let mut old_start = WrapRow(edit.old.start);
             let mut new_start = WrapRow(edit.new.start);
 
-            // Preserve transforms that:
-            // * strictly precedes this edit
-            // * isomorphic or replace transforms that end *at* the start of the edit
-            // * below blocks that end at the start of the edit
+            // Only preserve transforms that:
+            // * Strictly precedes this edit
+            // * Isomorphic transforms that end *at* the start of the edit
+            // * Below blocks that end at the start of the edit
+            // However, if we hit a replace block that ends at the start of the edit we want to reconstruct it.
             new_transforms.append(cursor.slice(&old_start, Bias::Left, &()), &());
             if let Some(transform) = cursor.item() {
-                if transform.summary.input_rows > 0 && cursor.end(&()) == old_start {
+                if transform.summary.input_rows > 0
+                    && cursor.end(&()) == old_start
+                    && transform
+                        .block
+                        .as_ref()
+                        .map_or(true, |b| !b.is_replacement())
+                {
                     // Preserve the transform (push and next)
                     new_transforms.push(transform.clone(), &());
                     cursor.next(&());
@@ -557,7 +527,6 @@ impl BlockMap {
             // Ensure the edit starts at a transform boundary.
             // If the edit starts within an isomorphic transform, preserve its prefix
             // If the edit lands within a replacement block, expand the edit to include the start of the replaced input range
-            let mut preserved_blocks_above_edit = false;
             let transform = cursor.item().unwrap();
             let transform_rows_before_edit = old_start.0 - cursor.start().0;
             if transform_rows_before_edit > 0 {
@@ -575,9 +544,6 @@ impl BlockMap {
                     debug_assert!(transform.summary.input_rows > 0);
                     old_start.0 -= transform_rows_before_edit;
                     new_start.0 -= transform_rows_before_edit;
-                    // The blocks *above* it are already in the new transforms, so
-                    // we don't need to re-insert them when querying blocks.
-                    preserved_blocks_above_edit = true;
                 }
             }
 
@@ -690,12 +656,6 @@ impl BlockMap {
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
             for (block_placement, block) in blocks_in_edit.drain(..) {
-                if preserved_blocks_above_edit
-                    && block_placement == BlockPlacement::Above(new_start)
-                {
-                    continue;
-                }
-
                 let mut summary = TransformSummary {
                     input_rows: 0,
                     output_rows: block.height(),
@@ -877,75 +837,84 @@ impl BlockMap {
 
     fn sort_blocks(blocks: &mut Vec<(BlockPlacement<WrapRow>, Block)>) {
         blocks.sort_unstable_by(|(placement_a, block_a), (placement_b, block_b)| {
-            placement_a
-                .cmp(&placement_b)
-                .then_with(|| match (block_a, block_b) {
-                    (
-                        Block::ExcerptBoundary {
-                            next_excerpt: next_excerpt_a,
-                            ..
-                        },
-                        Block::ExcerptBoundary {
-                            next_excerpt: next_excerpt_b,
-                            ..
-                        },
-                    ) => next_excerpt_a
-                        .as_ref()
-                        .map(|excerpt| excerpt.id)
-                        .cmp(&next_excerpt_b.as_ref().map(|excerpt| excerpt.id)),
-                    (Block::ExcerptBoundary { next_excerpt, .. }, Block::Custom(_)) => {
-                        if next_excerpt.is_some() {
+            let placement_comparison = match (placement_a, placement_b) {
+                (BlockPlacement::Above(row_a), BlockPlacement::Above(row_b))
+                | (BlockPlacement::Below(row_a), BlockPlacement::Below(row_b)) => row_a.cmp(row_b),
+                (BlockPlacement::Above(row_a), BlockPlacement::Below(row_b)) => {
+                    row_a.cmp(row_b).then(Ordering::Less)
+                }
+                (BlockPlacement::Below(row_a), BlockPlacement::Above(row_b)) => {
+                    row_a.cmp(row_b).then(Ordering::Greater)
+                }
+                (BlockPlacement::Above(row), BlockPlacement::Replace(range)) => {
+                    row.cmp(&range.start).then(Ordering::Greater)
+                }
+                (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
+                    range.start.cmp(row).then(Ordering::Less)
+                }
+                (BlockPlacement::Below(row), BlockPlacement::Replace(range)) => {
+                    row.cmp(&range.start).then(Ordering::Greater)
+                }
+                (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
+                    range.start.cmp(row).then(Ordering::Less)
+                }
+                (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => range_a
+                    .start
+                    .cmp(&range_b.start)
+                    .then_with(|| range_b.end.cmp(&range_a.end))
+                    .then_with(|| {
+                        if block_a.is_header() {
                             Ordering::Less
-                        } else {
-                            Ordering::Greater
-                        }
-                    }
-                    (Block::Custom(_), Block::ExcerptBoundary { next_excerpt, .. }) => {
-                        if next_excerpt.is_some() {
+                        } else if block_b.is_header() {
                             Ordering::Greater
                         } else {
-                            Ordering::Less
+                            Ordering::Equal
                         }
+                    }),
+            };
+            placement_comparison.then_with(|| match (block_a, block_b) {
+                (
+                    Block::ExcerptBoundary {
+                        next_excerpt: next_excerpt_a,
+                        ..
+                    },
+                    Block::ExcerptBoundary {
+                        next_excerpt: next_excerpt_b,
+                        ..
+                    },
+                ) => next_excerpt_a
+                    .as_ref()
+                    .map(|excerpt| excerpt.id)
+                    .cmp(&next_excerpt_b.as_ref().map(|excerpt| excerpt.id)),
+                (Block::ExcerptBoundary { next_excerpt, .. }, Block::Custom(_)) => {
+                    if next_excerpt.is_some() {
+                        Ordering::Less
+                    } else {
+                        Ordering::Greater
                     }
-                    (Block::Custom(block_a), Block::Custom(block_b)) => block_a
-                        .priority
-                        .cmp(&block_b.priority)
-                        .then_with(|| block_a.id.cmp(&block_b.id)),
-                    (Block::Custom(_), Block::FoldedBuffer { .. }) => Ordering::Less,
-                    (Block::FoldedBuffer { .. }, Block::Custom(_)) => Ordering::Greater,
-                    _ => unreachable!(),
-                })
+                }
+                (Block::Custom(_), Block::ExcerptBoundary { next_excerpt, .. }) => {
+                    if next_excerpt.is_some() {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Less
+                    }
+                }
+                (Block::Custom(block_a), Block::Custom(block_b)) => block_a
+                    .priority
+                    .cmp(&block_b.priority)
+                    .then_with(|| block_a.id.cmp(&block_b.id)),
+                _ => {
+                    unreachable!()
+                }
+            })
         });
         blocks.dedup_by(|right, left| match (left.0.clone(), right.0.clone()) {
             (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
-                if left.1.is_header() {
-                    range.start <= row && range.end >= row
-                } else {
-                    range.start < row && range.end >= row
-                }
-            }
-            (BlockPlacement::Above(row), BlockPlacement::Replace(range)) => {
-                if right.1.is_header() && range.start <= row && range.end >= row {
-                    mem::swap(right, left);
-                    true
-                } else {
-                    false
-                }
+                range.start <= row && range.end >= row
             }
             (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
-                if left.1.is_header() {
-                    range.start <= row && range.end >= row
-                } else {
-                    range.start <= row && range.end > row
-                }
-            }
-            (BlockPlacement::Below(row), BlockPlacement::Replace(range)) => {
-                if right.1.is_header() && range.start <= row && range.end >= row {
-                    mem::swap(right, left);
-                    true
-                } else {
-                    false
-                }
+                range.start <= row && range.end >= row
             }
             (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => {
                 if range_a.end >= range_b.start && range_a.start <= range_b.end {
@@ -1442,42 +1411,44 @@ impl BlockSnapshot {
 
     pub fn block_for_id(&self, block_id: BlockId) -> Option<Block> {
         let buffer = self.wrap_snapshot.buffer_snapshot();
-
-        match block_id {
+        let wrap_point = match block_id {
             BlockId::Custom(custom_block_id) => {
                 let custom_block = self.custom_blocks_by_id.get(&custom_block_id)?;
-                Some(Block::Custom(custom_block.clone()))
+                return Some(Block::Custom(custom_block.clone()));
             }
             BlockId::ExcerptBoundary(next_excerpt_id) => {
-                let wrap_point;
                 if let Some(next_excerpt_id) = next_excerpt_id {
                     let excerpt_range = buffer.range_for_excerpt::<Point>(next_excerpt_id)?;
-                    wrap_point = self
-                        .wrap_snapshot
-                        .make_wrap_point(excerpt_range.start, Bias::Left);
+                    self.wrap_snapshot
+                        .make_wrap_point(excerpt_range.start, Bias::Left)
                 } else {
-                    wrap_point = self
-                        .wrap_snapshot
-                        .make_wrap_point(buffer.max_point(), Bias::Left);
+                    self.wrap_snapshot
+                        .make_wrap_point(buffer.max_point(), Bias::Left)
                 }
-
-                let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
-                cursor.seek(&WrapRow(wrap_point.row()), Bias::Left, &());
-                while let Some(transform) = cursor.item() {
-                    if let Some(block) = transform.block.as_ref() {
-                        if block.id() == block_id {
-                            return Some(block.clone());
-                        }
-                    } else if cursor.start().0 > WrapRow(wrap_point.row()) {
-                        break;
-                    }
-
-                    cursor.next(&());
-                }
-
-                None
             }
+            BlockId::FoldedBuffer(excerpt_id) => self.wrap_snapshot.make_wrap_point(
+                buffer.range_for_excerpt::<Point>(excerpt_id)?.start,
+                Bias::Left,
+            ),
+        };
+        let wrap_row = WrapRow(wrap_point.row());
+
+        let mut cursor = self.transforms.cursor::<WrapRow>(&());
+        cursor.seek(&wrap_row, Bias::Left, &());
+
+        while let Some(transform) = cursor.item() {
+            if let Some(block) = transform.block.as_ref() {
+                if block.id() == block_id {
+                    return Some(block.clone());
+                }
+            } else if *cursor.start() > wrap_row {
+                break;
+            }
+
+            cursor.next(&());
         }
+
+        None
     }
 
     pub fn max_point(&self) -> BlockPoint {
@@ -2392,7 +2363,7 @@ mod tests {
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), false, 1, 1, 0);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
-        writer.insert(vec![BlockProperties {
+        let replace_block_id = writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Replace(
                 buffer_snapshot.anchor_after(Point::new(1, 3))
@@ -2401,7 +2372,7 @@ mod tests {
             height: 4,
             render: Arc::new(|_| div().into_any()),
             priority: 0,
-        }]);
+        }])[0];
 
         let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
@@ -2426,7 +2397,7 @@ mod tests {
             buffer.edit(
                 [(
                     Point::new(1, 5)..Point::new(1, 5),
-                    "\nline 6\nline7\nline 8\nline 9",
+                    "\nline 2.1\nline2.2\nline 2.3\nline 2.4",
                 )],
                 None,
                 cx,
@@ -2445,9 +2416,16 @@ mod tests {
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
 
-        // Ensure blocks inserted above the start or below the end of the replaced region are shown.
+        // Blocks inserted right above the start or right below the end of the replaced region are hidden.
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.insert(vec![
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 3))),
+                height: 1,
+                render: Arc::new(|_| div().into_any()),
+                priority: 0,
+            },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 3))),
@@ -2464,7 +2442,7 @@ mod tests {
             },
         ]);
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
-        assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\n\n\nline5");
+        assert_eq!(blocks_snapshot.text(), "\nline1\n\n\n\n\nline5");
 
         // Ensure blocks inserted *inside* replaced region are hidden.
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
@@ -2491,8 +2469,17 @@ mod tests {
                 priority: 0,
             },
         ]);
-        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
-        assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\n\n\nline5");
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        assert_eq!(blocks_snapshot.text(), "\nline1\n\n\n\n\nline5");
+
+        // Removing the replace block shows all the hidden blocks again.
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        writer.remove(HashSet::from_iter([replace_block_id]));
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        assert_eq!(
+            blocks_snapshot.text(),
+            "\nline1\n\nline2\n\n\nline 2.1\nline2.2\nline 2.3\nline 2.4\n\nline4\n\nline5"
+        );
     }
 
     #[gpui::test]
@@ -3036,11 +3023,6 @@ mod tests {
                             };
 
                             let height = rng.gen_range(min_height..5);
-                            log::info!(
-                                "inserting block {:?} with height {}",
-                                placement.as_ref().map(|p| p.to_point(&buffer)),
-                                height
-                            );
                             BlockProperties {
                                 style: BlockStyle::Fixed,
                                 placement,
@@ -3060,13 +3042,26 @@ mod tests {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
-                    block_map.insert(block_properties.iter().map(|props| BlockProperties {
-                        placement: props.placement.clone(),
-                        height: props.height,
-                        style: props.style,
-                        render: Arc::new(|_| div().into_any()),
-                        priority: 0,
-                    }));
+                    let block_ids =
+                        block_map.insert(block_properties.iter().map(|props| BlockProperties {
+                            placement: props.placement.clone(),
+                            height: props.height,
+                            style: props.style,
+                            render: Arc::new(|_| div().into_any()),
+                            priority: 0,
+                        }));
+
+                    for (block_properties, block_id) in block_properties.iter().zip(block_ids) {
+                        log::info!(
+                            "inserted block {:?} with height {} and id {:?}",
+                            block_properties
+                                .placement
+                                .as_ref()
+                                .map(|p| p.to_point(&buffer_snapshot)),
+                            block_properties.height,
+                            block_id
+                        );
+                    }
                 }
                 40..=59 if !block_map.custom_blocks.is_empty() => {
                     let block_count = rng.gen_range(1..=4.min(block_map.custom_blocks.len()));
@@ -3355,7 +3350,12 @@ mod tests {
             assert_eq!(
                 blocks_snapshot.max_point().row + 1,
                 expected_row_count as u32,
-                "Expected lines count does not match with the blocks latest row",
+                "actual row count != expected row count",
+            );
+            assert_eq!(
+                blocks_snapshot.text(),
+                expected_text,
+                "actual text != expected text",
             );
 
             for start_row in 0..expected_row_count {
