@@ -3,11 +3,12 @@
 // it causes compile errors.
 #![cfg_attr(target_os = "macos", allow(unused_imports))]
 
+use futures::StreamExt;
 use gpui::{
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
     px, rgb, size, AsyncAppContext, Bounds, InteractiveElement, KeyBinding, Menu, MenuItem,
-    ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
+    ParentElement, Pixels, Render, ScreenCaptureFrame, ScreenCaptureStream, SharedString,
     StatefulInteractiveElement as _, Styled, Task, View, ViewContext, VisualContext, WindowBounds,
     WindowHandle, WindowOptions,
 };
@@ -22,6 +23,7 @@ use livekit_client::{
     track::{LocalTrack, RemoteTrack, RemoteVideoTrack, TrackSource},
     AudioStream, RemoteVideoTrackView, Room, RoomEvent, RoomOptions,
 };
+use media::core_video::CVImageBuffer;
 #[cfg(not(target_os = "windows"))]
 use postage::stream::Stream;
 
@@ -108,6 +110,7 @@ struct LivekitWindow {
     screen_share_track: Option<LocalTrackPublication>,
     microphone_stream: Option<AudioStream>,
     screen_share_stream: Option<Box<dyn ScreenCaptureStream>>,
+    latest_self_frame: Option<ScreenCaptureFrame>,
     #[cfg(not(target_os = "windows"))]
     remote_participants: Vec<(ParticipantIdentity, ParticipantState)>,
     _events_task: Task<()>,
@@ -156,6 +159,7 @@ impl LivekitWindow {
                             microphone_stream: None,
                             screen_share_track: None,
                             screen_share_stream: None,
+                            latest_self_frame: None,
                             remote_participants: Vec::new(),
                             _events_task,
                         }
@@ -312,7 +316,25 @@ impl LivekitWindow {
             cx.spawn(|this, mut cx| async move {
                 let sources = sources.await.unwrap()?;
                 let source = sources.into_iter().next().unwrap();
-                let (track, stream) = capture_local_video_track(&*source).await?;
+
+                let (self_stream_tx, mut self_stream_rx) = futures::channel::mpsc::unbounded();
+                let (track, stream) =
+                    capture_local_video_track(&*source, Some(self_stream_tx)).await?;
+
+                cx.spawn({
+                    let this = this.clone();
+                    |mut cx| async move {
+                        while let Some(frame) = self_stream_rx.next().await {
+                            this.update(&mut cx, |this, cx| {
+                                this.latest_self_frame = Some(frame);
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    }
+                })
+                .detach();
+
                 let publication = participant
                     .publish_track(
                         LocalTrack::Video(track),
@@ -394,6 +416,11 @@ impl Render for LivekitWindow {
                         .on_click(cx.listener(|this, _, cx| this.toggle_screen_share(cx))),
                 ]),
             )
+            .children(
+                self.latest_self_frame
+                    .as_ref()
+                    .map(|frame| gpui::surface(frame.0.clone()).size_full()),
+            )
             .child(
                 div()
                     .id("remote-participants")
@@ -403,7 +430,7 @@ impl Render for LivekitWindow {
                     .flex_grow()
                     .children(self.remote_participants.iter().map(|(identity, state)| {
                         div()
-                            .h(px(300.0))
+                            .size_full()
                             .flex()
                             .flex_col()
                             .m_2()

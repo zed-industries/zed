@@ -42,10 +42,10 @@ serde_derive.workspace = true
 settings.workspace = true
 util.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any())'.dependencies]
 livekit_client_macos = { workspace = true }
 
-[target.'cfg(not(target_os = "macos"))'.dependencies]
+[target.'cfg(all())'.dependencies]
 livekit_client = { workspace = true }
 
 [dev-dependencies]
