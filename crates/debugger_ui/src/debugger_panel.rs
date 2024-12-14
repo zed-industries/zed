@@ -308,21 +308,13 @@ impl DebugPanel {
         let mut envs: HashMap<String, String> = Default::default();
 
         if let Some(Value::Object(env)) = request_args.env {
-            // Special handling for VSCODE_INSPECTOR_OPTIONS:
-            // The JavaScript debug adapter expects this value to be a valid JSON object.
-            // However, it's often passed as an escaped string, which the adapter can't parse.
-            // We need to unescape it and reformat it so the adapter can read it correctly.
             for (key, value) in env {
                 let value_str = match (key.as_str(), value) {
-                    ("VSCODE_INSPECTOR_OPTIONS", Value::String(value)) => {
-                        serde_json::from_str::<Value>(&value[3..])
-                            .map(|json| format!(":::{}", json))
-                            .unwrap_or_else(|_| value)
-                    }
-                    (_, value) => value.to_string(),
+                    (_, Value::String(value)) => value,
+                    _ => continue,
                 };
 
-                envs.insert(key, value_str.trim_matches('"').to_string());
+                envs.insert(key, value_str);
             }
         }
 
