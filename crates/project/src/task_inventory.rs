@@ -177,7 +177,7 @@ impl Inventory {
                 let id_base = kind.to_id_base();
                 Some((
                     kind,
-                    task.resolve_task(&id_base, task_context)?,
+                    task.resolve_task(&id_base, Default::default(), task_context)?,
                     not_used_score,
                 ))
             })
@@ -397,7 +397,7 @@ mod test_inventory {
             let id_base = task_source_kind.to_id_base();
             inventory.task_scheduled(
                 task_source_kind.clone(),
-                task.resolve_task(&id_base, &TaskContext::default())
+                task.resolve_task(&id_base, Default::default(), &TaskContext::default())
                     .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
             );
         });

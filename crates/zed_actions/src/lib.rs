@@ -90,6 +90,14 @@ pub struct OpenRecent {
 gpui::impl_actions!(projects, [OpenRecent]);
 gpui::actions!(projects, [OpenRemote]);
 
+#[derive(PartialEq, Eq, Clone, Copy, Deserialize, Default, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskSpawnTarget {
+    Center,
+    #[default]
+    Dock,
+}
+
 /// Spawn a task with name or open tasks modal
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct Spawn {
@@ -98,11 +106,18 @@ pub struct Spawn {
     /// If it is not set, a modal with a list of available tasks is opened instead.
     /// Defaults to None.
     pub task_name: Option<String>,
+    /// Which part of the UI the task should be spawned in.
+    /// Defaults to Dock.
+    #[serde(default)]
+    pub target: Option<TaskSpawnTarget>,
 }
 
 impl Spawn {
     pub fn modal() -> Self {
-        Self { task_name: None }
+        Self {
+            task_name: None,
+            target: None,
+        }
     }
 }
 

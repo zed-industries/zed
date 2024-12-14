@@ -68,7 +68,7 @@ impl TasksModalDelegate {
         };
         Some((
             source_kind,
-            new_oneshot.resolve_task(&id_base, &self.task_context)?,
+            new_oneshot.resolve_task(&id_base, Default::default(), &self.task_context)?,
         ))
     }
 
@@ -684,6 +684,7 @@ mod tests {
 
         cx.dispatch_action(Spawn {
             task_name: Some("example task".to_string()),
+            target: None,
         });
         let tasks_picker = workspace.update(cx, |workspace, cx| {
             workspace

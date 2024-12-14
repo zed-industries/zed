@@ -50,13 +50,7 @@ impl Project {
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
             .into_iter()
             .chain(self.worktrees(cx))
-            .find_map(|tree| {
-                let worktree = tree.read(cx);
-                worktree
-                    .root_entry()
-                    .filter(|entry| entry.is_dir())
-                    .map(|_| worktree.abs_path().clone())
-            });
+            .find_map(|tree| tree.read(cx).root_dir());
         worktree
     }
 
