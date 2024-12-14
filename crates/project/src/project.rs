@@ -2540,7 +2540,7 @@ impl Project {
                         .read(cx)
                         .list_toolchains(worktree_id, language_name, cx)
                 })
-                .unwrap_or(Task::Ready(None))
+                .ok()?
                 .await
             })
         } else {
