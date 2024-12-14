@@ -93,7 +93,11 @@ impl DebugAdapterClient {
             };
 
             if let Err(e) = match message {
-                Message::Event(ev) => cx.update(|cx| event_handler(Message::Event(ev), cx)),
+                Message::Event(ev) => {
+                    log::debug!("Received event `{}`", &ev);
+
+                    cx.update(|cx| event_handler(Message::Event(ev), cx))
+                }
                 Message::Request(req) => cx.update(|cx| event_handler(Message::Request(req), cx)),
                 Message::Response(_) => unreachable!(),
             } {
