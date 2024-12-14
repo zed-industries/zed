@@ -250,14 +250,24 @@ impl DiffMap {
         ranges: &[Range<multi_buffer::Anchor>],
     ) -> bool {
         let mut cursor = self.snapshot.transforms.cursor::<InlayOffset>(&());
+        let multibuffer_snapshot = self.snapshot.buffer();
         for range in ranges {
-            let range = range.to_offset(self.snapshot.buffer());
-            let inlay_start = self.snapshot.inlay_snapshot.to_inlay_offset(range.start);
-            let inlay_end = self.snapshot.inlay_snapshot.to_inlay_offset(range.end);
+            let range = range.to_point(multibuffer_snapshot);
+            let start = multibuffer_snapshot.point_to_offset(Point::new(range.start.row, 0));
+            let end = multibuffer_snapshot.point_to_offset(Point::new(range.end.row + 1, 0));
+            let start = start.saturating_sub(1);
+            let end = multibuffer_snapshot.len().min(end + 1);
+            let inlay_start = self.snapshot.inlay_snapshot.to_inlay_offset(start);
+            let inlay_end = self.snapshot.inlay_snapshot.to_inlay_offset(end);
             cursor.seek(&inlay_start, Bias::Right, &());
             while *cursor.start() < inlay_end {
-                if let Some(DiffTransform::DeletedHunk { .. }) = cursor.item() {
-                    return true;
+                match cursor.item() {
+                    Some(DiffTransform::DeletedHunk { .. })
+                    | Some(DiffTransform::BufferContent {
+                        is_inserted_hunk: true,
+                        ..
+                    }) => return true,
+                    _ => {}
                 }
                 cursor.next(&());
             }
