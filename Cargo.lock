@@ -2729,7 +2729,6 @@ dependencies = [
  "sqlx",
  "strum 0.25.0",
  "subtle",
- "supermaven_api",
  "telemetry_events",
  "text",
  "theme",
@@ -6311,7 +6310,6 @@ dependencies = [
  "project",
  "serde_json",
  "settings",
- "supermaven",
  "theme",
  "ui",
  "workspace",
@@ -12268,48 +12266,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "supermaven"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "editor",
- "env_logger 0.11.5",
- "futures 0.3.31",
- "gpui",
- "http_client",
- "inline_completion",
- "language",
- "log",
- "postage",
- "project",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "supermaven_api",
- "text",
- "theme",
- "ui",
- "unicode-segmentation",
- "util",
-]
-
-[[package]]
-name = "supermaven_api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.31",
- "http_client",
- "paths",
- "serde",
- "serde_json",
- "smol",
-]
-
-[[package]]
 name = "sval"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16072,7 +16028,6 @@ dependencies = [
  "smol",
  "snippet_provider",
  "snippets_ui",
- "supermaven",
  "sysinfo",
  "tab_switcher",
  "task",

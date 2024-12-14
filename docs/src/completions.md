@@ -3,7 +3,7 @@
 Zed supports supports two sources for completions:
 
 1. "Code Completions" provided by Language Servers (LSPs) automatically installed by Zed or via [Zed Language Extensions](languages.md).
-2. "Inline Completions" provided by external APIs like [GitHub Copilot](#github-copilot) or [Supermaven](#supermaven).
+2. "Inline Completions" provided by external APIs like [GitHub Copilot](#github-copilot).
 
 ## Code Completions
 
@@ -35,20 +35,6 @@ To use GitHub Copilot (enabled by default), add the following to your `settings.
 ```
 
 You should be able to sign-in to GitHub Copilot by clicking on the Copilot icon in the status bar and following the setup instructions.
-
-### Supermaven
-
-To use Supermaven, add the following to your `settings.json`:
-
-```json
-{
-  "features": {
-    "inline_completion_provider": "supermaven"
-  }
-}
-```
-
-You should be able to sign-in to Supermaven by clicking on the Supermaven icon in the status bar and following the setup instructions.
 
 ## Using Inline completions
 

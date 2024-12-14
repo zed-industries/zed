@@ -272,12 +272,6 @@ pub fn copilot_dir() -> &'static PathBuf {
     COPILOT_DIR.get_or_init(|| support_dir().join("copilot"))
 }
 
-/// Returns the path to the Supermaven directory.
-pub fn supermaven_dir() -> &'static PathBuf {
-    static SUPERMAVEN_DIR: OnceLock<PathBuf> = OnceLock::new();
-    SUPERMAVEN_DIR.get_or_init(|| support_dir().join("supermaven"))
-}
-
 /// Returns the path to the default Prettier directory.
 pub fn default_prettier_dir() -> &'static PathBuf {
     static DEFAULT_PRETTIER_DIR: OnceLock<PathBuf> = OnceLock::new();

@@ -390,7 +390,6 @@ fn main() {
             app_state.node_runtime.clone(),
             cx,
         );
-        supermaven::init(app_state.client.clone(), cx);
         language_model::init(cx);
         language_models::init(
             app_state.user_store.clone(),

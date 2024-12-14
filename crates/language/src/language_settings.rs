@@ -202,12 +202,10 @@ pub enum InlineCompletionProvider {
     None,
     #[default]
     Copilot,
-    Supermaven,
     Zeta,
 }
 
 /// The settings for inline completions, such as [GitHub Copilot](https://github.com/features/copilot)
-/// or [Supermaven](https://supermaven.com).
 #[derive(Clone, Debug, Default)]
 pub struct InlineCompletionSettings {
     /// The provider that supplies inline completions.

@@ -125,7 +125,7 @@ pub struct EditorEvent {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InlineCompletionEvent {
-    /// Provider of the completion suggestion (e.g. copilot, supermaven)
+    /// Provider of the completion suggestion (e.g. copilot)
     pub provider: String,
     pub suggestion_accepted: bool,
     pub file_extension: Option<String>,

@@ -38,7 +38,6 @@ use http_client::HttpClient;
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
 use reqwest_client::ReqwestClient;
 use sha2::Digest;
-use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
     channel::oneshot, future::BoxFuture, stream::FuturesUnordered, FutureExt, SinkExt, StreamExt,
@@ -132,7 +131,6 @@ struct Session {
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
-    supermaven_client: Option<Arc<SupermavenAdminApi>>,
     http_client: Arc<dyn HttpClient>,
     /// The GeoIP country code for the user.
     #[allow(unused)]
@@ -384,7 +382,6 @@ impl Server {
             .add_request_handler(accept_terms_of_service)
             .add_message_handler(acknowledge_channel_message)
             .add_message_handler(acknowledge_buffer_version)
-            .add_request_handler(get_supermaven_api_key)
             .add_request_handler(forward_mutating_project_request::<proto::OpenContext>)
             .add_request_handler(forward_mutating_project_request::<proto::CreateContext>)
             .add_request_handler(forward_mutating_project_request::<proto::SynchronizeContexts>)
@@ -729,11 +726,6 @@ impl Server {
                 }
             };
 
-            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(|supermaven_admin_api_key| Arc::new(SupermavenAdminApi::new(
-                    supermaven_admin_api_key.to_string(),
-                    http_client.clone(),
-                )));
-
             let session = Session {
                 principal: principal.clone(),
                 connection_id,
@@ -745,7 +737,6 @@ impl Server {
                 geoip_country_code,
                 system_id,
                 _executor: executor.clone(),
-                supermaven_client,
             };
 
             if let Err(error) = this.send_initial_client_update(connection_id, &principal, zed_version, send_connection_id, &session).await {
@@ -3814,37 +3805,6 @@ async fn authorize_access_to_legacy_llm_endpoints(session: &Session) -> Result<(
     } else {
         Err(anyhow!("permission denied"))?
     }
-}
-
-/// Get a Supermaven API key for the user
-async fn get_supermaven_api_key(
-    _request: proto::GetSupermavenApiKey,
-    response: Response<proto::GetSupermavenApiKey>,
-    session: Session,
-) -> Result<()> {
-    let user_id: String = session.user_id().to_string();
-    if !session.is_staff() {
-        return Err(anyhow!("supermaven not enabled for this account"))?;
-    }
-
-    let email = session
-        .email()
-        .ok_or_else(|| anyhow!("user must have an email"))?;
-
-    let supermaven_admin_api = session
-        .supermaven_client
-        .as_ref()
-        .ok_or_else(|| anyhow!("supermaven not configured"))?;
-
-    let result = supermaven_admin_api
-        .try_get_or_create_user(CreateExternalUserRequest { id: user_id, email })
-        .await?;
-
-    response.send(proto::GetSupermavenApiKeyResponse {
-        api_key: result.api_key,
-    })?;
-
-    Ok(())
 }
 
 /// Start receiving chat updates for a channel

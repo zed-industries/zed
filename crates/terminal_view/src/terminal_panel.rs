@@ -145,7 +145,7 @@ impl TerminalPanel {
                             .tooltip(|cx| Tooltip::for_action("New Terminal", &NewTerminal, cx))
                             .on_click(cx.listener(move |_, _, cx| {
                                 cx.dispatch_action(workspace::NewTerminal.boxed_clone());
-                            }))
+                            })),
                     )
                     .child(
                         PopoverMenu::new("terminal-pane-tab-bar-split")

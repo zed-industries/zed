@@ -220,9 +220,6 @@ message Envelope {
 
         OpenNewBuffer open_new_buffer = 196;
 
-        GetSupermavenApiKey get_supermaven_api_key = 198;
-        GetSupermavenApiKeyResponse get_supermaven_api_key_response = 199;
-
         TaskContextForLocation task_context_for_location = 203;
         TaskContext task_context = 204;
 
@@ -2202,12 +2199,6 @@ message LspResponse {
         GetCodeActionsResponse get_code_actions_response = 2;
         GetSignatureHelpResponse get_signature_help_response = 3;
     }
-}
-
-message GetSupermavenApiKey {}
-
-message GetSupermavenApiKeyResponse {
-    string api_key = 1;
 }
 
 message TaskContextForLocation {

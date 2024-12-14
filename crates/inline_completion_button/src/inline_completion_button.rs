@@ -15,7 +15,6 @@ use language::{
 };
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
-use supermaven::{AccountStatus, Supermaven};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -41,13 +40,6 @@ pub struct InlineCompletionButton {
     file: Option<Arc<dyn File>>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
-}
-
-enum SupermavenButtonStatus {
-    Ready,
-    Errored(String),
-    NeedsActivation(String),
-    Initializing,
 }
 
 impl Render for InlineCompletionButton {
@@ -131,74 +123,6 @@ impl Render for InlineCompletionButton {
                 )
             }
 
-            InlineCompletionProvider::Supermaven => {
-                let Some(supermaven) = Supermaven::global(cx) else {
-                    return div();
-                };
-
-                let supermaven = supermaven.read(cx);
-
-                let status = match supermaven {
-                    Supermaven::Starting => SupermavenButtonStatus::Initializing,
-                    Supermaven::FailedDownload { error } => {
-                        SupermavenButtonStatus::Errored(error.to_string())
-                    }
-                    Supermaven::Spawned(agent) => {
-                        let account_status = agent.account_status.clone();
-                        match account_status {
-                            AccountStatus::NeedsActivation { activate_url } => {
-                                SupermavenButtonStatus::NeedsActivation(activate_url.clone())
-                            }
-                            AccountStatus::Unknown => SupermavenButtonStatus::Initializing,
-                            AccountStatus::Ready => SupermavenButtonStatus::Ready,
-                        }
-                    }
-                    Supermaven::Error { error } => {
-                        SupermavenButtonStatus::Errored(error.to_string())
-                    }
-                };
-
-                let icon = status.to_icon();
-                let tooltip_text = status.to_tooltip();
-                let this = cx.view().clone();
-                let fs = self.fs.clone();
-
-                return div().child(
-                    PopoverMenu::new("supermaven")
-                        .menu(move |cx| match &status {
-                            SupermavenButtonStatus::NeedsActivation(activate_url) => {
-                                Some(ContextMenu::build(cx, |menu, _| {
-                                    let fs = fs.clone();
-                                    let activate_url = activate_url.clone();
-                                    menu.entry("Sign In", None, move |cx| {
-                                        cx.open_url(activate_url.as_str())
-                                    })
-                                    .entry(
-                                        "Use Copilot",
-                                        None,
-                                        move |cx| {
-                                            set_completion_provider(
-                                                fs.clone(),
-                                                cx,
-                                                InlineCompletionProvider::Copilot,
-                                            )
-                                        },
-                                    )
-                                }))
-                            }
-                            SupermavenButtonStatus::Ready => Some(
-                                this.update(cx, |this, cx| this.build_supermaven_context_menu(cx)),
-                            ),
-                            _ => None,
-                        })
-                        .anchor(AnchorCorner::BottomRight)
-                        .trigger(
-                            IconButton::new("supermaven-icon", icon)
-                                .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx)),
-                        ),
-                );
-            }
-
             InlineCompletionProvider::Zeta => {
                 if !cx.has_flag::<ZetaFeatureFlag>() {
                     return div();
@@ -257,16 +181,6 @@ impl InlineCompletionButton {
                 .entry("Disable Copilot", None, {
                     let fs = fs.clone();
                     move |cx| hide_copilot(fs.clone(), cx)
-                })
-                .entry("Use Supermaven", None, {
-                    let fs = fs.clone();
-                    move |cx| {
-                        set_completion_provider(
-                            fs.clone(),
-                            cx,
-                            InlineCompletionProvider::Supermaven,
-                        )
-                    }
                 })
         })
     }
@@ -352,14 +266,6 @@ impl InlineCompletionButton {
         })
     }
 
-    fn build_supermaven_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, cx| {
-            self.build_language_settings_menu(menu, cx)
-                .separator()
-                .action("Sign Out", supermaven::SignOut.boxed_clone())
-        })
-    }
-
     pub fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -398,26 +304,6 @@ impl StatusItemView for InlineCompletionButton {
             self.editor_enabled = None;
         }
         cx.notify();
-    }
-}
-
-impl SupermavenButtonStatus {
-    fn to_icon(&self) -> IconName {
-        match self {
-            SupermavenButtonStatus::Ready => IconName::Supermaven,
-            SupermavenButtonStatus::Errored(_) => IconName::SupermavenError,
-            SupermavenButtonStatus::NeedsActivation(_) => IconName::SupermavenInit,
-            SupermavenButtonStatus::Initializing => IconName::SupermavenInit,
-        }
-    }
-
-    fn to_tooltip(&self) -> String {
-        match self {
-            SupermavenButtonStatus::Ready => "Supermaven is ready".to_string(),
-            SupermavenButtonStatus::Errored(error) => format!("Supermaven error: {}", error),
-            SupermavenButtonStatus::NeedsActivation(_) => "Supermaven needs activation".to_string(),
-            SupermavenButtonStatus::Initializing => "Supermaven initializing".to_string(),
-        }
     }
 }
 
@@ -479,18 +365,6 @@ fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
         all_language_settings(None, cx).inline_completions_enabled(None, None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_inline_completions = Some(!show_inline_completions)
-    });
-}
-
-fn set_completion_provider(
-    fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-    provider: InlineCompletionProvider,
-) {
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.features
-            .get_or_insert(Default::default())
-            .inline_completion_provider = Some(provider);
     });
 }
 

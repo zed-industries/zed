@@ -8,7 +8,6 @@ use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
 use gpui::{AnyWindowHandle, AppContext, Context, ViewContext, WeakView};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
-use supermaven::{Supermaven, SupermavenCompletionProvider};
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -155,12 +154,6 @@ fn assign_inline_completion_provider(
                     }
                 }
                 let provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
-                editor.set_inline_completion_provider(Some(provider), cx);
-            }
-        }
-        language::language_settings::InlineCompletionProvider::Supermaven => {
-            if let Some(supermaven) = Supermaven::global(cx) {
-                let provider = cx.new_model(|_| SupermavenCompletionProvider::new(supermaven));
                 editor.set_inline_completion_provider(Some(provider), cx);
             }
         }
