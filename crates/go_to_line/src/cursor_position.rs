@@ -140,15 +140,13 @@ impl CursorPosition {
         let lines = (lines > 1).then_some((lines, "line"));
         let selections = (selections > 1).then_some((selections, "selection"));
         let characters = (characters > 0).then_some((characters, "character"));
-        let words = words
-            .map(|words| {
-                if words > 0 {
-                    Some((words, "word"))
-                } else {
-                    None
-                }
-            })
-            .flatten();
+        let words = words.and_then(|words| {
+            if words > 0 {
+                Some((words, "word"))
+            } else {
+                None
+            }
+        });
         if (None, None, None) == (characters, selections, lines) {
             // Nothing to display.
             return;
