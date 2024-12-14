@@ -367,8 +367,9 @@ impl Render for DapLogToolbarItemView {
                 current_client
                     .map(|row| {
                         Cow::Owned(format!(
-                            "{} - {}",
+                            "{}({}) - {}",
                             row.client_name,
+                            row.client_id.0,
                             match row.selected_entry {
                                 LogKind::Adapter => ADAPTER_LOGS,
                                 LogKind::Rpc => RPC_MESSAGES,
@@ -382,7 +383,7 @@ impl Render for DapLogToolbarItemView {
                 let menu_rows = menu_rows.clone();
                 ContextMenu::build(cx, move |mut menu, cx| {
                     for row in menu_rows.into_iter() {
-                        menu = menu.header(row.client_name.to_string());
+                        menu = menu.header(format!("{}({})", row.client_name, row.client_id.0));
 
                         if row.has_adapter_logs {
                             menu = menu.entry(
