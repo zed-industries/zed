@@ -78,11 +78,7 @@ impl SlashCommandCompletionProvider {
             .command_names(cx)
             .into_iter()
             .enumerate()
-            .map(|(ix, def)| StringMatchCandidate {
-                id: ix,
-                string: def.to_string(),
-                char_bag: def.as_ref().into(),
-            })
+            .map(|(ix, def)| StringMatchCandidate::new(ix, &def))
             .collect::<Vec<_>>();
         let command_name = command_name.to_string();
         let editor = self.editor.clone();

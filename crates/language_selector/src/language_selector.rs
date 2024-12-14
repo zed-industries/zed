@@ -112,7 +112,7 @@ impl LanguageSelectorDelegate {
                     .then_some(name)
             })
             .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name))
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
             .collect::<Vec<_>>();
 
         Self {
