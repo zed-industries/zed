@@ -4135,10 +4135,7 @@ impl LspStore {
     pub fn resolve_completion(
         &self,
         buffer: Model<Buffer>,
-        // server_id: u64,
         mut completion: Completion,
-        // completion_indices: Vec<usize>,
-        // completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Completion>>> {
         let client = self.upstream_client();
@@ -4210,15 +4207,9 @@ impl LspStore {
                     None => Vec::new(),
                 }
                 .pop()
-                .flatten()
-                .unwrap_or_else(|| {
-                    CodeLabel::plain(
-                        completion_item.label.clone(),
-                        completion_item.filter_text.as_deref(),
-                    )
-                });
+                .flatten();
 
-                (completion_item, Some(new_label))
+                (completion_item, new_label)
             };
 
             if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
