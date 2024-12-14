@@ -67,15 +67,6 @@ impl<T> Task<T> {
         Task(TaskState::Ready(Some(val)))
     }
 
-    /// Returns the task's result if it is already know. The only known usecase for this is for
-    /// skipping spawning another task that awaits on this one.
-    pub fn get_ready(self) -> Option<T> {
-        match self {
-            Task(TaskState::Ready(val)) => val,
-            Task(TaskState::Spawned(_)) => None,
-        }
-    }
-
     /// Detaching a task runs it to completion in the background
     pub fn detach(self) {
         match self {
