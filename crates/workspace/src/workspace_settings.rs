@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 use anyhow::Result;
 use collections::HashMap;
 use gpui::AppContext;
@@ -20,6 +22,7 @@ pub struct WorkspaceSettings {
     pub use_system_path_prompts: bool,
     pub command_aliases: HashMap<String, String>,
     pub show_user_picture: bool,
+    pub max_tabs: Option<NonZeroUsize>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -133,6 +136,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub show_user_picture: Option<bool>,
+    // Maximum open tabs in a pane. Will not close an unsaved
+    // tab. Set to `None` for unlimited tabs.
+    //
+    // Default: none
+    pub max_tabs: Option<NonZeroUsize>,
 }
 
 #[derive(Deserialize)]
