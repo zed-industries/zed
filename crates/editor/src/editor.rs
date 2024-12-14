@@ -523,7 +523,7 @@ impl RunnableTasks {
     ) -> impl Iterator<Item = (TaskSourceKind, ResolvedTask)> + 'a {
         self.templates.iter().filter_map(|(kind, template)| {
             template
-                .resolve_task(&kind.to_id_base(), cx)
+                .resolve_task(&kind.to_id_base(), Default::default(), cx)
                 .map(|task| (kind.clone(), task))
         })
     }

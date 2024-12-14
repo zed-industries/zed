@@ -14,6 +14,7 @@ use gpui::{
 use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
+use task::{NewCenterTask, RevealStrategy};
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -45,7 +46,7 @@ use zed_actions::InlineAssist;
 
 use std::{
     cmp,
-    ops::RangeInclusive,
+    ops::{ControlFlow, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -78,8 +79,9 @@ pub fn init(cx: &mut AppContext) {
 
     register_serializable_item::<TerminalView>(cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(TerminalView::deploy);
+        workspace.register_action(TerminalView::deploy_center_task);
     })
     .detach();
 }
@@ -127,6 +129,61 @@ impl FocusableView for TerminalView {
 }
 
 impl TerminalView {
+    pub fn deploy_center_task(
+        workspace: &mut Workspace,
+        task: &NewCenterTask,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let reveal_strategy: RevealStrategy = task.action.reveal;
+        let mut spawn_task = task.action.clone();
+
+        let is_local = workspace.project().read(cx).is_local();
+
+        if let ControlFlow::Break(_) =
+            TerminalPanel::fill_command(is_local, &task.action, &mut spawn_task)
+        {
+            return;
+        }
+
+        let kind = TerminalKind::Task(spawn_task);
+
+        let project = workspace.project().clone();
+        let database_id = workspace.database_id();
+        cx.spawn(|workspace, mut cx| async move {
+            let terminal = cx
+                .update(|cx| {
+                    let window = cx.window_handle();
+                    project.update(cx, |project, cx| project.create_terminal(kind, window, cx))
+                })?
+                .await?;
+
+            let terminal_view = cx.new_view(|cx| {
+                TerminalView::new(terminal.clone(), workspace.clone(), database_id, cx)
+            })?;
+
+            cx.update(|cx| {
+                let focus_item = match reveal_strategy {
+                    RevealStrategy::Always => true,
+                    RevealStrategy::Never | RevealStrategy::NoFocus => false,
+                };
+
+                workspace.update(cx, |workspace, cx| {
+                    workspace.add_item_to_active_pane(
+                        Box::new(terminal_view),
+                        None,
+                        focus_item,
+                        cx,
+                    );
+                })?;
+
+                anyhow::Ok(())
+            })??;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     ///Create a new Terminal in the current working directory or the user's home directory
     pub fn deploy(
         workspace: &mut Workspace,

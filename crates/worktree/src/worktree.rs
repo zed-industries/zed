@@ -2533,6 +2533,12 @@ impl Snapshot {
         self.entry_for_path("")
     }
 
+    pub fn root_dir(&self) -> Option<Arc<Path>> {
+        self.root_entry()
+            .filter(|entry| entry.is_dir())
+            .map(|_| self.abs_path().clone())
+    }
+
     pub fn root_name(&self) -> &str {
         &self.root_name
     }
