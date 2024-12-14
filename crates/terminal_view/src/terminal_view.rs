@@ -1195,7 +1195,7 @@ impl SerializableItem for TerminalView {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let terminal = self.terminal().read(cx);
-        if terminal.task().is_some() {
+        if terminal.task().is_some() || terminal.debug_terminal() {
             return None;
         }
 
