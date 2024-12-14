@@ -18,22 +18,12 @@ pub struct StringMatchCandidate {
     pub char_bag: CharBag,
 }
 
-impl Match for StringMatch {
-    fn score(&self) -> f64 {
-        self.score
-    }
-
-    fn set_positions(&mut self, positions: Vec<usize>) {
-        self.positions = positions;
-    }
-}
-
 impl StringMatchCandidate {
-    pub fn new(id: usize, string: String) -> Self {
+    pub fn new(id: usize, string: &str) -> Self {
         Self {
             id,
-            char_bag: CharBag::from(string.as_str()),
-            string,
+            string: string.into(),
+            char_bag: string.into(),
         }
     }
 }
@@ -54,6 +44,16 @@ pub struct StringMatch {
     pub score: f64,
     pub positions: Vec<usize>,
     pub string: String,
+}
+
+impl Match for StringMatch {
+    fn score(&self) -> f64 {
+        self.score
+    }
+
+    fn set_positions(&mut self, positions: Vec<usize>) {
+        self.positions = positions;
+    }
 }
 
 impl StringMatch {

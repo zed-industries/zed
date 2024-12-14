@@ -381,11 +381,7 @@ impl MessageEditor {
 
         let candidates = names
             .into_iter()
-            .map(|user| StringMatchCandidate {
-                id: 0,
-                string: user.clone(),
-                char_bag: user.chars().collect(),
-            })
+            .map(|user| StringMatchCandidate::new(0, &user))
             .collect::<Vec<_>>();
 
         Some((start_anchor, query, candidates))
@@ -401,11 +397,7 @@ impl MessageEditor {
             LazyLock::new(|| {
                 let emojis = emojis::iter()
                     .flat_map(|s| s.shortcodes())
-                    .map(|emoji| StringMatchCandidate {
-                        id: 0,
-                        string: emoji.to_string(),
-                        char_bag: emoji.chars().collect(),
-                    })
+                    .map(|emoji| StringMatchCandidate::new(0, emoji))
                     .collect::<Vec<_>>();
                 emojis
             });

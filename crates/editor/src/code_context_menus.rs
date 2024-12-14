@@ -163,7 +163,7 @@ impl CompletionsMenu {
             .map(|(id, completion)| {
                 StringMatchCandidate::new(
                     id,
-                    completion.label.text[completion.label.filter_range.clone()].into(),
+                    &completion.label.text[completion.label.filter_range.clone()],
                 )
             })
             .collect();
@@ -211,7 +211,7 @@ impl CompletionsMenu {
         let match_candidates = choices
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, completion.to_string()))
+            .map(|(id, completion)| StringMatchCandidate::new(id, &completion))
             .collect();
         let matches = choices
             .iter()

@@ -3296,40 +3296,32 @@ impl OutlinePanel {
                     if let Some(file_name) =
                         self.relative_path(fs_entry, cx).as_deref().map(file_name)
                     {
-                        state.match_candidates.push(StringMatchCandidate {
-                            id,
-                            string: file_name.to_string(),
-                            char_bag: file_name.chars().collect(),
-                        });
+                        state
+                            .match_candidates
+                            .push(StringMatchCandidate::new(id, &file_name));
                     }
                 }
                 PanelEntry::FoldedDirs(worktree_id, entries) => {
                     let dir_names = self.dir_names_string(entries, *worktree_id, cx);
                     {
-                        state.match_candidates.push(StringMatchCandidate {
-                            id,
-                            string: dir_names.clone(),
-                            char_bag: dir_names.chars().collect(),
-                        });
+                        state
+                            .match_candidates
+                            .push(StringMatchCandidate::new(id, &dir_names));
                     }
                 }
                 PanelEntry::Outline(outline_entry) => match outline_entry {
                     OutlineEntry::Outline(_, _, outline) => {
-                        state.match_candidates.push(StringMatchCandidate {
-                            id,
-                            string: outline.text.clone(),
-                            char_bag: outline.text.chars().collect(),
-                        });
+                        state
+                            .match_candidates
+                            .push(StringMatchCandidate::new(id, &outline.text));
                     }
                     OutlineEntry::Excerpt(..) => {}
                 },
                 PanelEntry::Search(new_search_entry) => {
                     if let Some(search_data) = new_search_entry.render_data.get() {
-                        state.match_candidates.push(StringMatchCandidate {
-                            id,
-                            char_bag: search_data.context_text.chars().collect(),
-                            string: search_data.context_text.clone(),
-                        });
+                        state
+                            .match_candidates
+                            .push(StringMatchCandidate::new(id, &search_data.context_text));
                     }
                 }
             }

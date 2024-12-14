@@ -96,7 +96,7 @@ impl ScopeSelectorDelegate {
         let candidates = candidates
             .chain(languages)
             .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name))
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
             .collect::<Vec<_>>();
 
         Self {

@@ -179,7 +179,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         .map(|(id, symbol)| {
                             StringMatchCandidate::new(
                                 id,
-                                symbol.label.text[symbol.label.filter_range.clone()].to_string(),
+                                &symbol.label.text[symbol.label.filter_range.clone()],
                             )
                         })
                         .partition(|candidate| {
@@ -313,7 +313,7 @@ mod tests {
                     let candidates = fake_symbols
                         .iter()
                         .enumerate()
-                        .map(|(id, symbol)| StringMatchCandidate::new(id, symbol.name.clone()))
+                        .map(|(id, symbol)| StringMatchCandidate::new(id, &symbol.name))
                         .collect::<Vec<_>>();
                     let matches = if params.query.is_empty() {
                         Vec::new()
