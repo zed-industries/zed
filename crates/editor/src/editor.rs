@@ -127,7 +127,6 @@ pub use multi_buffer::{
 use multi_buffer::{
     ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, ToOffsetUtf16,
 };
-use parking_lot::RwLock;
 use project::{
     lsp_store::{FormatTarget, FormatTrigger, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -606,7 +605,7 @@ pub struct Editor {
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
-    context_menu: RwLock<Option<CodeContextMenu>>,
+    context_menu: RefCell<Option<CodeContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
     hunk_controls_menu_handle: PopoverMenuHandle<ui::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
@@ -614,7 +613,7 @@ pub struct Editor {
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
-    available_code_actions: Option<(Location, Arc<[AvailableCodeAction]>)>,
+    available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
     code_actions_task: Option<Task<Result<()>>>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
@@ -635,7 +634,7 @@ pub struct Editor {
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
-    code_action_providers: Vec<Arc<dyn CodeActionProvider>>,
+    code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
     active_inline_completion: Option<InlineCompletionState>,
     // enable_inline_completions is a switch that Vim can use to disable
     // inline completions based on its mode.
@@ -1191,7 +1190,7 @@ impl Editor {
         let mut code_action_providers = Vec::new();
         if let Some(project) = project.clone() {
             get_unstaged_changes_for_buffers(&project, buffer.read(cx).all_buffers(), cx);
-            code_action_providers.push(Arc::new(project) as Arc<_>);
+            code_action_providers.push(Rc::new(project) as Rc<_>);
         }
 
         let mut this = Self {
@@ -1237,7 +1236,7 @@ impl Editor {
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
-            context_menu: RwLock::new(None),
+            context_menu: RefCell::new(None),
             mouse_context_menu: None,
             hunk_controls_menu_handle: PopoverMenuHandle::default(),
             completion_tasks: Default::default(),
@@ -1382,7 +1381,7 @@ impl Editor {
             key_context.add("renaming");
         }
         if self.context_menu_visible() {
-            match self.context_menu.read().as_ref() {
+            match self.context_menu.borrow().as_ref() {
                 Some(CodeContextMenu::Completions(_)) => {
                     key_context.add("menu");
                     key_context.add("showing_completions")
@@ -1884,10 +1883,9 @@ impl Editor {
 
         if local {
             let new_cursor_position = self.selections.newest_anchor().head();
-            let mut context_menu = self.context_menu.write();
+            let mut context_menu = self.context_menu.borrow_mut();
             let completion_menu = match context_menu.as_ref() {
                 Some(CodeContextMenu::Completions(menu)) => Some(menu),
-
                 _ => {
                     *context_menu = None;
                     None
@@ -1911,7 +1909,7 @@ impl Editor {
                             .await;
 
                         this.update(&mut cx, |this, cx| {
-                            let mut context_menu = this.context_menu.write();
+                            let mut context_menu = this.context_menu.borrow_mut();
                             let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref()
                             else {
                                 return;
@@ -3649,7 +3647,7 @@ impl Editor {
             return;
         };
 
-        if !self.snippet_stack.is_empty() && self.context_menu.read().as_ref().is_some() {
+        if !self.snippet_stack.is_empty() && self.context_menu.borrow().as_ref().is_some() {
             return;
         }
 
@@ -3668,7 +3666,7 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
 
-        let aside_was_displayed = match self.context_menu.read().deref() {
+        let aside_was_displayed = match self.context_menu.borrow().deref() {
             Some(CodeContextMenu::Completions(menu)) => menu.aside_was_displayed.get(),
             _ => false,
         };
@@ -3721,16 +3719,14 @@ impl Editor {
                 };
 
                 editor.update(&mut cx, |editor, cx| {
-                    let mut context_menu = editor.context_menu.write();
+                    let mut context_menu = editor.context_menu.borrow_mut();
                     match context_menu.as_ref() {
                         None => {}
-
                         Some(CodeContextMenu::Completions(prev_menu)) => {
                             if prev_menu.id > id {
                                 return;
                             }
                         }
-
                         _ => return,
                     }
 
@@ -3793,7 +3789,7 @@ impl Editor {
             .matches
             .get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let buffer_handle = completions_menu.buffer;
-        let completions = completions_menu.completions.read();
+        let completions = completions_menu.completions.borrow_mut();
         let completion = completions.get(mat.candidate_id)?;
         cx.stop_propagation();
 
@@ -3959,7 +3955,7 @@ impl Editor {
     }
 
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
-        let mut context_menu = self.context_menu.write();
+        let mut context_menu = self.context_menu.borrow_mut();
         if let Some(CodeContextMenu::CodeActions(code_actions)) = context_menu.as_ref() {
             if code_actions.deployed_from_indicator == action.deployed_from_indicator {
                 // Toggle if we're selecting the same one
@@ -4039,7 +4035,7 @@ impl Editor {
                         };
                         let resolved_tasks =
                             tasks.zip(task_context).map(|(tasks, task_context)| {
-                                Arc::new(ResolvedTasks {
+                                Rc::new(ResolvedTasks {
                                     templates: tasks.resolve(&task_context).collect(),
                                     position: snapshot.buffer_snapshot.anchor_before(Point::new(
                                         multibuffer_point.row,
@@ -4054,7 +4050,7 @@ impl Editor {
                                 .as_ref()
                                 .map_or(true, |actions| actions.is_empty());
                         if let Ok(task) = editor.update(&mut cx, |editor, cx| {
-                            *editor.context_menu.write() =
+                            *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
                                     actions: CodeActionContents {
@@ -4239,7 +4235,7 @@ impl Editor {
 
     pub fn push_code_action_provider(
         &mut self,
-        provider: Arc<dyn CodeActionProvider>,
+        provider: Rc<dyn CodeActionProvider>,
         cx: &mut ViewContext<Self>,
     ) {
         self.code_action_providers.push(provider);
@@ -5002,7 +4998,7 @@ impl Editor {
 
     pub fn context_menu_visible(&self) -> bool {
         self.context_menu
-            .read()
+            .borrow()
             .as_ref()
             .map_or(false, |menu| menu.visible())
     }
@@ -5014,7 +5010,7 @@ impl Editor {
         max_height: Pixels,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(ContextMenuOrigin, AnyElement)> {
-        self.context_menu.read().as_ref().map(|menu| {
+        self.context_menu.borrow().as_ref().map(|menu| {
             menu.render(
                 cursor_position,
                 style,
@@ -5028,7 +5024,7 @@ impl Editor {
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<CodeContextMenu> {
         cx.notify();
         self.completion_tasks.clear();
-        self.context_menu.write().take()
+        self.context_menu.borrow_mut().take()
     }
 
     fn show_snippet_choices(
@@ -5045,7 +5041,7 @@ impl Editor {
         let id = post_inc(&mut self.next_completion_id);
 
         if let Some(buffer) = buffer {
-            *self.context_menu.write() = Some(CodeContextMenu::Completions(
+            *self.context_menu.borrow_mut() = Some(CodeContextMenu::Completions(
                 CompletionsMenu::new_snippet_choices(id, true, choices, selection, buffer),
             ));
         }
@@ -7099,7 +7095,7 @@ impl Editor {
 
         if self
             .context_menu
-            .write()
+            .borrow_mut()
             .as_mut()
             .map(|menu| menu.select_first(self.completion_provider.as_deref(), cx))
             .unwrap_or(false)
@@ -7208,7 +7204,7 @@ impl Editor {
 
         if self
             .context_menu
-            .write()
+            .borrow_mut()
             .as_mut()
             .map(|menu| menu.select_last(self.completion_provider.as_deref(), cx))
             .unwrap_or(false)
@@ -7261,25 +7257,25 @@ impl Editor {
     }
 
     pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.write().as_mut() {
+        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
             context_menu.select_first(self.completion_provider.as_deref(), cx);
         }
     }
 
     pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.write().as_mut() {
+        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
             context_menu.select_prev(self.completion_provider.as_deref(), cx);
         }
     }
 
     pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.write().as_mut() {
+        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
             context_menu.select_next(self.completion_provider.as_deref(), cx);
         }
     }
 
     pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.write().as_mut() {
+        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
             context_menu.select_last(self.completion_provider.as_deref(), cx);
         }
     }
@@ -12679,7 +12675,7 @@ impl Editor {
     }
 
     pub fn has_active_completions_menu(&self) -> bool {
-        self.context_menu.read().as_ref().map_or(false, |menu| {
+        self.context_menu.borrow().as_ref().map_or(false, |menu| {
             menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
         })
     }
@@ -13175,7 +13171,7 @@ pub trait CompletionProvider {
         &self,
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completions: Rc<RefCell<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>>;
 
@@ -13405,7 +13401,7 @@ impl CompletionProvider for Model<Project> {
         &self,
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completions: Rc<RefCell<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>> {
         self.update(cx, |project, cx| {
