@@ -911,8 +911,7 @@ pub fn new_terminal_pane(
         pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
                 let this_pane = cx.view().clone();
-                let belongs_to_this_pane = tab.pane == this_pane;
-                let item = if belongs_to_this_pane {
+                let item = if tab.pane == this_pane {
                     pane.item_for_index(tab.ix)
                 } else {
                     tab.pane.read(cx).item_for_index(tab.ix)
@@ -922,53 +921,57 @@ pub fn new_terminal_pane(
                         let source = tab.pane.clone();
                         let item_id_to_move = item.item_id();
 
-                        let new_pane = pane.drag_split_direction().and_then(|split_direction| {
-                            terminal_panel.update(cx, |terminal_panel, cx| {
-                                let is_zoomed = if terminal_panel.active_pane == this_pane {
-                                    pane.is_zoomed()
-                                } else {
-                                    terminal_panel.active_pane.read(cx).is_zoomed()
-                                };
-                                let new_pane = new_terminal_pane(
-                                    workspace.clone(),
-                                    project.clone(),
-                                    is_zoomed,
-                                    cx,
-                                );
-                                terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
-                                terminal_panel
-                                    .center
-                                    .split(&this_pane, &new_pane, split_direction)
-                                    .log_err()?;
-                                Some(new_pane)
+                        let new_split_pane = pane
+                            .drag_split_direction()
+                            .map(|split_direction| {
+                                terminal_panel.update(cx, |terminal_panel, cx| {
+                                    let is_zoomed = if terminal_panel.active_pane == this_pane {
+                                        pane.is_zoomed()
+                                    } else {
+                                        terminal_panel.active_pane.read(cx).is_zoomed()
+                                    };
+                                    let new_pane = new_terminal_pane(
+                                        workspace.clone(),
+                                        project.clone(),
+                                        is_zoomed,
+                                        cx,
+                                    );
+                                    terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
+                                    terminal_panel.center.split(
+                                        &this_pane,
+                                        &new_pane,
+                                        split_direction,
+                                    )?;
+                                    anyhow::Ok(new_pane)
+                                })
                             })
-                        });
+                            .transpose();
 
-                        let destination;
-                        let destination_index;
-                        if let Some(new_pane) = new_pane {
-                            destination_index = new_pane.read(cx).active_item_index();
-                            destination = new_pane;
-                        } else if belongs_to_this_pane {
-                            return ControlFlow::Break(());
-                        } else {
-                            destination = cx.view().clone();
-                            destination_index = pane.active_item_index();
-                        }
-                        // Destination pane may be the one currently updated, so defer the move.
-                        cx.spawn(|_, mut cx| async move {
-                            cx.update(|cx| {
-                                move_item(
-                                    &source,
-                                    &destination,
-                                    item_id_to_move,
-                                    destination_index,
-                                    cx,
-                                );
-                            })
-                            .ok();
-                        })
-                        .detach();
+                        match new_split_pane {
+                            // Source pane may be the one currently updated, so defer the move.
+                            Ok(Some(new_pane)) => cx
+                                .spawn(|_, mut cx| async move {
+                                    cx.update(|cx| {
+                                        move_item(
+                                            &source,
+                                            &new_pane,
+                                            item_id_to_move,
+                                            new_pane.read(cx).active_item_index(),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                                })
+                                .detach(),
+                            // If we drop into existing pane or current pane,
+                            // regular pane drop handler will take care of it,
+                            // using the right tab index for the operation.
+                            Ok(None) => return ControlFlow::Continue(()),
+                            err @ Err(_) => {
+                                err.log_err();
+                                return ControlFlow::Break(());
+                            }
+                        };
                     } else if let Some(project_path) = item.project_path(cx) {
                         if let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
                         {
