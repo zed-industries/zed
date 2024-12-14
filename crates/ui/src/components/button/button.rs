@@ -194,7 +194,7 @@ impl Button {
     }
 }
 
-impl Selectable for Button {
+impl Toggleable for Button {
     /// Sets the selected state of the button.
     ///
     /// This method allows the selection state of the button to be specified.
@@ -213,8 +213,8 @@ impl Selectable for Button {
     /// ```
     ///
     /// Use [`selected_style`](Button::selected_style) to change the style of the button when it is selected.
-    fn selected(mut self, selected: bool) -> Self {
-        self.base = self.base.selected(selected);
+    fn toggle_state(mut self, selected: bool) -> Self {
+        self.base = self.base.toggle_state(selected);
         self
     }
 }
@@ -405,7 +405,7 @@ impl RenderOnce for Button {
                     this.children(self.icon.map(|icon| {
                         ButtonIcon::new(icon)
                             .disabled(is_disabled)
-                            .selected(is_selected)
+                            .toggle_state(is_selected)
                             .selected_icon(self.selected_icon)
                             .selected_icon_color(self.selected_icon_color)
                             .size(self.icon_size)
@@ -429,7 +429,7 @@ impl RenderOnce for Button {
                     this.children(self.icon.map(|icon| {
                         ButtonIcon::new(icon)
                             .disabled(is_disabled)
-                            .selected(is_selected)
+                            .toggle_state(is_selected)
                             .selected_icon(self.selected_icon)
                             .selected_icon_color(self.selected_icon_color)
                             .size(self.icon_size)
@@ -500,7 +500,7 @@ impl ComponentPreview for Button {
                     ),
                     single_example(
                         "Selected",
-                        Button::new("selected", "Selected").selected(true),
+                        Button::new("selected", "Selected").toggle_state(true),
                     ),
                 ],
             ),

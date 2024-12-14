@@ -13,7 +13,7 @@ use task::{ResolvedTask, TaskContext, TaskTemplate};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
-    KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Selectable, Tooltip,
+    KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
     WindowContext,
 };
 use util::ResultExt;
@@ -379,7 +379,7 @@ impl PickerDelegate for TasksModalDelegate {
                     };
                     item
                 })
-                .selected(selected)
+                .toggle_state(selected)
                 .child(highlighted_location.render(cx)),
         )
     }

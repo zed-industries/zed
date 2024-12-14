@@ -1228,7 +1228,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .start_slot::<Icon>(file_icon)
                 .end_slot::<AnyElement>(history_icon)
                 .inset(true)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(
                     h_flex()
                         .gap_2()

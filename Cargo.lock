@@ -472,6 +472,8 @@ dependencies = [
  "fuzzy",
  "gpui",
  "handlebars 4.5.0",
+ "html_to_markdown",
+ "http_client",
  "indoc",
  "language",
  "language_model",
@@ -5030,6 +5032,7 @@ name = "fuzzy"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "log",
  "util",
 ]
 
@@ -13973,7 +13976,6 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
- "itertools 0.13.0",
  "log",
  "rand 0.8.5",
  "regex",
@@ -16424,6 +16426,7 @@ name = "zeta"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "call",
  "client",
  "clock",

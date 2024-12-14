@@ -267,7 +267,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .start_slot(
                     div().pr_0p5().child(
                         Icon::new(model_info.icon)

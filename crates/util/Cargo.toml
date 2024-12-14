@@ -24,7 +24,6 @@ futures-lite.workspace = true
 futures.workspace = true
 git2 = { workspace = true, optional = true }
 globset.workspace = true
-itertools.workspace = true
 log.workspace = true
 rand = { workspace = true, optional = true }
 regex.workspace = true

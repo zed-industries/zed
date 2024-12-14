@@ -18,7 +18,7 @@
       "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
       "cmd-shift-l": "editor::SplitSelectionIntoLines",
       "cmd-shift-a": "editor::SelectLargerSyntaxNode",
-      "cmd-shift-d": "editor::DuplicateLineDown",
+      "cmd-shift-d": "editor::DuplicateSelection",
       "ctrl-cmd-g": "editor::SelectAllMatches", // find_all_under
       "shift-f12": "editor::FindAllReferences",
       "alt-cmd-down": "editor::GoToDefinition",

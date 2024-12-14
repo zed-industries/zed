@@ -59,7 +59,7 @@ impl PickerDelegate for Delegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(Label::new(candidate)),
         )
     }
