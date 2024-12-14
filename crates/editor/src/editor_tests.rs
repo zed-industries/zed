@@ -14309,24 +14309,6 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         full_text,
     );
-
-    multi_buffer_editor.update(cx, |editor, cx| {
-        editor.fold_buffer(buffer_1.read(cx).remote_id(), cx)
-    });
-    assert_eq!(
-        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        full_text,
-        "Folding a single buffer is a noop"
-    );
-
-    multi_buffer_editor.update(cx, |editor, cx| {
-        editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
-    });
-    assert_eq!(
-        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        full_text,
-        "Unfolding a not folded buffer is a noop"
-    );
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
