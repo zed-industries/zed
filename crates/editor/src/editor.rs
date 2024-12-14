@@ -10666,17 +10666,37 @@ impl Editor {
         if self.buffer().read(cx).is_singleton() {
             return;
         }
+        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
+            return;
+        };
+        let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(&buffer, cx);
         self.display_map
-            .update(cx, |display_map, cx| display_map.fold_buffer(buffer_id, cx))
+            .update(cx, |display_map, cx| display_map.fold_buffer(buffer_id, cx));
+        cx.emit(EditorEvent::BufferFoldToggled {
+            ids: folded_excerpts.iter().map(|&(id, _)| id).collect(),
+            folded: true,
+        });
     }
 
     pub fn unfold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
         if self.buffer().read(cx).is_singleton() {
             return;
         }
+        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
+            return;
+        };
+        let unfolded_excerpts = self.buffer().read(cx).excerpts_for_buffer(&buffer, cx);
         self.display_map.update(cx, |display_map, cx| {
             display_map.unfold_buffer(buffer_id, cx);
-        })
+        });
+        cx.emit(EditorEvent::BufferFoldToggled {
+            ids: unfolded_excerpts.iter().map(|&(id, _)| id).collect(),
+            folded: false,
+        });
+    }
+
+    pub fn buffer_folded(&self, buffer: BufferId, cx: &AppContext) -> bool {
+        self.display_map.read(cx).buffer_folded(buffer)
     }
 
     /// Removes any folds with the given ranges.
@@ -13836,6 +13856,10 @@ pub enum EditorEvent {
     },
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
+    },
+    BufferFoldToggled {
+        ids: Vec<ExcerptId>,
+        folded: bool,
     },
     ExcerptsEdited {
         ids: Vec<ExcerptId>,

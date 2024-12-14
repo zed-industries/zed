@@ -41,7 +41,7 @@ pub struct BlockMap {
     buffer_header_height: u32,
     excerpt_header_height: u32,
     excerpt_footer_height: u32,
-    folded_buffers: HashSet<BufferId>,
+    pub(super) folded_buffers: HashSet<BufferId>,
 }
 
 pub struct BlockMapReader<'a> {

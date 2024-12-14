@@ -364,6 +364,10 @@ impl DisplayMap {
         block_map.unfold_buffer(buffer_id, self.buffer.read(cx), cx)
     }
 
+    pub(crate) fn buffer_folded(&self, buffer_id: language::BufferId) -> bool {
+        self.block_map.folded_buffers.contains(&buffer_id)
+    }
+
     pub fn insert_creases(
         &mut self,
         creases: impl IntoIterator<Item = Crease<Anchor>>,

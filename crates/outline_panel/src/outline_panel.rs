@@ -2919,6 +2919,9 @@ impl OutlinePanel {
         cx: &mut ViewContext<'_, Self>,
     ) -> Task<(Vec<CachedEntry>, Option<usize>)> {
         let project = self.project.clone();
+        let Some(active_editor) = self.active_editor() else {
+            return Task::ready((Vec::new(), None));
+        };
         cx.spawn(|outline_panel, mut cx| async move {
             let mut generation_state = GenerationState::default();
 
@@ -3149,6 +3152,7 @@ impl OutlinePanel {
                             if is_singleton || query.is_some() || (should_add && is_expanded) {
                                 outline_panel.add_search_entries(
                                     &mut generation_state,
+                                    &active_editor,
                                     entry.clone(),
                                     depth,
                                     query.clone(),
@@ -3173,16 +3177,18 @@ impl OutlinePanel {
                                     None
                                 };
                             if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
-                                outline_panel.add_excerpt_entries(
-                                    &mut generation_state,
-                                    buffer_id,
-                                    entry_excerpts,
-                                    depth,
-                                    track_matches,
-                                    is_singleton,
-                                    query.as_deref(),
-                                    cx,
-                                );
+                                if !active_editor.read(cx).buffer_folded(buffer_id, cx) {
+                                    outline_panel.add_excerpt_entries(
+                                        &mut generation_state,
+                                        buffer_id,
+                                        entry_excerpts,
+                                        depth,
+                                        track_matches,
+                                        is_singleton,
+                                        query.as_deref(),
+                                        cx,
+                                    );
+                                }
                             }
                         }
                     }
@@ -3536,15 +3542,13 @@ impl OutlinePanel {
     fn add_search_entries(
         &mut self,
         state: &mut GenerationState,
+        active_editor: &View<Editor>,
         parent_entry: FsEntry,
         parent_depth: usize,
         filter_query: Option<String>,
         is_singleton: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.active_editor().is_none() {
-            return;
-        };
         let ItemsDisplayMode::Search(search_state) = &mut self.mode else {
             return;
         };
@@ -3560,10 +3564,27 @@ impl OutlinePanel {
         .collect::<HashSet<_>>();
 
         let depth = if is_singleton { 0 } else { parent_depth + 1 };
-        let new_search_matches = search_state.matches.iter().filter(|(match_range, _)| {
-            related_excerpts.contains(&match_range.start.excerpt_id)
-                || related_excerpts.contains(&match_range.end.excerpt_id)
-        });
+        let new_search_matches = search_state
+            .matches
+            .iter()
+            .filter(|(match_range, _)| {
+                related_excerpts.contains(&match_range.start.excerpt_id)
+                    || related_excerpts.contains(&match_range.end.excerpt_id)
+            })
+            .filter(|(match_range, _)| {
+                let editor = active_editor.read(cx);
+                if let Some(buffer_id) = match_range.start.buffer_id {
+                    if editor.buffer_folded(buffer_id, cx) {
+                        return false;
+                    }
+                }
+                if let Some(buffer_id) = match_range.start.buffer_id {
+                    if editor.buffer_folded(buffer_id, cx) {
+                        return false;
+                    }
+                }
+                true
+            });
 
         let new_search_entries = new_search_matches
             .map(|(match_range, search_data)| SearchEntry {
@@ -4372,6 +4393,10 @@ fn subscribe_for_editor_events(
                 outline_panel.update_non_fs_items(cx);
             }
             EditorEvent::ExcerptsEdited { ids } => {
+                outline_panel.invalidate_outlines(ids);
+                outline_panel.update_non_fs_items(cx);
+            }
+            EditorEvent::BufferFoldToggled { ids, .. } => {
                 outline_panel.invalidate_outlines(ids);
                 outline_panel.update_non_fs_items(cx);
             }
