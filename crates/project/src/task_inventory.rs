@@ -427,7 +427,10 @@ mod test_inventory {
                 .into_iter()
                 .filter_map(|(source_kind, task)| {
                     let id_base = source_kind.to_id_base();
-                    Some((source_kind, task.resolve_task(&id_base, task_context)?))
+                    Some((
+                        source_kind,
+                        task.resolve_task(&id_base, Default::default(), task_context)?,
+                    ))
                 })
                 .map(|(source_kind, resolved_task)| (source_kind, resolved_task.resolved_label))
                 .collect()
