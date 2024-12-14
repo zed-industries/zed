@@ -93,7 +93,7 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::prelude::*;
-use util::{paths::SanitizedPath, ResultExt, TryFutureExt};
+use util::{paths::SanitizedPath, serde::default_true, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -174,10 +174,18 @@ pub struct ActivatePaneInDirection(pub SplitDirection);
 pub struct SwapPaneInDirection(pub SplitDirection);
 
 #[derive(Clone, Deserialize, PartialEq)]
-pub struct MoveItemToPane(pub usize);
+pub struct MoveItemToPane {
+    pub destination: usize,
+    #[serde(default = "default_true")]
+    pub focus_destination: bool,
+}
 
 #[derive(Clone, Deserialize, PartialEq)]
-pub struct MoveItemToPaneInDirection(pub SplitDirection);
+pub struct MoveItemToPaneInDirection {
+    pub direction: SplitDirection,
+    #[serde(default = "default_true")]
+    pub focus_destination: bool,
+}
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2840,10 +2848,16 @@ impl Workspace {
     fn move_item_to_pane_at_index(&mut self, action: &MoveItemToPane, cx: &mut ViewContext<Self>) {
         let panes = self.center.panes();
         let source_pane = self.active_pane.clone();
-        let Some(target_pane) = panes.get(action.0).map(|p| (*p).clone()) else {
+        let Some(target_pane) = panes.get(action.destination).map(|p| (*p).clone()) else {
             return;
         };
-        move_active_item(&source_pane, &target_pane, true, true, cx);
+        move_active_item(
+            &source_pane,
+            &target_pane,
+            action.focus_destination,
+            true,
+            cx,
+        );
     }
 
     pub fn activate_next_pane(&mut self, cx: &mut WindowContext) {
@@ -2966,12 +2980,12 @@ impl Workspace {
 
     pub fn move_item_to_pane_in_direction(
         &mut self,
-        direction: SplitDirection,
+        action: &MoveItemToPaneInDirection,
         cx: &mut WindowContext,
     ) {
-        if let Some(destination_pane) = self.find_pane_in_direction(direction, cx) {
-            let source_pane = self.active_pane.clone();
-            move_active_item(&source_pane, &destination_pane, true, true, cx);
+        if let Some(destination) = self.find_pane_in_direction(action.direction, cx) {
+            let source = self.active_pane.clone();
+            move_active_item(&source, &destination, action.focus_destination, true, cx);
         }
     }
 
@@ -4469,7 +4483,7 @@ impl Workspace {
             )
             .on_action(
                 cx.listener(|workspace, action: &MoveItemToPaneInDirection, cx| {
-                    workspace.move_item_to_pane_in_direction(action.0, cx)
+                    workspace.move_item_to_pane_in_direction(action, cx)
                 }),
             )
             .on_action(cx.listener(|workspace, action: &SwapPaneInDirection, cx| {
