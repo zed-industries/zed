@@ -591,6 +591,8 @@ impl GitPanel {
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let git_state = self.git_state.clone();
         let commit_message = git_state.read(cx).commit_message.clone();
+        let editor = self.editor.clone();
+        let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
 
         println!("{:?}", commit_message);
 
@@ -629,18 +631,26 @@ impl GitPanel {
 
         div().w_full().h(px(140.)).px_2().pt_1().pb_2().child(
             v_flex()
+                .id("commit-editor-container")
+                .relative()
                 .h_full()
                 .py_2p5()
                 .px_3()
                 .bg(cx.theme().colors().editor_background)
+                .on_click(cx.listener(move |_, _: &ClickEvent, cx| cx.focus(&editor_focus_handle)))
                 .child(self.editor.clone())
-                .child(h_flex().child(div().gap_1().flex_grow()).child(
-                    if self.current_modifiers.alt {
-                        commit_all_button
-                    } else {
-                        commit_staged_button
-                    },
-                )),
+                .child(
+                    h_flex()
+                        .absolute()
+                        .bottom_2p5()
+                        .right_3()
+                        .child(div().gap_1().flex_grow())
+                        .child(if self.current_modifiers.alt {
+                            commit_all_button
+                        } else {
+                            commit_staged_button
+                        }),
+                ),
         )
     }
 
