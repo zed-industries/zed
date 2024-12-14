@@ -9502,7 +9502,7 @@ impl Editor {
                         let location_tasks = definitions
                             .into_iter()
                             .map(|definition| match definition {
-                                HoverLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
+                                HoverLink::Text(link) => Task::ready(Ok(Some(link.target))),
                                 HoverLink::InlayHint(lsp_location, server_id) => {
                                     editor.compute_target_location(lsp_location, server_id, cx)
                                 }
@@ -9544,7 +9544,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<Option<Location>>> {
         let Some(project) = self.project.clone() else {
-            return Task::Ready(Some(Ok(None)));
+            return Task::ready(Ok(None));
         };
 
         cx.spawn(move |editor, mut cx| async move {

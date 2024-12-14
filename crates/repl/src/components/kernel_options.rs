@@ -98,7 +98,7 @@ impl PickerDelegate for KernelPickerDelegate {
 
         if query.is_empty() {
             self.filtered_kernels = all_kernels;
-            return Task::Ready(Some(()));
+            return Task::ready(());
         }
 
         self.filtered_kernels = if query.is_empty() {
@@ -110,7 +110,7 @@ impl PickerDelegate for KernelPickerDelegate {
                 .collect()
         };
 
-        return Task::Ready(Some(()));
+        return Task::ready(());
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
