@@ -516,7 +516,7 @@ fn string_match_candidates<'a>(
         .map(|(index, (_, candidate))| StringMatchCandidate {
             id: index,
             char_bag: candidate.resolved_label.chars().collect(),
-            string: candidate.display_label().to_owned(),
+            string: candidate.display_label().into(),
         })
         .collect()
 }

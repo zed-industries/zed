@@ -249,11 +249,7 @@ fn tab_items_for_queries(
                         .enumerate()
                         .filter_map(|(id, (full_path, ..))| {
                             let path_string = full_path.as_deref()?.to_string_lossy().to_string();
-                            Some(fuzzy::StringMatchCandidate {
-                                id,
-                                char_bag: path_string.as_str().into(),
-                                string: path_string,
-                            })
+                            Some(fuzzy::StringMatchCandidate::new(id, &path_string))
                         })
                         .collect::<Vec<_>>();
                     let mut processed_matches = HashSet::default();

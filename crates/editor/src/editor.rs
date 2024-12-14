@@ -13293,7 +13293,7 @@ fn snippet_completions(
                 snippet
                     .prefix
                     .iter()
-                    .map(move |prefix| StringMatchCandidate::new(ix, prefix.clone()))
+                    .map(move |prefix| StringMatchCandidate::new(ix, &prefix))
             })
             .collect::<Vec<StringMatchCandidate>>();
 

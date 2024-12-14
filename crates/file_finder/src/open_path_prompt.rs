@@ -131,7 +131,7 @@ impl PickerDelegate for OpenPathDelegate {
                                 .iter()
                                 .enumerate()
                                 .map(|(ix, path)| {
-                                    StringMatchCandidate::new(ix, path.to_string_lossy().into())
+                                    StringMatchCandidate::new(ix, &path.to_string_lossy())
                                 })
                                 .collect::<Vec<_>>();
 

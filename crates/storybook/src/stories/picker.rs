@@ -22,11 +22,7 @@ impl Delegate {
                 .iter()
                 .copied()
                 .enumerate()
-                .map(|(id, string)| StringMatchCandidate {
-                    id,
-                    char_bag: string.into(),
-                    string: string.into(),
-                })
+                .map(|(id, string)| StringMatchCandidate::new(id, string))
                 .collect(),
             matches: vec![],
             selected_ix: 0,
