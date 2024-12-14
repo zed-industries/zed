@@ -1,5 +1,5 @@
-use image::GenericImageView;
-use std::fs::metadata;
+pub mod image_info;
+
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -125,20 +125,8 @@ impl Item for ImageView {
     fn breadcrumbs(&self, _theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         let text = breadcrumbs_text_for_image(self.project.read(cx), self.image_item.read(cx), cx);
 
-        let img_info = image_info(self.image_item.read(cx), self.project.read(cx), cx)
-            .map(|(width, height, size)| {
-                format!(
-                    "{} | Dimension: {}x{} | Image size: {:.2} KB",
-                    text,
-                    width,
-                    height,
-                    size as f64 / 1024.0
-                )
-            })
-            .unwrap_or_else(|err| format!("{} | Image info is not available: {}", text, err));
-
         Some(vec![BreadcrumbText {
-            text: img_info,
+            text: text,
             highlights: None,
             font: None,
         }])
@@ -158,35 +146,6 @@ impl Item for ImageView {
             focus_handle: cx.focus_handle(),
         }))
     }
-}
-
-fn image_info(
-    image: &ImageItem,
-    project: &Project,
-    cx: &AppContext,
-) -> Result<(u32, u32, u64), String> {
-    let worktree = project
-        .worktree_for_id(image.project_path(cx).worktree_id, cx)
-        .ok_or_else(|| "Could not find worktree for image".to_string())?;
-    let worktree_root = worktree.read(cx).abs_path();
-
-    let path = if image.path().is_absolute() {
-        image.path().to_path_buf()
-    } else {
-        worktree_root.join(image.path())
-    };
-
-    if !path.exists() {
-        return Err(format!("File does not exist at path: {:?}", path));
-    }
-
-    let img = image::open(&path).map_err(|e| format!("Failed to open image: {}", e))?;
-    let dimensions = img.dimensions();
-
-    let file_metadata = metadata(&path).map_err(|e| format!("Cannot access image data: {}", e))?;
-    let file_size = file_metadata.len();
-
-    Ok((dimensions.0, dimensions.1, file_size))
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &AppContext) -> String {

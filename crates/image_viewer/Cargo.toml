@@ -22,5 +22,5 @@ settings.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
+image.workspace = true
 workspace.workspace = true
-image = "0.25.5"

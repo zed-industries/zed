@@ -4,11 +4,13 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
+use fs::Fs;
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
     hash, prelude::*, AppContext, EventEmitter, Img, Model, ModelContext, Subscription, Task,
     WeakModel,
 };
+use image::{ColorType, GenericImageView};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
 use std::ffi::OsStr;
@@ -52,9 +54,73 @@ pub struct ImageItem {
     pub file: Arc<dyn File>,
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub file_size: Option<u64>,
+    pub color_type: Option<&'static str>,
+}
+
+fn image_color_type_description(color_type: ColorType) -> &'static str {
+    match color_type {
+        ColorType::L8 => "Grayscale (8-bit)",
+        ColorType::La8 => "Grayscale with Alpha (8-bit)",
+        ColorType::Rgba8 => "PNG (32-bit color)",
+        ColorType::Rgb8 => "RGB (24-bit color)",
+        ColorType::Rgb16 => "RGB (48-bit color)",
+        ColorType::Rgba16 => "PNG (64-bit color)",
+        ColorType::L16 => "Grayscale (16-bit)",
+        ColorType::La16 => "Grayscale with Alpha (16-bit)",
+
+        _ => "unknown color type",
+    }
 }
 
 impl ImageItem {
+    async fn image_info<F: Fs>(
+        image: &ImageItem,
+        project: &Project,
+        cx: &AppContext,
+        fs: &F,
+    ) -> Result<(u32, u32, u64, &'static str), String> {
+        let worktree = project
+            .worktree_for_id(image.project_path(cx).worktree_id, cx)
+            .ok_or_else(|| "Could not find worktree for image".to_string())?;
+        let worktree_root = worktree.read(cx).abs_path();
+
+        let path = if image.path().is_absolute() {
+            image.path().to_path_buf()
+        } else {
+            worktree_root.join(image.path())
+        };
+
+        if !path.exists() {
+            return Err(format!("File does not exist at path: {:?}", path));
+        }
+
+        let img = image::open(&path).map_err(|e| format!("Failed to open image: {}", e))?;
+        let dimensions = img.dimensions();
+        let img_color_type = image_color_type_description(img.color());
+
+        let file_metadata = fs
+            .metadata(path.as_path())
+            .await
+            .map_err(|e| format!("Cannot access image data: {}", e))?
+            .ok_or_else(|| "No metadata found".to_string())?;
+
+        let file_size = file_metadata.len;
+
+        Ok((dimensions.0, dimensions.1, file_size, img_color_type))
+    }
+
+    pub async fn try_open<F: Fs>(
+        &self,
+        project: &Project,
+        cx: &AppContext,
+        fs: &F,
+    ) -> Result<(u32, u32, u64, &'static str), String> {
+        Self::image_info(self, project, cx, fs).await
+    }
+
     pub fn project_path(&self, cx: &AppContext) -> ProjectPath {
         ProjectPath {
             worktree_id: self.file.worktree_id(cx),
@@ -64,6 +130,30 @@ impl ImageItem {
 
     pub fn path(&self) -> &Arc<Path> {
         self.file.path()
+    }
+
+    pub async fn load_metadata<F: Fs>(
+        &mut self,
+        project: &Project,
+        cx: &AppContext,
+        fs: &F,
+    ) -> Result<(), String> {
+        println!("Loading metadata for image: {:?}", self.path());
+
+        match Self::try_open(self, project, cx, fs).await {
+            Ok(metadata) => {
+                self.width = Some(metadata.0);
+                self.height = Some(metadata.1);
+                self.file_size = Some(metadata.2);
+                self.color_type = Some(metadata.3);
+                println!("Metadata loaded: {:?}", metadata);
+                Ok(())
+            }
+            Err(err) => {
+                println!("Failed to load metadata: {}", err);
+                Err(err)
+            }
+        }
     }
 
     fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
@@ -388,6 +478,10 @@ impl ImageStoreImpl for Model<LocalImageStore> {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
+                width: None,
+                file_size: None,
+                height: None,
+                color_type: None,
                 reload_task: None,
             })?;
 
