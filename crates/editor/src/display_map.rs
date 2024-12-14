@@ -269,7 +269,7 @@ impl DisplayMap {
                     let start = buffer_snapshot.anchor_before(range.start);
                     let end = buffer_snapshot.anchor_after(range.end);
                     BlockProperties {
-                        placement: BlockPlacement::Replace(start..end),
+                        placement: BlockPlacement::Replace(start..=end),
                         render,
                         height,
                         style,
@@ -2259,7 +2259,7 @@ pub mod tests {
                 [BlockProperties {
                     placement: BlockPlacement::Replace(
                         buffer_snapshot.anchor_before(Point::new(1, 2))
-                            ..buffer_snapshot.anchor_after(Point::new(2, 3)),
+                            ..=buffer_snapshot.anchor_after(Point::new(2, 3)),
                     ),
                     height: 4,
                     style: BlockStyle::Fixed,

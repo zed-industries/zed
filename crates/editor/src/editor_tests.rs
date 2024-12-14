@@ -4064,7 +4064,7 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
         let snapshot = editor.snapshot(cx);
         let snapshot = &snapshot.buffer_snapshot;
         let placement = BlockPlacement::Replace(
-            snapshot.anchor_after(Point::new(1, 0))..snapshot.anchor_after(Point::new(3, 0)),
+            snapshot.anchor_after(Point::new(1, 0))..=snapshot.anchor_after(Point::new(3, 0)),
         );
         editor.insert_blocks(
             [BlockProperties {

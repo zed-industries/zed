@@ -15,7 +15,7 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
-    ops::{Deref, DerefMut, Range, RangeBounds},
+    ops::{Deref, DerefMut, Range, RangeBounds, RangeInclusive},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -85,7 +85,7 @@ pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext) -> AnyElement
 pub enum BlockPlacement<T> {
     Above(T),
     Below(T),
-    Replace(Range<T>),
+    Replace(RangeInclusive<T>),
 }
 
 impl<T> BlockPlacement<T> {
@@ -93,7 +93,7 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
-            BlockPlacement::Replace(range) => &range.start,
+            BlockPlacement::Replace(range) => range.start(),
         }
     }
 
@@ -101,7 +101,7 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
-            BlockPlacement::Replace(range) => &range.end,
+            BlockPlacement::Replace(range) => range.end(),
         }
     }
 
@@ -109,7 +109,7 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Above(position) => BlockPlacement::Above(position),
             BlockPlacement::Below(position) => BlockPlacement::Below(position),
-            BlockPlacement::Replace(range) => BlockPlacement::Replace(&range.start..&range.end),
+            BlockPlacement::Replace(range) => BlockPlacement::Replace(range.start()..=range.end()),
         }
     }
 
@@ -117,7 +117,10 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Above(position) => BlockPlacement::Above(f(position)),
             BlockPlacement::Below(position) => BlockPlacement::Below(f(position)),
-            BlockPlacement::Replace(range) => BlockPlacement::Replace(f(range.start)..f(range.end)),
+            BlockPlacement::Replace(range) => {
+                let (start, end) = range.into_inner();
+                BlockPlacement::Replace(f(start)..=f(end))
+            }
         }
     }
 }
@@ -136,21 +139,21 @@ impl BlockPlacement<Anchor> {
                 anchor_a.cmp(anchor_b, buffer).then(Ordering::Greater)
             }
             (BlockPlacement::Above(anchor), BlockPlacement::Replace(range)) => {
-                anchor.cmp(&range.start, buffer).then(Ordering::Less)
+                anchor.cmp(range.start(), buffer).then(Ordering::Less)
             }
             (BlockPlacement::Replace(range), BlockPlacement::Above(anchor)) => {
-                range.start.cmp(anchor, buffer).then(Ordering::Greater)
+                range.start().cmp(anchor, buffer).then(Ordering::Greater)
             }
             (BlockPlacement::Below(anchor), BlockPlacement::Replace(range)) => {
-                anchor.cmp(&range.start, buffer).then(Ordering::Greater)
+                anchor.cmp(range.start(), buffer).then(Ordering::Greater)
             }
             (BlockPlacement::Replace(range), BlockPlacement::Below(anchor)) => {
-                range.start.cmp(anchor, buffer).then(Ordering::Less)
+                range.start().cmp(anchor, buffer).then(Ordering::Less)
             }
             (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => range_a
-                .start
-                .cmp(&range_b.start, buffer)
-                .then_with(|| range_b.end.cmp(&range_a.end, buffer)),
+                .start()
+                .cmp(range_b.start(), buffer)
+                .then_with(|| range_b.end().cmp(range_a.end(), buffer)),
         }
     }
 
@@ -170,8 +173,8 @@ impl BlockPlacement<Anchor> {
                 Some(BlockPlacement::Below(wrap_row))
             }
             BlockPlacement::Replace(range) => {
-                let mut start = range.start.to_point(buffer_snapshot);
-                let mut end = range.end.to_point(buffer_snapshot);
+                let mut start = range.start().to_point(buffer_snapshot);
+                let mut end = range.end().to_point(buffer_snapshot);
                 if start == end {
                     None
                 } else {
@@ -181,7 +184,7 @@ impl BlockPlacement<Anchor> {
                     end.column = buffer_snapshot.line_len(MultiBufferRow(end.row));
                     let end_wrap_row =
                         WrapRow(wrap_snapshot.make_wrap_point(end, Bias::Left).row());
-                    Some(BlockPlacement::Replace(start_wrap_row..end_wrap_row))
+                    Some(BlockPlacement::Replace(start_wrap_row..=end_wrap_row))
                 }
             }
         }
@@ -672,8 +675,8 @@ impl BlockMap {
                         rows_before_block = (position.0 + 1) - new_transforms.summary().input_rows;
                     }
                     BlockPlacement::Replace(range) => {
-                        rows_before_block = range.start.0 - new_transforms.summary().input_rows;
-                        summary.input_rows = range.end.0 - range.start.0 + 1;
+                        rows_before_block = range.start().0 - new_transforms.summary().input_rows;
+                        summary.input_rows = range.end().0 - range.start().0 + 1;
                     }
                 }
 
@@ -792,7 +795,7 @@ impl BlockMap {
                     let wrap_end_row = wrap_snapshot.make_wrap_point(buffer_end, Bias::Right).row();
 
                     return Some((
-                        BlockPlacement::Replace(WrapRow(wrap_row)..WrapRow(wrap_end_row)),
+                        BlockPlacement::Replace(WrapRow(wrap_row)..=WrapRow(wrap_end_row)),
                         Block::FoldedBuffer {
                             prev_excerpt,
                             height: height + buffer_header_height,
@@ -847,21 +850,21 @@ impl BlockMap {
                     row_a.cmp(row_b).then(Ordering::Greater)
                 }
                 (BlockPlacement::Above(row), BlockPlacement::Replace(range)) => {
-                    row.cmp(&range.start).then(Ordering::Greater)
+                    row.cmp(range.start()).then(Ordering::Greater)
                 }
                 (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
-                    range.start.cmp(row).then(Ordering::Less)
+                    range.start().cmp(row).then(Ordering::Less)
                 }
                 (BlockPlacement::Below(row), BlockPlacement::Replace(range)) => {
-                    row.cmp(&range.start).then(Ordering::Greater)
+                    row.cmp(range.start()).then(Ordering::Greater)
                 }
                 (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
-                    range.start.cmp(row).then(Ordering::Less)
+                    range.start().cmp(row).then(Ordering::Less)
                 }
                 (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => range_a
-                    .start
-                    .cmp(&range_b.start)
-                    .then_with(|| range_b.end.cmp(&range_a.end))
+                    .start()
+                    .cmp(range_b.start())
+                    .then_with(|| range_b.end().cmp(range_a.end()))
                     .then_with(|| {
                         if block_a.is_header() {
                             Ordering::Less
@@ -911,14 +914,16 @@ impl BlockMap {
         });
         blocks.dedup_by(|right, left| match (left.0.clone(), right.0.clone()) {
             (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
-                range.start <= row && range.end >= row
+                *range.start() <= row && *range.end() >= row
             }
             (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
-                range.start <= row && range.end >= row
+                *range.start() <= row && *range.end() >= row
             }
             (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => {
-                if range_a.end >= range_b.start && range_a.start <= range_b.end {
-                    left.0 = BlockPlacement::Replace(range_a.start..range_a.end.max(range_b.end));
+                if range_a.end() >= range_b.start() && range_a.start() <= range_b.end() {
+                    left.0 = BlockPlacement::Replace(
+                        *range_a.start()..=*range_a.end().max(range_b.end()),
+                    );
                     true
                 } else {
                     false
@@ -2367,7 +2372,7 @@ mod tests {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Replace(
                 buffer_snapshot.anchor_after(Point::new(1, 3))
-                    ..buffer_snapshot.anchor_before(Point::new(3, 1)),
+                    ..=buffer_snapshot.anchor_before(Point::new(3, 1)),
             ),
             height: 4,
             render: Arc::new(|_| div().into_any()),
@@ -3016,7 +3021,7 @@ mod tests {
                                         rng.gen_range(offset..=buffer.len()),
                                         Bias::Left,
                                     ));
-                                    BlockPlacement::Replace(start..end)
+                                    BlockPlacement::Replace(start..=end)
                                 }
                                 1 => BlockPlacement::Above(buffer.anchor_after(offset)),
                                 _ => BlockPlacement::Below(buffer.anchor_after(offset)),
@@ -3276,10 +3281,10 @@ mod tests {
                 if let Some((BlockPlacement::Replace(replace_range), block)) =
                     sorted_blocks_iter.peek()
                 {
-                    if wrap_row >= replace_range.start.0 {
+                    if wrap_row >= replace_range.start().0 {
                         is_in_replace_block = true;
 
-                        if wrap_row == replace_range.start.0 {
+                        if wrap_row == replace_range.start().0 {
                             if matches!(block, Block::FoldedBuffer { .. }) {
                                 expected_buffer_rows.push(None);
                             } else {
@@ -3288,7 +3293,7 @@ mod tests {
                             }
                         }
 
-                        if wrap_row == replace_range.end.0 {
+                        if wrap_row == replace_range.end().0 {
                             expected_block_positions.push((block_row, block.id()));
                             let text = "\n".repeat((block.height() - 1) as usize);
                             if block_row > 0 {
