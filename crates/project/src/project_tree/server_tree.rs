@@ -6,11 +6,13 @@
 //! LSP Tree is transparent to RPC peers; when clients ask host to spawn a new language server, the host will perform LSP Tree lookup for provided path; it may decide
 //! to reuse existing language server. The client maintains it's own LSP Tree that is a subset of host LSP Tree. Done this way, the client does not need to
 //! ask about suitable language server for each path it interacts with; it can resolve most of the queries locally.
+//! This module defines a Project Tree.
 
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use collections::HashMap;
-use lsp_types::Url;
+use language::LanguageName;
+use lsp::Url;
 
 use crate::LanguageServerId;
 
@@ -22,8 +24,6 @@ enum Action {
     PinpointTo,
     ExtendWorkspaceFolders(LanguageServerId, Url),
 }
-
-pub type LanguageName = Arc<str>;
 
 pub type AbsWorkspaceRootPath = Arc<Path>;
 

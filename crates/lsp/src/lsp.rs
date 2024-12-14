@@ -1,5 +1,4 @@
 mod input_handler;
-mod server_tree;
 
 pub use lsp_types::request::*;
 pub use lsp_types::*;

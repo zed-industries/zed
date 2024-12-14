@@ -259,6 +259,13 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+    pub fn find_closest_project_root(
+        &self,
+        worktree_id: WorktreeId,
+        path: Arc<Path>,
+    ) -> Option<Arc<Path>> {
+        None
+    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
