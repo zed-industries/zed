@@ -14,7 +14,8 @@ actions!(
         UnstageAll,
         DiscardAll,
         CommitStagedChanges,
-        CommitAllChanges
+        CommitAllChanges,
+        ClearMessage
     ]
 );
 

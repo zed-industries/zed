@@ -1,4 +1,7 @@
+use anyhow::Context;
 use collections::HashMap;
+use editor::Editor;
+use language::Buffer;
 use std::{
     cell::OnceCell,
     collections::HashSet,
@@ -8,6 +11,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use theme::ThemeSettings;
 
 use git::repository::GitFileStatus;
 
@@ -85,6 +89,7 @@ pub struct GitPanel {
     show_scrollbar: bool,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     git_state: Model<GitState>,
+    editor: View<Editor>,
 
     // The entries that are currently shown in the panel, aka
     // not hidden by folding or such
@@ -110,12 +115,11 @@ impl GitPanel {
         let fs = workspace.app_state().fs.clone();
         let weak_workspace = workspace.weak_handle();
         let project = workspace.project().clone();
+        let language_registry = workspace.app_state().languages.clone();
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
-            // todo!(): Remove this!
-            git_state.update(cx, |state, _cx| {
-                state.set_message(Some("Test commit message!".to_string().into()))
-            });
+            let state = git_state.read(cx);
+            let current_commit_message = state.commit_message.clone();
 
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
@@ -139,6 +143,55 @@ impl GitPanel {
             })
             .detach();
 
+            let editor = cx.new_view(|cx| {
+                let theme = ThemeSettings::get_global(cx);
+
+                let mut text_style = cx.text_style();
+                let refinement = TextStyleRefinement {
+                    font_family: Some(theme.buffer_font.family.clone()),
+                    font_features: Some(FontFeatures::disable_ligatures()),
+                    font_size: Some(px(12.).into()),
+                    color: Some(cx.theme().colors().editor_foreground),
+                    background_color: Some(gpui::transparent_black()),
+                    ..Default::default()
+                };
+
+                text_style.refine(&refinement);
+
+                let mut editor = Editor::auto_height(10, cx);
+                if let Some(message) = current_commit_message {
+                    editor.set_text(message, cx);
+                } else {
+                    editor.set_text("", cx);
+                }
+                // editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                editor.set_use_autoclose(false);
+                editor.set_show_gutter(false, cx);
+                editor.set_show_wrap_guides(false, cx);
+                editor.set_show_indent_guides(false, cx);
+                editor.set_text_style_refinement(refinement);
+                editor.set_placeholder_text("Enter commit message", cx);
+                editor
+            });
+
+            let buffer = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("commit editor must be singleton");
+
+            cx.subscribe(&buffer, Self::on_buffer_event).detach();
+
+            let markdown = language_registry.language_for_name("Markdown");
+            cx.spawn(|_, mut cx| async move {
+                let markdown = markdown.await.context("failed to load Markdown language")?;
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.set_language(Some(markdown), cx)
+                })
+            })
+            .detach_and_log_err(cx);
+
             let scroll_handle = UniformListScrollHandle::new();
 
             let mut this = Self {
@@ -151,6 +204,7 @@ impl GitPanel {
                 current_modifiers: cx.modifiers(),
                 expanded_dir_ids: Default::default(),
                 git_state,
+                editor,
 
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
@@ -278,14 +332,24 @@ impl GitPanel {
         println!("Discard all triggered");
     }
 
+    fn clear_message(&mut self, cx: &mut ViewContext<Self>) {
+        let git_state = self.git_state.clone();
+        git_state.update(cx, |state, _cx| state.clear_message());
+        self.editor.update(cx, |editor, cx| editor.set_text("", cx));
+    }
+
     /// Commit all staged changes
-    fn commit_staged_changes(&mut self, _: &CommitStagedChanges, _cx: &mut ViewContext<Self>) {
+    fn commit_staged_changes(&mut self, _: &CommitStagedChanges, cx: &mut ViewContext<Self>) {
+        self.clear_message(cx);
+
         // todo!(): Implement commit all staged
         println!("Commit staged changes triggered");
     }
 
     /// Commit all changes, regardless of whether they are staged or not
-    fn commit_all_changes(&mut self, _: &CommitAllChanges, _cx: &mut ViewContext<Self>) {
+    fn commit_all_changes(&mut self, _: &CommitAllChanges, cx: &mut ViewContext<Self>) {
+        self.clear_message(cx);
+
         // todo!(): Implement commit all changes
         println!("Commit all changes triggered");
     }
@@ -435,6 +499,23 @@ impl GitPanel {
 
         cx.notify();
     }
+
+    fn on_buffer_event(
+        &mut self,
+        _buffer: Model<Buffer>,
+        event: &language::BufferEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
+            let commit_message = self.editor.update(cx, |editor, cx| editor.text(cx));
+
+            self.git_state.update(cx, |state, _cx| {
+                state.commit_message = Some(commit_message.into());
+            });
+
+            cx.notify();
+        }
+    }
 }
 
 impl GitPanel {
@@ -510,6 +591,9 @@ impl GitPanel {
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let git_state = self.git_state.clone();
         let commit_message = git_state.read(cx).commit_message.clone();
+
+        println!("{:?}", commit_message);
+
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();
 
@@ -549,22 +633,14 @@ impl GitPanel {
                 .py_2p5()
                 .px_3()
                 .bg(cx.theme().colors().editor_background)
-                .font_buffer(cx)
-                .text_ui_sm(cx)
-                .text_color(cx.theme().colors().text_muted)
-                .when_some(commit_message.clone(), |this, message| this.child(message))
-                .when(commit_message.is_none(), |this| this.child("Add a message"))
-                .gap_1()
-                .child(div().flex_grow())
+                .child(self.editor.clone())
                 .child(h_flex().child(div().gap_1().flex_grow()).child(
                     if self.current_modifiers.alt {
                         commit_all_button
                     } else {
                         commit_staged_button
                     },
-                ))
-                .cursor(CursorStyle::OperationNotAllowed)
-                .opacity(0.5),
+                )),
         )
     }
 
