@@ -1946,7 +1946,7 @@ impl LocalLspStore {
             None => return,
         };
         if let Ok(file_url) = lsp::Url::from_file_path(old_path) {
-        self.unregister_buffer_from_language_servers(buffer, file_url, cx);
+            self.unregister_buffer_from_language_servers(buffer, file_url, cx);
         }
     }
 
@@ -4921,96 +4921,96 @@ impl LspStore {
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);
         if let Ok(uri) = lsp::Url::from_file_path(abs_path) {
-        let next_snapshot = buffer.text_snapshot();
+            let next_snapshot = buffer.text_snapshot();
 
-        let language_servers: Vec<_> = self
-            .as_local()
-            .unwrap()
-            .language_servers_for_buffer(buffer, cx)
-            .map(|i| i.1.clone())
-            .collect();
-
-        for language_server in language_servers {
-            let language_server = language_server.clone();
-
-            let buffer_snapshots = self
-                .as_local_mut()
+            let language_servers: Vec<_> = self
+                .as_local()
                 .unwrap()
-                .buffer_snapshots
-                .get_mut(&buffer.remote_id())
-                .and_then(|m| m.get_mut(&language_server.server_id()))?;
-            let previous_snapshot = buffer_snapshots.last()?;
+                .language_servers_for_buffer(buffer, cx)
+                .map(|i| i.1.clone())
+                .collect();
 
-            let build_incremental_change = || {
-                buffer
-                    .edits_since::<(PointUtf16, usize)>(previous_snapshot.snapshot.version())
-                    .map(|edit| {
-                        let edit_start = edit.new.start.0;
-                        let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
-                        let new_text = next_snapshot
-                            .text_for_range(edit.new.start.1..edit.new.end.1)
-                            .collect();
-                        lsp::TextDocumentContentChangeEvent {
-                            range: Some(lsp::Range::new(
-                                point_to_lsp(edit_start),
-                                point_to_lsp(edit_end),
-                            )),
+            for language_server in language_servers {
+                let language_server = language_server.clone();
+
+                let buffer_snapshots = self
+                    .as_local_mut()
+                    .unwrap()
+                    .buffer_snapshots
+                    .get_mut(&buffer.remote_id())
+                    .and_then(|m| m.get_mut(&language_server.server_id()))?;
+                let previous_snapshot = buffer_snapshots.last()?;
+
+                let build_incremental_change = || {
+                    buffer
+                        .edits_since::<(PointUtf16, usize)>(previous_snapshot.snapshot.version())
+                        .map(|edit| {
+                            let edit_start = edit.new.start.0;
+                            let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
+                            let new_text = next_snapshot
+                                .text_for_range(edit.new.start.1..edit.new.end.1)
+                                .collect();
+                            lsp::TextDocumentContentChangeEvent {
+                                range: Some(lsp::Range::new(
+                                    point_to_lsp(edit_start),
+                                    point_to_lsp(edit_end),
+                                )),
+                                range_length: None,
+                                text: new_text,
+                            }
+                        })
+                        .collect()
+                };
+
+                let document_sync_kind = language_server
+                    .capabilities()
+                    .text_document_sync
+                    .as_ref()
+                    .and_then(|sync| match sync {
+                        lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
+                        lsp::TextDocumentSyncCapability::Options(options) => options.change,
+                    });
+
+                let content_changes: Vec<_> = match document_sync_kind {
+                    Some(lsp::TextDocumentSyncKind::FULL) => {
+                        vec![lsp::TextDocumentContentChangeEvent {
+                            range: None,
                             range_length: None,
-                            text: new_text,
+                            text: next_snapshot.text(),
+                        }]
+                    }
+                    Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
+                    _ => {
+                        #[cfg(any(test, feature = "test-support"))]
+                        {
+                            build_incremental_change()
                         }
-                    })
-                    .collect()
-            };
 
-            let document_sync_kind = language_server
-                .capabilities()
-                .text_document_sync
-                .as_ref()
-                .and_then(|sync| match sync {
-                    lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
-                    lsp::TextDocumentSyncCapability::Options(options) => options.change,
+                        #[cfg(not(any(test, feature = "test-support")))]
+                        {
+                            continue;
+                        }
+                    }
+                };
+
+                let next_version = previous_snapshot.version + 1;
+                buffer_snapshots.push(LspBufferSnapshot {
+                    version: next_version,
+                    snapshot: next_snapshot.clone(),
                 });
 
-            let content_changes: Vec<_> = match document_sync_kind {
-                Some(lsp::TextDocumentSyncKind::FULL) => {
-                    vec![lsp::TextDocumentContentChangeEvent {
-                        range: None,
-                        range_length: None,
-                        text: next_snapshot.text(),
-                    }]
-                }
-                Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
-                _ => {
-                    #[cfg(any(test, feature = "test-support"))]
-                    {
-                        build_incremental_change()
-                    }
-
-                    #[cfg(not(any(test, feature = "test-support")))]
-                    {
-                        continue;
-                    }
-                }
-            };
-
-            let next_version = previous_snapshot.version + 1;
-            buffer_snapshots.push(LspBufferSnapshot {
-                version: next_version,
-                snapshot: next_snapshot.clone(),
-            });
-
-            language_server
-                .notify::<lsp::notification::DidChangeTextDocument>(
-                    lsp::DidChangeTextDocumentParams {
-                        text_document: lsp::VersionedTextDocumentIdentifier::new(
-                            uri.clone(),
-                            next_version,
-                        ),
-                        content_changes,
-                    },
-                )
-                .log_err();
-        }
+                language_server
+                    .notify::<lsp::notification::DidChangeTextDocument>(
+                        lsp::DidChangeTextDocumentParams {
+                            text_document: lsp::VersionedTextDocumentIdentifier::new(
+                                uri.clone(),
+                                next_version,
+                            ),
+                            content_changes,
+                        },
+                    )
+                    .log_err();
+            }
         }
 
         None
