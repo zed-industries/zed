@@ -47,6 +47,7 @@ use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::ActiveTheme;
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
+use vim::vim_settings::{ModeIndicatorLocation, VimSettings};
 use vim_mode_setting::VimModeSetting;
 use welcome::{BaseKeymap, MultibufferHint};
 use workspace::notifications::NotificationId;
@@ -185,9 +186,22 @@ pub fn initialize_workspace(
             status_bar.add_right_item(inline_completion_button, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(active_toolchain_language, cx);
-            status_bar.add_right_item(vim_mode_indicator, cx);
+            match VimSettings::get_global(cx).mode_indicator.location {
+                Some(ModeIndicatorLocation::Left) => status_bar.add_left_item(vim_mode_indicator, cx),
+                Some(ModeIndicatorLocation::Right) | None => status_bar.add_right_item(vim_mode_indicator, cx),
+            }
             status_bar.add_right_item(cursor_position, cx);
         });
+
+        let mut current_location = VimSettings::get_global(cx).mode_indicator.location;
+        cx.observe_global::<SettingsStore>(move |workspace, cx| {
+            let new_location = VimSettings::get_global(cx).mode_indicator.location;
+            if current_location != new_location {
+                current_location = new_location;
+                update_vim_mode_indicator_position(workspace, new_location, cx);
+            }
+        })
+        .detach();
 
         auto_update_ui::notify_of_any_new_update(cx);
 
@@ -210,6 +224,33 @@ pub fn initialize_workspace(
     .detach();
 
     feature_gate_zed_pro_actions(cx);
+}
+
+fn update_vim_mode_indicator_position(
+    workspace: &mut Workspace,
+    new_location: Option<ModeIndicatorLocation>,
+    cx: &mut ViewContext<Workspace>,
+) {
+    if let Some(mode_indicator_position) = workspace
+        .status_bar()
+        .read(cx)
+        .position_of_item::<vim::ModeIndicator>()
+    {
+        workspace.status_bar().update(cx, |status_bar, cx| {
+            if let Some(vim_mode_indicator) = status_bar.item_of_type::<vim::ModeIndicator>() {
+                status_bar.remove_item_at(mode_indicator_position, cx);
+                match new_location {
+                    Some(ModeIndicatorLocation::Left) => {
+                        status_bar.add_left_item(vim_mode_indicator, cx)
+                    }
+                    Some(ModeIndicatorLocation::Right) | None => {
+                        status_bar.add_right_item(vim_mode_indicator, cx)
+                    }
+                }
+            }
+        });
+        cx.notify();
+    }
 }
 
 fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
@@ -3504,6 +3545,113 @@ mod tests {
         cx.run_until_parked();
     }
 
+    #[gpui::test]
+    async fn test_vim_mode_indicator_location_setting(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file": "contents",
+                    },
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.languages().add(markdown_language())
+        });
+        let workspace = cx.add_window(|cx| Workspace::test_new(project, cx));
+
+        let entries = cx.update(|cx| workspace.root(cx).unwrap().file_project_paths(cx));
+        let file = entries[0].clone();
+
+        let pane = workspace
+            .read_with(cx, |workspace, _| workspace.active_pane().clone())
+            .unwrap();
+
+        workspace
+            .update(cx, |w, cx| w.open_path(file.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap();
+
+        workspace
+            .update(cx, |_, cx| {
+                pane.update(cx, |pane, cx| {
+                    let editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+                    assert_eq!(editor.project_path(cx), Some(file.clone()));
+                    let buffer = editor.update(cx, |editor, cx| {
+                        editor.insert("dirt", cx);
+                        editor.buffer().downgrade()
+                    });
+                    (editor.downgrade(), buffer)
+                })
+            })
+            .unwrap();
+
+        let right_position = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .unwrap()
+                .status_bar()
+                .read(cx)
+                .position_of_item::<vim::ModeIndicator>()
+        });
+        assert!(right_position.is_some());
+        println!("right_position: {}", right_position.unwrap());
+
+        // move the indicator to the left
+        workspace
+            .update(cx, |workspace, cx| {
+                update_vim_mode_indicator_position(
+                    workspace,
+                    Some(ModeIndicatorLocation::Left),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        let left_position = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .unwrap()
+                .status_bar()
+                .read(cx)
+                .position_of_item::<vim::ModeIndicator>()
+        });
+        assert!(left_position.is_some());
+        println!("left_position: {}", left_position.unwrap());
+
+        assert!(left_position.unwrap() < right_position.unwrap());
+
+        // move the indicator back to the right
+        workspace
+            .update(cx, |workspace, cx| {
+                update_vim_mode_indicator_position(
+                    workspace,
+                    Some(ModeIndicatorLocation::Right),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        let back_to_right_position = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .unwrap()
+                .status_bar()
+                .read(cx)
+                .position_of_item::<vim::ModeIndicator>()
+        });
+        assert!(back_to_right_position.is_some());
+
+        assert!(back_to_right_position.unwrap() > left_position.unwrap());
+    }
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         init_test_with_state(cx, cx.update(AppState::test))
     }
@@ -3528,6 +3676,7 @@ mod tests {
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
+            VimSettings::register(cx);
             release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
             language::init(cx);

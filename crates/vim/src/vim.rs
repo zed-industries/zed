@@ -17,9 +17,9 @@ mod replace;
 mod rewrap;
 mod state;
 mod surrounds;
+pub mod vim_settings;
 mod visual;
 
-use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
@@ -34,16 +34,15 @@ use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::search::SearchSubmit;
-use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_derive::Serialize;
-use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{px, IntoElement, VisualContext};
 use vim_mode_setting::VimModeSetting;
+use vim_settings::VimSettings;
 use workspace::{self, Pane, ResizeIntent, Workspace};
 
 use crate::state::ReplayableAction;
@@ -1202,47 +1201,5 @@ impl Vim {
             ));
         });
         cx.notify()
-    }
-}
-
-/// Controls when to use system clipboard.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum UseSystemClipboard {
-    /// Don't use system clipboard.
-    Never,
-    /// Use system clipboard.
-    Always,
-    /// Use system clipboard for yank operations.
-    OnYank,
-}
-
-#[derive(Deserialize)]
-struct VimSettings {
-    pub toggle_relative_line_numbers: bool,
-    pub use_system_clipboard: UseSystemClipboard,
-    pub use_multiline_find: bool,
-    pub use_smartcase_find: bool,
-    pub custom_digraphs: HashMap<String, Arc<str>>,
-    pub highlight_on_yank_duration: u64,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-struct VimSettingsContent {
-    pub toggle_relative_line_numbers: Option<bool>,
-    pub use_system_clipboard: Option<UseSystemClipboard>,
-    pub use_multiline_find: Option<bool>,
-    pub use_smartcase_find: Option<bool>,
-    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
-    pub highlight_on_yank_duration: Option<u64>,
-}
-
-impl Settings for VimSettings {
-    const KEY: Option<&'static str> = Some("vim");
-
-    type FileContent = VimSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        sources.json_merge()
     }
 }
