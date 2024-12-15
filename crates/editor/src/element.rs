@@ -1713,6 +1713,15 @@ impl EditorElement {
                     }
                     let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
                     let multibuffer_row = MultiBufferRow(multibuffer_point.row);
+                    let buffer_folded = snapshot
+                        .buffer_snapshot
+                        .buffer_line_for_row(multibuffer_row)
+                        .map(|(buffer_snapshot, _)| buffer_snapshot.remote_id())
+                        .map(|buffer_id| editor.buffer_folded(buffer_id, cx))
+                        .unwrap_or(false);
+                    if buffer_folded {
+                        return None;
+                    }
 
                     if snapshot.is_line_folded(multibuffer_row) {
                         // Skip folded indicators, unless it's the starting line of a fold.
@@ -5834,29 +5843,33 @@ impl Element for EditorElement {
                                 if !expanded_add_hunks_by_rows
                                     .contains_key(&newest_selection_display_row)
                                 {
-                                    let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
-                                        MultiBufferRow(newest_selection_point.row),
-                                    );
-                                    if let Some((buffer, range)) = buffer {
-                                        let buffer_id = buffer.remote_id();
-                                        let row = range.start.row;
-                                        let has_test_indicator = self
-                                            .editor
-                                            .read(cx)
-                                            .tasks
-                                            .contains_key(&(buffer_id, row));
+                                    if !snapshot
+                                        .is_line_folded(MultiBufferRow(newest_selection_point.row))
+                                    {
+                                        let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
+                                            MultiBufferRow(newest_selection_point.row),
+                                        );
+                                        if let Some((buffer, range)) = buffer {
+                                            let buffer_id = buffer.remote_id();
+                                            let row = range.start.row;
+                                            let has_test_indicator = self
+                                                .editor
+                                                .read(cx)
+                                                .tasks
+                                                .contains_key(&(buffer_id, row));
 
-                                        if !has_test_indicator {
-                                            code_actions_indicator = self
-                                                .layout_code_actions_indicator(
-                                                    line_height,
-                                                    newest_selection_head,
-                                                    scroll_pixel_position,
-                                                    &gutter_dimensions,
-                                                    &gutter_hitbox,
-                                                    &rows_with_hunk_bounds,
-                                                    cx,
-                                                );
+                                            if !has_test_indicator {
+                                                code_actions_indicator = self
+                                                    .layout_code_actions_indicator(
+                                                        line_height,
+                                                        newest_selection_head,
+                                                        scroll_pixel_position,
+                                                        &gutter_dimensions,
+                                                        &gutter_hitbox,
+                                                        &rows_with_hunk_bounds,
+                                                        cx,
+                                                    );
+                                            }
                                         }
                                     }
                                 }
