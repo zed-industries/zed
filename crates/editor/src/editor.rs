@@ -6738,33 +6738,24 @@ impl Editor {
         let buffer = self.buffer.read(cx).read(cx);
         let mut query = String::new();
 
-        let mut clipboard_selections = Vec::with_capacity(selections.len());
-        {
-            let max_point = buffer.max_point();
-            let mut is_first = true;
-            for selection in selections.iter() {
-                let mut start = selection.start;
-                let mut end = selection.end;
-                let is_entire_line = selection.is_empty() || self.selections.line_mode;
-                if is_entire_line {
-                    start = Point::new(start.row, 0);
-                    end = cmp::min(max_point, Point::new(end.row + 1, 0));
-                }
-                if is_first {
-                    is_first = false;
-                } else {
-                    query += "\n";
-                }
-                let mut len = 0;
-                for chunk in buffer.text_for_range(start..end) {
-                    query.push_str(chunk);
-                    len += chunk.len();
-                }
-                clipboard_selections.push(ClipboardSelection {
-                    len,
-                    is_entire_line,
-                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
-                });
+        let max_point = buffer.max_point();
+        let mut is_first = true;
+        for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);
+                end = cmp::min(max_point, Point::new(end.row + 1, 0));
+            }
+            if is_first {
+                is_first = false;
+            } else {
+                query += "\n";
+            }
+
+            for chunk in buffer.text_for_range(start..end) {
+                query.push_str(chunk);
             }
         }
 
