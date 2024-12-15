@@ -1329,7 +1329,7 @@ impl OutlinePanel {
         };
 
         let mut buffers_to_fold = HashSet::default();
-        let folded = match &selected_entry {
+        let collapsed = match &selected_entry {
             PanelEntry::Fs(FsEntry::Directory(worktree_id, selected_dir_entry)) => {
                 if self
                     .collapsed_entries
@@ -1381,10 +1381,10 @@ impl OutlinePanel {
             PanelEntry::Outline(OutlineEntry::Excerpt(buffer_id, excerpt_id, _)) => self
                 .collapsed_entries
                 .insert(CollapsedEntry::Excerpt(*buffer_id, *excerpt_id)),
-            PanelEntry::Search(_) | PanelEntry::Outline(..) => return,
+            PanelEntry::Search(_) | PanelEntry::Outline(..) => false,
         };
 
-        if folded {
+        if collapsed {
             active_editor.update(cx, |editor, cx| {
                 buffers_to_fold.retain(|buffer_id| !editor.buffer_folded(*buffer_id, cx));
             });
@@ -1394,6 +1394,8 @@ impl OutlinePanel {
             } else {
                 self.toggle_buffers_fold(buffers_to_fold, true, cx).detach();
             }
+        } else {
+            self.select_parent(&SelectParent, cx);
         }
     }
 
