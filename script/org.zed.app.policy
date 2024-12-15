@@ -3,7 +3,7 @@
  "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <policyconfig>
-  <action id="org.zed.pkexec">
+  <action id="org.zed.app">
     <description>Run Zed with elevated privileges</description>
     <message>Zed needs temporary elevated access to make changes. Please enter your password.</message>
     <defaults>
@@ -11,6 +11,6 @@
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/bin/bash</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/zed/elevate.sh</annotate>
   </action>
 </policyconfig>

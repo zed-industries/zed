@@ -53,9 +53,6 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-const ELEVATION_SUCCESS_MARKER: &str = "SUDOPROMPT\n";
-
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
     fn remove(&self, path: &Path) -> Result<()>;
@@ -562,10 +559,7 @@ impl Fs for RealFs {
                         path.to_str().unwrap()
                     );
 
-                    execute_elevated_command(
-                        &command,
-                        "Zed requires sudo access to save your changes. Please enter your password.",
-                    ).await
+                    execute_elevated_command(&command).await
                 } else {
                     // Todo: Implement for Mac and Windows
                     Err(e.into())
@@ -2043,39 +2037,32 @@ fn create_temp_file(path: &Path) -> Result<NamedTempFile> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-async fn execute_elevated_command(command: &str, prompt_message: &str) -> Result<()> {
-    let paths = ["/usr/bin/kdesudo", "/usr/bin/pkexec"];
+async fn execute_elevated_command(command: &str) -> Result<()> {
+    let pkexec_path = Path::new("/usr/bin/pkexec");
+    let script_path = PathBuf::from("/usr/libexec/zed/elevate.sh");
 
-    let binary = paths
-        .iter()
-        .find(|path| Path::new(path).exists())
-        .ok_or_else(|| anyhow::anyhow!("Unable to find pkexec or kdesudo"))?;
-
-    let mut cmd = Command::new(binary);
-
-    if binary.contains("kdesudo") {
-        cmd.args(["--comment", prompt_message, "-d", "--"]);
-    } else if binary.contains("pkexec") {
-        // PolicyKit will automatically find our policy file in /usr/share/polkit-1/actions/
-        // and use its message to prompt for elevated access. This policy file is copied there
-        // by the install script.
-        //
-        // If not found, PolicyKit will use the default message.
-        cmd.env("PKEXEC_ACTION", "org.zed.pkexec");
-        cmd.arg("--disable-internal-agent");
+    if !pkexec_path.exists() {
+        return Err(anyhow::anyhow!(
+            "pkexec not found at {}",
+            pkexec_path.display()
+        ));
     }
 
-    cmd.arg("/bin/bash").arg("-c").arg(format!(
-        "echo '{}'; {}",
-        ELEVATION_SUCCESS_MARKER.trim(),
-        command
-    ));
+    if !script_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Elevation script not found at {}",
+            script_path.display()
+        ));
+    }
+
+    let mut cmd = Command::new(pkexec_path);
+    cmd.arg("--disable-internal-agent")
+        .arg(&script_path)
+        .arg(command);
 
     let output = cmd.output().await?;
     if output.status.success() {
-        if String::from_utf8_lossy(&output.stdout).starts_with(ELEVATION_SUCCESS_MARKER) {
-            return Ok(());
-        }
+        return Ok(());
     }
 
     Err(anyhow::anyhow!("Failed to run as elevated user"))
