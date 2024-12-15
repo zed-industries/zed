@@ -678,6 +678,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
 }
 
@@ -1325,6 +1326,7 @@ impl Editor {
             addons: HashMap::default(),
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
+            toggle_fold_multiple_buffers: Task::ready(()),
             text_style_refinement: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
@@ -10487,22 +10489,30 @@ impl Editor {
     }
 
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
-        if !self.buffer.read(cx).is_singleton() {
-            return;
-        }
+        if self.buffer.read(cx).is_singleton() {
+            let mut fold_ranges = Vec::new();
+            let snapshot = self.buffer.read(cx).snapshot(cx);
 
-        let mut fold_ranges = Vec::new();
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-
-        for row in 0..snapshot.max_row().0 {
-            if let Some(foldable_range) =
-                self.snapshot(cx).crease_for_buffer_row(MultiBufferRow(row))
-            {
-                fold_ranges.push(foldable_range);
+            for row in 0..snapshot.max_row().0 {
+                if let Some(foldable_range) =
+                    self.snapshot(cx).crease_for_buffer_row(MultiBufferRow(row))
+                {
+                    fold_ranges.push(foldable_range);
+                }
             }
-        }
 
-        self.fold_creases(fold_ranges, true, cx);
+            self.fold_creases(fold_ranges, true, cx);
+        } else {
+            self.toggle_fold_multiple_buffers = cx.spawn(|editor, mut cx| async move {
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
+                            editor.fold_buffer(buffer_id, cx);
+                        }
+                    })
+                    .ok();
+            });
+        }
     }
 
     pub fn fold_function_bodies(
@@ -10652,8 +10662,20 @@ impl Editor {
     }
 
     pub fn unfold_all(&mut self, _: &actions::UnfoldAll, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.unfold_ranges(&[0..display_map.buffer_snapshot.len()], true, true, cx);
+        if self.buffer.read(cx).is_singleton() {
+            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            self.unfold_ranges(&[0..display_map.buffer_snapshot.len()], true, true, cx);
+        } else {
+            self.toggle_fold_multiple_buffers = cx.spawn(|editor, mut cx| async move {
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
+                            editor.unfold_buffer(buffer_id, cx);
+                        }
+                    })
+                    .ok();
+            });
+        }
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
