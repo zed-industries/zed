@@ -1945,8 +1945,9 @@ impl LocalLspStore {
             Some(local) => local.abs_path(cx),
             None => return,
         };
-        let file_url = lsp::Url::from_file_path(old_path).unwrap();
+        if let Ok(file_url) = lsp::Url::from_file_path(old_path) {
         self.unregister_buffer_from_language_servers(buffer, file_url, cx);
+        }
     }
 
     pub(crate) fn unregister_buffer_from_language_servers(
@@ -4919,7 +4920,7 @@ impl LspStore {
         let buffer = buffer.read(cx);
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);
-        let uri = lsp::Url::from_file_path(abs_path).unwrap();
+        if let Ok(uri) = lsp::Url::from_file_path(abs_path) {
         let next_snapshot = buffer.text_snapshot();
 
         let language_servers: Vec<_> = self
@@ -5009,6 +5010,7 @@ impl LspStore {
                     },
                 )
                 .log_err();
+        }
         }
 
         None
