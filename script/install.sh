@@ -126,6 +126,18 @@ linux() {
     cp "$HOME/.local/zed$suffix.app/share/applications/zed$suffix.desktop" "${desktop_file_path}"
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
     sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
+
+    # Copy PolicyKit if pkexec is available
+    if command -v pkexec >/dev/null 2>&1; then
+        echo "Zed requires sudo access to setup polkit policy file to improve system file handling."
+        if sudo mkdir -p "/usr/share/polkit-1/actions" && \
+            sudo cp "$HOME/.local/zed${suffix}.app/share/polkit-1/actions/org.zed.pkexec.policy" "/usr/share/polkit-1/actions/" && \
+            sudo chmod 644 "/usr/share/polkit-1/actions/org.zed.pkexec.policy"; then
+            echo "Successfully set up policy file"
+        else
+            echo "Failed to set up policy file"
+        fi
+    fi
 }
 
 macos() {

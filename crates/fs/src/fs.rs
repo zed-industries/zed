@@ -10,6 +10,8 @@ use git::GitHostingProviderRegistry;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use smol::process::Command;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::fs::File;
 #[cfg(unix)]
 use std::os::fd::AsFd;
@@ -50,6 +52,9 @@ use parking_lot::Mutex;
 use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+const ELEVATION_SUCCESS_MARKER: &str = "SUDOPROMPT\n";
 
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
@@ -514,24 +519,7 @@ impl Fs for RealFs {
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                // Use the directory of the destination as temp dir to avoid
-                // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-                // See https://github.com/zed-industries/zed/pull/8437 for more details.
-                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            } else if cfg!(target_os = "windows") {
-                // If temp dir is set to a different drive than the destination,
-                // we receive error:
-                //
-                // failed to persist temporary file:
-                // The system cannot move the file to a different disk drive. (os error 17)
-                //
-                // So we use the directory of the destination as a temp dir to avoid it.
-                // https://github.com/zed-industries/zed/issues/16571
-                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            } else {
-                NamedTempFile::new()
-            }?;
+            let mut tmp_file = create_temp_file(&path)?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
             Ok::<(), anyhow::Error>(())
@@ -546,13 +534,45 @@ impl Fs for RealFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        let file = smol::fs::File::create(path).await?;
-        let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in chunks(text, line_ending) {
-            writer.write_all(chunk.as_bytes()).await?;
+        match smol::fs::File::create(path).await {
+            Ok(file) => {
+                let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
+                for chunk in chunks(text, line_ending) {
+                    writer.write_all(chunk.as_bytes()).await?;
+                }
+                writer.flush().await?;
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+                    let tmp_file = create_temp_file(&path)?;
+                    let mut async_file = smol::fs::File::from(tmp_file.as_file().try_clone()?);
+
+                    let mut writer =
+                        smol::io::BufWriter::with_capacity(buffer_size, &mut async_file);
+                    for chunk in chunks(text, line_ending) {
+                        writer.write_all(chunk.as_bytes()).await?;
+                    }
+                    writer.flush().await?;
+
+                    // Using 'tee' to preserve the target file's permissions and ownership
+                    let command = format!(
+                        "cat {} | sudo tee {} > /dev/null",
+                        tmp_file.path().to_str().unwrap(),
+                        path.to_str().unwrap()
+                    );
+
+                    execute_elevated_command(
+                        &command,
+                        "Zed requires sudo access to save your changes. Please enter your password.",
+                    ).await
+                } else {
+                    // Todo: Implement for Mac and Windows
+                    Err(e.into())
+                }
+            }
+            Err(e) => Err(e.into()),
         }
-        writer.flush().await?;
-        Ok(())
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
@@ -1997,6 +2017,68 @@ fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
             ending.into_iter().chain([line])
         })
     })
+}
+
+fn create_temp_file(path: &Path) -> Result<NamedTempFile> {
+    let temp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+        // Use the directory of the destination as temp dir to avoid
+        // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+        // See https://github.com/zed-industries/zed/pull/8437 for more details.
+        NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?
+    } else if cfg!(target_os = "windows") {
+        // If temp dir is set to a different drive than the destination,
+        // we receive error:
+        //
+        // failed to persist temporary file:
+        // The system cannot move the file to a different disk drive. (os error 17)
+        //
+        // So we use the directory of the destination as a temp dir to avoid it.
+        // https://github.com/zed-industries/zed/issues/16571
+        NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?
+    } else {
+        NamedTempFile::new()?
+    };
+
+    Ok(temp_file)
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+async fn execute_elevated_command(command: &str, prompt_message: &str) -> Result<()> {
+    let paths = ["/usr/bin/kdesudo", "/usr/bin/pkexec"];
+
+    let binary = paths
+        .iter()
+        .find(|path| Path::new(path).exists())
+        .ok_or_else(|| anyhow::anyhow!("Unable to find pkexec or kdesudo"))?;
+
+    let mut cmd = Command::new(binary);
+
+    if binary.contains("kdesudo") {
+        cmd.args(["--comment", prompt_message, "-d", "--"]);
+    } else if binary.contains("pkexec") {
+        // PolicyKit will automatically find our policy file in /usr/share/polkit-1/actions/
+        // and use its message to prompt for elevated access. This policy file is copied there
+        // by the install script.
+        //
+        // If not found, PolicyKit will use the default message.
+        cmd.env("PKEXEC_ACTION", "org.zed.pkexec");
+        cmd.arg("--disable-internal-agent");
+    }
+
+    cmd.arg("/bin/bash").arg("-c").arg(format!(
+        "echo '{}'; {}",
+        ELEVATION_SUCCESS_MARKER.trim(),
+        command
+    ));
+
+    let output = cmd.output().await?;
+    if output.status.success() {
+        if String::from_utf8_lossy(&output.stdout).starts_with(ELEVATION_SUCCESS_MARKER) {
+            return Ok(());
+        }
+    }
+
+    Err(anyhow::anyhow!("Failed to run as elevated user"))
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {
