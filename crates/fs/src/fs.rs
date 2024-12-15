@@ -2036,6 +2036,16 @@ fn create_temp_file(path: &Path) -> Result<NamedTempFile> {
     Ok(temp_file)
 }
 
+#[cfg(target_os = "macos")]
+async fn execute_elevated_command(_command: &str) -> Result<()> {
+    unimplemented!("execute_elevated_command is not implemented")
+}
+
+#[cfg(target_os = "windows")]
+async fn execute_elevated_command(_command: &str) -> Result<()> {
+    unimplemented!("execute_elevated_command is not implemented")
+}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 async fn execute_elevated_command(command: &str) -> Result<()> {
     let pkexec_path = Path::new("/usr/bin/pkexec");
