@@ -871,18 +871,14 @@ impl OutlinePanel {
         };
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
         let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
-        let offset_from_top = if active_multi_buffer.read(cx).is_singleton() {
-            Point::default()
-        } else {
-            Point::new(0.0, -(active_editor.read(cx).file_header_size() as f32))
-        };
-
         let mut change_selection = prefer_selection_change;
+        let mut scroll_to_buffer = None;
         let scroll_target = match entry {
             PanelEntry::FoldedDirs(..) | PanelEntry::Fs(FsEntry::Directory(..)) => None,
             PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
                 change_selection = false;
-                let scroll_target = multi_buffer_snapshot.excerpts().find_map(
+                scroll_to_buffer = Some(*buffer_id);
+                multi_buffer_snapshot.excerpts().find_map(
                     |(excerpt_id, buffer_snapshot, excerpt_range)| {
                         if &buffer_snapshot.remote_id() == buffer_id {
                             multi_buffer_snapshot
@@ -891,13 +887,12 @@ impl OutlinePanel {
                             None
                         }
                     },
-                );
-                Some(offset_from_top).zip(scroll_target)
+                )
             }
-            PanelEntry::Fs(FsEntry::File(_, file_entry, ..)) => {
+            PanelEntry::Fs(FsEntry::File(_, file_entry, buffer_id, _)) => {
                 change_selection = false;
-                let scroll_target = self
-                    .project
+                scroll_to_buffer = Some(*buffer_id);
+                self.project
                     .update(cx, |project, cx| {
                         project
                             .path_for_entry(file_entry.id, cx)
@@ -912,29 +907,23 @@ impl OutlinePanel {
                         let (excerpt_id, excerpt_range) = excerpts.first()?;
                         multi_buffer_snapshot
                             .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
-                    });
-                Some(offset_from_top).zip(scroll_target)
+                    })
             }
             PanelEntry::Outline(OutlineEntry::Outline(_, excerpt_id, outline)) => {
-                let scroll_target = multi_buffer_snapshot
+                multi_buffer_snapshot
                     .anchor_in_excerpt(*excerpt_id, outline.range.start)
                     .or_else(|| {
                         multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, outline.range.end)
-                    });
-                Some(Point::default()).zip(scroll_target)
+                    })
             }
             PanelEntry::Outline(OutlineEntry::Excerpt(_, excerpt_id, excerpt_range)) => {
                 change_selection = false;
-                let scroll_target = multi_buffer_snapshot
-                    .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start);
-                Some(Point::default()).zip(scroll_target)
+                multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
             }
-            PanelEntry::Search(SearchEntry { match_range, .. }) => {
-                Some((Point::default(), match_range.start))
-            }
+            PanelEntry::Search(SearchEntry { match_range, .. }) => Some(match_range.start),
         };
 
-        if let Some((offset, anchor)) = scroll_target {
+        if let Some(anchor) = scroll_target {
             let activate = self
                 .workspace
                 .update(cx, |workspace, cx| match self.active_item() {
@@ -955,6 +944,13 @@ impl OutlinePanel {
                         );
                     });
                 } else {
+                    let mut offset = Point::default();
+                    if let Some(buffer_id) = scroll_to_buffer {
+                        if !active_editor.read(cx).buffer_folded(buffer_id, cx) {
+                            offset.y = -(active_editor.read(cx).file_header_size() as f32 + 1.0);
+                        }
+                    }
+
                     active_editor.update(cx, |editor, cx| {
                         editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
                     });
@@ -2006,7 +2002,7 @@ impl OutlinePanel {
                     icon.unwrap_or_else(empty_icon),
                 )
             }
-            FsEntry::ExternalFile(buffer_id, ..) => {
+            FsEntry::ExternalFile(buffer_id, _) => {
                 let color = entry_label_color(is_active);
                 let (icon, name) = match self.buffer_snapshot_for_id(*buffer_id, cx) {
                     Some(buffer_snapshot) => match buffer_snapshot.file() {
