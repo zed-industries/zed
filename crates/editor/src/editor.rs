@@ -678,6 +678,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
 }
 
@@ -1325,6 +1326,7 @@ impl Editor {
             addons: HashMap::default(),
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
+            toggle_fold_multiple_buffers: Task::ready(()),
             text_style_refinement: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
@@ -10311,22 +10313,53 @@ impl Editor {
     }
 
     pub fn toggle_fold(&mut self, _: &actions::ToggleFold, cx: &mut ViewContext<Self>) {
-        let selection = self.selections.newest::<Point>(cx);
+        if self.is_singleton(cx) {
+            let selection = self.selections.newest::<Point>(cx);
 
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let range = if selection.is_empty() {
-            let point = selection.head().to_display_point(&display_map);
-            let start = DisplayPoint::new(point.row(), 0).to_point(&display_map);
-            let end = DisplayPoint::new(point.row(), display_map.line_len(point.row()))
-                .to_point(&display_map);
-            start..end
+            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let range = if selection.is_empty() {
+                let point = selection.head().to_display_point(&display_map);
+                let start = DisplayPoint::new(point.row(), 0).to_point(&display_map);
+                let end = DisplayPoint::new(point.row(), display_map.line_len(point.row()))
+                    .to_point(&display_map);
+                start..end
+            } else {
+                selection.range()
+            };
+            if display_map.folds_in_range(range).next().is_some() {
+                self.unfold_lines(&Default::default(), cx)
+            } else {
+                self.fold(&Default::default(), cx)
+            }
         } else {
-            selection.range()
-        };
-        if display_map.folds_in_range(range).next().is_some() {
-            self.unfold_lines(&Default::default(), cx)
-        } else {
-            self.fold(&Default::default(), cx)
+            let (display_snapshot, selections) = self.selections.all_adjusted_display(cx);
+            let mut toggled_buffers = HashSet::default();
+            for selection in selections {
+                if let Some(buffer_id) = display_snapshot
+                    .display_point_to_anchor(selection.head(), Bias::Right)
+                    .buffer_id
+                {
+                    if toggled_buffers.insert(buffer_id) {
+                        if self.buffer_folded(buffer_id, cx) {
+                            self.unfold_buffer(buffer_id, cx);
+                        } else {
+                            self.fold_buffer(buffer_id, cx);
+                        }
+                    }
+                }
+                if let Some(buffer_id) = display_snapshot
+                    .display_point_to_anchor(selection.tail(), Bias::Left)
+                    .buffer_id
+                {
+                    if toggled_buffers.insert(buffer_id) {
+                        if self.buffer_folded(buffer_id, cx) {
+                            self.unfold_buffer(buffer_id, cx);
+                        } else {
+                            self.fold_buffer(buffer_id, cx);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -10355,44 +10388,68 @@ impl Editor {
     }
 
     pub fn fold(&mut self, _: &actions::Fold, cx: &mut ViewContext<Self>) {
-        let mut to_fold = Vec::new();
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.all_adjusted(cx);
+        if self.is_singleton(cx) {
+            let mut to_fold = Vec::new();
+            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let selections = self.selections.all_adjusted(cx);
 
-        for selection in selections {
-            let range = selection.range().sorted();
-            let buffer_start_row = range.start.row;
+            for selection in selections {
+                let range = selection.range().sorted();
+                let buffer_start_row = range.start.row;
 
-            if range.start.row != range.end.row {
-                let mut found = false;
-                let mut row = range.start.row;
-                while row <= range.end.row {
-                    if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
-                        found = true;
-                        row = crease.range().end.row + 1;
-                        to_fold.push(crease);
-                    } else {
-                        row += 1
+                if range.start.row != range.end.row {
+                    let mut found = false;
+                    let mut row = range.start.row;
+                    while row <= range.end.row {
+                        if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row))
+                        {
+                            found = true;
+                            row = crease.range().end.row + 1;
+                            to_fold.push(crease);
+                        } else {
+                            row += 1
+                        }
+                    }
+                    if found {
+                        continue;
                     }
                 }
-                if found {
-                    continue;
-                }
-            }
 
-            for row in (0..=range.start.row).rev() {
-                if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
-                    if crease.range().end.row >= buffer_start_row {
-                        to_fold.push(crease);
-                        if row <= range.start.row {
-                            break;
+                for row in (0..=range.start.row).rev() {
+                    if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
+                        if crease.range().end.row >= buffer_start_row {
+                            to_fold.push(crease);
+                            if row <= range.start.row {
+                                break;
+                            }
                         }
                     }
                 }
             }
-        }
 
-        self.fold_creases(to_fold, true, cx);
+            self.fold_creases(to_fold, true, cx);
+        } else {
+            let (display_snapshot, selections) = self.selections.all_adjusted_display(cx);
+            let mut folded_buffers = HashSet::default();
+            for selection in selections {
+                if let Some(buffer_id) = display_snapshot
+                    .display_point_to_anchor(selection.head(), Bias::Right)
+                    .buffer_id
+                {
+                    if folded_buffers.insert(buffer_id) {
+                        self.fold_buffer(buffer_id, cx);
+                    }
+                }
+                if let Some(buffer_id) = display_snapshot
+                    .display_point_to_anchor(selection.tail(), Bias::Left)
+                    .buffer_id
+                {
+                    if folded_buffers.insert(buffer_id) {
+                        self.fold_buffer(buffer_id, cx);
+                    }
+                }
+            }
+        }
     }
 
     fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
@@ -10432,22 +10489,30 @@ impl Editor {
     }
 
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
-        if !self.buffer.read(cx).is_singleton() {
-            return;
-        }
+        if self.buffer.read(cx).is_singleton() {
+            let mut fold_ranges = Vec::new();
+            let snapshot = self.buffer.read(cx).snapshot(cx);
 
-        let mut fold_ranges = Vec::new();
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-
-        for row in 0..snapshot.max_row().0 {
-            if let Some(foldable_range) =
-                self.snapshot(cx).crease_for_buffer_row(MultiBufferRow(row))
-            {
-                fold_ranges.push(foldable_range);
+            for row in 0..snapshot.max_row().0 {
+                if let Some(foldable_range) =
+                    self.snapshot(cx).crease_for_buffer_row(MultiBufferRow(row))
+                {
+                    fold_ranges.push(foldable_range);
+                }
             }
-        }
 
-        self.fold_creases(fold_ranges, true, cx);
+            self.fold_creases(fold_ranges, true, cx);
+        } else {
+            self.toggle_fold_multiple_buffers = cx.spawn(|editor, mut cx| async move {
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
+                            editor.fold_buffer(buffer_id, cx);
+                        }
+                    })
+                    .ok();
+            });
+        }
     }
 
     pub fn fold_function_bodies(
@@ -10519,22 +10584,45 @@ impl Editor {
     }
 
     pub fn unfold_lines(&mut self, _: &UnfoldLines, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = &display_map.buffer_snapshot;
-        let selections = self.selections.all::<Point>(cx);
-        let ranges = selections
-            .iter()
-            .map(|s| {
-                let range = s.display_range(&display_map).sorted();
-                let mut start = range.start.to_point(&display_map);
-                let mut end = range.end.to_point(&display_map);
-                start.column = 0;
-                end.column = buffer.line_len(MultiBufferRow(end.row));
-                start..end
-            })
-            .collect::<Vec<_>>();
+        if self.is_singleton(cx) {
+            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let buffer = &display_map.buffer_snapshot;
+            let selections = self.selections.all::<Point>(cx);
+            let ranges = selections
+                .iter()
+                .map(|s| {
+                    let range = s.display_range(&display_map).sorted();
+                    let mut start = range.start.to_point(&display_map);
+                    let mut end = range.end.to_point(&display_map);
+                    start.column = 0;
+                    end.column = buffer.line_len(MultiBufferRow(end.row));
+                    start..end
+                })
+                .collect::<Vec<_>>();
 
-        self.unfold_ranges(&ranges, true, true, cx);
+            self.unfold_ranges(&ranges, true, true, cx);
+        } else {
+            let (display_snapshot, selections) = self.selections.all_adjusted_display(cx);
+            let mut unfolded_buffers = HashSet::default();
+            for selection in selections {
+                if let Some(buffer_id) = display_snapshot
+                    .display_point_to_anchor(selection.head(), Bias::Right)
+                    .buffer_id
+                {
+                    if unfolded_buffers.insert(buffer_id) {
+                        self.unfold_buffer(buffer_id, cx);
+                    }
+                }
+                if let Some(buffer_id) = display_snapshot
+                    .display_point_to_anchor(selection.tail(), Bias::Left)
+                    .buffer_id
+                {
+                    if unfolded_buffers.insert(buffer_id) {
+                        self.unfold_buffer(buffer_id, cx);
+                    }
+                }
+            }
+        }
     }
 
     pub fn unfold_recursive(&mut self, _: &UnfoldRecursive, cx: &mut ViewContext<Self>) {
@@ -10574,8 +10662,20 @@ impl Editor {
     }
 
     pub fn unfold_all(&mut self, _: &actions::UnfoldAll, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.unfold_ranges(&[0..display_map.buffer_snapshot.len()], true, true, cx);
+        if self.buffer.read(cx).is_singleton() {
+            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            self.unfold_ranges(&[0..display_map.buffer_snapshot.len()], true, true, cx);
+        } else {
+            self.toggle_fold_multiple_buffers = cx.spawn(|editor, mut cx| async move {
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
+                            editor.unfold_buffer(buffer_id, cx);
+                        }
+                    })
+                    .ok();
+            });
+        }
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
@@ -10660,6 +10760,45 @@ impl Editor {
         self.remove_folds_with(ranges, auto_scroll, cx, |map, cx| {
             map.unfold_intersecting(ranges.iter().cloned(), inclusive, cx)
         });
+    }
+
+    pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
+        if self.buffer().read(cx).is_singleton() || self.buffer_folded(buffer_id, cx) {
+            return;
+        }
+        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
+            return;
+        };
+        let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(&buffer, cx);
+        self.display_map
+            .update(cx, |display_map, cx| display_map.fold_buffer(buffer_id, cx));
+        cx.emit(EditorEvent::BufferFoldToggled {
+            ids: folded_excerpts.iter().map(|&(id, _)| id).collect(),
+            folded: true,
+        });
+        cx.notify();
+    }
+
+    pub fn unfold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
+        if self.buffer().read(cx).is_singleton() || !self.buffer_folded(buffer_id, cx) {
+            return;
+        }
+        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
+            return;
+        };
+        let unfolded_excerpts = self.buffer().read(cx).excerpts_for_buffer(&buffer, cx);
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.unfold_buffer(buffer_id, cx);
+        });
+        cx.emit(EditorEvent::BufferFoldToggled {
+            ids: unfolded_excerpts.iter().map(|&(id, _)| id).collect(),
+            folded: false,
+        });
+        cx.notify();
+    }
+
+    pub fn buffer_folded(&self, buffer: BufferId, cx: &AppContext) -> bool {
+        self.display_map.read(cx).buffer_folded(buffer)
     }
 
     /// Removes any folds with the given ranges.
@@ -13819,6 +13958,10 @@ pub enum EditorEvent {
     },
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
+    },
+    BufferFoldToggled {
+        ids: Vec<ExcerptId>,
+        folded: bool,
     },
     ExcerptsEdited {
         ids: Vec<ExcerptId>,

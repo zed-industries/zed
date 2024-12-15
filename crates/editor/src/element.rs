@@ -27,18 +27,18 @@ use crate::{
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
+use file_icons::FileIcons;
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
-    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, View, ViewContext,
-    WeakView, WindowContext,
+    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClickEvent,
+    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
+    ElementInputHandler, Entity, FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla,
+    InteractiveElement, IntoElement, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent,
+    ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription,
+    TextRun, TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
 };
-use gpui::{ClickEvent, Subscription};
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -49,8 +49,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot, ToOffset,
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint,
+    MultiBufferRow, MultiBufferSnapshot, ToOffset,
 };
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -1713,6 +1713,15 @@ impl EditorElement {
                     }
                     let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
                     let multibuffer_row = MultiBufferRow(multibuffer_point.row);
+                    let buffer_folded = snapshot
+                        .buffer_snapshot
+                        .buffer_line_for_row(multibuffer_row)
+                        .map(|(buffer_snapshot, _)| buffer_snapshot.remote_id())
+                        .map(|buffer_id| editor.buffer_folded(buffer_id, cx))
+                        .unwrap_or(false);
+                    if buffer_folded {
+                        return None;
+                    }
 
                     if snapshot.is_line_folded(multibuffer_row) {
                         // Skip folded indicators, unless it's the starting line of a fold.
@@ -2087,6 +2096,7 @@ impl EditorElement {
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
+        let header_padding = px(6.0);
         let mut element = match block {
             Block::Custom(block) => {
                 let block_start = block.start().to_point(&snapshot.buffer_snapshot);
@@ -2136,21 +2146,58 @@ impl EditorElement {
                     .into_any()
             }
 
-            Block::ExcerptBoundary {
+            Block::FoldedBuffer {
+                first_excerpt,
                 prev_excerpt,
-                next_excerpt,
                 show_excerpt_controls,
-                starts_new_buffer,
                 height,
                 ..
             } => {
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
 
-                let header_padding = px(6.0);
+                let mut result = v_flex().id(block_id).w_full();
+                if let Some(prev_excerpt) = prev_excerpt {
+                    if *show_excerpt_controls {
+                        result = result.child(
+                            h_flex()
+                                .w(icon_offset)
+                                .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * cx.line_height())
+                                .flex_none()
+                                .justify_end()
+                                .child(self.render_expand_excerpt_button(
+                                    prev_excerpt.id,
+                                    ExpandExcerptDirection::Down,
+                                    IconName::ArrowDownFromLine,
+                                    cx,
+                                )),
+                        );
+                    }
+                }
+
+                let jump_data = jump_data(snapshot, block_row_start, *height, first_excerpt, cx);
+                result
+                    .child(self.render_buffer_header(
+                        first_excerpt,
+                        header_padding,
+                        true,
+                        jump_data,
+                        cx,
+                    ))
+                    .into_any_element()
+            }
+            Block::ExcerptBoundary {
+                prev_excerpt,
+                next_excerpt,
+                show_excerpt_controls,
+                height,
+                starts_new_buffer,
+                ..
+            } => {
+                let icon_offset = gutter_dimensions.width
+                    - (gutter_dimensions.left_padding + gutter_dimensions.margin);
 
                 let mut result = v_flex().id(block_id).w_full();
-
                 if let Some(prev_excerpt) = prev_excerpt {
                     if *show_excerpt_controls {
                         result = result.child(
@@ -2170,115 +2217,15 @@ impl EditorElement {
                 }
 
                 if let Some(next_excerpt) = next_excerpt {
-                    let buffer = &next_excerpt.buffer;
-                    let range = &next_excerpt.range;
-                    let jump_data = {
-                        let jump_path =
-                            project::File::from_dyn(buffer.file()).map(|file| ProjectPath {
-                                worktree_id: file.worktree_id(cx),
-                                path: file.path.clone(),
-                            });
-                        let jump_anchor = range
-                            .primary
-                            .as_ref()
-                            .map_or(range.context.start, |primary| primary.start);
-
-                        let excerpt_start = range.context.start;
-                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-                        let offset_from_excerpt_start = if jump_anchor == excerpt_start {
-                            0
-                        } else {
-                            let excerpt_start_row =
-                                language::ToPoint::to_point(&jump_anchor, buffer).row;
-                            jump_position.row - excerpt_start_row
-                        };
-                        let line_offset_from_top =
-                            block_row_start.0 + *height + offset_from_excerpt_start
-                                - snapshot
-                                    .scroll_anchor
-                                    .scroll_position(&snapshot.display_snapshot)
-                                    .y as u32;
-                        JumpData {
-                            excerpt_id: next_excerpt.id,
-                            anchor: jump_anchor,
-                            position: language::ToPoint::to_point(&jump_anchor, buffer),
-                            path: jump_path,
-                            line_offset_from_top,
-                        }
-                    };
-
+                    let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt, cx);
                     if *starts_new_buffer {
-                        let include_root = self
-                            .editor
-                            .read(cx)
-                            .project
-                            .as_ref()
-                            .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                            .unwrap_or_default();
-                        let path = buffer.resolve_file_path(cx, include_root);
-                        let filename = path
-                            .as_ref()
-                            .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
-                        let parent_path = path.as_ref().and_then(|path| {
-                            Some(path.parent()?.to_string_lossy().to_string() + "/")
-                        });
-
-                        result = result.child(
-                            div()
-                                .px(header_padding)
-                                .pt(header_padding)
-                                .w_full()
-                                .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
-                                .child(
-                                    h_flex()
-                                        .id("path header block")
-                                        .size_full()
-                                        .flex_basis(Length::Definite(DefiniteLength::Fraction(
-                                            0.667,
-                                        )))
-                                        .px(gpui::px(12.))
-                                        .rounded_md()
-                                        .shadow_md()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .bg(cx.theme().colors().editor_subheader_background)
-                                        .justify_between()
-                                        .hover(|style| style.bg(cx.theme().colors().element_hover))
-                                        .child(
-                                            h_flex().gap_3().child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(
-                                                        filename
-                                                            .map(SharedString::from)
-                                                            .unwrap_or_else(|| "untitled".into()),
-                                                    )
-                                                    .when_some(parent_path, |then, path| {
-                                                        then.child(div().child(path).text_color(
-                                                            cx.theme().colors().text_muted,
-                                                        ))
-                                                    }),
-                                            ),
-                                        )
-                                        .child(Icon::new(IconName::ArrowUpRight))
-                                        .cursor_pointer()
-                                        .tooltip(|cx| {
-                                            Tooltip::for_action("Jump to File", &OpenExcerpts, cx)
-                                        })
-                                        .on_mouse_down(MouseButton::Left, |_, cx| {
-                                            cx.stop_propagation()
-                                        })
-                                        .on_click(cx.listener_for(&self.editor, {
-                                            move |editor, e: &ClickEvent, cx| {
-                                                editor.open_excerpts_common(
-                                                    Some(jump_data.clone()),
-                                                    e.down.modifiers.secondary(),
-                                                    cx,
-                                                );
-                                            }
-                                        })),
-                                ),
-                        );
+                        result = result.child(self.render_buffer_header(
+                            next_excerpt,
+                            header_padding,
+                            false,
+                            jump_data,
+                            cx,
+                        ));
                         if *show_excerpt_controls {
                             result = result.child(
                                 h_flex()
@@ -2426,6 +2373,105 @@ impl EditorElement {
         }
 
         (element, final_size)
+    }
+
+    fn render_buffer_header(
+        &self,
+        for_excerpt: &ExcerptInfo,
+        header_padding: Pixels,
+        is_folded: bool,
+        jump_data: JumpData,
+        cx: &mut WindowContext,
+    ) -> Div {
+        let include_root = self
+            .editor
+            .read(cx)
+            .project
+            .as_ref()
+            .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+            .unwrap_or_default();
+        let path = for_excerpt.buffer.resolve_file_path(cx, include_root);
+        let filename = path
+            .as_ref()
+            .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
+        let parent_path = path
+            .as_ref()
+            .and_then(|path| Some(path.parent()?.to_string_lossy().to_string() + "/"));
+
+        div()
+            .px(header_padding)
+            .pt(header_padding)
+            .w_full()
+            .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
+            .child(
+                h_flex()
+                    .id("path header block")
+                    .size_full()
+                    .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
+                    .px(gpui::px(12.))
+                    .rounded_md()
+                    .shadow_md()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_subheader_background)
+                    .justify_between()
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .map(|header| {
+                                let editor = self.editor.clone();
+                                let buffer_id = for_excerpt.buffer_id;
+                                let toggle_chevron_icon =
+                                    FileIcons::get_chevron_icon(!is_folded, cx)
+                                        .map(Icon::from_path);
+                                header.child(
+                                    ButtonLike::new("toggle-buffer-fold")
+                                        .children(toggle_chevron_icon)
+                                        .on_click(move |_, cx| {
+                                            if is_folded {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.unfold_buffer(buffer_id, cx);
+                                                });
+                                            } else {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.fold_buffer(buffer_id, cx);
+                                                });
+                                            }
+                                        }),
+                                )
+                            })
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        filename
+                                            .map(SharedString::from)
+                                            .unwrap_or_else(|| "untitled".into()),
+                                    )
+                                    .when_some(parent_path, |then, path| {
+                                        then.child(
+                                            div()
+                                                .child(path)
+                                                .text_color(cx.theme().colors().text_muted),
+                                        )
+                                    }),
+                            ),
+                    )
+                    .child(Icon::new(IconName::ArrowUpRight))
+                    .cursor_pointer()
+                    .tooltip(|cx| Tooltip::for_action("Jump to File", &OpenExcerpts, cx))
+                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                    .on_click(cx.listener_for(&self.editor, {
+                        move |editor, e: &ClickEvent, cx| {
+                            editor.open_excerpts_common(
+                                Some(jump_data.clone()),
+                                e.down.modifiers.secondary(),
+                                cx,
+                            );
+                        }
+                    })),
+            )
     }
 
     fn render_expand_excerpt_button(
@@ -4314,6 +4360,46 @@ impl EditorElement {
     }
 }
 
+fn jump_data(
+    snapshot: &EditorSnapshot,
+    block_row_start: DisplayRow,
+    height: u32,
+    for_excerpt: &ExcerptInfo,
+    cx: &mut WindowContext<'_>,
+) -> JumpData {
+    let range = &for_excerpt.range;
+    let buffer = &for_excerpt.buffer;
+    let jump_path = project::File::from_dyn(buffer.file()).map(|file| ProjectPath {
+        worktree_id: file.worktree_id(cx),
+        path: file.path.clone(),
+    });
+    let jump_anchor = range
+        .primary
+        .as_ref()
+        .map_or(range.context.start, |primary| primary.start);
+
+    let excerpt_start = range.context.start;
+    let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
+    let offset_from_excerpt_start = if jump_anchor == excerpt_start {
+        0
+    } else {
+        let excerpt_start_row = language::ToPoint::to_point(&jump_anchor, buffer).row;
+        jump_position.row - excerpt_start_row
+    };
+    let line_offset_from_top = block_row_start.0 + height + offset_from_excerpt_start
+        - snapshot
+            .scroll_anchor
+            .scroll_position(&snapshot.display_snapshot)
+            .y as u32;
+    JumpData {
+        excerpt_id: for_excerpt.id,
+        anchor: jump_anchor,
+        position: language::ToPoint::to_point(&jump_anchor, buffer),
+        path: jump_path,
+        line_offset_from_top,
+    }
+}
+
 fn inline_completion_popover_text(
     editor_snapshot: &EditorSnapshot,
     edits: &Vec<(Range<Anchor>, String)>,
@@ -5757,29 +5843,33 @@ impl Element for EditorElement {
                                 if !expanded_add_hunks_by_rows
                                     .contains_key(&newest_selection_display_row)
                                 {
-                                    let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
-                                        MultiBufferRow(newest_selection_point.row),
-                                    );
-                                    if let Some((buffer, range)) = buffer {
-                                        let buffer_id = buffer.remote_id();
-                                        let row = range.start.row;
-                                        let has_test_indicator = self
-                                            .editor
-                                            .read(cx)
-                                            .tasks
-                                            .contains_key(&(buffer_id, row));
+                                    if !snapshot
+                                        .is_line_folded(MultiBufferRow(newest_selection_point.row))
+                                    {
+                                        let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
+                                            MultiBufferRow(newest_selection_point.row),
+                                        );
+                                        if let Some((buffer, range)) = buffer {
+                                            let buffer_id = buffer.remote_id();
+                                            let row = range.start.row;
+                                            let has_test_indicator = self
+                                                .editor
+                                                .read(cx)
+                                                .tasks
+                                                .contains_key(&(buffer_id, row));
 
-                                        if !has_test_indicator {
-                                            code_actions_indicator = self
-                                                .layout_code_actions_indicator(
-                                                    line_height,
-                                                    newest_selection_head,
-                                                    scroll_pixel_position,
-                                                    &gutter_dimensions,
-                                                    &gutter_hitbox,
-                                                    &rows_with_hunk_bounds,
-                                                    cx,
-                                                );
+                                            if !has_test_indicator {
+                                                code_actions_indicator = self
+                                                    .layout_code_actions_indicator(
+                                                        line_height,
+                                                        newest_selection_head,
+                                                        scroll_pixel_position,
+                                                        &gutter_dimensions,
+                                                        &gutter_hitbox,
+                                                        &rows_with_hunk_bounds,
+                                                        cx,
+                                                    );
+                                            }
                                         }
                                     }
                                 }
