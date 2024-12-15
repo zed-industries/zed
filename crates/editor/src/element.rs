@@ -459,6 +459,7 @@ impl EditorElement {
         register_action(view, cx, Editor::apply_all_diff_hunks);
         register_action(view, cx, Editor::apply_selected_diff_hunks);
         register_action(view, cx, Editor::open_active_item_in_terminal);
+        register_action(view, cx, Editor::search_with_google);
         register_action(view, cx, Editor::reload_file);
         register_action(view, cx, Editor::spawn_nearest_task);
         register_action(view, cx, Editor::insert_uuid_v4);

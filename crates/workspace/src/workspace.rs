@@ -149,6 +149,7 @@ actions!(
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
+        SearchWithGoogle,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,

@@ -9,7 +9,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use std::ops::Range;
 use text::PointUtf16;
-use workspace::OpenInTerminal;
+use workspace::{OpenInTerminal, SearchWithGoogle};
 
 #[derive(Debug)]
 pub enum MenuPosition {
@@ -190,7 +190,8 @@ pub fn deploy_context_menu(
                     }
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
-                .action("Copy Permalink", Box::new(CopyPermalinkToLine));
+                .action("Copy Permalink", Box::new(CopyPermalinkToLine))
+                .action("Search with Google", Box::new(SearchWithGoogle));
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,

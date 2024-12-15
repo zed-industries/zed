@@ -84,6 +84,7 @@ unicode-script.workspace = true
 unindent = { workspace = true, optional = true }
 ui.workspace = true
 url.workspace = true
+urlencoding = "2.1.2"
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true

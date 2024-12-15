@@ -335,6 +335,7 @@ gpui::actions!(
         ScrollCursorCenter,
         ScrollCursorCenterTopBottom,
         ScrollCursorTop,
+        SearchWithGoogle,
         SelectAll,
         SelectAllMatches,
         SelectDown,

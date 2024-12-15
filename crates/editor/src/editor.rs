@@ -174,7 +174,9 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{Item as WorkspaceItem, OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
+use workspace::{
+    Item as WorkspaceItem, OpenInTerminal, OpenTerminal, SearchWithGoogle, TabBarSettings, Toast,
+};
 
 use crate::hover_links::{find_url, find_url_from_range};
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
@@ -6720,6 +6722,54 @@ impl Editor {
             return;
         };
         self.do_paste(&text, metadata, false, cx);
+    }
+
+    fn build_google_search_url(&mut self, search_query: String) -> String {
+        let url = format!(
+            "https://www.google.com/search?q={}",
+            urlencoding::encode(&search_query)
+        );
+
+        url
+    }
+
+    fn search_with_google(&mut self, _: &SearchWithGoogle, cx: &mut ViewContext<Self>) {
+        let selections = self.selections.all::<Point>(cx);
+        let buffer = self.buffer.read(cx).read(cx);
+        let mut query = String::new();
+
+        let mut clipboard_selections = Vec::with_capacity(selections.len());
+        {
+            let max_point = buffer.max_point();
+            let mut is_first = true;
+            for selection in selections.iter() {
+                let mut start = selection.start;
+                let mut end = selection.end;
+                let is_entire_line = selection.is_empty() || self.selections.line_mode;
+                if is_entire_line {
+                    start = Point::new(start.row, 0);
+                    end = cmp::min(max_point, Point::new(end.row + 1, 0));
+                }
+                if is_first {
+                    is_first = false;
+                } else {
+                    query += "\n";
+                }
+                let mut len = 0;
+                for chunk in buffer.text_for_range(start..end) {
+                    query.push_str(chunk);
+                    len += chunk.len();
+                }
+                clipboard_selections.push(ClipboardSelection {
+                    len,
+                    is_entire_line,
+                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
+                });
+            }
+        }
+
+        let url = self.build_google_search_url(query);
+        cx.open_url(&url);
     }
 
     pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {

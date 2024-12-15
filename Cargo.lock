@@ -3952,6 +3952,7 @@ dependencies = [
  "unicode-segmentation",
  "unindent",
  "url",
+ "urlencoding",
  "util",
  "uuid",
  "workspace",
