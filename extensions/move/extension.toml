@@ -1,0 +1,18 @@
+id = "move"
+name = "Move"
+version = "0.0.1"
+schema_version = 1
+authors = [
+    "Alexandros Tzimas <alex.tzimas@mystenlabs.com>",
+    "lispking <lispking@qq.com>",
+]
+description = "Move language support for the zed editor."
+repository = "https://github.com/MystenLabs/move-zed-extension"
+
+[language_servers.move-language-server]
+name = "move"
+language = "Move"
+
+[grammars.move]
+repository = "https://github.com/tzakian/tree-sitter-move"
+commit = "8bc0d1692caa8763fef54d48068238d9bf3c0264"
