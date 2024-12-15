@@ -32,7 +32,7 @@ pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oi
             String::from_utf8_lossy(&output.stdout)
                 .trim()
                 .split_terminator(MARKER)
-                .map(|str| str.trim().replace("<", "&lt;").replace(">", "&gt;")),
+                .map(|str| String::from(str.trim())),
         )
         .collect::<HashMap<Oid, String>>())
 }
