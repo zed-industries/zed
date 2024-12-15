@@ -13,7 +13,7 @@ use language::{
     LanguageServerId, ToOffset,
 };
 use parking_lot::RwLock;
-use project::{search::SearchQuery, Completion};
+use project::{lsp_store::CompletionsMatchState, search::SearchQuery, Completion};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, sync::LazyLock, time::Duration};
 use theme::ThemeSettings;
@@ -68,7 +68,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         &self,
         _buffer: Model<Buffer>,
         _completion_indices: Vec<usize>,
-        _completions: Arc<RwLock<Box<[Completion]>>>,
+        _completions_match_state: Arc<RwLock<CompletionsMatchState>>,
         _cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<bool>> {
         Task::ready(Ok(false))

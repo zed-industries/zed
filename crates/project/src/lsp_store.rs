@@ -23,6 +23,7 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt,
 };
+use fuzzy::StringMatchCandidate;
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
     AppContext, AsyncAppContext, Context, Entity, EventEmitter, Model, ModelContext, PromptLevel,
@@ -46,10 +47,10 @@ use lsp::{
     notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
     DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter,
     FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
-    InsertTextFormat, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
-    LanguageServerId, LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
-    RenameFilesParams, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url,
-    WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
+    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
+    LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams,
+    ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url, WillRenameFiles,
+    WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::{Mutex, RwLock};
@@ -519,7 +520,7 @@ impl LocalLspStore {
                                 &adapter.disk_based_diagnostic_sources,
                                 cx,
                             )
-                            .log_err();
+                            .log_err()
                         })
                         .ok();
                     }
@@ -4137,7 +4138,7 @@ impl LspStore {
         &self,
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completions_match_state: Arc<RwLock<CompletionsMatchState>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<bool>> {
         let client = self.upstream_client();
@@ -4151,8 +4152,8 @@ impl LspStore {
             if let Some((client, project_id)) = client {
                 for completion_index in completion_indices {
                     let (server_id, completion) = {
-                        let completions_guard = completions.read();
-                        let completion = &completions_guard[completion_index];
+                        let state_guard = completions_match_state.read();
+                        let completion = &state_guard.completions[completion_index];
                         did_resolve = true;
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
@@ -4164,7 +4165,7 @@ impl LspStore {
                         project_id,
                         server_id,
                         buffer_id,
-                        completions.clone(),
+                        completions_match_state.clone(),
                         completion_index,
                         completion,
                         client.clone(),
@@ -4175,8 +4176,8 @@ impl LspStore {
             } else {
                 for completion_index in completion_indices {
                     let (server_id, completion) = {
-                        let completions_guard = completions.read();
-                        let completion = &completions_guard[completion_index];
+                        let state_guard = completions_match_state.read();
+                        let completion = &state_guard.completions[completion_index];
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
 
@@ -4201,7 +4202,7 @@ impl LspStore {
                         server,
                         adapter,
                         &buffer_snapshot,
-                        completions.clone(),
+                        completions_match_state.clone(),
                         completion_index,
                         completion,
                         language_registry.clone(),
@@ -4218,7 +4219,7 @@ impl LspStore {
         server: Arc<lsp::LanguageServer>,
         adapter: Arc<CachedLspAdapter>,
         snapshot: &BufferSnapshot,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completions_match_state: Arc<RwLock<CompletionsMatchState>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
         language_registry: Arc<LanguageRegistry>,
@@ -4238,48 +4239,29 @@ impl LspStore {
             return;
         };
 
-        if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
-            let documentation = language::prepare_completion_documentation(
+        let documentation = if let Some(lsp_documentation) = completion_item.documentation.as_ref()
+        {
+            language::prepare_completion_documentation(
                 lsp_documentation,
                 &language_registry,
                 snapshot.language().cloned(),
             )
-            .await;
-
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(documentation);
+            .await
         } else {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
+            Documentation::Undocumented
+        };
 
-        if let Some(text_edit) = completion_item.text_edit.as_ref() {
+        let new_text_edit = maybe!({
+            let text_edit = completion_item.text_edit.as_ref()?;
+
             // Technically we don't have to parse the whole `text_edit`, since the only
             // language server we currently use that does update `text_edit` in `completionItem/resolve`
             // is `typescript-language-server` and they only update `text_edit.new_text`.
             // But we should not rely on that.
-            let edit = parse_completion_text_edit(text_edit, snapshot);
-
-            if let Some((old_range, mut new_text)) = edit {
-                LineEnding::normalize(&mut new_text);
-
-                let mut completions = completions.write();
-                let completion = &mut completions[completion_index];
-
-                completion.new_text = new_text;
-                completion.old_range = old_range;
-            }
-        }
-        if completion_item.insert_text_format == Some(InsertTextFormat::SNIPPET) {
-            // vtsls might change the type of completion after resolution.
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            if completion_item.insert_text_format != completion.lsp_completion.insert_text_format {
-                completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
-            }
-        }
+            let (old_range, mut new_text) = parse_completion_text_edit(text_edit, snapshot)?;
+            LineEnding::normalize(&mut new_text);
+            Some((new_text, old_range))
+        });
 
         // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
         // So we have to update the label here anyway...
@@ -4300,10 +4282,41 @@ impl LspStore {
             )
         });
 
-        let mut completions = completions.write();
-        let completion = &mut completions[completion_index];
+        let mut state_guard = completions_match_state.write();
+        let completion = &state_guard.completions[completion_index];
+        let label_updated = if completion.label != new_label {
+            let old_filter_text = completion.label.filter_text();
+            let new_filter_text = new_label.filter_text();
+            if old_filter_text == new_filter_text {
+                let id = state_guard.match_candidates[completion_index].id;
+                let new_match_candidate = StringMatchCandidate::new(id, new_filter_text);
+                state_guard.match_candidates[completion_index] = new_match_candidate;
+                true
+            } else {
+                log::error!(
+                        "Resolved completion changed display label from {} to {}. \
+                        Refusing to apply this because it changes the fuzzy match text from {} to {}",
+                        completion.label.text(),
+                        new_label.text(),
+                        completion.label.filter_text(),
+                        new_label.filter_text()
+                        );
+                false
+            }
+        } else {
+            false
+        };
+
+        let completion = &mut state_guard.completions[completion_index];
         completion.lsp_completion = completion_item;
-        completion.label = new_label;
+        completion.documentation = Some(documentation);
+        if label_updated {
+            completion.label = new_label;
+        }
+        if let Some((new_text, old_range)) = new_text_edit {
+            completion.new_text = new_text;
+            completion.old_range = old_range;
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4311,7 +4324,7 @@ impl LspStore {
         project_id: u64,
         server_id: LanguageServerId,
         buffer_id: BufferId,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completions_match_state: Arc<RwLock<CompletionsMatchState>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
         client: AnyProtoClient,
@@ -4349,21 +4362,24 @@ impl LspStore {
             Documentation::MultiLinePlainText(response.documentation)
         };
 
-        let mut completions = completions.write();
-        let completion = &mut completions[completion_index];
-        completion.documentation = Some(documentation);
-        completion.lsp_completion = lsp_completion;
-
-        let old_range = response
-            .old_start
-            .and_then(deserialize_anchor)
-            .zip(response.old_end.and_then(deserialize_anchor));
-        if let Some((old_start, old_end)) = old_range {
+        let new_text_edit = maybe!({
+            let old_start = deserialize_anchor(response.old_start?)?;
+            let old_end = deserialize_anchor(response.old_end?)?;
             if !response.new_text.is_empty() {
-                completion.new_text = response.new_text;
-                completion.old_range = old_start..old_end;
+                Some((response.new_text, old_start..old_end))
+            } else {
+                None
             }
+        });
+
+        let mut state_guard = completions_match_state.write();
+        let completion = &mut state_guard.completions[completion_index];
+        if let Some((new_text, old_range)) = new_text_edit {
+            completion.new_text = new_text;
+            completion.old_range = old_range;
         }
+        completion.lsp_completion = lsp_completion;
+        completion.documentation = Some(documentation);
     }
 
     pub fn apply_additional_edits_for_completion(
@@ -7839,6 +7855,12 @@ fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
     } else {
         Some(hover)
     }
+}
+
+#[derive(Debug)]
+pub struct CompletionsMatchState {
+    pub completions: Box<[Completion]>,
+    pub match_candidates: Box<[StringMatchCandidate]>,
 }
 
 async fn populate_labels_for_completions(

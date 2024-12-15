@@ -12,6 +12,7 @@ use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use parking_lot::RwLock;
+use project::lsp_store::CompletionsMatchState;
 use project::{CodeAction, Completion, TaskSourceKind};
 use task::ResolvedTask;
 use ui::{
@@ -137,8 +138,7 @@ pub struct CompletionsMenu {
     sort_completions: bool,
     pub initial_position: Anchor,
     pub buffer: Model<Buffer>,
-    pub completions: Arc<RwLock<Box<[Completion]>>>,
-    match_candidates: Arc<[StringMatchCandidate]>,
+    pub completions_state: Arc<RwLock<CompletionsMatchState>>,
     pub matches: Arc<[StringMatch]>,
     pub selected_item: usize,
     scroll_handle: UniformListScrollHandle,
@@ -157,16 +157,16 @@ impl CompletionsMenu {
         completions: Box<[Completion]>,
         aside_was_displayed: bool,
     ) -> Self {
-        let match_candidates = completions
-            .iter()
-            .enumerate()
-            .map(|(id, completion)| {
-                StringMatchCandidate::new(
-                    id,
-                    &completion.label.text[completion.label.filter_range.clone()],
-                )
-            })
-            .collect();
+        let completions_state = CompletionsMatchState {
+            match_candidates: completions
+                .iter()
+                .enumerate()
+                .map(|(id, completion)| {
+                    StringMatchCandidate::new(id, &completion.label.filter_text())
+                })
+                .collect(),
+            completions,
+        };
 
         Self {
             id,
@@ -174,8 +174,7 @@ impl CompletionsMenu {
             initial_position,
             buffer,
             show_completion_documentation,
-            completions: Arc::new(RwLock::new(completions)),
-            match_candidates,
+            completions_state: RwLock::new(completions_state).into(),
             matches: Vec::new().into(),
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
@@ -191,28 +190,29 @@ impl CompletionsMenu {
         selection: Range<Anchor>,
         buffer: Model<Buffer>,
     ) -> Self {
-        let completions = choices
-            .iter()
-            .map(|choice| Completion {
-                old_range: selection.start.text_anchor..selection.end.text_anchor,
-                new_text: choice.to_string(),
-                label: CodeLabel {
-                    text: choice.to_string(),
-                    runs: Default::default(),
-                    filter_range: Default::default(),
-                },
-                server_id: LanguageServerId(usize::MAX),
-                documentation: None,
-                lsp_completion: Default::default(),
-                confirm: None,
-            })
-            .collect();
-
-        let match_candidates = choices
-            .iter()
-            .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, &completion))
-            .collect();
+        let completions_state = CompletionsMatchState {
+            completions: choices
+                .iter()
+                .map(|choice| Completion {
+                    old_range: selection.start.text_anchor..selection.end.text_anchor,
+                    new_text: choice.to_string(),
+                    label: CodeLabel {
+                        text: choice.to_string(),
+                        runs: Default::default(),
+                        filter_range: Default::default(),
+                    },
+                    server_id: LanguageServerId(usize::MAX),
+                    documentation: None,
+                    lsp_completion: Default::default(),
+                    confirm: None,
+                })
+                .collect(),
+            match_candidates: choices
+                .iter()
+                .enumerate()
+                .map(|(id, completion)| StringMatchCandidate::new(id, &completion))
+                .collect(),
+        };
         let matches = choices
             .iter()
             .enumerate()
@@ -228,8 +228,7 @@ impl CompletionsMenu {
             sort_completions,
             initial_position: selection.start,
             buffer,
-            completions: Arc::new(RwLock::new(completions)),
-            match_candidates,
+            completions_state: RwLock::new(completions_state).into(),
             matches,
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
@@ -311,7 +310,7 @@ impl CompletionsMenu {
         let resolve_task = provider.resolve_completions(
             self.buffer.clone(),
             vec![completion_index],
-            self.completions.clone(),
+            self.completions_state.clone(),
             cx,
         );
 
@@ -340,8 +339,8 @@ impl CompletionsMenu {
             .iter()
             .enumerate()
             .max_by_key(|(_, mat)| {
-                let completions = self.completions.read();
-                let completion = &completions[mat.candidate_id];
+                let completions_state = self.completions_state.read();
+                let completion = &completions_state.completions[mat.candidate_id];
                 let documentation = &completion.documentation;
 
                 let mut len = completion.label.text.chars().count();
@@ -355,14 +354,12 @@ impl CompletionsMenu {
             })
             .map(|(ix, _)| ix);
 
-        let completions = self.completions.clone();
-        let matches = self.matches.clone();
         let selected_item = self.selected_item;
         let style = style.clone();
 
         let multiline_docs = if show_completion_documentation {
             let mat = &self.matches[selected_item];
-            match &self.completions.read()[mat.candidate_id].documentation {
+            match &self.completions_state.read().completions[mat.candidate_id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
@@ -406,13 +403,16 @@ impl CompletionsMenu {
                 .occlude()
         });
 
+        let completions_state_arc = self.completions_state.clone();
+        let matches = self.matches.clone();
         let list = uniform_list(
             cx.view().clone(),
             "completions",
             matches.len(),
             move |_editor, range, cx| {
                 let start_ix = range.start;
-                let completions_guard = completions.read();
+                let completions_state = completions_state_arc.read();
+                let completions = &completions_state.completions;
 
                 matches[range]
                     .iter()
@@ -420,7 +420,7 @@ impl CompletionsMenu {
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
-                        let completion = &completions_guard[candidate_id];
+                        let completion = &completions[candidate_id];
 
                         let documentation = if show_completion_documentation {
                             &completion.documentation
@@ -510,7 +510,7 @@ impl CompletionsMenu {
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(
-                &self.match_candidates,
+                &self.completions_state.read().match_candidates,
                 query,
                 query.chars().any(|c| c.is_uppercase()),
                 100,
@@ -519,7 +519,9 @@ impl CompletionsMenu {
             )
             .await
         } else {
-            self.match_candidates
+            self.completions_state
+                .read()
+                .match_candidates
                 .iter()
                 .enumerate()
                 .map(|(candidate_id, candidate)| StringMatch {
@@ -547,7 +549,7 @@ impl CompletionsMenu {
             }
         }
 
-        let completions = self.completions.read();
+        let completions_state = self.completions_state.read();
         if self.sort_completions {
             matches.sort_unstable_by_key(|mat| {
                 // We do want to strike a balance here between what the language server tells us
@@ -579,7 +581,7 @@ impl CompletionsMenu {
                     },
                 }
 
-                let completion = &completions[mat.candidate_id];
+                let completion = &completions_state.completions[mat.candidate_id];
                 let sort_key = completion.sort_key();
                 let sort_text = completion.lsp_completion.sort_text.as_deref();
                 let score = Reverse(OrderedFloat(mat.score));
@@ -601,13 +603,13 @@ impl CompletionsMenu {
         }
 
         for mat in &mut matches {
-            let completion = &completions[mat.candidate_id];
+            let completion = &completions_state.completions[mat.candidate_id];
             mat.string.clone_from(&completion.label.text);
             for position in &mut mat.positions {
                 *position += completion.label.filter_range.start;
             }
         }
-        drop(completions);
+        drop(completions_state);
 
         self.matches = matches.into();
         self.selected_item = 0;

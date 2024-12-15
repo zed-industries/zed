@@ -56,6 +56,7 @@ use lsp::{
     LanguageServerId, LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
+use lsp_store::CompletionsMatchState;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 pub use prettier_store::PrettierStore;
@@ -2872,7 +2873,7 @@ impl Project {
         &self,
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completions: Arc<RwLock<CompletionsMatchState>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<bool>> {
         self.lsp_store.update(cx, |lsp_store, cx| {

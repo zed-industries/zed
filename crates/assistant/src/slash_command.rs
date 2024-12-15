@@ -8,7 +8,7 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
 use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
-use project::CompletionIntent;
+use project::{lsp_store::CompletionsMatchState, CompletionIntent};
 use rope::Point;
 use std::{
     ops::Range,
@@ -322,7 +322,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         &self,
         _: Model<Buffer>,
         _: Vec<usize>,
-        _: Arc<RwLock<Box<[project::Completion]>>>,
+        _: Arc<RwLock<CompletionsMatchState>>,
         _: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>> {
         Task::ready(Ok(true))

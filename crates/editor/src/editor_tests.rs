@@ -10694,7 +10694,8 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
             .expect("Should have the context menu deployed");
         match context_menu {
             CodeContextMenu::Completions(completions_menu) => {
-                let completions = completions_menu.completions.read();
+                let state_guard = completions_menu.completions_state.read();
+                let completions = &state_guard.completions;
                 assert_eq!(completions.len(), 1, "Should have one completion");
                 assert_eq!(completions.get(0).unwrap().label.text, "unresolved");
             }
@@ -10725,7 +10726,8 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
             .expect("Should have the context menu deployed");
         match context_menu {
             CodeContextMenu::Completions(completions_menu) => {
-                let completions = completions_menu.completions.read();
+                let state_guard = completions_menu.completions_state.read();
+                let completions = &state_guard.completions;
                 assert_eq!(completions.len(), 1, "Should have one completion");
                 assert_eq!(
                     completions.get(0).unwrap().label.text,
