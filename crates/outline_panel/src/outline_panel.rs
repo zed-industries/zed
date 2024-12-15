@@ -1274,7 +1274,6 @@ impl OutlinePanel {
             if let Some(buffer_id) = buffer_id_to_unfold {
                 active_editor.update(cx, |editor, cx| {
                     editor.unfold_buffer(buffer_id, cx);
-                    cx.notify();
                 });
             }
             self.update_cached_entries(None, cx);
@@ -1344,7 +1343,6 @@ impl OutlinePanel {
         if let Some(buffer_id) = buffer_id_to_fold {
             active_editor.update(cx, |editor, cx| {
                 editor.fold_buffer(buffer_id, cx);
-                cx.notify();
             });
         }
     }
@@ -1483,7 +1481,6 @@ impl OutlinePanel {
                 } else {
                     editor.unfold_buffer(buffer_id, cx);
                 }
-                cx.notify();
             });
         }
     }
