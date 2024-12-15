@@ -816,7 +816,7 @@ impl OutlinePanel {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
             self.toggle_expanded(&selected_entry, cx);
-            self.open_entry(&selected_entry, true, false, cx);
+            self.scroll_editor_to_entry(&selected_entry, true, false, cx);
         }
     }
 
@@ -839,7 +839,7 @@ impl OutlinePanel {
         } else if let Some((active_editor, selected_entry)) =
             self.active_editor().zip(self.selected_entry().cloned())
         {
-            self.open_entry(&selected_entry, true, true, cx);
+            self.scroll_editor_to_entry(&selected_entry, true, true, cx);
             active_editor.update(cx, |editor, cx| editor.open_excerpts(action, cx));
         }
     }
@@ -854,12 +854,12 @@ impl OutlinePanel {
         } else if let Some((active_editor, selected_entry)) =
             self.active_editor().zip(self.selected_entry().cloned())
         {
-            self.open_entry(&selected_entry, true, true, cx);
+            self.scroll_editor_to_entry(&selected_entry, true, true, cx);
             active_editor.update(cx, |editor, cx| editor.open_excerpts_in_split(action, cx));
         }
     }
 
-    fn open_entry(
+    fn scroll_editor_to_entry(
         &mut self,
         entry: &PanelEntry,
         prefer_selection_change: bool,
@@ -945,12 +945,42 @@ impl OutlinePanel {
                     });
                 } else {
                     let mut offset = Point::default();
+                    let show_excerpt_controls = active_editor
+                        .read(cx)
+                        .display_map
+                        .read(cx)
+                        .show_excerpt_controls();
+                    let expand_excerpt_control_height = 1.0;
                     if let Some(buffer_id) = scroll_to_buffer {
-                        if !active_editor.read(cx).buffer_folded(buffer_id, cx) {
-                            offset.y = -(active_editor.read(cx).file_header_size() as f32 + 1.0);
+                        let current_folded = active_editor.read(cx).buffer_folded(buffer_id, cx);
+                        if current_folded {
+                            if show_excerpt_controls {
+                                let previous_buffer_id = self
+                                    .fs_entries
+                                    .iter()
+                                    .rev()
+                                    .filter_map(|entry| match entry {
+                                        FsEntry::File(_, _, buffer_id, _)
+                                        | FsEntry::ExternalFile(buffer_id, _) => Some(*buffer_id),
+                                        FsEntry::Directory(..) => None,
+                                    })
+                                    .skip_while(|id| *id != buffer_id)
+                                    .skip(1)
+                                    .next();
+                                if let Some(previous_buffer_id) = previous_buffer_id {
+                                    if !active_editor.read(cx).buffer_folded(previous_buffer_id, cx)
+                                    {
+                                        offset.y += expand_excerpt_control_height;
+                                    }
+                                }
+                            }
+                        } else {
+                            offset.y = -(active_editor.read(cx).file_header_size() as f32);
+                            if show_excerpt_controls {
+                                offset.y -= expand_excerpt_control_height;
+                            }
                         }
                     }
-
                     active_editor.update(cx, |editor, cx| {
                         editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
                     });
@@ -979,7 +1009,7 @@ impl OutlinePanel {
             self.select_first(&SelectFirst {}, cx)
         }
         if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.open_entry(&selected_entry, true, false, cx);
+            self.scroll_editor_to_entry(&selected_entry, true, false, cx);
         }
     }
 
@@ -998,7 +1028,7 @@ impl OutlinePanel {
             self.select_last(&SelectLast, cx)
         }
         if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.open_entry(&selected_entry, true, false, cx);
+            self.scroll_editor_to_entry(&selected_entry, true, false, cx);
         }
     }
 
@@ -1282,21 +1312,8 @@ impl OutlinePanel {
             if buffers_to_unfold.is_empty() {
                 self.update_cached_entries(None, cx);
             } else {
-                cx.spawn(|outline_panel, mut cx| async move {
-                    outline_panel
-                        .update(&mut cx, |outline_panel, cx| {
-                            active_editor.update(cx, |editor, cx| {
-                                for buffer_id in buffers_to_unfold {
-                                    outline_panel
-                                        .preserve_selection_on_buffer_fold_toggles
-                                        .insert(buffer_id);
-                                    editor.unfold_buffer(buffer_id, cx);
-                                }
-                            })
-                        })
-                        .ok();
-                })
-                .detach();
+                self.toggle_buffers_fold(buffers_to_unfold, false, cx)
+                    .detach();
             }
         } else {
             self.select_next(&SelectNext, cx)
@@ -1375,21 +1392,7 @@ impl OutlinePanel {
             if buffers_to_fold.is_empty() {
                 self.update_cached_entries(None, cx);
             } else {
-                cx.spawn(|outline_panel, mut cx| async move {
-                    outline_panel
-                        .update(&mut cx, |outline_panel, cx| {
-                            active_editor.update(cx, |editor, cx| {
-                                for buffer_id in buffers_to_fold {
-                                    outline_panel
-                                        .preserve_selection_on_buffer_fold_toggles
-                                        .insert(buffer_id);
-                                    editor.fold_buffer(buffer_id, cx);
-                                }
-                            })
-                        })
-                        .ok();
-                })
-                .detach();
+                self.toggle_buffers_fold(buffers_to_fold, true, cx).detach();
             }
         }
     }
@@ -1440,21 +1443,8 @@ impl OutlinePanel {
         if buffers_to_unfold.is_empty() {
             self.update_cached_entries(None, cx);
         } else {
-            cx.spawn(|outline_panel, mut cx| async move {
-                outline_panel
-                    .update(&mut cx, |outline_panel, cx| {
-                        active_editor.update(cx, |editor, cx| {
-                            for buffer_id in buffers_to_unfold {
-                                outline_panel
-                                    .preserve_selection_on_buffer_fold_toggles
-                                    .insert(buffer_id);
-                                editor.unfold_buffer(buffer_id, cx);
-                            }
-                        })
-                    })
-                    .ok();
-            })
-            .detach();
+            self.toggle_buffers_fold(buffers_to_unfold, false, cx)
+                .detach();
         }
     }
 
@@ -1495,21 +1485,7 @@ impl OutlinePanel {
         if buffers_to_fold.is_empty() {
             self.update_cached_entries(None, cx);
         } else {
-            cx.spawn(|outline_panel, mut cx| async move {
-                outline_panel
-                    .update(&mut cx, |outline_panel, cx| {
-                        active_editor.update(cx, |editor, cx| {
-                            for buffer_id in buffers_to_fold {
-                                outline_panel
-                                    .preserve_selection_on_buffer_fold_toggles
-                                    .insert(buffer_id);
-                                editor.fold_buffer(buffer_id, cx);
-                            }
-                        })
-                    })
-                    .ok();
-            })
-            .detach();
+            self.toggle_buffers_fold(buffers_to_fold, true, cx).detach();
         }
     }
 
@@ -1595,26 +1571,41 @@ impl OutlinePanel {
         if buffers_to_toggle.is_empty() {
             self.update_cached_entries(None, cx);
         } else {
-            cx.spawn(|outline_panel, mut cx| async move {
-                outline_panel
-                    .update(&mut cx, |outline_panel, cx| {
-                        active_editor.update(cx, |editor, cx| {
-                            for buffer_id in buffers_to_toggle {
-                                outline_panel
-                                    .preserve_selection_on_buffer_fold_toggles
-                                    .insert(buffer_id);
-                                if fold {
-                                    editor.fold_buffer(buffer_id, cx);
-                                } else {
-                                    editor.unfold_buffer(buffer_id, cx);
-                                }
-                            }
-                        });
-                    })
-                    .ok();
-            })
-            .detach();
+            self.toggle_buffers_fold(buffers_to_toggle, fold, cx)
+                .detach();
         }
+    }
+
+    fn toggle_buffers_fold(
+        &self,
+        buffers: HashSet<BufferId>,
+        fold: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<()> {
+        let Some(active_editor) = self.active_editor() else {
+            return Task::ready(());
+        };
+        cx.spawn(|outline_panel, mut cx| async move {
+            outline_panel
+                .update(&mut cx, |outline_panel, cx| {
+                    active_editor.update(cx, |editor, cx| {
+                        for buffer_id in buffers {
+                            outline_panel
+                                .preserve_selection_on_buffer_fold_toggles
+                                .insert(buffer_id);
+                            if fold {
+                                editor.fold_buffer(buffer_id, cx);
+                            } else {
+                                editor.unfold_buffer(buffer_id, cx);
+                            }
+                        }
+                    });
+                    if let Some(selection) = outline_panel.selected_entry().cloned() {
+                        outline_panel.scroll_editor_to_entry(&selection, false, false, cx);
+                    }
+                })
+                .ok();
+        })
     }
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
@@ -2223,7 +2214,7 @@ impl OutlinePanel {
                     }
                     let change_focus = event.down.click_count > 1;
                     outline_panel.toggle_expanded(&clicked_entry, cx);
-                    outline_panel.open_entry(&clicked_entry, true, change_focus, cx);
+                    outline_panel.scroll_editor_to_entry(&clicked_entry, true, change_focus, cx);
                 })
             })
             .cursor_pointer()
