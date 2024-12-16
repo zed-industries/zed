@@ -57,7 +57,7 @@ impl ContextPicker {
         if thread_store.is_some() {
             entries.push(ContextPickerEntry {
                 name: "Thread".into(),
-                icon: IconName::MessageBubbles,
+                icon: IconName::MessageCircle,
             });
         }
 

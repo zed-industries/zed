@@ -202,7 +202,7 @@ impl Panel for AssistantPanel {
     fn set_position(&mut self, _position: DockPosition, _cx: &mut ViewContext<Self>) {}
 
     fn size(&self, _cx: &WindowContext) -> Pixels {
-        px(640.)
+        px(550.)
     }
 
     fn set_size(&mut self, _size: Option<Pixels>, _cx: &mut ViewContext<Self>) {}
@@ -312,7 +312,6 @@ impl AssistantPanel {
 
         v_flex()
             .gap_2()
-            .mx_auto()
             .child(
                 v_flex().w_full().child(
                     svg()
@@ -334,7 +333,7 @@ impl AssistantPanel {
                         ),
                     )
                     .child(
-                        v_flex().gap_2().children(
+                        v_flex().mx_auto().w_4_5().gap_2().children(
                             recent_threads
                                 .into_iter()
                                 .map(|thread| PastThread::new(thread, cx.view().downgrade())),
