@@ -2891,6 +2891,10 @@ impl EditorElement {
         const PADDING_X: Pixels = Pixels(24.);
         const PADDING_Y: Pixels = Pixels(2.);
 
+        if self.editor.read(cx).has_active_completions_menu() {
+            return None;
+        }
+
         let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
 
         match &active_inline_completion.completion {
@@ -4519,7 +4523,7 @@ fn jump_data(
     }
 }
 
-fn inline_completion_popover_text(
+pub(crate) fn inline_completion_popover_text(
     editor_snapshot: &EditorSnapshot,
     edits: &Vec<(Range<Anchor>, String)>,
     cx: &WindowContext,
