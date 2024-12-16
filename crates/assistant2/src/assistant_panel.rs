@@ -3,18 +3,21 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
 use client::zed_urls;
+use fs::Fs;
 use gpui::{
     prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Model, Pixels, Task, View, ViewContext, WeakView,
     WindowContext,
 };
 use language::LanguageRegistry;
+use settings::Settings;
 use time::UtcOffset;
 use ui::{prelude::*, KeyBinding, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::active_thread::ActiveThread;
+use crate::assistant_settings::{AssistantDockPosition, AssistantSettings};
 use crate::message_editor::MessageEditor;
 use crate::thread::{ThreadError, ThreadId};
 use crate::thread_history::{PastThread, ThreadHistory};
@@ -39,6 +42,7 @@ enum ActiveView {
 
 pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
+    fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Model<ThreadStore>,
     thread: View<ActiveThread>,
@@ -47,6 +51,8 @@ pub struct AssistantPanel {
     local_timezone: UtcOffset,
     active_view: ActiveView,
     history: View<ThreadHistory>,
+    width: Option<Pixels>,
+    height: Option<Pixels>,
 }
 
 impl AssistantPanel {
@@ -76,6 +82,7 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
+        let fs = workspace.app_state().fs.clone();
         let language_registry = workspace.project().read(cx).languages().clone();
         let workspace = workspace.weak_handle();
         let weak_self = cx.view().downgrade();
@@ -83,6 +90,7 @@ impl AssistantPanel {
         Self {
             active_view: ActiveView::Thread,
             workspace: workspace.clone(),
+            fs,
             language_registry: language_registry.clone(),
             thread_store: thread_store.clone(),
             thread: cx.new_view(|cx| {
@@ -103,6 +111,8 @@ impl AssistantPanel {
             )
             .unwrap(),
             history: cx.new_view(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
+            width: None,
+            height: None,
         }
     }
 
@@ -199,13 +209,38 @@ impl Panel for AssistantPanel {
         true
     }
 
-    fn set_position(&mut self, _position: DockPosition, _cx: &mut ViewContext<Self>) {}
-
-    fn size(&self, _cx: &WindowContext) -> Pixels {
-        px(550.)
+    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+        settings::update_settings_file::<AssistantSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| {
+                let dock = match position {
+                    DockPosition::Left => AssistantDockPosition::Left,
+                    DockPosition::Bottom => AssistantDockPosition::Bottom,
+                    DockPosition::Right => AssistantDockPosition::Right,
+                };
+                settings.set_dock(dock);
+            },
+        );
     }
 
-    fn set_size(&mut self, _size: Option<Pixels>, _cx: &mut ViewContext<Self>) {}
+    fn size(&self, cx: &WindowContext) -> Pixels {
+        let settings = AssistantSettings::get_global(cx);
+        match self.position(cx) {
+            DockPosition::Left | DockPosition::Right => {
+                self.width.unwrap_or(settings.default_width)
+            }
+            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
+        }
+    }
+
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
+        match self.position(cx) {
+            DockPosition::Left | DockPosition::Right => self.width = size,
+            DockPosition::Bottom => self.height = size,
+        }
+        cx.notify();
+    }
 
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
 
