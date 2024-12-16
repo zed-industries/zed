@@ -174,6 +174,7 @@ This will force zed to fallback to the system `libssl` and `libcrypto` libraries
 ### Editing files requiring root access
 
 When you try to edit files that require root access, Zed will use polkit to prompt for your password. Polkit comes pre-installed with most desktop environments like GNOME and KDE. If you're using a minimal system and polkit is not installed, you can install it with:
+
 - Ubuntu/Debian: `sudo apt install policykit-1`
 - Fedora: `sudo dnf install polkit`
 - Arch Linux: `sudo pacman -S polkit`
