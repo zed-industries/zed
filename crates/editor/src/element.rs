@@ -22,7 +22,7 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
     LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    SoftWrap, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -2435,6 +2435,17 @@ impl EditorElement {
                                 .size(ButtonSize::Large)
                                 .width(px(30.).into())
                                 .children(toggle_chevron_icon)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |cx| {
+                                        Tooltip::for_action_in(
+                                            "Toggle Excerpt Fold",
+                                            &ToggleFold,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
                                 .on_click(move |_, cx| {
                                     if is_folded {
                                         editor.update(cx, |editor, cx| {
