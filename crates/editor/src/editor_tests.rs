@@ -4064,7 +4064,7 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
         let snapshot = editor.snapshot(cx);
         let snapshot = &snapshot.buffer_snapshot;
         let placement = BlockPlacement::Replace(
-            snapshot.anchor_after(Point::new(1, 0))..snapshot.anchor_after(Point::new(3, 0)),
+            snapshot.anchor_after(Point::new(1, 0))..=snapshot.anchor_after(Point::new(3, 0)),
         );
         editor.insert_blocks(
             [BlockProperties {
@@ -8342,9 +8342,9 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
         additional edit
     "});
     cx.simulate_keystroke(" ");
-    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.borrow_mut().is_none()));
     cx.simulate_keystroke("s");
-    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.borrow_mut().is_none()));
 
     cx.assert_editor_state(indoc! {"
         one.second_completion
@@ -8406,12 +8406,12 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     });
     cx.set_state("editorˇ");
     cx.simulate_keystroke(".");
-    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.borrow_mut().is_none()));
     cx.simulate_keystroke("c");
     cx.simulate_keystroke("l");
     cx.simulate_keystroke("o");
     cx.assert_editor_state("editor.cloˇ");
-    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.borrow_mut().is_none()));
     cx.update_editor(|editor, cx| {
         editor.show_completions(&ShowCompletions { trigger: None }, cx);
     });
@@ -8468,7 +8468,8 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     cx.update_editor(|editor, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["first", "last"]
@@ -8480,7 +8481,8 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, cx| {
         editor.move_page_down(&MovePageDown::default(), cx);
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert!(
                 menu.selected_item == 1,
                 "expected PageDown to select the last item from the context menu"
@@ -8492,7 +8494,8 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, cx| {
         editor.move_page_up(&MovePageUp::default(), cx);
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert!(
                 menu.selected_item == 0,
                 "expected PageUp to select the first item from the context menu"
@@ -8560,7 +8563,8 @@ async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     cx.update_editor(|editor, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["r", "ret", "Range", "return"]
@@ -10648,7 +10652,9 @@ async fn test_completions_with_additional_edits(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) {
+async fn test_completions_resolve_updates_labels_if_filter_text_matches(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx, |_| {});
 
     let mut cx = EditorLspTestContext::new_rust(
@@ -10667,20 +10673,34 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
     cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
     cx.simulate_keystroke(".");
 
-    let completion_item = lsp::CompletionItem {
-        label: "unresolved".to_string(),
+    let item1 = lsp::CompletionItem {
+        label: "id".to_string(),
+        filter_text: Some("id".to_string()),
         detail: None,
         documentation: None,
         text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
             range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-            new_text: ".unresolved".to_string(),
+            new_text: ".id".to_string(),
+        })),
+        ..lsp::CompletionItem::default()
+    };
+
+    let item2 = lsp::CompletionItem {
+        label: "other".to_string(),
+        filter_text: Some("other".to_string()),
+        detail: None,
+        documentation: None,
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+            new_text: ".other".to_string(),
         })),
         ..lsp::CompletionItem::default()
     };
 
     cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
-        let item = completion_item.clone();
-        async move { Ok(Some(lsp::CompletionResponse::Array(vec![item]))) }
+        let item1 = item1.clone();
+        let item2 = item2.clone();
+        async move { Ok(Some(lsp::CompletionResponse::Array(vec![item1, item2]))) }
     })
     .next()
     .await;
@@ -10688,15 +10708,20 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _| {
-        let context_menu = editor.context_menu.read();
+        let context_menu = editor.context_menu.borrow_mut();
         let context_menu = context_menu
             .as_ref()
             .expect("Should have the context menu deployed");
         match context_menu {
             CodeContextMenu::Completions(completions_menu) => {
-                let completions = completions_menu.completions.read();
-                assert_eq!(completions.len(), 1, "Should have one completion");
-                assert_eq!(completions.get(0).unwrap().label.text, "unresolved");
+                let completions = completions_menu.completions.borrow_mut();
+                assert_eq!(
+                    completions
+                        .iter()
+                        .map(|completion| &completion.label.text)
+                        .collect::<Vec<_>>(),
+                    vec!["id", "other"]
+                )
             }
             CodeContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
         }
@@ -10704,12 +10729,33 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
 
     cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| async move {
         Ok(lsp::CompletionItem {
-            label: "resolved".to_string(),
+            label: "method id()".to_string(),
+            filter_text: Some("id".to_string()),
             detail: Some("Now resolved!".to_string()),
             documentation: Some(lsp::Documentation::String("Docs".to_string())),
             text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                 range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-                new_text: ".resolved".to_string(),
+                new_text: ".id".to_string(),
+            })),
+            ..lsp::CompletionItem::default()
+        })
+    })
+    .next()
+    .await;
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        editor.context_menu_next(&Default::default(), cx);
+    });
+
+    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| async move {
+        Ok(lsp::CompletionItem {
+            label: "invalid changed label".to_string(),
+            detail: Some("Now resolved!".to_string()),
+            documentation: Some(lsp::Documentation::String("Docs".to_string())),
+            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+                new_text: ".id".to_string(),
             })),
             ..lsp::CompletionItem::default()
         })
@@ -10719,18 +10765,20 @@ async fn test_completions_resolve_updates_labels(cx: &mut gpui::TestAppContext) 
     cx.run_until_parked();
 
     cx.update_editor(|editor, _| {
-        let context_menu = editor.context_menu.read();
+        let context_menu = editor.context_menu.borrow_mut();
         let context_menu = context_menu
             .as_ref()
             .expect("Should have the context menu deployed");
         match context_menu {
             CodeContextMenu::Completions(completions_menu) => {
-                let completions = completions_menu.completions.read();
-                assert_eq!(completions.len(), 1, "Should have one completion");
+                let completions = completions_menu.completions.borrow_mut();
                 assert_eq!(
-                    completions.get(0).unwrap().label.text,
-                    "resolved",
-                    "Should update the completion label after resolving"
+                    completions
+                        .iter()
+                        .map(|completion| &completion.label.text)
+                        .collect::<Vec<_>>(),
+                    vec!["method id()", "other"],
+                    "Should update first completion label, but not second as the filter text did not match."
                 );
             }
             CodeContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
@@ -10910,7 +10958,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
         .await;
     cx.run_until_parked();
     cx.update_editor(|editor, _| {
-        let menu = editor.context_menu.read();
+        let menu = editor.context_menu.borrow_mut();
         match menu.as_ref().expect("should have the completions menu") {
             CodeContextMenu::Completions(completions_menu) => {
                 assert_eq!(
@@ -11015,7 +11063,8 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("-");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-red", "bg-blue", "bg-yellow"]
@@ -11028,7 +11077,8 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-blue", "bg-yellow"]
@@ -11044,7 +11094,8 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-yellow"]
@@ -13903,6 +13954,412 @@ async fn test_find_enclosing_node_with_task(cx: &mut gpui::TestAppContext) {
         let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
         assert_eq!(row, 8, "Should find task when cursor is on function name");
     });
+}
+
+#[gpui::test]
+async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text_1 = "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj".to_string();
+    let sample_text_2 = "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu".to_string();
+    let sample_text_3 = "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n1111\n2222\n3333\n4444\n5555".to_string();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "first.rs": sample_text_1,
+            "second.rs": sample_text_2,
+            "third.rs": sample_text_3,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        worktrees.pop().unwrap()
+    });
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let buffer_1 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "first.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_2 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "second.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_3 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "third.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new_model(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        multi_buffer.push_excerpts(
+            buffer_1.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multi_buffer.push_excerpts(
+            buffer_2.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multi_buffer.push_excerpts(
+            buffer_3.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multi_buffer
+    });
+    let multi_buffer_editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
+
+    let full_text = "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n";
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        full_text,
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_1.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "After folding the first buffer, its text should not be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_2.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
+        "After folding the second buffer, its text should not be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_3.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\n\n\n",
+        "After folding the third buffer, its text should not be displayed"
+    );
+
+    // Emulate selection inside the fold logic, that should work
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.snapshot(cx).next_line_boundary(Point::new(0, 4));
+    });
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_2.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
+        "After unfolding the second buffer, its text should be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
+        "After unfolding the first buffer, its and 2nd buffer's text should be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_3.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        full_text,
+        "After unfolding the all buffers, all original text should be displayed"
+    );
+}
+
+#[gpui::test]
+async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text_1 = "1111\n2222\n3333".to_string();
+    let sample_text_2 = "4444\n5555\n6666".to_string();
+    let sample_text_3 = "7777\n8888\n9999".to_string();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "first.rs": sample_text_1,
+            "second.rs": sample_text_2,
+            "third.rs": sample_text_3,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        worktrees.pop().unwrap()
+    });
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let buffer_1 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "first.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_2 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "second.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_3 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "third.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new_model(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        multi_buffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(3, 0),
+                primary: None,
+            }],
+            cx,
+        );
+        multi_buffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(3, 0),
+                primary: None,
+            }],
+            cx,
+        );
+        multi_buffer.push_excerpts(
+            buffer_3.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(3, 0),
+                primary: None,
+            }],
+            cx,
+        );
+        multi_buffer
+    });
+
+    let multi_buffer_editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
+
+    let full_text = "\n\n\n1111\n2222\n3333\n\n\n\n\n4444\n5555\n6666\n\n\n\n\n7777\n8888\n9999\n";
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        full_text,
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_1.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\n\n\n4444\n5555\n6666\n\n\n\n\n7777\n8888\n9999\n",
+        "After folding the first buffer, its text should not be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_2.read(cx).remote_id(), cx)
+    });
+
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\n\n\n\n\n7777\n8888\n9999\n",
+        "After folding the second buffer, its text should not be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_3.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\n\n\n",
+        "After folding the third buffer, its text should not be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_2.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\n\n\n4444\n5555\n6666\n\n\n",
+        "After unfolding the second buffer, its text should be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        "\n\n\n1111\n2222\n3333\n\n\n\n\n4444\n5555\n6666\n\n\n",
+        "After unfolding the first buffer, its text should be displayed"
+    );
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_3.read(cx).remote_id(), cx)
+    });
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        full_text,
+        "After unfolding all buffers, all original text should be displayed"
+    );
+}
+
+#[gpui::test]
+async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj".to_string();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        worktrees.pop().unwrap()
+    });
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let buffer_1 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new_model(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        multi_buffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)
+                    ..Point::new(
+                        sample_text.chars().filter(|&c| c == '\n').count() as u32 + 1,
+                        0,
+                    ),
+                primary: None,
+            }],
+            cx,
+        );
+        multi_buffer
+    });
+    let multi_buffer_editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
+
+    let selection_range = Point::new(1, 0)..Point::new(2, 0);
+    multi_buffer_editor.update(cx, |editor, cx| {
+        enum TestHighlight {}
+        let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        let highlight_range = selection_range.clone().to_anchors(&multi_buffer_snapshot);
+        editor.highlight_text::<TestHighlight>(
+            vec![highlight_range.clone()],
+            HighlightStyle::color(Hsla::green()),
+            cx,
+        );
+        editor.change_selections(None, cx, |s| s.select_ranges(Some(highlight_range)));
+    });
+
+    let full_text = format!("\n\n\n{sample_text}\n");
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
+        full_text,
+    );
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

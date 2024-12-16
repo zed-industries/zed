@@ -94,7 +94,9 @@ impl AssistantPanel {
                     cx,
                 )
             }),
-            message_editor: cx.new_view(|cx| MessageEditor::new(workspace, thread.clone(), cx)),
+            message_editor: cx.new_view(|cx| {
+                MessageEditor::new(workspace, thread_store.downgrade(), thread.clone(), cx)
+            }),
             tools,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
@@ -123,8 +125,14 @@ impl AssistantPanel {
                 cx,
             )
         });
-        self.message_editor =
-            cx.new_view(|cx| MessageEditor::new(self.workspace.clone(), thread, cx));
+        self.message_editor = cx.new_view(|cx| {
+            MessageEditor::new(
+                self.workspace.clone(),
+                self.thread_store.downgrade(),
+                thread,
+                cx,
+            )
+        });
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
@@ -146,8 +154,14 @@ impl AssistantPanel {
                 cx,
             )
         });
-        self.message_editor =
-            cx.new_view(|cx| MessageEditor::new(self.workspace.clone(), thread, cx));
+        self.message_editor = cx.new_view(|cx| {
+            MessageEditor::new(
+                self.workspace.clone(),
+                self.thread_store.downgrade(),
+                thread,
+                cx,
+            )
+        });
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
@@ -309,10 +323,11 @@ impl AssistantPanel {
             .when(!recent_threads.is_empty(), |parent| {
                 parent
                     .child(
-                        h_flex()
-                            .w_full()
-                            .justify_center()
-                            .child(Label::new("Recent Threads:").size(LabelSize::Small)),
+                        h_flex().w_full().justify_center().child(
+                            Label::new("Recent Threads:")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                     )
                     .child(
                         v_flex().gap_2().children(

@@ -17,6 +17,7 @@
       "escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
+      "alt-shift-enter": "menu::Restart",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
@@ -425,7 +426,10 @@
       "ctrl-shift-r": "task::Rerun",
       "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
-      "alt-shift-t": "task::Spawn"
+      "alt-shift-t": "task::Spawn",
+      "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
+      // also possible to spawn tasks by name:
+      // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
     }
   },
   // Bindings from Sublime Text
@@ -467,21 +471,24 @@
     }
   },
   {
-    "context": "Editor && showing_completions",
-    "use_key_equivalents": true,
-    "bindings": {
-      "enter": "editor::ConfirmCompletion"
-    }
-  },
-  {
     "context": "Editor && !inline_completion && showing_completions",
     "use_key_equivalents": true,
     "bindings": {
+      "enter": "editor::ConfirmCompletion",
       "tab": "editor::ComposeCompletion"
     }
   },
   {
-    "context": "Editor && inline_completion",
+    "context": "Editor && inline_completion && showing_completions",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "editor::ConfirmCompletion",
+      "tab": "editor::ComposeCompletion",
+      "shift-tab": "editor::AcceptInlineCompletion"
+    }
+  },
+  {
+    "context": "Editor && inline_completion && !showing_completions",
     "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::AcceptInlineCompletion"

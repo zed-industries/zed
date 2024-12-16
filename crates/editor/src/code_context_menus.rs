@@ -1,4 +1,5 @@
-use std::{cell::Cell, cmp::Reverse, ops::Range, sync::Arc};
+use std::cell::RefCell;
+use std::{cell::Cell, cmp::Reverse, ops::Range, rc::Rc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -11,7 +12,6 @@ use language::{CodeLabel, Documentation};
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
-use parking_lot::RwLock;
 use project::{CodeAction, Completion, TaskSourceKind};
 use task::ResolvedTask;
 use ui::{
@@ -137,9 +137,9 @@ pub struct CompletionsMenu {
     sort_completions: bool,
     pub initial_position: Anchor,
     pub buffer: Model<Buffer>,
-    pub completions: Arc<RwLock<Box<[Completion]>>>,
-    match_candidates: Arc<[StringMatchCandidate]>,
-    pub matches: Arc<[StringMatch]>,
+    pub completions: Rc<RefCell<Box<[Completion]>>>,
+    match_candidates: Rc<[StringMatchCandidate]>,
+    pub matches: Rc<[StringMatch]>,
     pub selected_item: usize,
     scroll_handle: UniformListScrollHandle,
     resolve_completions: bool,
@@ -160,12 +160,7 @@ impl CompletionsMenu {
         let match_candidates = completions
             .iter()
             .enumerate()
-            .map(|(id, completion)| {
-                StringMatchCandidate::new(
-                    id,
-                    completion.label.text[completion.label.filter_range.clone()].into(),
-                )
-            })
+            .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.filter_text()))
             .collect();
 
         Self {
@@ -174,7 +169,7 @@ impl CompletionsMenu {
             initial_position,
             buffer,
             show_completion_documentation,
-            completions: Arc::new(RwLock::new(completions)),
+            completions: RefCell::new(completions).into(),
             match_candidates,
             matches: Vec::new().into(),
             selected_item: 0,
@@ -211,7 +206,7 @@ impl CompletionsMenu {
         let match_candidates = choices
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, completion.to_string()))
+            .map(|(id, completion)| StringMatchCandidate::new(id, &completion))
             .collect();
         let matches = choices
             .iter()
@@ -228,7 +223,7 @@ impl CompletionsMenu {
             sort_completions,
             initial_position: selection.start,
             buffer,
-            completions: Arc::new(RwLock::new(completions)),
+            completions: RefCell::new(completions).into(),
             match_candidates,
             matches,
             selected_item: 0,
@@ -334,13 +329,13 @@ impl CompletionsMenu {
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
+        let completions = self.completions.borrow_mut();
         let show_completion_documentation = self.show_completion_documentation;
         let widest_completion_ix = self
             .matches
             .iter()
             .enumerate()
             .max_by_key(|(_, mat)| {
-                let completions = self.completions.read();
                 let completion = &completions[mat.candidate_id];
                 let documentation = &completion.documentation;
 
@@ -355,14 +350,12 @@ impl CompletionsMenu {
             })
             .map(|(ix, _)| ix);
 
-        let completions = self.completions.clone();
-        let matches = self.matches.clone();
         let selected_item = self.selected_item;
         let style = style.clone();
 
         let multiline_docs = if show_completion_documentation {
             let mat = &self.matches[selected_item];
-            match &self.completions.read()[mat.candidate_id].documentation {
+            match &completions[mat.candidate_id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
@@ -406,13 +399,16 @@ impl CompletionsMenu {
                 .occlude()
         });
 
+        drop(completions);
+        let completions = self.completions.clone();
+        let matches = self.matches.clone();
         let list = uniform_list(
             cx.view().clone(),
             "completions",
             matches.len(),
             move |_editor, range, cx| {
                 let start_ix = range.start;
-                let completions_guard = completions.read();
+                let completions_guard = completions.borrow_mut();
 
                 matches[range]
                     .iter()
@@ -428,8 +424,14 @@ impl CompletionsMenu {
                             &None
                         };
 
+                        let filter_start = completion.label.filter_range.start;
                         let highlights = gpui::combine_highlights(
-                            mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
+                            mat.ranges().map(|range| {
+                                (
+                                    filter_start + range.start..filter_start + range.end,
+                                    FontWeight::BOLD.into(),
+                                )
+                            }),
                             styled_runs_for_code_label(&completion.label, &style.syntax).map(
                                 |(range, mut highlight)| {
                                     // Ignore font weight for syntax highlighting, as we'll use it
@@ -547,7 +549,7 @@ impl CompletionsMenu {
             }
         }
 
-        let completions = self.completions.read();
+        let completions = self.completions.borrow_mut();
         if self.sort_completions {
             matches.sort_unstable_by_key(|mat| {
                 // We do want to strike a balance here between what the language server tells us
@@ -599,14 +601,6 @@ impl CompletionsMenu {
                 }
             });
         }
-
-        for mat in &mut matches {
-            let completion = &completions[mat.candidate_id];
-            mat.string.clone_from(&completion.label.text);
-            for position in &mut mat.positions {
-                *position += completion.label.filter_range.start;
-            }
-        }
         drop(completions);
 
         self.matches = matches.into();
@@ -618,13 +612,13 @@ impl CompletionsMenu {
 pub struct AvailableCodeAction {
     pub excerpt_id: ExcerptId,
     pub action: CodeAction,
-    pub provider: Arc<dyn CodeActionProvider>,
+    pub provider: Rc<dyn CodeActionProvider>,
 }
 
 #[derive(Clone)]
 pub struct CodeActionContents {
-    pub tasks: Option<Arc<ResolvedTasks>>,
-    pub actions: Option<Arc<[AvailableCodeAction]>>,
+    pub tasks: Option<Rc<ResolvedTasks>>,
+    pub actions: Option<Rc<[AvailableCodeAction]>>,
 }
 
 impl CodeActionContents {
@@ -709,7 +703,7 @@ pub enum CodeActionsItem {
     CodeAction {
         excerpt_id: ExcerptId,
         action: CodeAction,
-        provider: Arc<dyn CodeActionProvider>,
+        provider: Rc<dyn CodeActionProvider>,
     },
 }
 

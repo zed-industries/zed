@@ -24,6 +24,7 @@
       "cmd-escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
+      "alt-shift-enter": "menu::Restart",
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
@@ -494,8 +495,9 @@
     "bindings": {
       "cmd-shift-r": "task::Spawn",
       "cmd-alt-r": "task::Rerun",
-      "alt-t": "task::Spawn",
-      "alt-shift-t": "task::Spawn"
+      "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
+      // also possible to spawn tasks by name:
+      // "foo-bar": ["task_name::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
     }
   },
   // Bindings from Sublime Text
@@ -538,21 +540,24 @@
     }
   },
   {
-    "context": "Editor && showing_completions",
-    "use_key_equivalents": true,
-    "bindings": {
-      "enter": "editor::ConfirmCompletion"
-    }
-  },
-  {
     "context": "Editor && !inline_completion && showing_completions",
     "use_key_equivalents": true,
     "bindings": {
+      "enter": "editor::ConfirmCompletion",
       "tab": "editor::ComposeCompletion"
     }
   },
   {
-    "context": "Editor && inline_completion",
+    "context": "Editor && inline_completion && showing_completions",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "editor::ConfirmCompletion",
+      "tab": "editor::ComposeCompletion",
+      "shift-tab": "editor::AcceptInlineCompletion"
+    }
+  },
+  {
+    "context": "Editor && inline_completion && !showing_completions",
     "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::AcceptInlineCompletion"

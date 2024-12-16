@@ -228,7 +228,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .join(""),
                 };
 
-                StringMatchCandidate::new(id, combined_string)
+                StringMatchCandidate::new(id, &combined_string)
             })
             .collect::<Vec<_>>();
         self.matches = smol::block_on(fuzzy::match_strings(

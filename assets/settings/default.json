@@ -101,6 +101,8 @@
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
+  // Time to wait before showing the informational hover box
+  "hover_popover_delay": 350,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
@@ -552,6 +554,8 @@
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
   "autosave": "off",
+  // Maximum number of tabs per pane. Unset for unlimited.
+  "max_tabs": null,
   // Settings related to the editor's tab bar.
   "tab_bar": {
     // Whether or not to show the tab bar in the editor

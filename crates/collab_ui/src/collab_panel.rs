@@ -393,11 +393,8 @@ impl CollabPanel {
                 // Populate the active user.
                 if let Some(user) = user_store.current_user() {
                     self.match_candidates.clear();
-                    self.match_candidates.push(StringMatchCandidate {
-                        id: 0,
-                        string: user.github_login.clone(),
-                        char_bag: user.github_login.chars().collect(),
-                    });
+                    self.match_candidates
+                        .push(StringMatchCandidate::new(0, &user.github_login));
                     let matches = executor.block(match_strings(
                         &self.match_candidates,
                         &query,
@@ -436,11 +433,10 @@ impl CollabPanel {
                 self.match_candidates.clear();
                 self.match_candidates
                     .extend(room.remote_participants().values().map(|participant| {
-                        StringMatchCandidate {
-                            id: participant.user.id as usize,
-                            string: participant.user.github_login.clone(),
-                            char_bag: participant.user.github_login.chars().collect(),
-                        }
+                        StringMatchCandidate::new(
+                            participant.user.id as usize,
+                            &participant.user.github_login,
+                        )
                     }));
                 let mut matches = executor.block(match_strings(
                     &self.match_candidates,
@@ -489,10 +485,8 @@ impl CollabPanel {
                 self.match_candidates.clear();
                 self.match_candidates
                     .extend(room.pending_participants().iter().enumerate().map(
-                        |(id, participant)| StringMatchCandidate {
-                            id,
-                            string: participant.github_login.clone(),
-                            char_bag: participant.github_login.chars().collect(),
+                        |(id, participant)| {
+                            StringMatchCandidate::new(id, &participant.github_login)
                         },
                     ));
                 let matches = executor.block(match_strings(
@@ -519,17 +513,12 @@ impl CollabPanel {
 
         if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(
-                    channel_store
-                        .ordered_channels()
-                        .enumerate()
-                        .map(|(ix, (_, channel))| StringMatchCandidate {
-                            id: ix,
-                            string: channel.name.clone().into(),
-                            char_bag: channel.name.chars().collect(),
-                        }),
-                );
+            self.match_candidates.extend(
+                channel_store
+                    .ordered_channels()
+                    .enumerate()
+                    .map(|(ix, (_, channel))| StringMatchCandidate::new(ix, &channel.name)),
+            );
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -600,14 +589,12 @@ impl CollabPanel {
         let channel_invites = channel_store.channel_invitations();
         if !channel_invites.is_empty() {
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
-                    StringMatchCandidate {
-                        id: ix,
-                        string: channel.name.clone().into(),
-                        char_bag: channel.name.chars().collect(),
-                    }
-                }));
+            self.match_candidates.extend(
+                channel_invites
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, channel)| StringMatchCandidate::new(ix, &channel.name)),
+            );
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -637,17 +624,12 @@ impl CollabPanel {
         let incoming = user_store.incoming_contact_requests();
         if !incoming.is_empty() {
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(
-                    incoming
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, user)| StringMatchCandidate {
-                            id: ix,
-                            string: user.github_login.clone(),
-                            char_bag: user.github_login.chars().collect(),
-                        }),
-                );
+            self.match_candidates.extend(
+                incoming
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, user)| StringMatchCandidate::new(ix, &user.github_login)),
+            );
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -666,17 +648,12 @@ impl CollabPanel {
         let outgoing = user_store.outgoing_contact_requests();
         if !outgoing.is_empty() {
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(
-                    outgoing
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, user)| StringMatchCandidate {
-                            id: ix,
-                            string: user.github_login.clone(),
-                            char_bag: user.github_login.chars().collect(),
-                        }),
-                );
+            self.match_candidates.extend(
+                outgoing
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, user)| StringMatchCandidate::new(ix, &user.github_login)),
+            );
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -703,17 +680,12 @@ impl CollabPanel {
         let contacts = user_store.contacts();
         if !contacts.is_empty() {
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(
-                    contacts
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, contact)| StringMatchCandidate {
-                            id: ix,
-                            string: contact.user.github_login.clone(),
-                            char_bag: contact.user.github_login.chars().collect(),
-                        }),
-                );
+            self.match_candidates.extend(
+                contacts
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, contact)| StringMatchCandidate::new(ix, &contact.user.github_login)),
+            );
 
             let matches = executor.block(match_strings(
                 &self.match_candidates,

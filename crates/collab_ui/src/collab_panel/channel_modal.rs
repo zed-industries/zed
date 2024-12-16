@@ -272,11 +272,7 @@ impl PickerDelegate for ChannelModalDelegate {
                     self.match_candidates.clear();
                     self.match_candidates
                         .extend(self.members.iter().enumerate().map(|(id, member)| {
-                            StringMatchCandidate {
-                                id,
-                                string: member.user.github_login.clone(),
-                                char_bag: member.user.github_login.chars().collect(),
-                            }
+                            StringMatchCandidate::new(id, &member.user.github_login)
                         }));
 
                     let matches = cx.background_executor().block(match_strings(
