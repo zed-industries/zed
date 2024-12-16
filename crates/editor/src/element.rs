@@ -1686,7 +1686,7 @@ impl EditorElement {
                     deployed_from_indicator,
                     actions,
                     ..
-                })) = editor.context_menu.read().as_ref()
+                })) = editor.context_menu.borrow().as_ref()
                 {
                     actions
                         .tasks
@@ -1777,7 +1777,7 @@ impl EditorElement {
             if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
                 deployed_from_indicator,
                 ..
-            })) = editor.context_menu.read().as_ref()
+            })) = editor.context_menu.borrow().as_ref()
             {
                 active = deployed_from_indicator.map_or(true, |indicator_row| indicator_row == row);
             };

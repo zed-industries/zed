@@ -2767,7 +2767,6 @@ dependencies = [
  "language",
  "menu",
  "notifications",
- "parking_lot",
  "picker",
  "pretty_assertions",
  "project",

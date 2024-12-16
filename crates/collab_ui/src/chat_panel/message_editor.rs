@@ -12,10 +12,15 @@ use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
     LanguageServerId, ToOffset,
 };
-use parking_lot::RwLock;
 use project::{search::SearchQuery, Completion};
 use settings::Settings;
-use std::{ops::Range, sync::Arc, sync::LazyLock, time::Duration};
+use std::{
+    cell::RefCell,
+    ops::Range,
+    rc::Rc,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use theme::ThemeSettings;
 use ui::{prelude::*, TextSize};
 
@@ -68,7 +73,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         &self,
         _buffer: Model<Buffer>,
         _completion_indices: Vec<usize>,
-        _completions: Arc<RwLock<Box<[Completion]>>>,
+        _completions: Rc<RefCell<Box<[Completion]>>>,
         _cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<bool>> {
         Task::ready(Ok(false))

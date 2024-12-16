@@ -7,11 +7,13 @@ use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
 use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use project::CompletionIntent;
 use rope::Point;
 use std::{
+    cell::RefCell,
     ops::Range,
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
@@ -322,7 +324,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         &self,
         _: Model<Buffer>,
         _: Vec<usize>,
-        _: Arc<RwLock<Box<[project::Completion]>>>,
+        _: Rc<RefCell<Box<[project::Completion]>>>,
         _: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>> {
         Task::ready(Ok(true))

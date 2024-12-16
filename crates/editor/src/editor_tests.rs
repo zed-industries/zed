@@ -8342,9 +8342,9 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
         additional edit
     "});
     cx.simulate_keystroke(" ");
-    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.borrow_mut().is_none()));
     cx.simulate_keystroke("s");
-    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.borrow_mut().is_none()));
 
     cx.assert_editor_state(indoc! {"
         one.second_completion
@@ -8406,12 +8406,12 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     });
     cx.set_state("editorˇ");
     cx.simulate_keystroke(".");
-    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.borrow_mut().is_none()));
     cx.simulate_keystroke("c");
     cx.simulate_keystroke("l");
     cx.simulate_keystroke("o");
     cx.assert_editor_state("editor.cloˇ");
-    assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
+    assert!(cx.editor(|e, _| e.context_menu.borrow_mut().is_none()));
     cx.update_editor(|editor, cx| {
         editor.show_completions(&ShowCompletions { trigger: None }, cx);
     });
@@ -8468,7 +8468,8 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     cx.update_editor(|editor, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["first", "last"]
@@ -8480,7 +8481,8 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, cx| {
         editor.move_page_down(&MovePageDown::default(), cx);
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert!(
                 menu.selected_item == 1,
                 "expected PageDown to select the last item from the context menu"
@@ -8492,7 +8494,8 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, cx| {
         editor.move_page_up(&MovePageUp::default(), cx);
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert!(
                 menu.selected_item == 0,
                 "expected PageUp to select the first item from the context menu"
@@ -8560,7 +8563,8 @@ async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     cx.update_editor(|editor, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["r", "ret", "Range", "return"]
@@ -10704,13 +10708,13 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _| {
-        let context_menu = editor.context_menu.read();
+        let context_menu = editor.context_menu.borrow_mut();
         let context_menu = context_menu
             .as_ref()
             .expect("Should have the context menu deployed");
         match context_menu {
             CodeContextMenu::Completions(completions_menu) => {
-                let completions = completions_menu.completions.read();
+                let completions = completions_menu.completions.borrow_mut();
                 assert_eq!(
                     completions
                         .iter()
@@ -10761,13 +10765,13 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
     cx.run_until_parked();
 
     cx.update_editor(|editor, _| {
-        let context_menu = editor.context_menu.read();
+        let context_menu = editor.context_menu.borrow_mut();
         let context_menu = context_menu
             .as_ref()
             .expect("Should have the context menu deployed");
         match context_menu {
             CodeContextMenu::Completions(completions_menu) => {
-                let completions = completions_menu.completions.read();
+                let completions = completions_menu.completions.borrow_mut();
                 assert_eq!(
                     completions
                         .iter()
@@ -10954,7 +10958,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
         .await;
     cx.run_until_parked();
     cx.update_editor(|editor, _| {
-        let menu = editor.context_menu.read();
+        let menu = editor.context_menu.borrow_mut();
         match menu.as_ref().expect("should have the completions menu") {
             CodeContextMenu::Completions(completions_menu) => {
                 assert_eq!(
@@ -11059,7 +11063,8 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("-");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-red", "bg-blue", "bg-yellow"]
@@ -11072,7 +11077,8 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-blue", "bg-yellow"]
@@ -11088,7 +11094,8 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
                 &["bg-yellow"]

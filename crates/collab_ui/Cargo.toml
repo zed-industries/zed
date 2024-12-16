@@ -44,7 +44,6 @@ gpui.workspace = true
 language.workspace = true
 menu.workspace = true
 notifications.workspace = true
-parking_lot.workspace = true
 picker.workspace = true
 project.workspace = true
 release_channel.workspace = true
