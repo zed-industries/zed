@@ -2424,39 +2424,38 @@ impl EditorElement {
                         let toggle_chevron_icon =
                             FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
                         header.child(
-                            ButtonLike::new("toggle-buffer-fold")
-                                .tooltip(move |cx| {
-                                    if is_folded {
-                                        Tooltip::text("Unfold Excerpt", cx)
-                                    } else {
-                                        Tooltip::text("Fold Excerpt", cx)
-                                    }
-                                })
-                                .size(ButtonSize::Large)
-                                .width(px(30.).into())
-                                .children(toggle_chevron_icon)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |cx| {
-                                        Tooltip::for_action_in(
-                                            "Toggle Excerpt Fold",
-                                            &ToggleFold,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    }
-                                })
-                                .on_click(move |_, cx| {
-                                    if is_folded {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.unfold_buffer(buffer_id, cx);
-                                        });
-                                    } else {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.fold_buffer(buffer_id, cx);
-                                        });
-                                    }
-                                }),
+                            div()
+                                .hover(|style| style.bg(cx.theme().colors().element_selected))
+                                .rounded_sm()
+                                .child(
+                                    ButtonLike::new("toggle-buffer-fold")
+                                        .style(ui::ButtonStyle::Transparent)
+                                        .size(ButtonSize::Large)
+                                        .width(px(30.).into())
+                                        .children(toggle_chevron_icon)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |cx| {
+                                                Tooltip::for_action_in(
+                                                    "Toggle Excerpt Fold",
+                                                    &ToggleFold,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click(move |_, cx| {
+                                            if is_folded {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.unfold_buffer(buffer_id, cx);
+                                                });
+                                            } else {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.fold_buffer(buffer_id, cx);
+                                                });
+                                            }
+                                        }),
+                                ),
                         )
                     })
                     .child(
