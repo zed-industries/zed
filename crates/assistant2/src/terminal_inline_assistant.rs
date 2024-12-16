@@ -82,7 +82,7 @@ impl TerminalInlineAssistant {
     pub fn assist(
         &mut self,
         terminal_view: &View<TerminalView>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: WeakView<Workspace>,
         cx: &mut WindowContext,
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
@@ -361,7 +361,7 @@ struct TerminalInlineAssist {
     terminal: WeakView<TerminalView>,
     prompt_editor: Option<View<PromptEditor>>,
     codegen: Model<Codegen>,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: WeakView<Workspace>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -370,7 +370,7 @@ impl TerminalInlineAssist {
         assist_id: TerminalInlineAssistId,
         terminal: &View<TerminalView>,
         prompt_editor: View<PromptEditor>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: WeakView<Workspace>,
         cx: &mut WindowContext,
     ) -> Self {
         let codegen = prompt_editor.read(cx).codegen.clone();
@@ -396,11 +396,7 @@ impl TerminalInlineAssist {
 
                             if let CodegenStatus::Error(error) = &codegen.read(cx).status {
                                 if assist.prompt_editor.is_none() {
-                                    if let Some(workspace) = assist
-                                        .workspace
-                                        .as_ref()
-                                        .and_then(|workspace| workspace.upgrade())
-                                    {
+                                    if let Some(workspace) = assist.workspace.upgrade() {
                                         let error =
                                             format!("Terminal inline assistant error: {}", error);
                                         workspace.update(cx, |workspace, cx| {

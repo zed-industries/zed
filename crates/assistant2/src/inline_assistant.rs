@@ -212,12 +212,12 @@ impl InlineAssistant {
         let handle_assist = |cx: &mut ViewContext<Workspace>| match inline_assist_target {
             InlineAssistTarget::Editor(active_editor) => {
                 InlineAssistant::update_global(cx, |assistant, cx| {
-                    assistant.assist(&active_editor, Some(cx.view().downgrade()), cx)
+                    assistant.assist(&active_editor, cx.view().downgrade(), cx)
                 })
             }
             InlineAssistTarget::Terminal(active_terminal) => {
                 TerminalInlineAssistant::update_global(cx, |assistant, cx| {
-                    assistant.assist(&active_terminal, Some(cx.view().downgrade()), cx)
+                    assistant.assist(&active_terminal, cx.view().downgrade(), cx)
                 })
             }
         };
@@ -264,7 +264,7 @@ impl InlineAssistant {
     pub fn assist(
         &mut self,
         editor: &View<Editor>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: WeakView<Workspace>,
         cx: &mut WindowContext,
     ) {
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
@@ -429,7 +429,7 @@ impl InlineAssistant {
         initial_prompt: String,
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: WeakView<Workspace>,
         cx: &mut WindowContext,
     ) -> InlineAssistId {
         let assist_group_id = self.next_assist_group_id.post_inc();
@@ -2166,7 +2166,7 @@ pub struct InlineAssist {
     decorations: Option<InlineAssistDecorations>,
     codegen: Model<Codegen>,
     _subscriptions: Vec<Subscription>,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: WeakView<Workspace>,
 }
 
 impl InlineAssist {
@@ -2180,7 +2180,7 @@ impl InlineAssist {
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
         codegen: Model<Codegen>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: WeakView<Workspace>,
         cx: &mut WindowContext,
     ) -> Self {
         let prompt_editor_focus_handle = prompt_editor.focus_handle(cx);
@@ -2240,11 +2240,7 @@ impl InlineAssist {
 
                             if let CodegenStatus::Error(error) = codegen.read(cx).status(cx) {
                                 if assist.decorations.is_none() {
-                                    if let Some(workspace) = assist
-                                        .workspace
-                                        .as_ref()
-                                        .and_then(|workspace| workspace.upgrade())
-                                    {
+                                    if let Some(workspace) = assist.workspace.upgrade() {
                                         let error = format!("Inline assistant error: {}", error);
                                         workspace.update(cx, |workspace, cx| {
                                             struct InlineAssistantError;
@@ -3387,7 +3383,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     "Fix Diagnostics".into(),
                     None,
                     true,
-                    Some(workspace),
+                    workspace,
                     cx,
                 );
                 assistant.start_assist(assist_id, cx);
