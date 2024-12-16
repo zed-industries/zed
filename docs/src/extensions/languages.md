@@ -51,10 +51,10 @@ Zed uses the [Tree-sitter](https://tree-sitter.github.io) parsing library to pro
 ```toml
 [grammars.gleam]
 repository = "https://github.com/gleam-lang/tree-sitter-gleam"
-commit = "58b7cac8fc14c92b0677c542610d8738c373fa81"
+rev = "58b7cac8fc14c92b0677c542610d8738c373fa81"
 ```
 
-The `repository` field must specify a repository where the Tree-sitter grammar should be loaded from, and the `commit` field must contain the SHA of the Git commit to use. An extension can provide multiple grammars by referencing multiple tree-sitter repositories.
+The `repository` field must specify a repository where the Tree-sitter grammar should be loaded from, and the `rev` field must contain a Git revision to use, such as the SHA of a Git commit. An extension can provide multiple grammars by referencing multiple tree-sitter repositories.
 
 ## Tree-sitter Queries
 
