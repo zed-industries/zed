@@ -423,8 +423,14 @@ impl CompletionsMenu {
                             &None
                         };
 
+                        let filter_start = completion.label.filter_range.start;
                         let highlights = gpui::combine_highlights(
-                            mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
+                            mat.ranges().map(|range| {
+                                (
+                                    filter_start + range.start..filter_start + range.end,
+                                    FontWeight::BOLD.into(),
+                                )
+                            }),
                             styled_runs_for_code_label(&completion.label, &style.syntax).map(
                                 |(range, mut highlight)| {
                                     // Ignore font weight for syntax highlighting, as we'll use it
@@ -593,14 +599,6 @@ impl CompletionsMenu {
                     }
                 }
             });
-        }
-
-        for mat in &mut matches {
-            let completion = &completions[mat.candidate_id];
-            mat.string.clone_from(&completion.label.text);
-            for position in &mut mat.positions {
-                *position += completion.label.filter_range.start;
-            }
         }
         drop(completions);
 
