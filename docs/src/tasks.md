@@ -17,9 +17,9 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     // Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish, defaults to `false`.
     "allow_concurrent_runs": false,
     // What to do with the terminal pane and tab, after the command was started:
-    // * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
-    // * `no_focus` — always show the terminal pane, add/reuse the task's tab there, but don't focus it
-    // * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
+    // * `always` — always show the task's pane, and focus the corresponding tab in it (default)
+    // * `no_focus` — always show the task's pane, add the task's tab in it, but don't focus it
+    // * `never` — do not alter focus, but still add/reuse the task's tab in its pane
     "reveal": "always",
     // What to do with the terminal pane and tab, after the command had finished:
     // * `never` — Do nothing when the command finishes (default)
