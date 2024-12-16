@@ -11,6 +11,7 @@ mod modal;
 mod settings;
 
 pub use modal::{Rerun, Spawn};
+use zed_actions::TaskSpawnTarget;
 
 pub fn init(cx: &mut AppContext) {
     settings::TaskSettings::register(cx);
@@ -53,6 +54,7 @@ pub fn init(cx: &mut AppContext) {
                                             task_source_kind,
                                             &original_task,
                                             &task_context,
+                                            Default::default(),
                                             false,
                                             cx,
                                         )
@@ -89,7 +91,8 @@ pub fn init(cx: &mut AppContext) {
 
 fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
     match &action.task_name {
-        Some(name) => spawn_task_with_name(name.clone(), cx).detach_and_log_err(cx),
+        Some(name) => spawn_task_with_name(name.clone(), action.target.unwrap_or_default(), cx)
+            .detach_and_log_err(cx),
         None => toggle_modal(workspace, cx).detach(),
     }
 }
@@ -119,6 +122,7 @@ fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) 
 
 fn spawn_task_with_name(
     name: String,
+    task_target: TaskSpawnTarget,
     cx: &mut ViewContext<Workspace>,
 ) -> AsyncTask<anyhow::Result<()>> {
     cx.spawn(|workspace, mut cx| async move {
@@ -160,6 +164,7 @@ fn spawn_task_with_name(
                     task_source_kind,
                     &target_task,
                     &task_context,
+                    task_target,
                     false,
                     cx,
                 );

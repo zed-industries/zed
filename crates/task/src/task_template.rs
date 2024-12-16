@@ -115,7 +115,12 @@ impl TaskTemplate {
     ///
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
     /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
-    pub fn resolve_task(&self, id_base: &str, cx: &TaskContext) -> Option<ResolvedTask> {
+    pub fn resolve_task(
+        &self,
+        id_base: &str,
+        target: zed_actions::TaskSpawnTarget,
+        cx: &TaskContext,
+    ) -> Option<ResolvedTask> {
         if self.label.trim().is_empty() || self.command.trim().is_empty() {
             return None;
         }
@@ -214,6 +219,7 @@ impl TaskTemplate {
         Some(ResolvedTask {
             id: id.clone(),
             substituted_variables,
+            target,
             original_task: self.clone(),
             resolved_label: full_label.clone(),
             resolved: Some(SpawnInTerminal {
@@ -382,7 +388,7 @@ mod tests {
             },
         ] {
             assert_eq!(
-                task_with_blank_property.resolve_task(TEST_ID_BASE, &TaskContext::default()),
+                task_with_blank_property.resolve_task(TEST_ID_BASE, Default::default(), &TaskContext::default()),
                 None,
                 "should not resolve task with blank label and/or command: {task_with_blank_property:?}"
             );
@@ -400,7 +406,7 @@ mod tests {
 
         let resolved_task = |task_template: &TaskTemplate, task_cx| {
             let resolved_task = task_template
-                .resolve_task(TEST_ID_BASE, task_cx)
+                .resolve_task(TEST_ID_BASE, Default::default(), task_cx)
                 .unwrap_or_else(|| panic!("failed to resolve task {task_without_cwd:?}"));
             assert_substituted_variables(&resolved_task, Vec::new());
             resolved_task
@@ -526,6 +532,7 @@ mod tests {
         for i in 0..15 {
             let resolved_task = task_with_all_variables.resolve_task(
                 TEST_ID_BASE,
+                Default::default(),
                 &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(all_variables.clone()),
@@ -614,6 +621,7 @@ mod tests {
             let removed_variable = not_all_variables.remove(i);
             let resolved_task_attempt = task_with_all_variables.resolve_task(
                 TEST_ID_BASE,
+                Default::default(),
                 &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(not_all_variables),
@@ -633,7 +641,7 @@ mod tests {
             ..Default::default()
         };
         let resolved_task = task
-            .resolve_task(TEST_ID_BASE, &TaskContext::default())
+            .resolve_task(TEST_ID_BASE, Default::default(), &TaskContext::default())
             .unwrap();
         assert_substituted_variables(&resolved_task, Vec::new());
         let resolved = resolved_task.resolved.unwrap();
@@ -651,7 +659,7 @@ mod tests {
             ..Default::default()
         };
         assert!(task
-            .resolve_task(TEST_ID_BASE, &TaskContext::default())
+            .resolve_task(TEST_ID_BASE, Default::default(), &TaskContext::default())
             .is_none());
     }
 
@@ -701,7 +709,7 @@ mod tests {
         .enumerate()
         {
             let resolved = symbol_dependent_task
-                .resolve_task(TEST_ID_BASE, &cx)
+                .resolve_task(TEST_ID_BASE, Default::default(), &cx)
                 .unwrap_or_else(|| panic!("Failed to resolve task {symbol_dependent_task:?}"));
             assert_eq!(
                 resolved.substituted_variables,
@@ -743,7 +751,9 @@ mod tests {
         context
             .task_variables
             .insert(VariableName::Symbol, "my-symbol".to_string());
-        assert!(faulty_go_test.resolve_task("base", &context).is_some());
+        assert!(faulty_go_test
+            .resolve_task("base", Default::default(), &context)
+            .is_some());
     }
 
     #[test]
@@ -802,7 +812,7 @@ mod tests {
         };
 
         let resolved = template
-            .resolve_task(TEST_ID_BASE, &context)
+            .resolve_task(TEST_ID_BASE, Default::default(), &context)
             .unwrap()
             .resolved
             .unwrap();

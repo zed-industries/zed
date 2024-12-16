@@ -353,6 +353,7 @@ impl QuickActionBar {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
         Some(
             h_flex()
+                .gap(DynamicSpacing::Base06.rems(cx))
                 .child(self.render_kernel_selector(cx))
                 .child(
                     IconButton::new("toggle_repl_icon", IconName::ReplNeutral)

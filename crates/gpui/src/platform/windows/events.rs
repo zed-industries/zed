@@ -33,7 +33,7 @@ pub(crate) fn handle_msg(
         WM_ACTIVATE => handle_activate_msg(handle, wparam, state_ptr),
         WM_CREATE => handle_create_msg(handle, state_ptr),
         WM_MOVE => handle_move_msg(handle, lparam, state_ptr),
-        WM_SIZE => handle_size_msg(lparam, state_ptr),
+        WM_SIZE => handle_size_msg(wparam, lparam, state_ptr),
         WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => handle_size_move_loop(handle),
         WM_EXITSIZEMOVE | WM_EXITMENULOOP => handle_size_move_loop_exit(handle),
         WM_TIMER => handle_timer_msg(handle, wparam, state_ptr),
@@ -136,13 +136,32 @@ fn handle_move_msg(
     Some(0)
 }
 
-fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_size_msg(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+
+    // Don't resize the renderer when the window is minimized, but record that it was minimized so
+    // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
+    if wparam.0 == SIZE_MINIMIZED as usize {
+        lock.is_minimized = Some(true);
+        return Some(0);
+    }
+    let may_have_been_minimized = lock.is_minimized.unwrap_or(true);
+    lock.is_minimized = Some(false);
+
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
-    let mut lock = state_ptr.state.borrow_mut();
     let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    lock.renderer.update_drawable_size(new_size);
+    if may_have_been_minimized {
+        lock.renderer
+            .update_drawable_size_even_if_unchanged(new_size);
+    } else {
+        lock.renderer.update_drawable_size(new_size);
+    }
     let new_size = new_size.to_pixels(scale_factor);
     lock.logical_size = new_size;
     if let Some(mut callback) = lock.callbacks.resize.take() {

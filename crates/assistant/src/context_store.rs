@@ -716,7 +716,7 @@ impl ContextStore {
                 let candidates = metadata
                     .iter()
                     .enumerate()
-                    .map(|(id, metadata)| StringMatchCandidate::new(id, metadata.title.clone()))
+                    .map(|(id, metadata)| StringMatchCandidate::new(id, &metadata.title))
                     .collect::<Vec<_>>();
                 let matches = fuzzy::match_strings(
                     &candidates,

@@ -105,7 +105,6 @@ pub struct ProjectPanel {
     // We keep track of the mouse down state on entries so we don't flash the UI
     // in case a user clicks to open a file.
     mouse_down: bool,
-    hovered_entries: HashSet<ProjectEntryId>,
 }
 
 #[derive(Clone, Debug)]
@@ -144,7 +143,6 @@ struct EntryDetails {
     is_marked: bool,
     is_editing: bool,
     is_processing: bool,
-    is_hovered: bool,
     is_cut: bool,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
@@ -261,16 +259,18 @@ struct ItemColors {
     hover: Hsla,
     drag_over: Hsla,
     marked_active: Hsla,
+    focused: Hsla,
 }
 
 fn get_item_color(cx: &ViewContext<ProjectPanel>) -> ItemColors {
     let colors = cx.theme().colors();
 
     ItemColors {
-        default: colors.surface_background,
+        default: colors.panel_background,
         hover: colors.ghost_element_hover,
         drag_over: colors.drop_target_background,
         marked_active: colors.ghost_element_selected,
+        focused: colors.panel_focused_border,
     }
 }
 
@@ -281,6 +281,7 @@ impl ProjectPanel {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
             cx.on_focus_out(&focus_handle, |this, _, cx| {
+                this.focus_out(cx);
                 this.hide_scrollbar(cx);
             })
             .detach();
@@ -401,7 +402,6 @@ impl ProjectPanel {
                 diagnostics: Default::default(),
                 scroll_handle,
                 mouse_down: false,
-                hovered_entries: Default::default(),
             };
             this.update_visible_entries(None, cx);
 
@@ -593,6 +593,12 @@ impl ProjectPanel {
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         if !self.focus_handle.contains_focused(cx) {
             cx.emit(Event::Focus);
+        }
+    }
+
+    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.focus_handle.is_focused(cx) {
+            self.confirm(&Confirm, cx);
         }
     }
 
@@ -2854,7 +2860,6 @@ impl ProjectPanel {
                         is_expanded,
                         is_selected: self.selection == Some(selection),
                         is_marked,
-                        is_hovered: self.hovered_entries.contains(&entry.id),
                         is_editing: false,
                         is_processing: false,
                         is_cut: self
@@ -3197,6 +3202,8 @@ impl ProjectPanel {
         details: EntryDetails,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
+        const GROUP_NAME: &str = "project_entry";
+
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
@@ -3210,7 +3217,6 @@ impl ProjectPanel {
         let is_active = self
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
-        let is_hovered = details.is_hovered;
 
         let width = self.size(cx);
         let file_name = details.filename.clone();
@@ -3243,16 +3249,37 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
-        let (bg_color, border_color) = match (is_hovered, is_marked || is_active, self.mouse_down) {
-            (true, _, true) => (item_colors.marked_active, item_colors.hover),
-            (true, false, false) => (item_colors.hover, item_colors.hover),
-            (true, true, false) => (item_colors.hover, item_colors.marked_active),
-            (false, true, _) => (item_colors.marked_active, item_colors.marked_active),
-            _ => (item_colors.default, item_colors.default),
+        let default_color = if is_marked || is_active {
+            item_colors.marked_active
+        } else {
+            item_colors.default
         };
+
+        let bg_hover_color = if self.mouse_down {
+            item_colors.marked_active
+        } else {
+            item_colors.hover
+        };
+
+        let border_color =
+            if !self.mouse_down && is_active && self.focus_handle.contains_focused(cx) {
+                item_colors.focused
+            } else if self.mouse_down && is_marked || is_active {
+                item_colors.marked_active
+            } else {
+                item_colors.default
+            };
 
         div()
             .id(entry_id.to_proto() as usize)
+            .group(GROUP_NAME)
+            .cursor_pointer()
+            .rounded_none()
+            .bg(default_color)
+            .border_1()
+            .border_r_2()
+            .border_color(border_color)
+            .hover(|style| style.bg(bg_hover_color))
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
@@ -3328,14 +3355,6 @@ impl ProjectPanel {
                     cx.propagate();
                 }),
             )
-            .on_hover(cx.listener(move |this, hover, cx| {
-                if *hover {
-                    this.hovered_entries.insert(entry_id);
-                } else {
-                    this.hovered_entries.remove(&entry_id);
-                }
-                cx.notify();
-            }))
             .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
                 if event.down.button == MouseButton::Right || event.down.first_mouse || show_editor
                 {
@@ -3396,9 +3415,6 @@ impl ProjectPanel {
                     this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                 }
             }))
-            .cursor_pointer()
-            .bg(bg_color)
-            .border_color(border_color)
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
@@ -3443,9 +3459,11 @@ impl ProjectPanel {
                                             } else {
                                                 IconDecorationKind::Dot
                                             },
-                                            bg_color,
+                                            default_color,
                                             cx,
                                         )
+                                        .group_name(Some(GROUP_NAME.into()))
+                                        .knockout_hover_color(bg_hover_color)
                                         .color(decoration_color.color(cx))
                                         .position(Point {
                                             x: px(-2.),
@@ -3549,17 +3567,17 @@ impl ProjectPanel {
                             // Stop propagation to prevent the catch-all context menu for the project
                             // panel from being deployed.
                             cx.stop_propagation();
+                            // Some context menu actions apply to all marked entries. If the user
+                            // right-clicks on an entry that is not marked, they may not realize the
+                            // action applies to multiple entries. To avoid inadvertent changes, all
+                            // entries are unmarked.
+                            if !this.marked_entries.contains(&selection) {
+                                this.marked_entries.clear();
+                            }
                             this.deploy_context_menu(event.position, entry_id, cx);
                         },
                     ))
                     .overflow_x(),
-            )
-            .border_1()
-            .border_r_2()
-            .rounded_none()
-            .when(
-                !self.mouse_down && is_active && self.focus_handle.contains_focused(cx),
-                |this| this.border_color(Color::Selected.color(cx)),
             )
     }
 
@@ -4314,7 +4332,6 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
-    use ui::Context;
     use workspace::{
         item::{Item, ProjectItem},
         register_project_item, AppState,

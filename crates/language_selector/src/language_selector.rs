@@ -104,14 +104,15 @@ impl LanguageSelectorDelegate {
         let candidates = language_registry
             .language_names()
             .into_iter()
-            .enumerate()
-            .filter_map(|(candidate_id, name)| {
+            .filter_map(|name| {
                 language_registry
                     .available_language_for_name(&name)?
                     .hidden()
                     .not()
-                    .then(|| StringMatchCandidate::new(candidate_id, name))
+                    .then_some(name)
             })
+            .enumerate()
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
             .collect::<Vec<_>>();
 
         Self {
@@ -280,7 +281,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .start_slot::<Icon>(language_icon)
                 .child(HighlightedLabel::new(label, mat.positions.clone())),
         )

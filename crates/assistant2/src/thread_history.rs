@@ -127,11 +127,23 @@ impl RenderOnce for PastThread {
                     .child(
                         IconButton::new("delete", IconName::TrashAlt)
                             .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small),
+                            .icon_size(IconSize::Small)
+                            .on_click({
+                                let assistant_panel = self.assistant_panel.clone();
+                                let id = id.clone();
+                                move |_event, cx| {
+                                    assistant_panel
+                                        .update(cx, |this, cx| {
+                                            this.delete_thread(&id, cx);
+                                        })
+                                        .ok();
+                                }
+                            }),
                     ),
             )
             .on_click({
                 let assistant_panel = self.assistant_panel.clone();
+                let id = id.clone();
                 move |_event, cx| {
                     assistant_panel
                         .update(cx, |this, cx| {

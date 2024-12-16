@@ -407,7 +407,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(h_flex().w_full().child(label))
                 .start_slot::<Icon>(icon)
                 .map(|el| {

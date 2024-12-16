@@ -173,7 +173,7 @@ impl ReplStore {
 
         let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
 
-        cx.spawn(|this, mut cx| async move {
+        let all_specs = cx.background_executor().spawn(async move {
             let mut all_specs = local_kernel_specifications
                 .await?
                 .into_iter()
@@ -186,10 +186,21 @@ impl ReplStore {
                 }
             }
 
-            this.update(&mut cx, |this, cx| {
-                this.kernel_specifications = all_specs;
-                cx.notify();
-            })
+            anyhow::Ok(all_specs)
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            let all_specs = all_specs.await;
+
+            if let Ok(specs) = all_specs {
+                this.update(&mut cx, |this, cx| {
+                    this.kernel_specifications = specs;
+                    cx.notify();
+                })
+                .ok();
+            }
+
+            anyhow::Ok(())
         })
     }
 

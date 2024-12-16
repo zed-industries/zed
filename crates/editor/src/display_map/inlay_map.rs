@@ -62,9 +62,9 @@ impl Inlay {
         }
     }
 
-    pub fn suggestion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn inline_completion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
-            id: InlayId::Suggestion(id),
+            id: InlayId::InlineCompletion(id),
             position,
             text: text.into(),
         }
@@ -211,7 +211,7 @@ pub struct InlayBufferRows<'a> {
 struct HighlightEndpoint {
     offset: InlayOffset,
     is_start: bool,
-    tag: Option<TypeId>,
+    tag: TypeId,
     style: HighlightStyle,
 }
 
@@ -239,7 +239,7 @@ pub struct InlayChunks<'a> {
     max_output_offset: InlayOffset,
     highlight_styles: HighlightStyles,
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
-    active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
+    active_highlights: BTreeMap<TypeId, HighlightStyle>,
     highlights: Highlights<'a>,
     snapshot: &'a InlaySnapshot,
 }
@@ -346,7 +346,15 @@ impl<'a> Iterator for InlayChunks<'a> {
                 }
 
                 let mut highlight_style = match inlay.id {
-                    InlayId::Suggestion(_) => self.highlight_styles.suggestion,
+                    InlayId::InlineCompletion(_) => {
+                        self.highlight_styles.inline_completion.map(|s| {
+                            if inlay.text.chars().all(|c| c.is_whitespace()) {
+                                s.whitespace
+                            } else {
+                                s.insertion
+                            }
+                        })
+                    }
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                 };
                 let next_inlay_highlight_endpoint;
@@ -693,7 +701,7 @@ impl InlayMap {
                 let inlay_id = if i % 2 == 0 {
                     InlayId::Hint(post_inc(next_inlay_id))
                 } else {
-                    InlayId::Suggestion(post_inc(next_inlay_id))
+                    InlayId::InlineCompletion(post_inc(next_inlay_id))
                 };
                 log::info!(
                     "creating inlay {:?} at buffer offset {} with bias {:?} and text {:?}",
@@ -1096,7 +1104,7 @@ impl InlaySnapshot {
         &self,
         cursor: &mut Cursor<'_, Transform, (InlayOffset, usize)>,
         range: &Range<InlayOffset>,
-        text_highlights: &TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>,
+        text_highlights: &TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>,
         highlight_endpoints: &mut Vec<HighlightEndpoint>,
     ) {
         while cursor.start().0 < range.end {
@@ -1112,7 +1120,7 @@ impl InlaySnapshot {
                     )))
                 };
 
-            for (tag, text_highlights) in text_highlights.iter() {
+            for (&tag, text_highlights) in text_highlights.iter() {
                 let style = text_highlights.0;
                 let ranges = &text_highlights.1;
 
@@ -1134,13 +1142,13 @@ impl InlaySnapshot {
                     highlight_endpoints.push(HighlightEndpoint {
                         offset: self.to_inlay_offset(range.start.to_offset(&self.buffer)),
                         is_start: true,
-                        tag: *tag,
+                        tag,
                         style,
                     });
                     highlight_endpoints.push(HighlightEndpoint {
                         offset: self.to_inlay_offset(range.end.to_offset(&self.buffer)),
                         is_start: false,
-                        tag: *tag,
+                        tag,
                         style,
                     });
                 }
@@ -1389,7 +1397,7 @@ mod tests {
                     text: "|123|".into(),
                 },
                 Inlay {
-                    id: InlayId::Suggestion(post_inc(&mut next_inlay_id)),
+                    id: InlayId::InlineCompletion(post_inc(&mut next_inlay_id)),
                     position: buffer.read(cx).snapshot(cx).anchor_after(3),
                     text: "|456|".into(),
                 },
@@ -1605,7 +1613,7 @@ mod tests {
                     text: "|456|".into(),
                 },
                 Inlay {
-                    id: InlayId::Suggestion(post_inc(&mut next_inlay_id)),
+                    id: InlayId::InlineCompletion(post_inc(&mut next_inlay_id)),
                     position: buffer.read(cx).snapshot(cx).anchor_before(7),
                     text: "\n|567|\n".into(),
                 },
@@ -1708,7 +1716,7 @@ mod tests {
             text_highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
             log::info!("highlighting text ranges {text_highlight_ranges:?}");
             text_highlights.insert(
-                Some(TypeId::of::<()>()),
+                TypeId::of::<()>(),
                 Arc::new((
                     HighlightStyle::default(),
                     text_highlight_ranges

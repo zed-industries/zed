@@ -427,11 +427,6 @@ pub trait LocalFile: File {
 
     /// Loads the file's contents from disk.
     fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>>;
-
-    /// Returns true if the file should not be shared with collaborators.
-    fn is_private(&self, _: &AppContext) -> bool {
-        false
-    }
 }
 
 /// The auto-indent behavior associated with an editing operation.
@@ -563,7 +558,7 @@ impl<'a, 'b> DerefMut for ChunkRendererContext<'a, 'b> {
 pub struct Diff {
     pub(crate) base_version: clock::Global,
     line_ending: LineEnding,
-    edits: Vec<(Range<usize>, Arc<str>)>,
+    pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
 #[derive(Clone, Copy)]

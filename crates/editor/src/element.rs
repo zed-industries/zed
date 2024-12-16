@@ -1,5 +1,6 @@
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
+    code_context_menus::CodeActionsMenu,
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -16,28 +17,28 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, ChunkReplacement, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint,
-    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
+    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
+    DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp, OpenExcerpts,
-    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
+    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
+use file_icons::FileIcons;
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
-    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, View, ViewContext,
-    WeakView, WindowContext,
+    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClickEvent,
+    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
+    ElementInputHandler, Entity, FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla,
+    InteractiveElement, IntoElement, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent,
+    ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription,
+    TextRun, TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
 };
-use gpui::{ClickEvent, Subscription};
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -47,7 +48,10 @@ use language::{
     ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{Anchor, ExcerptId, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow};
+use multi_buffer::{
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint,
+    MultiBufferRow, MultiBufferSnapshot, ToOffset,
+};
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -214,6 +218,7 @@ impl EditorElement {
         register_action(view, cx, Editor::cut_to_end_of_line);
         register_action(view, cx, Editor::duplicate_line_up);
         register_action(view, cx, Editor::duplicate_line_down);
+        register_action(view, cx, Editor::duplicate_selection);
         register_action(view, cx, Editor::move_line_up);
         register_action(view, cx, Editor::move_line_down);
         register_action(view, cx, Editor::transpose);
@@ -456,6 +461,8 @@ impl EditorElement {
         register_action(view, cx, Editor::open_active_item_in_terminal);
         register_action(view, cx, Editor::reload_file);
         register_action(view, cx, Editor::spawn_nearest_task);
+        register_action(view, cx, Editor::insert_uuid_v4);
+        register_action(view, cx, Editor::insert_uuid_v7);
     }
 
     fn register_key_listeners(&self, cx: &mut WindowContext, layout: &EditorLayout) {
@@ -1675,11 +1682,11 @@ impl EditorElement {
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
             let active_task_indicator_row =
-                if let Some(crate::ContextMenu::CodeActions(CodeActionsMenu {
+                if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
                     deployed_from_indicator,
                     actions,
                     ..
-                })) = editor.context_menu.read().as_ref()
+                })) = editor.context_menu.borrow().as_ref()
                 {
                     actions
                         .tasks
@@ -1690,16 +1697,32 @@ impl EditorElement {
                     None
                 };
 
+            let offset_range_start = snapshot
+                .display_point_to_anchor(DisplayPoint::new(range.start, 0), Bias::Left)
+                .to_offset(&snapshot.buffer_snapshot);
+            let offset_range_end = snapshot
+                .display_point_to_anchor(DisplayPoint::new(range.end, 0), Bias::Right)
+                .to_offset(&snapshot.buffer_snapshot);
+
             editor
                 .tasks
                 .iter()
                 .filter_map(|(_, tasks)| {
-                    let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
-                    let multibuffer_row = MultiBufferRow(multibuffer_point.row);
-                    let display_row = multibuffer_point.to_display_point(snapshot).row();
-                    if range.start > display_row || range.end < display_row {
+                    if tasks.offset.0 < offset_range_start || tasks.offset.0 >= offset_range_end {
                         return None;
                     }
+                    let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
+                    let multibuffer_row = MultiBufferRow(multibuffer_point.row);
+                    let buffer_folded = snapshot
+                        .buffer_snapshot
+                        .buffer_line_for_row(multibuffer_row)
+                        .map(|(buffer_snapshot, _)| buffer_snapshot.remote_id())
+                        .map(|buffer_id| editor.buffer_folded(buffer_id, cx))
+                        .unwrap_or(false);
+                    if buffer_folded {
+                        return None;
+                    }
+
                     if snapshot.is_line_folded(multibuffer_row) {
                         // Skip folded indicators, unless it's the starting line of a fold.
                         if multibuffer_row
@@ -1712,6 +1735,7 @@ impl EditorElement {
                             return None;
                         }
                     }
+                    let display_row = multibuffer_point.to_display_point(snapshot).row();
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
@@ -1750,10 +1774,10 @@ impl EditorElement {
         let mut button = None;
         let row = newest_selection_head.row();
         self.editor.update(cx, |editor, cx| {
-            if let Some(crate::ContextMenu::CodeActions(CodeActionsMenu {
+            if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
                 deployed_from_indicator,
                 ..
-            })) = editor.context_menu.read().as_ref()
+            })) = editor.context_menu.borrow().as_ref()
             {
                 active = deployed_from_indicator.map_or(true, |indicator_row| indicator_row == row);
             };
@@ -2072,6 +2096,7 @@ impl EditorElement {
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
+        let header_padding = px(6.0);
         let mut element = match block {
             Block::Custom(block) => {
                 let block_start = block.start().to_point(&snapshot.buffer_snapshot);
@@ -2121,21 +2146,58 @@ impl EditorElement {
                     .into_any()
             }
 
-            Block::ExcerptBoundary {
+            Block::FoldedBuffer {
+                first_excerpt,
                 prev_excerpt,
-                next_excerpt,
                 show_excerpt_controls,
-                starts_new_buffer,
                 height,
                 ..
             } => {
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
 
-                let header_padding = px(6.0);
+                let mut result = v_flex().id(block_id).w_full();
+                if let Some(prev_excerpt) = prev_excerpt {
+                    if *show_excerpt_controls {
+                        result = result.child(
+                            h_flex()
+                                .w(icon_offset)
+                                .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * cx.line_height())
+                                .flex_none()
+                                .justify_end()
+                                .child(self.render_expand_excerpt_button(
+                                    prev_excerpt.id,
+                                    ExpandExcerptDirection::Down,
+                                    IconName::ArrowDownFromLine,
+                                    cx,
+                                )),
+                        );
+                    }
+                }
+
+                let jump_data = jump_data(snapshot, block_row_start, *height, first_excerpt, cx);
+                result
+                    .child(self.render_buffer_header(
+                        first_excerpt,
+                        header_padding,
+                        true,
+                        jump_data,
+                        cx,
+                    ))
+                    .into_any_element()
+            }
+            Block::ExcerptBoundary {
+                prev_excerpt,
+                next_excerpt,
+                show_excerpt_controls,
+                height,
+                starts_new_buffer,
+                ..
+            } => {
+                let icon_offset = gutter_dimensions.width
+                    - (gutter_dimensions.left_padding + gutter_dimensions.margin);
 
                 let mut result = v_flex().id(block_id).w_full();
-
                 if let Some(prev_excerpt) = prev_excerpt {
                     if *show_excerpt_controls {
                         result = result.child(
@@ -2155,115 +2217,15 @@ impl EditorElement {
                 }
 
                 if let Some(next_excerpt) = next_excerpt {
-                    let buffer = &next_excerpt.buffer;
-                    let range = &next_excerpt.range;
-                    let jump_data = {
-                        let jump_path =
-                            project::File::from_dyn(buffer.file()).map(|file| ProjectPath {
-                                worktree_id: file.worktree_id(cx),
-                                path: file.path.clone(),
-                            });
-                        let jump_anchor = range
-                            .primary
-                            .as_ref()
-                            .map_or(range.context.start, |primary| primary.start);
-
-                        let excerpt_start = range.context.start;
-                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-                        let offset_from_excerpt_start = if jump_anchor == excerpt_start {
-                            0
-                        } else {
-                            let excerpt_start_row =
-                                language::ToPoint::to_point(&jump_anchor, buffer).row;
-                            jump_position.row - excerpt_start_row
-                        };
-                        let line_offset_from_top =
-                            block_row_start.0 + *height + offset_from_excerpt_start
-                                - snapshot
-                                    .scroll_anchor
-                                    .scroll_position(&snapshot.display_snapshot)
-                                    .y as u32;
-                        JumpData {
-                            excerpt_id: next_excerpt.id,
-                            anchor: jump_anchor,
-                            position: language::ToPoint::to_point(&jump_anchor, buffer),
-                            path: jump_path,
-                            line_offset_from_top,
-                        }
-                    };
-
+                    let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt, cx);
                     if *starts_new_buffer {
-                        let include_root = self
-                            .editor
-                            .read(cx)
-                            .project
-                            .as_ref()
-                            .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                            .unwrap_or_default();
-                        let path = buffer.resolve_file_path(cx, include_root);
-                        let filename = path
-                            .as_ref()
-                            .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
-                        let parent_path = path.as_ref().and_then(|path| {
-                            Some(path.parent()?.to_string_lossy().to_string() + "/")
-                        });
-
-                        result = result.child(
-                            div()
-                                .px(header_padding)
-                                .pt(header_padding)
-                                .w_full()
-                                .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
-                                .child(
-                                    h_flex()
-                                        .id("path header block")
-                                        .size_full()
-                                        .flex_basis(Length::Definite(DefiniteLength::Fraction(
-                                            0.667,
-                                        )))
-                                        .px(gpui::px(12.))
-                                        .rounded_md()
-                                        .shadow_md()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .bg(cx.theme().colors().editor_subheader_background)
-                                        .justify_between()
-                                        .hover(|style| style.bg(cx.theme().colors().element_hover))
-                                        .child(
-                                            h_flex().gap_3().child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(
-                                                        filename
-                                                            .map(SharedString::from)
-                                                            .unwrap_or_else(|| "untitled".into()),
-                                                    )
-                                                    .when_some(parent_path, |then, path| {
-                                                        then.child(div().child(path).text_color(
-                                                            cx.theme().colors().text_muted,
-                                                        ))
-                                                    }),
-                                            ),
-                                        )
-                                        .child(Icon::new(IconName::ArrowUpRight))
-                                        .cursor_pointer()
-                                        .tooltip(|cx| {
-                                            Tooltip::for_action("Jump to File", &OpenExcerpts, cx)
-                                        })
-                                        .on_mouse_down(MouseButton::Left, |_, cx| {
-                                            cx.stop_propagation()
-                                        })
-                                        .on_click(cx.listener_for(&self.editor, {
-                                            move |editor, e: &ClickEvent, cx| {
-                                                editor.open_excerpts_common(
-                                                    Some(jump_data.clone()),
-                                                    e.down.modifiers.secondary(),
-                                                    cx,
-                                                );
-                                            }
-                                        })),
-                                ),
-                        );
+                        result = result.child(self.render_buffer_header(
+                            next_excerpt,
+                            header_padding,
+                            false,
+                            jump_data,
+                            cx,
+                        ));
                         if *show_excerpt_controls {
                             result = result.child(
                                 h_flex()
@@ -2411,6 +2373,105 @@ impl EditorElement {
         }
 
         (element, final_size)
+    }
+
+    fn render_buffer_header(
+        &self,
+        for_excerpt: &ExcerptInfo,
+        header_padding: Pixels,
+        is_folded: bool,
+        jump_data: JumpData,
+        cx: &mut WindowContext,
+    ) -> Div {
+        let include_root = self
+            .editor
+            .read(cx)
+            .project
+            .as_ref()
+            .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+            .unwrap_or_default();
+        let path = for_excerpt.buffer.resolve_file_path(cx, include_root);
+        let filename = path
+            .as_ref()
+            .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
+        let parent_path = path
+            .as_ref()
+            .and_then(|path| Some(path.parent()?.to_string_lossy().to_string() + "/"));
+
+        div()
+            .px(header_padding)
+            .pt(header_padding)
+            .w_full()
+            .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
+            .child(
+                h_flex()
+                    .id("path header block")
+                    .size_full()
+                    .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
+                    .px(gpui::px(12.))
+                    .rounded_md()
+                    .shadow_md()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_subheader_background)
+                    .justify_between()
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .map(|header| {
+                                let editor = self.editor.clone();
+                                let buffer_id = for_excerpt.buffer_id;
+                                let toggle_chevron_icon =
+                                    FileIcons::get_chevron_icon(!is_folded, cx)
+                                        .map(Icon::from_path);
+                                header.child(
+                                    ButtonLike::new("toggle-buffer-fold")
+                                        .children(toggle_chevron_icon)
+                                        .on_click(move |_, cx| {
+                                            if is_folded {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.unfold_buffer(buffer_id, cx);
+                                                });
+                                            } else {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.fold_buffer(buffer_id, cx);
+                                                });
+                                            }
+                                        }),
+                                )
+                            })
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        filename
+                                            .map(SharedString::from)
+                                            .unwrap_or_else(|| "untitled".into()),
+                                    )
+                                    .when_some(parent_path, |then, path| {
+                                        then.child(
+                                            div()
+                                                .child(path)
+                                                .text_color(cx.theme().colors().text_muted),
+                                        )
+                                    }),
+                            ),
+                    )
+                    .child(Icon::new(IconName::ArrowUpRight))
+                    .cursor_pointer()
+                    .tooltip(|cx| Tooltip::for_action("Jump to File", &OpenExcerpts, cx))
+                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                    .on_click(cx.listener_for(&self.editor, {
+                        move |editor, e: &ClickEvent, cx| {
+                            editor.open_excerpts_common(
+                                Some(jump_data.clone()),
+                                e.down.modifiers.secondary(),
+                                cx,
+                            );
+                        }
+                    })),
+            )
     }
 
     fn render_expand_excerpt_button(
@@ -2716,6 +2777,188 @@ impl EditorElement {
 
         cx.defer_draw(context_menu, list_origin, 1);
         true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_inline_completion_popover(
+        &self,
+        text_bounds: &Bounds<Pixels>,
+        editor_snapshot: &EditorSnapshot,
+        visible_row_range: Range<DisplayRow>,
+        scroll_top: f32,
+        scroll_bottom: f32,
+        line_layouts: &[LineWithInvisibles],
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        editor_width: Pixels,
+        style: &EditorStyle,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        const PADDING_X: Pixels = Pixels(24.);
+        const PADDING_Y: Pixels = Pixels(2.);
+
+        let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
+
+        match &active_inline_completion.completion {
+            InlineCompletion::Move(target_position) => {
+                let tab_kbd = h_flex()
+                    .px_0p5()
+                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                    .text_size(TextSize::XSmall.rems(cx))
+                    .text_color(cx.theme().colors().text.opacity(0.8))
+                    .child("tab");
+
+                let icon_container = div().mt(px(2.5)); // For optical alignment
+
+                let container_element = h_flex()
+                    .items_center()
+                    .py_0p5()
+                    .px_1()
+                    .gap_1()
+                    .bg(cx.theme().colors().editor_subheader_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().text_accent.opacity(0.2))
+                    .rounded_md()
+                    .shadow_sm();
+
+                let target_display_point = target_position.to_display_point(editor_snapshot);
+                if target_display_point.row().as_f32() < scroll_top {
+                    let mut element = container_element
+                        .child(tab_kbd)
+                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
+                        .child(
+                            icon_container
+                                .child(Icon::new(IconName::ArrowUp).size(IconSize::Small)),
+                        )
+                        .into_any();
+                    let size = element.layout_as_root(AvailableSpace::min_size(), cx);
+                    let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
+                    element.prepaint_at(text_bounds.origin + offset, cx);
+                    Some(element)
+                } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
+                    let mut element = container_element
+                        .child(tab_kbd)
+                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
+                        .child(
+                            icon_container
+                                .child(Icon::new(IconName::ArrowDown).size(IconSize::Small)),
+                        )
+                        .into_any();
+                    let size = element.layout_as_root(AvailableSpace::min_size(), cx);
+                    let offset = point(
+                        (text_bounds.size.width - size.width) / 2.,
+                        text_bounds.size.height - size.height - PADDING_Y,
+                    );
+                    element.prepaint_at(text_bounds.origin + offset, cx);
+                    Some(element)
+                } else {
+                    let mut element = container_element
+                        .child(tab_kbd)
+                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
+                        .into_any();
+
+                    let target_line_end = DisplayPoint::new(
+                        target_display_point.row(),
+                        editor_snapshot.line_len(target_display_point.row()),
+                    );
+                    let origin = self.editor.update(cx, |editor, cx| {
+                        editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
+                    })?;
+                    element.prepaint_as_root(
+                        text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                        AvailableSpace::min_size(),
+                        cx,
+                    );
+                    Some(element)
+                }
+            }
+            InlineCompletion::Edit(edits) => {
+                let edit_start = edits
+                    .first()
+                    .unwrap()
+                    .0
+                    .start
+                    .to_display_point(editor_snapshot);
+                let edit_end = edits
+                    .last()
+                    .unwrap()
+                    .0
+                    .end
+                    .to_display_point(editor_snapshot);
+
+                let is_visible = visible_row_range.contains(&edit_start.row())
+                    || visible_row_range.contains(&edit_end.row());
+                if !is_visible {
+                    return None;
+                }
+
+                if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
+                    return None;
+                }
+
+                let (text, highlights) = inline_completion_popover_text(editor_snapshot, edits, cx);
+                let line_count = text.lines().count() + 1;
+
+                let longest_row =
+                    editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
+                let longest_line_width = if visible_row_range.contains(&longest_row) {
+                    line_layouts[(longest_row.0 - visible_row_range.start.0) as usize].width
+                } else {
+                    layout_line(
+                        longest_row,
+                        editor_snapshot,
+                        style,
+                        editor_width,
+                        |_| false,
+                        cx,
+                    )
+                    .width
+                };
+
+                let styled_text =
+                    gpui::StyledText::new(text).with_highlights(&style.text, highlights);
+
+                let mut element = div()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_md()
+                    .px_1()
+                    .child(styled_text)
+                    .into_any();
+
+                let element_bounds = element.layout_as_root(AvailableSpace::min_size(), cx);
+                let is_fully_visible =
+                    editor_width >= longest_line_width + PADDING_X + element_bounds.width;
+
+                let origin = if is_fully_visible {
+                    text_bounds.origin
+                        + point(
+                            longest_line_width + PADDING_X - scroll_pixel_position.x,
+                            edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
+                        )
+                } else {
+                    let target_above =
+                        DisplayRow(edit_start.row().0.saturating_sub(line_count as u32));
+                    let row_target = if visible_row_range
+                        .contains(&DisplayRow(target_above.0.saturating_sub(1)))
+                    {
+                        target_above
+                    } else {
+                        DisplayRow(edit_end.row().0 + 1)
+                    };
+
+                    text_bounds.origin
+                        + point(
+                            -scroll_pixel_position.x,
+                            row_target.as_f32() * line_height - scroll_pixel_position.y,
+                        )
+                };
+
+                element.prepaint_as_root(origin, element_bounds.into(), cx);
+                Some(element)
+            }
+        }
     }
 
     fn layout_mouse_context_menu(
@@ -3940,6 +4183,16 @@ impl EditorElement {
         }
     }
 
+    fn paint_inline_completion_popover(
+        &mut self,
+        layout: &mut EditorLayout,
+        cx: &mut WindowContext,
+    ) {
+        if let Some(inline_completion_popover) = layout.inline_completion_popover.as_mut() {
+            inline_completion_popover.paint(cx);
+        }
+    }
+
     fn paint_mouse_context_menu(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         if let Some(mouse_context_menu) = layout.mouse_context_menu.as_mut() {
             mouse_context_menu.paint(cx);
@@ -4130,6 +4383,129 @@ impl EditorElement {
         let digit_count = (snapshot.widest_line_number() as f32).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
     }
+}
+
+fn jump_data(
+    snapshot: &EditorSnapshot,
+    block_row_start: DisplayRow,
+    height: u32,
+    for_excerpt: &ExcerptInfo,
+    cx: &mut WindowContext<'_>,
+) -> JumpData {
+    let range = &for_excerpt.range;
+    let buffer = &for_excerpt.buffer;
+    let jump_path = project::File::from_dyn(buffer.file()).map(|file| ProjectPath {
+        worktree_id: file.worktree_id(cx),
+        path: file.path.clone(),
+    });
+    let jump_anchor = range
+        .primary
+        .as_ref()
+        .map_or(range.context.start, |primary| primary.start);
+
+    let excerpt_start = range.context.start;
+    let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
+    let offset_from_excerpt_start = if jump_anchor == excerpt_start {
+        0
+    } else {
+        let excerpt_start_row = language::ToPoint::to_point(&jump_anchor, buffer).row;
+        jump_position.row - excerpt_start_row
+    };
+    let line_offset_from_top = block_row_start.0 + height + offset_from_excerpt_start
+        - snapshot
+            .scroll_anchor
+            .scroll_position(&snapshot.display_snapshot)
+            .y as u32;
+    JumpData {
+        excerpt_id: for_excerpt.id,
+        anchor: jump_anchor,
+        position: language::ToPoint::to_point(&jump_anchor, buffer),
+        path: jump_path,
+        line_offset_from_top,
+    }
+}
+
+fn inline_completion_popover_text(
+    editor_snapshot: &EditorSnapshot,
+    edits: &Vec<(Range<Anchor>, String)>,
+    cx: &WindowContext,
+) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
+    let edit_start = edits
+        .first()
+        .unwrap()
+        .0
+        .start
+        .to_display_point(editor_snapshot);
+
+    let mut text = String::new();
+    let mut offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
+    let mut highlights = Vec::new();
+    for (old_range, new_text) in edits {
+        let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
+        text.extend(
+            editor_snapshot
+                .buffer_snapshot
+                .chunks(offset..old_offset_range.start, false)
+                .map(|chunk| chunk.text),
+        );
+        offset = old_offset_range.end;
+
+        let start = text.len();
+        text.push_str(new_text);
+        let end = text.len();
+        highlights.push((
+            start..end,
+            HighlightStyle {
+                background_color: Some(cx.theme().status().created_background),
+                ..Default::default()
+            },
+        ));
+    }
+
+    let edit_end = edits
+        .last()
+        .unwrap()
+        .0
+        .end
+        .to_display_point(editor_snapshot);
+    let end_of_line = DisplayPoint::new(edit_end.row(), editor_snapshot.line_len(edit_end.row()))
+        .to_offset(editor_snapshot, Bias::Right);
+    text.extend(
+        editor_snapshot
+            .buffer_snapshot
+            .chunks(offset..end_of_line, false)
+            .map(|chunk| chunk.text),
+    );
+
+    (text, highlights)
+}
+
+fn all_edits_insertions_or_deletions(
+    edits: &Vec<(Range<Anchor>, String)>,
+    snapshot: &MultiBufferSnapshot,
+) -> bool {
+    let mut all_insertions = true;
+    let mut all_deletions = true;
+
+    for (range, new_text) in edits.iter() {
+        let range_is_empty = range.to_offset(&snapshot).is_empty();
+        let text_is_empty = new_text.is_empty();
+
+        if range_is_empty != text_is_empty {
+            if range_is_empty {
+                all_deletions = false;
+            } else {
+                all_insertions = false;
+            }
+        } else {
+            return false;
+        }
+
+        if !all_insertions && !all_deletions {
+            return false;
+        }
+    }
+    all_insertions || all_deletions
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5492,29 +5868,33 @@ impl Element for EditorElement {
                                 if !expanded_add_hunks_by_rows
                                     .contains_key(&newest_selection_display_row)
                                 {
-                                    let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
-                                        MultiBufferRow(newest_selection_point.row),
-                                    );
-                                    if let Some((buffer, range)) = buffer {
-                                        let buffer_id = buffer.remote_id();
-                                        let row = range.start.row;
-                                        let has_test_indicator = self
-                                            .editor
-                                            .read(cx)
-                                            .tasks
-                                            .contains_key(&(buffer_id, row));
+                                    if !snapshot
+                                        .is_line_folded(MultiBufferRow(newest_selection_point.row))
+                                    {
+                                        let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
+                                            MultiBufferRow(newest_selection_point.row),
+                                        );
+                                        if let Some((buffer, range)) = buffer {
+                                            let buffer_id = buffer.remote_id();
+                                            let row = range.start.row;
+                                            let has_test_indicator = self
+                                                .editor
+                                                .read(cx)
+                                                .tasks
+                                                .contains_key(&(buffer_id, row));
 
-                                        if !has_test_indicator {
-                                            code_actions_indicator = self
-                                                .layout_code_actions_indicator(
-                                                    line_height,
-                                                    newest_selection_head,
-                                                    scroll_pixel_position,
-                                                    &gutter_dimensions,
-                                                    &gutter_hitbox,
-                                                    &rows_with_hunk_bounds,
-                                                    cx,
-                                                );
+                                            if !has_test_indicator {
+                                                code_actions_indicator = self
+                                                    .layout_code_actions_indicator(
+                                                        line_height,
+                                                        newest_selection_head,
+                                                        scroll_pixel_position,
+                                                        &gutter_dimensions,
+                                                        &gutter_hitbox,
+                                                        &rows_with_hunk_bounds,
+                                                        cx,
+                                                    );
+                                            }
                                         }
                                     }
                                 }
@@ -5563,6 +5943,20 @@ impl Element for EditorElement {
                             cx,
                         );
                     }
+
+                    let inline_completion_popover = self.layout_inline_completion_popover(
+                        &text_hitbox.bounds,
+                        &snapshot,
+                        start_row..end_row,
+                        scroll_position.y,
+                        scroll_position.y + height_in_lines,
+                        &line_layouts,
+                        line_height,
+                        scroll_pixel_position,
+                        editor_width,
+                        &style,
+                        cx,
+                    );
 
                     let mouse_context_menu = self.layout_mouse_context_menu(
                         &snapshot,
@@ -5650,6 +6044,7 @@ impl Element for EditorElement {
                         cursors,
                         visible_cursors,
                         selections,
+                        inline_completion_popover,
                         mouse_context_menu,
                         test_indicators,
                         code_actions_indicator,
@@ -5739,6 +6134,7 @@ impl Element for EditorElement {
                     }
 
                     self.paint_scrollbar(layout, cx);
+                    self.paint_inline_completion_popover(layout, cx);
                     self.paint_mouse_context_menu(layout, cx);
                 });
             })
@@ -5794,6 +6190,7 @@ pub struct EditorLayout {
     test_indicators: Vec<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
+    inline_completion_popover: Option<AnyElement>,
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
@@ -6387,7 +6784,6 @@ mod tests {
     use language::language_settings;
     use log::info;
     use std::num::NonZeroU32;
-    use ui::Context;
     use util::test::sample_text;
 
     #[gpui::test]
@@ -6832,6 +7228,161 @@ mod tests {
 
                 editor_width += resize_step;
             }
+        }
+    }
+
+    #[gpui::test]
+    fn test_inline_completion_popover_text(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        // Test case 1: Simple insertion
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 6))
+                        ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
+                    let edits = vec![(edit_range, " beautiful".to_string())];
+
+                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+
+                    assert_eq!(text, "Hello, beautiful world!");
+                    assert_eq!(highlights.len(), 1);
+                    assert_eq!(highlights[0].0, 6..16);
+                    assert_eq!(
+                        highlights[0].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                })
+                .unwrap();
+        }
+
+        // Test case 2: Replacement
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("This is a test.", cx);
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edits = vec![(
+                        snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 4)),
+                        "That".to_string(),
+                    )];
+
+                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+
+                    assert_eq!(text, "That is a test.");
+                    assert_eq!(highlights.len(), 1);
+                    assert_eq!(highlights[0].0, 0..4);
+                    assert_eq!(
+                        highlights[0].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                })
+                .unwrap();
+        }
+
+        // Test case 3: Multiple edits
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edits = vec![
+                        (
+                            snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 5)),
+                            "Greetings".into(),
+                        ),
+                        (
+                            snapshot.buffer_snapshot.anchor_after(Point::new(0, 12))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 12)),
+                            " and universe".into(),
+                        ),
+                    ];
+
+                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+
+                    assert_eq!(text, "Greetings, world and universe!");
+                    assert_eq!(highlights.len(), 2);
+                    assert_eq!(highlights[0].0, 0..9);
+                    assert_eq!(highlights[1].0, 16..29);
+                    assert_eq!(
+                        highlights[0].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                    assert_eq!(
+                        highlights[1].1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                })
+                .unwrap();
+        }
+
+        // Test case 4: Multiple lines with edits
+        {
+            let window = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple(
+                    "First line\nSecond line\nThird line\nFourth line",
+                    cx,
+                );
+                Editor::new(EditorMode::Full, buffer, None, true, cx)
+            });
+            let cx = &mut VisualTestContext::from_window(*window, cx);
+
+            window
+                .update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let edits = vec![
+                        (
+                            snapshot.buffer_snapshot.anchor_before(Point::new(1, 7))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(1, 11)),
+                            "modified".to_string(),
+                        ),
+                        (
+                            snapshot.buffer_snapshot.anchor_before(Point::new(2, 0))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(2, 10)),
+                            "New third line".to_string(),
+                        ),
+                        (
+                            snapshot.buffer_snapshot.anchor_before(Point::new(3, 6))
+                                ..snapshot.buffer_snapshot.anchor_before(Point::new(3, 6)),
+                            " updated".to_string(),
+                        ),
+                    ];
+
+                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+
+                    assert_eq!(text, "Second modified\nNew third line\nFourth updated line");
+                    assert_eq!(highlights.len(), 3);
+                    assert_eq!(highlights[0].0, 7..15); // "modified"
+                    assert_eq!(highlights[1].0, 16..30); // "New third line"
+                    assert_eq!(highlights[2].0, 37..45); // " updated"
+
+                    for highlight in &highlights {
+                        assert_eq!(
+                            highlight.1.background_color,
+                            Some(cx.theme().status().created_background)
+                        );
+                    }
+                })
+                .unwrap();
         }
     }
 

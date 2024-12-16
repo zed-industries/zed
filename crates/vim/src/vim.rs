@@ -626,10 +626,23 @@ impl Vim {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
             Mode::Normal => {
-                if self.operator_stack.is_empty() {
-                    CursorShape::Block
+                if let Some(operator) = self.operator_stack.last() {
+                    match operator {
+                        // Navigation operators -> Block cursor
+                        Operator::FindForward { .. }
+                        | Operator::FindBackward { .. }
+                        | Operator::Mark
+                        | Operator::Jump { .. }
+                        | Operator::Register
+                        | Operator::RecordRegister
+                        | Operator::ReplayRegister => CursorShape::Block,
+
+                        // All other operators -> Underline cursor
+                        _ => CursorShape::Underline,
+                    }
                 } else {
-                    CursorShape::Underline
+                    // No operator active -> Block cursor
+                    CursorShape::Block
                 }
             }
             Mode::Replace => CursorShape::Underline,
@@ -1162,6 +1175,15 @@ impl Vim {
                 if self.mode == Mode::Replace {
                     self.multi_replace(text, cx)
                 }
+
+                if self.mode == Mode::Normal {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.accept_inline_completion(
+                            &editor::actions::AcceptInlineCompletion {},
+                            cx,
+                        );
+                    });
+                }
             }
         }
     }
@@ -1174,7 +1196,10 @@ impl Vim {
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
-            editor.set_inline_completions_enabled(matches!(vim.mode, Mode::Insert | Mode::Replace));
+            editor.set_inline_completions_enabled(matches!(
+                vim.mode,
+                Mode::Insert | Mode::Normal | Mode::Replace
+            ));
         });
         cx.notify()
     }

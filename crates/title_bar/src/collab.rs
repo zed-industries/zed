@@ -292,11 +292,12 @@ impl TitleBar {
         let is_local = project.is_local() || project.is_via_ssh();
         let is_shared = is_local && project.is_shared();
         let is_muted = room.is_muted();
+        let muted_by_user = room.muted_by_user();
         let is_deafened = room.is_deafened().unwrap_or(false);
         let is_screen_sharing = room.is_screen_sharing();
-        let can_use_microphone = room.can_use_microphone();
+        let can_use_microphone = room.can_use_microphone(cx);
         let can_share_projects = room.can_share_projects();
-        let platform_supported = match self.platform_style {
+        let screen_sharing_supported = match self.platform_style {
             PlatformStyle::Mac => true,
             PlatformStyle::Linux | PlatformStyle::Windows => false,
         };
@@ -321,7 +322,7 @@ impl TitleBar {
                 })
                 .style(ButtonStyle::Subtle)
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .selected(is_shared)
+                .toggle_state(is_shared)
                 .label_size(LabelSize::Small)
                 .on_click(cx.listener(move |this, _, cx| {
                     if is_shared {
@@ -362,69 +363,78 @@ impl TitleBar {
                     },
                 )
                 .tooltip(move |cx| {
-                    Tooltip::text(
-                        if !platform_supported {
-                            "Cannot share microphone"
-                        } else if is_muted {
-                            "Unmute microphone"
+                    if is_muted {
+                        if is_deafened {
+                            Tooltip::with_meta(
+                                "Unmute Microphone",
+                                None,
+                                "Audio will be unmuted",
+                                cx,
+                            )
                         } else {
-                            "Mute microphone"
-                        },
-                        cx,
-                    )
+                            Tooltip::text("Unmute Microphone", cx)
+                        }
+                    } else {
+                        Tooltip::text("Mute Microphone", cx)
+                    }
                 })
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
-                .selected(platform_supported && is_muted)
-                .disabled(!platform_supported)
+                .toggle_state(is_muted)
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                 .on_click(move |_, cx| {
                     toggle_mute(&Default::default(), cx);
                 })
                 .into_any_element(),
             );
+
+            children.push(
+                IconButton::new(
+                    "mute-sound",
+                    if is_deafened {
+                        ui::IconName::AudioOff
+                    } else {
+                        ui::IconName::AudioOn
+                    },
+                )
+                .style(ButtonStyle::Subtle)
+                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                .icon_size(IconSize::Small)
+                .toggle_state(is_deafened)
+                .tooltip(move |cx| {
+                    if is_deafened {
+                        let label = "Unmute Audio";
+
+                        if !muted_by_user {
+                            Tooltip::with_meta(label, None, "Microphone will be unmuted", cx)
+                        } else {
+                            Tooltip::text(label, cx)
+                        }
+                    } else {
+                        let label = "Mute Audio";
+
+                        if !muted_by_user {
+                            Tooltip::with_meta(label, None, "Microphone will be muted", cx)
+                        } else {
+                            Tooltip::text(label, cx)
+                        }
+                    }
+                })
+                .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
+                .into_any_element(),
+            );
         }
 
-        children.push(
-            IconButton::new(
-                "mute-sound",
-                if is_deafened {
-                    ui::IconName::AudioOff
-                } else {
-                    ui::IconName::AudioOn
-                },
-            )
-            .style(ButtonStyle::Subtle)
-            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-            .icon_size(IconSize::Small)
-            .selected(is_deafened)
-            .disabled(!platform_supported)
-            .tooltip(move |cx| {
-                if !platform_supported {
-                    Tooltip::text("Cannot share microphone", cx)
-                } else if can_use_microphone {
-                    Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
-                } else {
-                    Tooltip::text("Deafen Audio", cx)
-                }
-            })
-            .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
-            .into_any_element(),
-        );
-
-        if can_share_projects {
+        if screen_sharing_supported {
             children.push(
                 IconButton::new("screen-share", ui::IconName::Screen)
                     .style(ButtonStyle::Subtle)
                     .icon_size(IconSize::Small)
-                    .selected(is_screen_sharing)
-                    .disabled(!platform_supported)
+                    .toggle_state(is_screen_sharing)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .tooltip(move |cx| {
                         Tooltip::text(
-                            if !platform_supported {
-                                "Cannot share screen"
-                            } else if is_screen_sharing {
+                            if is_screen_sharing {
                                 "Stop Sharing Screen"
                             } else {
                                 "Share Screen"

@@ -331,7 +331,7 @@ fn local_task_context_for_location(
     let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
     let worktree_abs_path = worktree_id
         .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
-        .map(|worktree| worktree.read(cx).abs_path());
+        .and_then(|worktree| worktree.read(cx).root_dir());
 
     cx.spawn(|mut cx| async move {
         let worktree_abs_path = worktree_abs_path.clone();

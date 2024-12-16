@@ -18,7 +18,8 @@ use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, EditorEvent, Event,
-    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, ReplEvent, SettingEvent,
+    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, InlineCompletionRating,
+    InlineCompletionRatingEvent, ReplEvent, SettingEvent,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -353,6 +354,24 @@ impl Telemetry {
         });
 
         self.report_event(event)
+    }
+
+    pub fn report_inline_completion_rating_event(
+        self: &Arc<Self>,
+        rating: InlineCompletionRating,
+        input_events: Arc<str>,
+        input_excerpt: Arc<str>,
+        output_excerpt: Arc<str>,
+        feedback: String,
+    ) {
+        let event = Event::InlineCompletionRating(InlineCompletionRatingEvent {
+            rating,
+            input_events,
+            input_excerpt,
+            output_excerpt,
+            feedback,
+        });
+        self.report_event(event);
     }
 
     pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
