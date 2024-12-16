@@ -163,7 +163,7 @@ impl<'a> FoldMapWriter<'a> {
             });
 
             let diff_range =
-                snapshot.make_diff_offset(range.start)..snapshot.make_diff_offset(range.end);
+                snapshot.to_diff_offset(range.start)..snapshot.to_diff_offset(range.end);
             edits.push(DiffEdit {
                 old: diff_range.clone(),
                 new: diff_range,
@@ -231,8 +231,8 @@ impl<'a> FoldMapWriter<'a> {
                     fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer);
                 if should_unfold(fold) {
                     if offset_range.end > offset_range.start {
-                        let diff_range = snapshot.make_diff_offset(offset_range.start)
-                            ..snapshot.make_diff_offset(offset_range.end);
+                        let diff_range = snapshot.to_diff_offset(offset_range.start)
+                            ..snapshot.to_diff_offset(offset_range.end);
                         edits.push(DiffEdit {
                             old: diff_range.clone(),
                             new: diff_range,
@@ -412,7 +412,7 @@ impl FoldMap {
 
                 let anchor = diff_map_snapshot
                     .buffer()
-                    .anchor_before(diff_map_snapshot.to_buffer_offset(edit.new.start));
+                    .anchor_before(diff_map_snapshot.to_multibuffer_offset(edit.new.start));
                 let mut folds_cursor = self
                     .snapshot
                     .folds
@@ -432,8 +432,8 @@ impl FoldMap {
                             let buffer_end = fold.range.end.to_offset(&diff_map_snapshot.buffer());
                             (
                                 fold.clone(),
-                                diff_map_snapshot.make_diff_offset(buffer_start)
-                                    ..diff_map_snapshot.make_diff_offset(buffer_end),
+                                diff_map_snapshot.to_diff_offset(buffer_start)
+                                    ..diff_map_snapshot.to_diff_offset(buffer_end),
                             )
                         });
                         folds_cursor.next(&diff_map_snapshot.buffer());
@@ -690,11 +690,11 @@ impl FoldSnapshot {
     }
 
     pub fn make_fold_point(&self, point: Point, bias: Bias) -> FoldPoint {
-        self.to_fold_point(self.diff_map_snapshot.make_diff_point(point), bias)
+        self.to_fold_point(self.diff_map_snapshot.to_diff_point(point), bias)
     }
 
     pub fn make_fold_offset(&self, buffer_offset: usize, bias: Bias) -> FoldOffset {
-        self.to_fold_offset(self.diff_map_snapshot.make_diff_offset(buffer_offset), bias)
+        self.to_fold_offset(self.diff_map_snapshot.to_diff_offset(buffer_offset), bias)
     }
 
     pub fn to_fold_point(&self, point: DiffPoint, bias: Bias) -> FoldPoint {
@@ -795,7 +795,7 @@ impl FoldSnapshot {
         T: ToOffset,
     {
         let buffer_offset = offset.to_offset(self.buffer());
-        let diff_offset = self.diff_map_snapshot.make_diff_offset(buffer_offset);
+        let diff_offset = self.diff_map_snapshot.to_diff_offset(buffer_offset);
         let mut cursor = self.transforms.cursor::<DiffOffset>(&());
         cursor.seek(&diff_offset, Bias::Right, &());
         cursor.item().map_or(false, |t| t.placeholder.is_some())
@@ -804,13 +804,13 @@ impl FoldSnapshot {
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
         let mut diff_point = self
             .diff_map_snapshot
-            .make_diff_point(Point::new(buffer_row.0, 0));
+            .to_diff_point(Point::new(buffer_row.0, 0));
         let mut cursor = self.transforms.cursor::<DiffPoint>(&());
         cursor.seek(&diff_point, Bias::Right, &());
         loop {
             match cursor.item() {
                 Some(transform) => {
-                    let buffer_point = self.diff_map_snapshot.to_buffer_point(diff_point);
+                    let buffer_point = self.diff_map_snapshot.to_multibuffer_point(diff_point);
                     if buffer_point.row != buffer_row.0 {
                         return false;
                     } else if transform.placeholder.is_some() {
@@ -1761,8 +1761,8 @@ mod tests {
 
             let mut expected_text: String = diff_snapshot.text().to_string();
             for fold_range in map.merged_folds().into_iter().rev() {
-                let fold_inlay_start = diff_snapshot.make_diff_offset(fold_range.start);
-                let fold_inlay_end = diff_snapshot.make_diff_offset(fold_range.end);
+                let fold_inlay_start = diff_snapshot.to_diff_offset(fold_range.start);
+                let fold_inlay_end = diff_snapshot.to_diff_offset(fold_range.end);
                 expected_text.replace_range(fold_inlay_start.0..fold_inlay_end.0, "⋯");
             }
 

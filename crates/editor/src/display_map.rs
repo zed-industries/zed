@@ -811,7 +811,7 @@ impl DisplaySnapshot {
             let mut fold_point = self.fold_snapshot.to_fold_point(diff_point, Bias::Left);
             fold_point.0.column = 0;
             diff_point = fold_point.to_diff_point(&self.fold_snapshot);
-            inlay_point = self.diff_snapshot().to_inlay_point(diff_point);
+            inlay_point = self.diff_snapshot().to_multibuffer_point(diff_point);
             point = self.inlay_snapshot.to_buffer_point(inlay_point);
 
             let mut display_point = self.point_to_display_point(point, Bias::Left);
@@ -831,7 +831,7 @@ impl DisplaySnapshot {
             let mut fold_point = self.fold_snapshot.to_fold_point(diff_point, Bias::Right);
             fold_point.0.column = self.fold_snapshot.line_len(fold_point.row());
             diff_point = fold_point.to_diff_point(&self.fold_snapshot);
-            inlay_point = self.diff_snapshot().to_inlay_point(diff_point);
+            inlay_point = self.diff_snapshot().to_multibuffer_point(diff_point);
             point = self.inlay_snapshot.to_buffer_point(inlay_point);
 
             let mut display_point = self.point_to_display_point(point, Bias::Right);
@@ -908,7 +908,7 @@ impl DisplaySnapshot {
 
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
         let diff_point = self.display_point_to_diff_point(point, bias);
-        self.diff_snapshot().to_inlay_point(diff_point)
+        self.diff_snapshot().to_multibuffer_point(diff_point)
     }
 
     fn display_point_to_diff_point(&self, point: DisplayPoint, bias: Bias) -> DiffPoint {
@@ -1508,7 +1508,7 @@ impl DisplayPoint {
         let tab_point = map.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = map.tab_snapshot.to_fold_point(tab_point, bias).0;
         let diff_point = fold_point.to_diff_point(&map.fold_snapshot);
-        let inlay_point = map.diff_snapshot().to_inlay_point(diff_point);
+        let inlay_point = map.diff_snapshot().to_multibuffer_point(diff_point);
         map.inlay_snapshot
             .to_buffer_offset(map.inlay_snapshot.to_offset(inlay_point))
     }

@@ -326,7 +326,7 @@ impl TabSnapshot {
         let inlay_point = fold_point.to_diff_point(&self.fold_snapshot);
         self.fold_snapshot
             .diff_map_snapshot
-            .to_buffer_point(inlay_point)
+            .to_multibuffer_point(inlay_point)
     }
 
     fn expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {
