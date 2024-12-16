@@ -1092,8 +1092,8 @@ impl Item for TerminalView {
                 let python_venv_directory = terminal.python_venv_directory.clone();
                 project.create_terminal_with_venv(
                     TerminalKind::Shell(working_directory),
-                    window,
                     python_venv_directory,
+                    window,
                     cx,
                 )
             })

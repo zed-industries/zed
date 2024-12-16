@@ -379,7 +379,7 @@ impl TerminalPanel {
         let window = cx.window_handle();
         let terminal = project
             .update(cx, |project, cx| {
-                project.create_terminal_with_venv(kind, window, python_venv_directory, cx)
+                project.create_terminal_with_venv(kind, python_venv_directory, window, cx)
             })
             .ok()?;
 
