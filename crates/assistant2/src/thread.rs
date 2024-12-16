@@ -194,6 +194,7 @@ impl Thread {
             if let Some(context) = self.context_for_message(message.id) {
                 let mut file_context = String::new();
                 let mut fetch_context = String::new();
+                let mut thread_context = String::new();
 
                 for context in context.iter() {
                     match context.kind {
@@ -207,6 +208,12 @@ impl Thread {
                             fetch_context.push_str(&context.text);
                             fetch_context.push('\n');
                         }
+                        ContextKind::Thread => {
+                            thread_context.push_str(&context.name);
+                            thread_context.push('\n');
+                            thread_context.push_str(&context.text);
+                            thread_context.push('\n');
+                        }
                     }
                 }
 
@@ -219,6 +226,12 @@ impl Thread {
                 if !fetch_context.is_empty() {
                     context_text.push_str("The following fetched results are available\n");
                     context_text.push_str(&fetch_context);
+                }
+
+                if !thread_context.is_empty() {
+                    context_text
+                        .push_str("The following previous conversation threads are available\n");
+                    context_text.push_str(&thread_context);
                 }
 
                 request_message

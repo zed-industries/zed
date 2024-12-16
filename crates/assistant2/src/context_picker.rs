@@ -1,11 +1,12 @@
 mod fetch_context_picker;
 mod file_context_picker;
+mod thread_context_picker;
 
 use std::sync::Arc;
 
 use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, SharedString, Task, View,
-    WeakView,
+    WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
@@ -14,13 +15,16 @@ use workspace::Workspace;
 
 use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
+use crate::context_picker::thread_context_picker::ThreadContextPicker;
 use crate::message_editor::MessageEditor;
+use crate::thread_store::ThreadStore;
 
 #[derive(Debug, Clone)]
 enum ContextPickerMode {
     Default,
     File(View<FileContextPicker>),
     Fetch(View<FetchContextPicker>),
+    Thread(View<ThreadContextPicker>),
 }
 
 pub(super) struct ContextPicker {
@@ -31,13 +35,15 @@ pub(super) struct ContextPicker {
 impl ContextPicker {
     pub fn new(
         workspace: WeakView<Workspace>,
+        thread_store: WeakModel<ThreadStore>,
         message_editor: WeakView<MessageEditor>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let delegate = ContextPickerDelegate {
             context_picker: cx.view().downgrade(),
-            workspace: workspace.clone(),
-            message_editor: message_editor.clone(),
+            workspace,
+            thread_store,
+            message_editor,
             entries: vec![
                 ContextPickerEntry {
                     name: "directory".into(),
@@ -53,6 +59,11 @@ impl ContextPicker {
                     name: "fetch".into(),
                     description: "Fetch content from URL".into(),
                     icon: IconName::Globe,
+                },
+                ContextPickerEntry {
+                    name: "thread".into(),
+                    description: "Insert any thread".into(),
+                    icon: IconName::MessageBubbles,
                 },
             ],
             selected_ix: 0,
@@ -81,6 +92,7 @@ impl FocusableView for ContextPicker {
             ContextPickerMode::Default => self.picker.focus_handle(cx),
             ContextPickerMode::File(file_picker) => file_picker.focus_handle(cx),
             ContextPickerMode::Fetch(fetch_picker) => fetch_picker.focus_handle(cx),
+            ContextPickerMode::Thread(thread_picker) => thread_picker.focus_handle(cx),
         }
     }
 }
@@ -94,6 +106,7 @@ impl Render for ContextPicker {
                 ContextPickerMode::Default => parent.child(self.picker.clone()),
                 ContextPickerMode::File(file_picker) => parent.child(file_picker.clone()),
                 ContextPickerMode::Fetch(fetch_picker) => parent.child(fetch_picker.clone()),
+                ContextPickerMode::Thread(thread_picker) => parent.child(thread_picker.clone()),
             })
     }
 }
@@ -108,6 +121,7 @@ struct ContextPickerEntry {
 pub(crate) struct ContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
+    thread_store: WeakModel<ThreadStore>,
     message_editor: WeakView<MessageEditor>,
     entries: Vec<ContextPickerEntry>,
     selected_ix: usize,
@@ -162,6 +176,16 @@ impl PickerDelegate for ContextPickerDelegate {
                                 )
                             }));
                         }
+                        "thread" => {
+                            this.mode = ContextPickerMode::Thread(cx.new_view(|cx| {
+                                ThreadContextPicker::new(
+                                    self.thread_store.clone(),
+                                    self.context_picker.clone(),
+                                    self.message_editor.clone(),
+                                    cx,
+                                )
+                            }));
+                        }
                         _ => {}
                     }
 
@@ -175,7 +199,9 @@ impl PickerDelegate for ContextPickerDelegate {
         self.context_picker
             .update(cx, |this, cx| match this.mode {
                 ContextPickerMode::Default => cx.emit(DismissEvent),
-                ContextPickerMode::File(_) | ContextPickerMode::Fetch(_) => {}
+                ContextPickerMode::File(_)
+                | ContextPickerMode::Fetch(_)
+                | ContextPickerMode::Thread(_) => {}
             })
             .log_err();
     }
