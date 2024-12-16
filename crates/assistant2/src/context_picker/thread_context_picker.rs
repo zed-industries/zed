@@ -7,7 +7,7 @@ use ui::{prelude::*, ListItem};
 
 use crate::context::ContextKind;
 use crate::context_picker::ContextPicker;
-use crate::message_editor::MessageEditor;
+use crate::context_strip::ContextStrip;
 use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
 
@@ -19,11 +19,11 @@ impl ThreadContextPicker {
     pub fn new(
         thread_store: WeakModel<ThreadStore>,
         context_picker: WeakView<ContextPicker>,
-        message_editor: WeakView<MessageEditor>,
+        context_strip: WeakView<ContextStrip>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let delegate =
-            ThreadContextPickerDelegate::new(thread_store, context_picker, message_editor);
+            ThreadContextPickerDelegate::new(thread_store, context_picker, context_strip);
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         ThreadContextPicker { picker }
@@ -51,7 +51,7 @@ struct ThreadContextEntry {
 pub struct ThreadContextPickerDelegate {
     thread_store: WeakModel<ThreadStore>,
     context_picker: WeakView<ContextPicker>,
-    message_editor: WeakView<MessageEditor>,
+    context_strip: WeakView<ContextStrip>,
     matches: Vec<ThreadContextEntry>,
     selected_index: usize,
 }
@@ -60,12 +60,12 @@ impl ThreadContextPickerDelegate {
     pub fn new(
         thread_store: WeakModel<ThreadStore>,
         context_picker: WeakView<ContextPicker>,
-        message_editor: WeakView<MessageEditor>,
+        context_strip: WeakView<ContextStrip>,
     ) -> Self {
         ThreadContextPickerDelegate {
             thread_store,
             context_picker,
-            message_editor,
+            context_strip,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -157,8 +157,8 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             return;
         };
 
-        self.message_editor
-            .update(cx, |message_editor, cx| {
+        self.context_strip
+            .update(cx, |context_strip, cx| {
                 let text = thread.update(cx, |thread, _cx| {
                     let mut text = String::new();
 
@@ -177,7 +177,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
                     text
                 });
 
-                message_editor.insert_context(ContextKind::Thread, entry.summary.clone(), text);
+                context_strip.insert_context(ContextKind::Thread, entry.summary.clone(), text);
             })
             .ok();
     }

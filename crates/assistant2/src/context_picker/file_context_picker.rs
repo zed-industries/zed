@@ -14,7 +14,7 @@ use workspace::Workspace;
 
 use crate::context::ContextKind;
 use crate::context_picker::ContextPicker;
-use crate::message_editor::MessageEditor;
+use crate::context_strip::ContextStrip;
 
 pub struct FileContextPicker {
     picker: View<Picker<FileContextPickerDelegate>>,
@@ -24,10 +24,10 @@ impl FileContextPicker {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        message_editor: WeakView<MessageEditor>,
+        context_strip: WeakView<ContextStrip>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate = FileContextPickerDelegate::new(context_picker, workspace, message_editor);
+        let delegate = FileContextPickerDelegate::new(context_picker, workspace, context_strip);
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
@@ -49,7 +49,7 @@ impl Render for FileContextPicker {
 pub struct FileContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
-    message_editor: WeakView<MessageEditor>,
+    context_strip: WeakView<ContextStrip>,
     matches: Vec<PathMatch>,
     selected_index: usize,
 }
@@ -58,12 +58,12 @@ impl FileContextPickerDelegate {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        message_editor: WeakView<MessageEditor>,
+        context_strip: WeakView<ContextStrip>,
     ) -> Self {
         Self {
             context_picker,
             workspace,
-            message_editor,
+            context_strip,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -214,24 +214,22 @@ impl PickerDelegate for FileContextPickerDelegate {
             let buffer = open_buffer_task.await?;
 
             this.update(&mut cx, |this, cx| {
-                this.delegate
-                    .message_editor
-                    .update(cx, |message_editor, cx| {
-                        let mut text = String::new();
-                        text.push_str(&codeblock_fence_for_path(Some(&path), None));
-                        text.push_str(&buffer.read(cx).text());
-                        if !text.ends_with('\n') {
-                            text.push('\n');
-                        }
+                this.delegate.context_strip.update(cx, |context_strip, cx| {
+                    let mut text = String::new();
+                    text.push_str(&codeblock_fence_for_path(Some(&path), None));
+                    text.push_str(&buffer.read(cx).text());
+                    if !text.ends_with('\n') {
+                        text.push('\n');
+                    }
 
-                        text.push_str("```\n");
+                    text.push_str("```\n");
 
-                        message_editor.insert_context(
-                            ContextKind::File,
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
-                    })
+                    context_strip.insert_context(
+                        ContextKind::File,
+                        path.to_string_lossy().to_string(),
+                        text,
+                    );
+                })
             })??;
 
             anyhow::Ok(())
