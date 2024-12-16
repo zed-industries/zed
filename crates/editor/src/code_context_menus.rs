@@ -3,9 +3,9 @@ use std::{cell::Cell, cmp::Reverse, ops::Range, rc::Rc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, HighlightStyle,
-    ListSizingBehavior, Model, ScrollStrategy, SharedString, StrikethroughStyle, StyledText,
-    UniformListScrollHandle, ViewContext, WeakView,
+    div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
+    Model, ScrollStrategy, SharedString, StrikethroughStyle, StyledText, UniformListScrollHandle,
+    ViewContext, WeakView,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -22,13 +22,13 @@ use ui::{
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::AcceptInlineCompletion;
 use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     display_map::DisplayPoint,
     render_parsed_markdown, split_words, styled_runs_for_code_label, CodeActionProvider,
     CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, ResolvedTasks,
 };
+use crate::{AcceptInlineCompletion, InlineCompletionHint};
 
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
@@ -153,7 +153,10 @@ pub struct CompletionsMenu {
 #[derive(Clone, Debug)]
 pub(crate) enum CompletionEntry {
     Match(StringMatch),
-    InlineCompletionHint(Option<(String, Vec<(Range<usize>, HighlightStyle)>)>),
+    InlineCompletionHint {
+        provider_name: SharedString,
+        hint: Option<InlineCompletionHint>,
+    },
 }
 
 impl CompletionsMenu {
@@ -303,16 +306,21 @@ impl CompletionsMenu {
 
     pub fn show_inline_completion_hint(
         &mut self,
-        hint: Option<(String, Vec<(Range<usize>, HighlightStyle)>)>,
+        provider_name: SharedString,
+        hint: Option<InlineCompletionHint>,
     ) {
         let mut new_entries = Vec::from(&*self.entries);
+        let hint = CompletionEntry::InlineCompletionHint {
+            provider_name,
+            hint,
+        };
         if matches!(
             self.entries.first(),
             Some(CompletionEntry::InlineCompletionHint { .. })
         ) {
-            new_entries[0] = CompletionEntry::InlineCompletionHint(hint);
+            new_entries[0] = hint;
         } else {
-            new_entries.insert(0, CompletionEntry::InlineCompletionHint(hint));
+            new_entries.insert(0, hint);
         }
 
         self.entries = new_entries.into();
@@ -348,7 +356,7 @@ impl CompletionsMenu {
                 })
                 .detach();
             }
-            CompletionEntry::InlineCompletionHint(_) => {
+            CompletionEntry::InlineCompletionHint { .. } => {
                 println!("todo: noop for now");
             }
         }
@@ -392,10 +400,7 @@ impl CompletionsMenu {
                     len
                 }
                 //TODO compute this the correct way
-                CompletionEntry::InlineCompletionHint(hint) => hint
-                    .as_ref()
-                    .and_then(|(text, _)| text.lines().map(|line| line.chars().count()).max())
-                    .unwrap_or(0),
+                CompletionEntry::InlineCompletionHint { .. } => 30,
             })
             .map(|(ix, _)| ix);
 
@@ -422,17 +427,16 @@ impl CompletionsMenu {
                     }
                     _ => None,
                 },
-                CompletionEntry::InlineCompletionHint(hint) => {
-                    hint.as_ref().map(|(text, highlights)| {
-                        div()
-                            .py_2()
-                            .bg(cx.theme().colors().editor_background)
-                            .child(
-                                gpui::StyledText::new(text)
-                                    .with_highlights(&style.text, highlights.clone()),
-                            )
-                    })
-                }
+                CompletionEntry::InlineCompletionHint { hint, .. } => hint.as_ref().map(|hint| {
+                    div()
+                        .my_1()
+                        .rounded_md()
+                        .bg(cx.theme().colors().editor_background)
+                        .child(
+                            gpui::StyledText::new(hint.text.clone())
+                                .with_highlights(&style.text, hint.highlights.clone()),
+                        )
+                }),
             }
         } else {
             None
@@ -558,9 +562,9 @@ impl CompletionsMenu {
                                         .end_slot::<Label>(documentation_label),
                                 )
                             }
-                            CompletionEntry::InlineCompletionHint(_) => div()
-                                .min_w(px(220.))
-                                .max_w(px(540.))
+                            CompletionEntry::InlineCompletionHint { provider_name, .. } => div()
+                                .min_w(px(250.))
+                                .max_w(px(500.))
                                 .pb_1()
                                 .border_b_1()
                                 .border_color(cx.theme().colors().border_variant)
@@ -575,19 +579,12 @@ impl CompletionsMenu {
                                                 cx,
                                             );
                                         }))
-                                        .child(
-                                            h_flex()
-                                                .justify_between()
-                                                .overflow_hidden()
-                                                .child(Label::new("Zed Predict"))
-                                                .child(
-                                                    div()
-                                                        .text_size(ui::TextSize::XSmall.rems(cx))
-                                                        .text_color(
-                                                            cx.theme().colors().text.opacity(0.8),
-                                                        )
-                                                        .child("tab to accept"),
-                                                ),
+                                        .child(Label::new(provider_name.clone()))
+                                        .end_slot(
+                                            Label::new("tab to accept")
+                                                .ml_4()
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
                                         ),
                                 ),
                         }
@@ -703,10 +700,25 @@ impl CompletionsMenu {
         }
         drop(completions);
 
-        self.entries = matches
+        let mut new_entries: Vec<_> = matches
             .into_iter()
             .map(|mat| CompletionEntry::Match(mat))
             .collect();
+        if let Some(CompletionEntry::InlineCompletionHint {
+            provider_name,
+            hint,
+        }) = self.entries.first()
+        {
+            new_entries.insert(
+                0,
+                CompletionEntry::InlineCompletionHint {
+                    provider_name: provider_name.clone(),
+                    hint: hint.clone(),
+                },
+            );
+        }
+
+        self.entries = new_entries.into();
         self.selected_item = 0;
     }
 }

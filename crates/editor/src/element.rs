@@ -33,11 +33,11 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnyElement, AvailableSpace, Bounds, ClickEvent, ClipboardItem,
     ContentMask, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler,
-    Entity, FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla, InteractiveElement, IntoElement,
-    Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
-    View, ViewContext, WeakView, WindowContext,
+    Entity, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, View,
+    ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -2994,8 +2994,8 @@ impl EditorElement {
                     return None;
                 }
 
-                let (text, highlights) = inline_completion_popover_text(editor_snapshot, edits, cx);
-                let line_count = text.lines().count() + 1;
+                let hint = crate::inline_completion_hint(editor_snapshot, edits, cx);
+                let line_count = hint.text.lines().count() + 1;
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -3013,8 +3013,8 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text =
-                    gpui::StyledText::new(text).with_highlights(&style.text, highlights);
+                let styled_text = gpui::StyledText::new(hint.text.clone())
+                    .with_highlights(&style.text, hint.highlights);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
@@ -4521,61 +4521,6 @@ fn jump_data(
         path: jump_path,
         line_offset_from_top,
     }
-}
-
-pub(crate) fn inline_completion_popover_text(
-    editor_snapshot: &EditorSnapshot,
-    edits: &Vec<(Range<Anchor>, String)>,
-    cx: &WindowContext,
-) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
-    let edit_start = edits
-        .first()
-        .unwrap()
-        .0
-        .start
-        .to_display_point(editor_snapshot);
-
-    let mut text = String::new();
-    let mut offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
-    let mut highlights = Vec::new();
-    for (old_range, new_text) in edits {
-        let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
-        text.extend(
-            editor_snapshot
-                .buffer_snapshot
-                .chunks(offset..old_offset_range.start, false)
-                .map(|chunk| chunk.text),
-        );
-        offset = old_offset_range.end;
-
-        let start = text.len();
-        text.push_str(new_text);
-        let end = text.len();
-        highlights.push((
-            start..end,
-            HighlightStyle {
-                background_color: Some(cx.theme().status().created_background),
-                ..Default::default()
-            },
-        ));
-    }
-
-    let edit_end = edits
-        .last()
-        .unwrap()
-        .0
-        .end
-        .to_display_point(editor_snapshot);
-    let end_of_line = DisplayPoint::new(edit_end.row(), editor_snapshot.line_len(edit_end.row()))
-        .to_offset(editor_snapshot, Bias::Right);
-    text.extend(
-        editor_snapshot
-            .buffer_snapshot
-            .chunks(offset..end_of_line, false)
-            .map(|chunk| chunk.text),
-    );
-
-    (text, highlights)
 }
 
 fn all_edits_insertions_or_deletions(
@@ -6874,7 +6819,7 @@ mod tests {
     use crate::{
         display_map::{BlockPlacement, BlockProperties},
         editor_tests::{init_test, update_test_language_settings},
-        Editor, MultiBuffer,
+        Editor, InlineCompletionHint, MultiBuffer,
     };
     use gpui::{TestAppContext, VisualTestContext};
     use language::language_settings;
@@ -7346,7 +7291,8 @@ mod tests {
                         ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
                     let edits = vec![(edit_range, " beautiful".to_string())];
 
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+                    let InlineCompletionHint { text, highlights } =
+                        crate::inline_completion_hint(&snapshot, &edits, cx);
 
                     assert_eq!(text, "Hello, beautiful world!");
                     assert_eq!(highlights.len(), 1);
@@ -7376,7 +7322,8 @@ mod tests {
                         "That".to_string(),
                     )];
 
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+                    let InlineCompletionHint { text, highlights } =
+                        crate::inline_completion_hint(&snapshot, &edits, cx);
 
                     assert_eq!(text, "That is a test.");
                     assert_eq!(highlights.len(), 1);
@@ -7413,7 +7360,8 @@ mod tests {
                         ),
                     ];
 
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+                    let InlineCompletionHint { text, highlights } =
+                        crate::inline_completion_hint(&snapshot, &edits, cx);
 
                     assert_eq!(text, "Greetings, world and universe!");
                     assert_eq!(highlights.len(), 2);
@@ -7463,7 +7411,8 @@ mod tests {
                         ),
                     ];
 
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
+                    let InlineCompletionHint { text, highlights } =
+                        crate::inline_completion_hint(&snapshot, &edits, cx);
 
                     assert_eq!(text, "Second modified\nNew third line\nFourth updated line");
                     assert_eq!(highlights.len(), 3);

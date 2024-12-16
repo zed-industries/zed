@@ -457,6 +457,12 @@ pub fn make_suggestion_styles(cx: &WindowContext) -> InlineCompletionStyles {
 
 type CompletionId = usize;
 
+#[derive(Clone, Debug)]
+struct InlineCompletionHint {
+    text: SharedString,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+
 enum InlineCompletion {
     Edit(Vec<(Range<Anchor>, String)>),
     Move(Anchor),
@@ -3731,9 +3737,11 @@ impl Editor {
                         let mut menu = menu.unwrap();
 
                         if editor.has_active_inline_completion() {
-                            menu.show_inline_completion_hint(
-                                editor.inline_completion_popover_text(cx),
-                            );
+                            if let Some(provider) = editor.inline_completion_provider() {
+                                let provider_name = provider.name();
+                                let hint = editor.inline_completion_hint(cx);
+                                menu.show_inline_completion_hint(provider_name.into(), hint);
+                            }
                         }
 
                         menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
@@ -3757,21 +3765,17 @@ impl Editor {
         self.completion_tasks.push((id, task));
     }
 
-    pub fn inline_completion_popover_text(
+    pub fn inline_completion_hint(
         &mut self,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(String, Vec<(Range<usize>, HighlightStyle)>)> {
+    ) -> Option<InlineCompletionHint> {
         let editor_snapshot = self.snapshot(cx);
         let InlineCompletion::Edit(edits) = &self.active_inline_completion.as_ref()?.completion
         else {
             return None;
         };
 
-        Some(crate::element::inline_completion_popover_text(
-            &editor_snapshot,
-            edits,
-            cx,
-        ))
+        Some(inline_completion_hint(&editor_snapshot, edits, cx))
     }
 
     pub fn confirm_completion(
@@ -4822,10 +4826,11 @@ impl Editor {
         });
 
         if self.has_active_completions_menu() {
-            let popover_text = self.inline_completion_popover_text(cx);
+            let provider_name = provider.name();
+            let hint = self.inline_completion_hint(cx);
             match self.context_menu.borrow_mut().as_mut() {
                 Some(CodeContextMenu::Completions(menu)) => {
-                    menu.show_inline_completion_hint(popover_text);
+                    menu.show_inline_completion_hint(provider_name.into(), hint);
                 }
                 _ => {}
             }
@@ -14536,6 +14541,64 @@ pub fn diagnostic_block_renderer(
             ))
             .into_any_element()
     })
+}
+
+pub(crate) fn inline_completion_hint(
+    editor_snapshot: &EditorSnapshot,
+    edits: &Vec<(Range<Anchor>, String)>,
+    cx: &WindowContext,
+) -> InlineCompletionHint {
+    let edit_start = edits
+        .first()
+        .unwrap()
+        .0
+        .start
+        .to_display_point(editor_snapshot);
+
+    let mut text = String::new();
+    let mut offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
+    let mut highlights = Vec::new();
+    for (old_range, new_text) in edits {
+        let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
+        text.extend(
+            editor_snapshot
+                .buffer_snapshot
+                .chunks(offset..old_offset_range.start, false)
+                .map(|chunk| chunk.text),
+        );
+        offset = old_offset_range.end;
+
+        let start = text.len();
+        text.push_str(new_text);
+        let end = text.len();
+        highlights.push((
+            start..end,
+            HighlightStyle {
+                background_color: Some(cx.theme().status().created_background),
+                ..Default::default()
+            },
+        ));
+    }
+
+    let edit_end = edits
+        .last()
+        .unwrap()
+        .0
+        .end
+        .to_display_point(editor_snapshot);
+    let end_of_line = DisplayPoint::new(edit_end.row(), editor_snapshot.line_len(edit_end.row()))
+        .to_offset(editor_snapshot, Bias::Right);
+    text.extend(
+        editor_snapshot
+            .buffer_snapshot
+            .chunks(offset..end_of_line, false)
+            .map(|chunk| chunk.text),
+    );
+
+    InlineCompletionHint {
+        text: text.into(),
+        highlights,
+    }
 }
 
 pub fn highlight_diagnostic_message(
