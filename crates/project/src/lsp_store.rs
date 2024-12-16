@@ -4305,7 +4305,18 @@ impl LspStore {
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         completion.lsp_completion = completion_item;
-        completion.label = new_label;
+        if completion.label.filter_text() == new_label.filter_text() {
+            completion.label = new_label;
+        } else {
+            log::error!(
+                "Resolved completion changed display label from {} to {}. \
+                 Refusing to apply this because it changes the fuzzy match text from {} to {}",
+                completion.label.text(),
+                new_label.text(),
+                completion.label.filter_text(),
+                new_label.filter_text()
+            );
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
