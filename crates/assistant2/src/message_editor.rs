@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 use editor::{Editor, EditorElement, EditorStyle};
+use fs::Fs;
 use gpui::{AppContext, FocusableView, Model, TextStyle, View, WeakModel, WeakView};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use settings::Settings;
+use settings::{update_settings_file, Settings};
 use theme::ThemeSettings;
 use ui::{prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, KeyBinding, Tooltip};
 use workspace::Workspace;
 
+use crate::assistant_settings::AssistantSettings;
 use crate::context_store::ContextStore;
 use crate::context_strip::ContextStrip;
 use crate::thread::{RequestKind, Thread};
@@ -24,6 +28,7 @@ pub struct MessageEditor {
 
 impl MessageEditor {
     pub fn new(
+        fs: Arc<dyn Fs>,
         workspace: WeakView<Workspace>,
         thread_store: WeakModel<ThreadStore>,
         thread: Model<Thread>,
@@ -50,9 +55,14 @@ impl MessageEditor {
                 )
             }),
             language_model_selector: cx.new_view(|cx| {
+                let fs = fs.clone();
                 LanguageModelSelector::new(
-                    |model, _cx| {
-                        println!("Selected {:?}", model.name());
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _cx| settings.set_model(model.clone()),
+                        );
                     },
                     cx,
                 )
