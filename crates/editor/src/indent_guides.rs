@@ -56,6 +56,7 @@ impl Editor {
         }
 
         Some(indent_guides_in_range(
+            self,
             visible_buffer_range,
             self.should_show_indent_guides() == Some(true),
             snapshot,
@@ -152,6 +153,7 @@ impl Editor {
 }
 
 pub fn indent_guides_in_range(
+    editor: &Editor,
     visible_buffer_range: Range<MultiBufferRow>,
     ignore_disabled_for_language: bool,
     snapshot: &DisplaySnapshot,
@@ -169,10 +171,20 @@ pub fn indent_guides_in_range(
         .indent_guides_in_range(start_anchor..end_anchor, ignore_disabled_for_language, cx)
         .into_iter()
         .filter(|indent_guide| {
+            if editor.buffer_folded(indent_guide.buffer_id, cx) {
+                return false;
+            }
+
             let start =
                 MultiBufferRow(indent_guide.multibuffer_row_range.start.0.saturating_sub(1));
             // Filter out indent guides that are inside a fold
-            !snapshot.is_line_folded(start)
+            // All indent guides that are starting "offscreen" have a start value of the first visible row minus one
+            // Therefore checking if a line is folded at first visible row minus one causes the other indent guides that are not related to the fold to disappear as well
+            let is_folded = snapshot.is_line_folded(start);
+            let line_indent = snapshot.line_indent_for_buffer_row(start);
+            let contained_in_fold =
+                line_indent.len(indent_guide.tab_size) <= indent_guide.indent_level();
+            !(is_folded && contained_in_fold)
         })
         .collect()
 }
