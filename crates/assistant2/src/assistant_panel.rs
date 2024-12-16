@@ -10,7 +10,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use time::UtcOffset;
-use ui::{prelude::*, Divider, IconButtonShape, KeyBinding, Tab, Tooltip};
+use ui::{prelude::*, KeyBinding, Tab, Tooltip};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
@@ -238,15 +238,17 @@ impl AssistantPanel {
             .px(DynamicSpacing::Base08.rems(cx))
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
+            .border_color(cx.theme().colors().border)
             .child(h_flex().children(self.thread.read(cx).summary(cx).map(Label::new)))
             .child(
                 h_flex()
-                    .gap(DynamicSpacing::Base08.rems(cx))
-                    .child(Divider::vertical())
+                    .h_full()
+                    .pl_1()
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border)
+                    .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         IconButton::new("new-thread", IconName::Plus)
-                            .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
                             .tooltip({
@@ -266,7 +268,6 @@ impl AssistantPanel {
                     )
                     .child(
                         IconButton::new("open-history", IconName::HistoryRerun)
-                            .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
                             .tooltip({
@@ -286,7 +287,6 @@ impl AssistantPanel {
                     )
                     .child(
                         IconButton::new("configure-assistant", IconName::Settings)
-                            .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
                             .tooltip(move |cx| Tooltip::text("Configure Assistant", cx))
@@ -541,7 +541,7 @@ impl Render for AssistantPanel {
                     .child(
                         h_flex()
                             .border_t_1()
-                            .border_color(cx.theme().colors().border_variant)
+                            .border_color(cx.theme().colors().border)
                             .child(self.message_editor.clone()),
                     )
                     .children(self.render_last_error(cx)),
