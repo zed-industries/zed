@@ -117,6 +117,20 @@ impl LabelCommon for Label {
         self
     }
 
+    /// Sets the background color of the label using a [`Color`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ui::prelude::*;
+    ///
+    /// let my_label = Label::new("Hello, World!").background(Color::Accent);
+    /// ```
+    fn background(mut self, color: Color) -> Self {
+        self.base = self.base.background(color);
+        self
+    }
+
     /// Sets the strikethrough property of the label.
     ///
     /// # Examples

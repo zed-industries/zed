@@ -38,6 +38,9 @@ pub trait LabelCommon {
     /// Sets the color of the label using a [`Color`].
     fn color(self, color: Color) -> Self;
 
+    /// Sets the background color of the label using a [`Color`].
+    fn background(self, color: Color) -> Self;
+
     /// Sets the strikethrough property of the label.
     fn strikethrough(self, strikethrough: bool) -> Self;
 
@@ -61,6 +64,7 @@ pub struct LabelLike {
     weight: Option<FontWeight>,
     line_height_style: LineHeightStyle,
     pub(crate) color: Color,
+    pub(crate) background: Option<Color>,
     strikethrough: bool,
     italic: bool,
     children: SmallVec<[AnyElement; 2]>,
@@ -83,6 +87,7 @@ impl LabelLike {
             weight: None,
             line_height_style: LineHeightStyle::default(),
             color: Color::Default,
+            background: None,
             strikethrough: false,
             italic: false,
             children: SmallVec::new(),
@@ -122,6 +127,11 @@ impl LabelCommon for LabelLike {
 
     fn color(mut self, color: Color) -> Self {
         self.color = color;
+        self
+    }
+
+    fn background(mut self, color: Color) -> Self {
+        self.background = Some(color);
         self
     }
 
@@ -166,6 +176,13 @@ impl RenderOnce for LabelLike {
             color.fade_out(1.0 - alpha);
         }
 
+        let background = self.background.map(|bg| bg.color(cx));
+        if let Some(mut background) = background {
+            if let Some(alpha) = self.alpha {
+                background.fade_out(1.0 - alpha);
+            }
+        }
+
         self.base
             .map(|this| match self.size {
                 LabelSize::Large => this.text_ui_lg(cx),
@@ -190,6 +207,9 @@ impl RenderOnce for LabelLike {
             .when(self.strikethrough, |this| this.line_through())
             .when(self.single_line, |this| this.whitespace_nowrap())
             .text_color(color)
+            .when(background.is_some(), |this| {
+                this.text_bg(background.unwrap())
+            })
             .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
             .children(self.children)
     }

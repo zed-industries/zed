@@ -46,6 +46,11 @@ impl LabelCommon for HighlightedLabel {
         self
     }
 
+    fn background(mut self, color: Color) -> Self {
+        self.base = self.base.background(color);
+        self
+    }
+
     fn strikethrough(mut self, strikethrough: bool) -> Self {
         self.base = self.base.strikethrough(strikethrough);
         self
