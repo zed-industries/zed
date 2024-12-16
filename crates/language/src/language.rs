@@ -264,7 +264,8 @@ impl CachedLspAdapter {
         worktree_id: WorktreeId,
         path: Arc<Path>,
     ) -> Option<Arc<Path>> {
-        None
+        // By default we'll root all projects at the root of a worktree.
+        Some(Arc::from("".as_ref()))
     }
 }
 

@@ -12,35 +12,36 @@ use std::{
 };
 
 use collections::HashMap;
+use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{LanguageName, LanguageRegistry};
-use lsp::{LanguageServerName, Url};
+use lsp::LanguageServerName;
 use settings::WorktreeId;
 
-use crate::{LanguageServerId, ProjectPath};
+use crate::{
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+    ProjectPath,
+};
 
-pub trait LspRootFinder {
-    fn find_root(&self) -> () {}
-}
-
-enum Action {
-    PinpointTo,
-    ExtendWorkspaceFolders(LanguageServerId, Url),
-}
-
-pub type AbsWorkspaceRootPath = Arc<Path>;
-
+type IsRoot = bool;
 pub struct ProjectTree {
     languages: Arc<LanguageRegistry>,
     root_points: HashMap<WorktreeId, BTreeMap<LanguageServerName, BTreeMap<Arc<Path>, IsRoot>>>,
+    worktree_store: Model<WorktreeStore>,
+    _subscriptions: [Subscription; 1],
 }
 
-type IsRoot = bool;
 impl ProjectTree {
-    fn new(languages: Arc<LanguageRegistry>) -> Self {
-        Self {
+    fn new(
+        languages: Arc<LanguageRegistry>,
+        worktree_store: Model<WorktreeStore>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
+        cx.new_model(|cx| Self {
             languages,
             root_points: Default::default(),
-        }
+            _subscriptions: [cx.subscribe(&worktree_store, Self::on_worktree_store_event)],
+            worktree_store,
+        })
     }
     fn root_for_path(
         &mut self,
@@ -54,9 +55,6 @@ impl ProjectTree {
         'adapter: for adapter in adapters {
             if let Some(adapter_roots) = worktree_roots.get(&adapter.name()) {
                 for ancestor in path.ancestors().skip(1) {
-                    // Look at roots detected so far. We should be executing this branch most of the time.
-                    // Todo: only search up until worktree root. Or should we? What about anonymous worktrees created for RA when browsing std?
-                    // they're rooted at the file being browsed.
                     if let Some(is_root) = adapter_roots.get(ancestor) {
                         if *is_root {
                             roots.push((worktree_id, ancestor).into());
@@ -78,5 +76,18 @@ impl ProjectTree {
             }
         }
         roots
+    }
+    fn on_worktree_store_event(
+        &mut self,
+        _: Model<WorktreeStore>,
+        evt: &WorktreeStoreEvent,
+        _: &mut ModelContext<Self>,
+    ) {
+        match evt {
+            WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
+                self.root_points.remove(&worktree_id);
+            }
+            _ => {}
+        }
     }
 }
