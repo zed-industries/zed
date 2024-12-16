@@ -323,10 +323,11 @@ impl AssistantPanel {
             .when(!recent_threads.is_empty(), |parent| {
                 parent
                     .child(
-                        h_flex()
-                            .w_full()
-                            .justify_center()
-                            .child(Label::new("Recent Threads:").size(LabelSize::Small)),
+                        h_flex().w_full().justify_center().child(
+                            Label::new("Recent Threads:")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                     )
                     .child(
                         v_flex().gap_2().children(
