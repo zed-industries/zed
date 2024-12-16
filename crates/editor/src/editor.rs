@@ -10329,31 +10329,20 @@ impl Editor {
                 self.fold(&Default::default(), cx)
             }
         } else {
-            let (display_snapshot, selections) = self.selections.all_adjusted_display(cx);
+            let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut toggled_buffers = HashSet::default();
-            for selection in selections {
-                if let Some(buffer_id) = display_snapshot
-                    .display_point_to_anchor(selection.head(), Bias::Right)
-                    .buffer_id
-                {
-                    if toggled_buffers.insert(buffer_id) {
-                        if self.buffer_folded(buffer_id, cx) {
-                            self.unfold_buffer(buffer_id, cx);
-                        } else {
-                            self.fold_buffer(buffer_id, cx);
-                        }
-                    }
-                }
-                if let Some(buffer_id) = display_snapshot
-                    .display_point_to_anchor(selection.tail(), Bias::Left)
-                    .buffer_id
-                {
-                    if toggled_buffers.insert(buffer_id) {
-                        if self.buffer_folded(buffer_id, cx) {
-                            self.unfold_buffer(buffer_id, cx);
-                        } else {
-                            self.fold_buffer(buffer_id, cx);
-                        }
+            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
+                self.selections
+                    .disjoint_anchors()
+                    .into_iter()
+                    .map(|selection| selection.range()),
+            ) {
+                let buffer_id = buffer_snapshot.remote_id();
+                if toggled_buffers.insert(buffer_id) {
+                    if self.buffer_folded(buffer_id, cx) {
+                        self.unfold_buffer(buffer_id, cx);
+                    } else {
+                        self.fold_buffer(buffer_id, cx);
                     }
                 }
             }
@@ -10426,24 +10415,17 @@ impl Editor {
 
             self.fold_creases(to_fold, true, cx);
         } else {
-            let (display_snapshot, selections) = self.selections.all_adjusted_display(cx);
+            let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut folded_buffers = HashSet::default();
-            for selection in selections {
-                if let Some(buffer_id) = display_snapshot
-                    .display_point_to_anchor(selection.head(), Bias::Right)
-                    .buffer_id
-                {
-                    if folded_buffers.insert(buffer_id) {
-                        self.fold_buffer(buffer_id, cx);
-                    }
-                }
-                if let Some(buffer_id) = display_snapshot
-                    .display_point_to_anchor(selection.tail(), Bias::Left)
-                    .buffer_id
-                {
-                    if folded_buffers.insert(buffer_id) {
-                        self.fold_buffer(buffer_id, cx);
-                    }
+            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
+                self.selections
+                    .disjoint_anchors()
+                    .into_iter()
+                    .map(|selection| selection.range()),
+            ) {
+                let buffer_id = buffer_snapshot.remote_id();
+                if folded_buffers.insert(buffer_id) {
+                    self.fold_buffer(buffer_id, cx);
                 }
             }
         }
@@ -10599,24 +10581,17 @@ impl Editor {
 
             self.unfold_ranges(&ranges, true, true, cx);
         } else {
-            let (display_snapshot, selections) = self.selections.all_adjusted_display(cx);
+            let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut unfolded_buffers = HashSet::default();
-            for selection in selections {
-                if let Some(buffer_id) = display_snapshot
-                    .display_point_to_anchor(selection.head(), Bias::Right)
-                    .buffer_id
-                {
-                    if unfolded_buffers.insert(buffer_id) {
-                        self.unfold_buffer(buffer_id, cx);
-                    }
-                }
-                if let Some(buffer_id) = display_snapshot
-                    .display_point_to_anchor(selection.tail(), Bias::Left)
-                    .buffer_id
-                {
-                    if unfolded_buffers.insert(buffer_id) {
-                        self.unfold_buffer(buffer_id, cx);
-                    }
+            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
+                self.selections
+                    .disjoint_anchors()
+                    .into_iter()
+                    .map(|selection| selection.range()),
+            ) {
+                let buffer_id = buffer_snapshot.remote_id();
+                if unfolded_buffers.insert(buffer_id) {
+                    self.unfold_buffer(buffer_id, cx);
                 }
             }
         }
