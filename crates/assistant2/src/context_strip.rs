@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{Model, View, WeakModel, WeakView};
-use ui::{prelude::*, IconButtonShape, PopoverMenu, PopoverMenuHandle, Tooltip};
+use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
 use crate::context_picker::ContextPicker;
@@ -44,14 +44,14 @@ impl Render for ContextStrip {
 
         h_flex()
             .flex_wrap()
-            .gap_2()
+            .gap_1()
             .child(
                 PopoverMenu::new("context-picker")
                     .menu(move |_cx| Some(context_picker.clone()))
                     .trigger(
                         IconButton::new("add-context", IconName::Plus)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small),
+                            .icon_size(IconSize::Small)
+                            .style(ui::ButtonStyle::Filled),
                     )
                     .attach(gpui::AnchorCorner::TopLeft)
                     .anchor(gpui::AnchorCorner::BottomLeft)
@@ -76,7 +76,6 @@ impl Render for ContextStrip {
             .when(!context.is_empty(), |parent| {
                 parent.child(
                     IconButton::new("remove-all-context", IconName::Eraser)
-                        .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
                         .on_click({
