@@ -360,11 +360,10 @@ impl DiffMap {
             let mut delta = 0_isize;
             let mut end_of_current_insert = InlayOffset(0);
             loop {
-                let old_overshoot = (edit.old.start - cursor.start().0).0;
-                let new_overshoot = edit.new.start.0 - new_transforms.summary().inlay_map.len;
-                let diff_edit_old_start = cursor.start().1 + DiffOffset(old_overshoot);
-                let diff_edit_new_start =
-                    DiffOffset(new_transforms.summary().diff_map.len + new_overshoot);
+                let edit_old_start =
+                    cursor.start().1 + DiffOffset((edit.old.start - cursor.start().0).0);
+                let mut edit_old_end =
+                    cursor.start().1 + DiffOffset((edit.old.end - cursor.start().0).0);
 
                 for (buffer, buffer_range, excerpt_id) in
                     multibuffer.range_to_buffer_ranges(multibuffer_range.clone(), cx)
@@ -526,6 +525,10 @@ impl DiffMap {
                         };
                         edits.push(edit);
                     }
+
+                    edit_old_end =
+                        cursor.start().1 + DiffOffset((edit.old.end - cursor.start().0).0);
+
                     cursor.next(&());
                 }
 
@@ -534,15 +537,17 @@ impl DiffMap {
                     edit.new.end,
                     end_of_current_insert,
                 );
-                let old_overshoot = (edit.old.end - cursor.start().0).0;
-                let diff_edit_old_end = cursor.start().1 + DiffOffset(old_overshoot);
-                let diff_edit_new_end = DiffOffset(new_transforms.summary().diff_map.len);
 
                 if let ChangeKind::InputEdited = operation {
-                    edits.push(DiffEdit {
-                        old: diff_edit_old_start..diff_edit_old_end,
-                        new: diff_edit_new_start..diff_edit_new_end,
-                    })
+                    let edit_new_start = DiffOffset((edit_old_start.0 as isize + delta) as usize);
+                    delta += (edit.new.end - edit.new.start).0 as isize
+                        - (edit.old.end - edit.old.start).0 as isize;
+                    let edit_new_end = DiffOffset((edit_old_end.0 as isize + delta) as usize);
+                    let edit = DiffEdit {
+                        old: edit_old_start..edit_old_end,
+                        new: edit_new_start..edit_new_end,
+                    };
+                    edits.push(edit);
                 }
 
                 if let Some((next_edit, _, _)) = changes.peek() {
