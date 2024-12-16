@@ -6,7 +6,7 @@ mod server_tree;
 mod toolchain_tree;
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{btree_map::Entry as TreeEntry, hash_map::Entry, BTreeMap},
     path::Path,
     sync::Arc,
 };
@@ -16,6 +16,7 @@ use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{LanguageName, LanguageRegistry};
 use lsp::LanguageServerName;
 use settings::WorktreeId;
+use worktree::{Event as WorktreeEvent, Worktree};
 
 use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -23,9 +24,51 @@ use crate::{
 };
 
 type IsRoot = bool;
+
+struct WorktreeRoots {
+    roots: BTreeMap<Arc<Path>, BTreeMap<LanguageServerName, IsRoot>>,
+    worktree_store: Model<WorktreeStore>,
+    worktree_subscription: Subscription,
+}
+
+impl WorktreeRoots {
+    fn new(
+        worktree_store: Model<WorktreeStore>,
+        worktree: Model<Worktree>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
+        cx.new_model(|cx| Self {
+            roots: Default::default(),
+            worktree_store,
+            worktree_subscription: cx.subscribe(&worktree, |this: &mut Self, _, event, cx| {
+                match event {
+                    WorktreeEvent::UpdatedEntries(changes) => {
+                        for (path, _, kind) in changes.iter() {
+                            match kind {
+                                worktree::PathChange::Removed => {
+                                    this.roots.remove(path);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    WorktreeEvent::UpdatedGitRepositories(_) => {}
+                    WorktreeEvent::DeletedEntry(entry_id) => {
+                        let Some(entry) = this.worktree_store.read(cx).entry_for_id(*entry_id, cx)
+                        else {
+                            return;
+                        };
+                        this.roots.remove(&entry.path);
+                    }
+                }
+            }),
+        })
+    }
+}
+
 pub struct ProjectTree {
     languages: Arc<LanguageRegistry>,
-    root_points: HashMap<WorktreeId, BTreeMap<LanguageServerName, BTreeMap<Arc<Path>, IsRoot>>>,
+    root_points: HashMap<WorktreeId, Model<WorktreeRoots>>,
     worktree_store: Model<WorktreeStore>,
     _subscriptions: [Subscription; 1],
 }
@@ -47,32 +90,72 @@ impl ProjectTree {
         &mut self,
         ProjectPath { worktree_id, path }: ProjectPath,
         language_name: &LanguageName,
-    ) -> Vec<ProjectPath> {
-        let mut roots = vec![];
+        cx: &mut ModelContext<Self>,
+    ) -> BTreeMap<LanguageServerName, ProjectPath> {
+        let mut roots = BTreeMap::default();
         let adapters = self.languages.lsp_adapters(&language_name);
-        let worktree_roots = self.root_points.entry(worktree_id).or_default();
+        let worktree_roots = match self.root_points.entry(worktree_id) {
+            Entry::Occupied(occupied_entry) => occupied_entry.get_mut(),
+            Entry::Vacant(vacant_entry) => {
+                let Some(worktree) = self
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                else {
+                    return Default::default();
+                };
+                let roots = WorktreeRoots::new(self.worktree_store.clone(), worktree, cx);
+                vacant_entry.insert(roots)
+            }
+        };
 
-        'adapter: for adapter in adapters {
-            if let Some(adapter_roots) = worktree_roots.get(&adapter.name()) {
+        let mut filled_adapters = vec![false; adapters.len()];
+        let mut adapters_with_roots = 0;
+        for ancestor in path.ancestors().skip(1) {
+            // TODO: scan up until worktree root and no further.
+            if adapters_with_roots == adapters.len() {
+                // We've found roots for all adapters, no need to continue
+                break;
+            }
+            if let Some(adapter_roots) = worktree_roots.read(cx).roots.get(ancestor) {
+                for (ix, adapter) in adapters.iter().enumerate() {
+                    let adapter_already_found_root = filled_adapters[ix];
+                    if adapter_already_found_root {
+                        continue;
+                    }
+
+                    match adapter_roots.entry(adapter.name.clone()) {
+                        TreeEntry::Vacant(vacant_entry) => {
+                            let root = adapter.find_closest_project_root(worktree_id, path.clone());
+                            vacant_entry.insert(root.is_some());
+                            if let Some(root) = root {
+                                roots.insert(adapter.name.clone(), (worktree_id, root).into());
+                            }
+                        }
+                        TreeEntry::Occupied(occupied_entry) => {
+                            let is_root = *occupied_entry.get();
+                            if is_root {
+                                roots.insert(adapter.name.clone(), (worktree_id, ancestor).into());
+                            }
+
+                            continue;
+                        }
+                    }
+                    filled_adapters[ix] = true;
+                    adapters_with_roots += 1;
+                }
+            }
+        }
+        'adapter: for (ix, adapter) in adapters.iter().enumerate() {
+            if let Some(adapter_roots) = worktree_roots.read(cx).roots.get(&adapter.name()) {
                 for ancestor in path.ancestors().skip(1) {
                     if let Some(is_root) = adapter_roots.get(ancestor) {
                         if *is_root {
-                            roots.push((worktree_id, ancestor).into());
+                            roots.insert((worktree_id, ancestor).into());
                         }
                         continue 'adapter;
                     }
                 }
-            }
-            // Ask adapter what the closest root is.
-            let root = adapter.find_closest_project_root(worktree_id, path.clone());
-            let is_known_root = root.is_some();
-            worktree_roots
-                .entry(adapter.name())
-                .or_default()
-                .entry(root.clone().unwrap_or_else(|| Arc::from(Path::new(""))))
-                .or_insert(is_known_root);
-            if let Some(root) = root {
-                roots.push((worktree_id, root).into());
             }
         }
         roots

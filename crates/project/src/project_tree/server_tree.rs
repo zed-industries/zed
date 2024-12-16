@@ -16,15 +16,6 @@ use lsp::Url;
 
 use crate::LanguageServerId;
 
-pub trait LspRootFinder {
-    fn find_root(&self) -> () {}
-}
-
-enum Action {
-    PinpointTo,
-    ExtendWorkspaceFolders(LanguageServerId, Url),
-}
-
 pub type AbsWorkspaceRootPath = Arc<Path>;
 
 #[derive(Default)]
