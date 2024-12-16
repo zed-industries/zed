@@ -37,7 +37,7 @@ pub struct DiffMapSnapshot {
     diffs: TreeMap<BufferId, DiffSnapshot>,
     transforms: SumTree<DiffTransform>,
     pub(crate) version: usize,
-    multibuffer_snapshot: MultiBufferSnapshot,
+    pub(crate) buffer: MultiBufferSnapshot,
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +137,7 @@ impl DiffMap {
                 },
                 &(),
             ),
-            multibuffer_snapshot,
+            buffer: multibuffer_snapshot,
         };
 
         let this = cx.new_model(|_| Self {
@@ -170,14 +170,40 @@ impl DiffMap {
     pub fn sync(
         &mut self,
         multibuffer_snapshot: MultiBufferSnapshot,
-        edits: Vec<text::Edit<usize>>,
+        mut buffer_edits: Vec<text::Edit<usize>>,
         cx: &mut ModelContext<Self>,
     ) -> (DiffMapSnapshot, Vec<DiffEdit>) {
-        let changes = edits
+        let changes = buffer_edits
             .iter()
             .map(|edit| (edit.clone(), ChangeKind::InputEdited))
             .collect::<Vec<_>>();
-        self.snapshot.multibuffer_snapshot = multibuffer_snapshot.clone();
+
+        let snapshot = &mut self.snapshot;
+        if buffer_edits.is_empty()
+            && snapshot.buffer.trailing_excerpt_update_count()
+                != multibuffer_snapshot.trailing_excerpt_update_count()
+        {
+            buffer_edits.push(Edit {
+                old: snapshot.buffer.len()..snapshot.buffer.len(),
+                new: multibuffer_snapshot.len()..multibuffer_snapshot.len(),
+            });
+        }
+
+        if buffer_edits.is_empty() {
+            if snapshot.buffer.edit_count() != multibuffer_snapshot.edit_count()
+                || snapshot.buffer.non_text_state_update_count()
+                    != multibuffer_snapshot.non_text_state_update_count()
+                || snapshot.buffer.trailing_excerpt_update_count()
+                    != multibuffer_snapshot.trailing_excerpt_update_count()
+            {
+                snapshot.version += 1;
+            }
+
+            snapshot.buffer = multibuffer_snapshot;
+            return (snapshot.clone(), Vec::new());
+        }
+
+        snapshot.buffer = multibuffer_snapshot.clone();
 
         self.recompute_transforms(changes, cx);
 
@@ -587,7 +613,7 @@ impl DiffMap {
             }
             let summary_to_add = self
                 .snapshot
-                .multibuffer_snapshot
+                .buffer
                 .text_summary_for_range::<TextSummary, _>(start_offset..end_offset);
 
             if !self.extend_last_buffer_content_transform(
@@ -634,11 +660,10 @@ impl DiffMap {
     #[cfg(test)]
     fn check_invariants(&self) {
         let snapshot = &self.snapshot;
-        if snapshot.transforms.summary().multibuffer_map.len != snapshot.multibuffer_snapshot.len()
-        {
+        if snapshot.transforms.summary().multibuffer_map.len != snapshot.buffer.len() {
             panic!(
                 "incorrect input length. expected {}, got {}. transforms: {:+?}",
-                snapshot.multibuffer_snapshot.len(),
+                snapshot.buffer.len(),
                 snapshot.transforms.summary().multibuffer_map.len,
                 snapshot.transforms.items(&()),
             );
@@ -746,7 +771,7 @@ impl DiffMapSnapshot {
         self.diffs.values().any(|diff| !diff.diff.is_empty())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn text(&self) -> String {
         self.chunks(DiffOffset(0)..self.len(), false, None)
             .map(|c| c.text)
@@ -755,6 +780,10 @@ impl DiffMapSnapshot {
 
     pub fn len(&self) -> DiffOffset {
         DiffOffset(self.transforms.summary().diff_map.len)
+    }
+
+    pub fn max_point(&self) -> DiffPoint {
+        DiffPoint(self.transforms.summary().diff_map.lines)
     }
 
     pub fn text_summary(&self) -> TextSummary {
@@ -781,7 +810,7 @@ impl DiffMapSnapshot {
                 let multibuffer_end =
                     multibuffer_transform_start + (diff_end - diff_transform_start).0;
 
-                self.multibuffer_snapshot
+                self.buffer
                     .text_summary_for_range(multibuffer_start..multibuffer_end)
             }
             DiffTransform::DeletedHunk {
@@ -819,10 +848,9 @@ impl DiffMapSnapshot {
                 let multibuffer_end =
                     multibuffer_transform_start + (range.end - diff_transform_start).0;
 
-                self.multibuffer_snapshot
-                    .text_summary_for_range::<TextSummary, _>(
-                        multibuffer_transform_start..multibuffer_end,
-                    )
+                self.buffer.text_summary_for_range::<TextSummary, _>(
+                    multibuffer_transform_start..multibuffer_end,
+                )
             }
             DiffTransform::DeletedHunk {
                 base_text_byte_range,
@@ -844,10 +872,10 @@ impl DiffMapSnapshot {
     }
 
     pub fn buffer(&self) -> &MultiBufferSnapshot {
-        &self.multibuffer_snapshot
+        &self.buffer
     }
 
-    pub fn to_point(&self, offset: DiffOffset) -> DiffPoint {
+    pub fn offset_to_point(&self, offset: DiffOffset) -> DiffPoint {
         let mut cursor = self.transforms.cursor::<DiffTransformSummary>(&());
         cursor.seek(&offset, Bias::Right, &());
         let start_transform = cursor.start();
@@ -859,9 +887,7 @@ impl DiffMapSnapshot {
         match cursor.item() {
             Some(DiffTransform::BufferContent { .. }) => {
                 let multibuffer_offset = start_transform.multibuffer_offset() + overshoot.0;
-                let multibuffer_point = self
-                    .multibuffer_snapshot
-                    .offset_to_point(multibuffer_offset);
+                let multibuffer_point = self.buffer.offset_to_point(multibuffer_offset);
                 start_transform.diff_point()
                     + DiffPoint(multibuffer_point - start_transform.multibuffer_point())
             }
@@ -896,7 +922,7 @@ impl DiffMapSnapshot {
         match cursor.item() {
             Some(DiffTransform::BufferContent { .. }) => {
                 let inlay_point = start_transform.multibuffer_point() + overshoot.0;
-                let clipped = self.multibuffer_snapshot.clip_point(inlay_point, bias);
+                let clipped = self.buffer.clip_point(inlay_point, bias);
                 start_transform.diff_point()
                     + DiffPoint(clipped - start_transform.multibuffer_point())
             }
@@ -916,7 +942,7 @@ impl DiffMapSnapshot {
         }
     }
 
-    pub fn to_offset(&self, point: DiffPoint) -> DiffOffset {
+    pub fn point_to_offset(&self, point: DiffPoint) -> DiffOffset {
         let mut cursor = self.transforms.cursor::<DiffTransformSummary>(&());
         cursor.seek(&point, Bias::Right, &());
         let start_transform = cursor.start();
@@ -928,8 +954,7 @@ impl DiffMapSnapshot {
         match cursor.item() {
             Some(DiffTransform::BufferContent { .. }) => {
                 let multibuffer_point = start_transform.multibuffer_point() + overshoot.0;
-                let multibuffer_offset =
-                    self.multibuffer_snapshot.point_to_offset(multibuffer_point);
+                let multibuffer_offset = self.buffer.point_to_offset(multibuffer_point);
                 start_transform.diff_offset()
                     + DiffOffset(multibuffer_offset - start_transform.multibuffer_offset())
             }
@@ -1023,7 +1048,7 @@ impl DiffMapSnapshot {
             multibuffer_start..multibuffer_end,
             language_aware,
             text_highlights,
-            &self.multibuffer_snapshot,
+            &self.buffer,
         );
 
         DiffMapChunks {
@@ -1056,7 +1081,7 @@ impl DiffMapSnapshot {
             0
         };
         let input_buffer_rows = self
-            .multibuffer_snapshot
+            .buffer
             .buffer_rows(MultiBufferRow(inlay_transform_start.row + overshoot));
 
         DiffMapRows {
@@ -1088,10 +1113,6 @@ impl<'a> DiffMapChunks<'a> {
         self.multibuffer_offset = inlay_start;
         self.offset = range.start;
         self.end_offset = range.end;
-    }
-
-    pub fn offset(&self) -> DiffOffset {
-        self.offset
     }
 }
 
@@ -1487,9 +1508,9 @@ mod tests {
             ),
             (DiffPoint::new(8, 0), DiffOffset(snapshot.text().len())),
         ] {
-            let actual = snapshot.to_offset(*point);
+            let actual = snapshot.point_to_offset(*point);
             assert_eq!(actual, *offset, "for {:?}", point);
-            let actual = snapshot.to_point(*offset);
+            let actual = snapshot.offset_to_point(*offset);
             assert_eq!(actual, *point, "for {:?}", offset);
         }
 

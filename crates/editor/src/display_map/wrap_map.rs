@@ -1216,12 +1216,11 @@ mod tests {
         });
         let mut buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-        log::info!("InlayMap text: {:?}", inlay_snapshot.text());
-        let (diff_map, diff_snapshot) =
-            cx.update(|cx| DiffMap::new(inlay_snapshot, buffer.clone(), cx));
+        let (diff_map, diff_snapshot) = cx.update(|cx| DiffMap::new(buffer.clone(), cx));
         log::info!("DiffMap text: {:?}", diff_snapshot.text());
-        let (mut fold_map, fold_snapshot) = FoldMap::new(diff_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(diff_snapshot);
+        log::info!("InlayMap text: {:?}", inlay_snapshot.text());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
         let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
@@ -1282,10 +1281,7 @@ mod tests {
                 40..=59 => {
                     let (inlay_snapshot, inlay_edits) =
                         inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
-                    let (diff_snapshot, diff_edits) = diff_map.update(cx, |diff_map, cx| {
-                        diff_map.sync(inlay_snapshot, inlay_edits, cx)
-                    });
-                    let (fold_snapshot, fold_edits) = fold_map.read(diff_snapshot, diff_edits);
+                    let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tabs_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
                     let (mut snapshot, wrap_edits) =
@@ -1306,13 +1302,12 @@ mod tests {
             }
 
             log::info!("Buffer text: {:?}", buffer_snapshot.text());
-            let (inlay_snapshot, inlay_edits) =
-                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
-            log::info!("InlayMap text: {:?}", inlay_snapshot.text());
             let (diff_snapshot, diff_edits) = diff_map.update(cx, |diff_map, cx| {
-                diff_map.sync(inlay_snapshot, inlay_edits, cx)
+                diff_map.sync(buffer_snapshot.clone(), buffer_edits, cx)
             });
-            let (fold_snapshot, fold_edits) = fold_map.read(diff_snapshot, diff_edits);
+            let (inlay_snapshot, inlay_edits) = inlay_map.sync(diff_snapshot, diff_edits);
+            log::info!("InlayMap text: {:?}", inlay_snapshot.text());
+            let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
             log::info!("FoldMap text: {:?}", fold_snapshot.text());
             let (tabs_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
             log::info!("TabMap text: {:?}", tabs_snapshot.text());
