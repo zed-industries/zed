@@ -7,7 +7,10 @@ use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use settings::{update_settings_file, Settings};
 use theme::ThemeSettings;
-use ui::{prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, KeyBinding, Tooltip};
+use ui::{
+    prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, KeyBinding, PopoverMenuHandle,
+    Tooltip,
+};
 use workspace::Workspace;
 
 use crate::assistant_settings::AssistantSettings;
@@ -23,6 +26,7 @@ pub struct MessageEditor {
     context_store: Model<ContextStore>,
     context_strip: View<ContextStrip>,
     language_model_selector: View<LanguageModelSelector>,
+    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     use_tools: bool,
 }
 
@@ -67,8 +71,13 @@ impl MessageEditor {
                     cx,
                 )
             }),
+            language_model_selector_menu_handle: PopoverMenuHandle::default(),
             use_tools: false,
         }
+    }
+
+    fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
+        self.language_model_selector_menu_handle.toggle(cx);
     }
 
     fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
@@ -163,6 +172,7 @@ impl MessageEditor {
                     Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
                 }),
         )
+        .with_handle(self.language_model_selector_menu_handle.clone())
     }
 }
 
@@ -182,6 +192,7 @@ impl Render for MessageEditor {
         v_flex()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::toggle_model_selector))
             .size_full()
             .gap_2()
             .p_2()

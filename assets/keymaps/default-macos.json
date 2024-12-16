@@ -224,7 +224,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "assistant2::NewThread",
-      "cmd-shift-h": "assistant2::OpenHistory"
+      "cmd-shift-h": "assistant2::OpenHistory",
+      "cmd-shift-m": "assistant2::ToggleModelSelector"
     }
   },
   {

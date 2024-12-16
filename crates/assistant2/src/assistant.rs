@@ -34,6 +34,7 @@ actions!(
     [
         ToggleFocus,
         NewThread,
+        ToggleContextPicker,
         ToggleModelSelector,
         OpenHistory,
         Chat,
