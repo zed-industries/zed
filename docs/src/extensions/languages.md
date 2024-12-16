@@ -363,12 +363,12 @@ TBD: `#set! tag`
 
 Zed uses the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) to provide advanced language support.
 
-An extension may provide any number of language servers. To provide a language server from your extension, add an entry to your `extension.toml` with the name of your language server and the language it applies to:
+An extension may provide any number of language servers. To provide a language server from your extension, add an entry to your `extension.toml` with the name of your language server and the language(s) it applies to:
 
 ```toml
 [language_servers.my-language]
 name = "My Language LSP"
-language = "My Language"
+languages = ["My Language"]
 ```
 
 Then, in the Rust code for your extension, implement the `language_server_command` method on your extension:
