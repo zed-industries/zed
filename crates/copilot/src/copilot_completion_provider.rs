@@ -373,6 +373,17 @@ mod tests {
 
         // Ensure existing inline completion is interpolated when inserting again.
         cx.simulate_keystroke("c");
+        // We still request a normal LSP completion, but we interpolate the
+        // existing inline completion.
+        drop(handle_completion_request(
+            &mut cx,
+            indoc! {"
+                one.c|<>
+                two
+                three
+            "},
+            vec!["ompletion_a", "ompletion_b"],
+        ));
         executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             assert!(!editor.context_menu_visible());
