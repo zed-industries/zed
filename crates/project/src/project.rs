@@ -57,7 +57,7 @@ use lsp::{
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
@@ -73,10 +73,8 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
-    cell::RefCell,
     ops::Range,
     path::{Component, Path, PathBuf},
-    rc::Rc,
     str,
     sync::Arc,
     time::Duration,
@@ -2542,7 +2540,7 @@ impl Project {
                         .read(cx)
                         .list_toolchains(worktree_id, language_name, cx)
                 })
-                .ok()?
+                .unwrap_or(Task::Ready(None))
                 .await
             })
         } else {
@@ -2874,7 +2872,7 @@ impl Project {
         &self,
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
-        completions: Rc<RefCell<Box<[Completion]>>>,
+        completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<bool>> {
         self.lsp_store.update(cx, |lsp_store, cx| {

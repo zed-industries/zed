@@ -50,10 +50,7 @@ pub struct ForegroundExecutor {
 /// the task to continue running, but with no way to return a value.
 #[must_use]
 #[derive(Debug)]
-pub struct Task<T>(TaskState<T>);
-
-#[derive(Debug)]
-enum TaskState<T> {
+pub enum Task<T> {
     /// A task that is ready to return a value
     Ready(Option<T>),
 
@@ -64,14 +61,14 @@ enum TaskState<T> {
 impl<T> Task<T> {
     /// Creates a new task that will resolve with the value
     pub fn ready(val: T) -> Self {
-        Task(TaskState::Ready(Some(val)))
+        Task::Ready(Some(val))
     }
 
     /// Detaching a task runs it to completion in the background
     pub fn detach(self) {
         match self {
-            Task(TaskState::Ready(_)) => {}
-            Task(TaskState::Spawned(task)) => task.detach(),
+            Task::Ready(_) => {}
+            Task::Spawned(task) => task.detach(),
         }
     }
 }
@@ -97,8 +94,8 @@ impl<T> Future for Task<T> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match unsafe { self.get_unchecked_mut() } {
-            Task(TaskState::Ready(val)) => Poll::Ready(val.take().unwrap()),
-            Task(TaskState::Spawned(task)) => task.poll(cx),
+            Task::Ready(val) => Poll::Ready(val.take().unwrap()),
+            Task::Spawned(task) => task.poll(cx),
         }
     }
 }
@@ -166,7 +163,7 @@ impl BackgroundExecutor {
         let (runnable, task) =
             async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable, label));
         runnable.schedule();
-        Task(TaskState::Spawned(task))
+        Task::Spawned(task)
     }
 
     /// Used by the test harness to run an async test in a synchronous fashion.
@@ -343,7 +340,7 @@ impl BackgroundExecutor {
             move |runnable| dispatcher.dispatch_after(duration, runnable)
         });
         runnable.schedule();
-        Task(TaskState::Spawned(task))
+        Task::Spawned(task)
     }
 
     /// in tests, start_waiting lets you indicate which task is waiting (for debugging only)
@@ -463,7 +460,7 @@ impl ForegroundExecutor {
                 dispatcher.dispatch_on_main_thread(runnable)
             });
             runnable.schedule();
-            Task(TaskState::Spawned(task))
+            Task::Spawned(task)
         }
         inner::<R>(dispatcher, Box::pin(future))
     }

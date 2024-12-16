@@ -328,7 +328,11 @@ impl ExtensionsPage {
                 let match_candidates = dev_extensions
                     .iter()
                     .enumerate()
-                    .map(|(ix, manifest)| StringMatchCandidate::new(ix, &manifest.name))
+                    .map(|(ix, manifest)| StringMatchCandidate {
+                        id: ix,
+                        string: manifest.name.clone(),
+                        char_bag: manifest.name.as_str().into(),
+                    })
                     .collect::<Vec<_>>();
 
                 let matches = match_strings(

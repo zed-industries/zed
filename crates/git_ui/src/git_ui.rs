@@ -77,7 +77,7 @@ const REMOVED_COLOR: Hsla = Hsla {
     a: 1.0,
 };
 
-// TODO: Add updated status colors to theme
+// todo!(): Add updated status colors to theme
 pub fn git_status_icon(status: GitFileStatus) -> impl IntoElement {
     match status {
         GitFileStatus::Added => Icon::new(IconName::SquarePlus).color(Color::Custom(ADDED_COLOR)),

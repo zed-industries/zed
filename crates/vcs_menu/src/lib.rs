@@ -172,7 +172,11 @@ impl PickerDelegate for BranchListDelegate {
                 branches
                     .into_iter()
                     .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
+                    .map(|(ix, command)| StringMatchCandidate {
+                        id: ix,
+                        char_bag: command.name.chars().collect(),
+                        string: command.name.into(),
+                    })
                     .collect::<Vec<StringMatchCandidate>>()
             });
             let Some(candidates) = candidates.log_err() else {

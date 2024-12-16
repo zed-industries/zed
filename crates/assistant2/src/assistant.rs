@@ -3,7 +3,6 @@ mod assistant_panel;
 mod assistant_settings;
 mod context;
 mod context_picker;
-mod context_strip;
 mod inline_assistant;
 mod message_editor;
 mod prompts;

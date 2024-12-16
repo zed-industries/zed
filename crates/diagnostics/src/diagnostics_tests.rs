@@ -1050,7 +1050,6 @@ fn editor_blocks(
                                     .ok()?
                             }
 
-                            Block::FoldedBuffer { .. } => FILE_HEADER.into(),
                             Block::ExcerptBoundary {
                                 starts_new_buffer, ..
                             } => {

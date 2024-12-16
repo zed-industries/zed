@@ -626,23 +626,10 @@ impl Vim {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
             Mode::Normal => {
-                if let Some(operator) = self.operator_stack.last() {
-                    match operator {
-                        // Navigation operators -> Block cursor
-                        Operator::FindForward { .. }
-                        | Operator::FindBackward { .. }
-                        | Operator::Mark
-                        | Operator::Jump { .. }
-                        | Operator::Register
-                        | Operator::RecordRegister
-                        | Operator::ReplayRegister => CursorShape::Block,
-
-                        // All other operators -> Underline cursor
-                        _ => CursorShape::Underline,
-                    }
-                } else {
-                    // No operator active -> Block cursor
+                if self.operator_stack.is_empty() {
                     CursorShape::Block
+                } else {
+                    CursorShape::Underline
                 }
             }
             Mode::Replace => CursorShape::Underline,

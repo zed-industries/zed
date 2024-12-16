@@ -24,5 +24,4 @@ pub struct Context {
 pub enum ContextKind {
     File,
     FetchedUrl,
-    Thread,
 }

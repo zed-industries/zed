@@ -113,7 +113,13 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
             .iter()
             .enumerate()
             .map(|(id, extension)| {
-                StringMatchCandidate::new(id, &format!("v{}", extension.manifest.version))
+                let text = format!("v{}", extension.manifest.version);
+
+                StringMatchCandidate {
+                    id,
+                    char_bag: text.as_str().into(),
+                    string: text,
+                }
             })
             .collect::<Vec<_>>();
 

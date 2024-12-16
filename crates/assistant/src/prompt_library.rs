@@ -1439,7 +1439,10 @@ impl PromptStore {
                     .iter()
                     .enumerate()
                     .filter_map(|(ix, metadata)| {
-                        Some(StringMatchCandidate::new(ix, metadata.title.as_ref()?))
+                        Some(StringMatchCandidate::new(
+                            ix,
+                            metadata.title.as_ref()?.to_string(),
+                        ))
                     })
                     .collect::<Vec<_>>();
                 let matches = fuzzy::match_strings(

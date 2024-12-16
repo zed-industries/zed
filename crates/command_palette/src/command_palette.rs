@@ -283,7 +283,11 @@ impl PickerDelegate for CommandPaletteDelegate {
                 let candidates = commands
                     .iter()
                     .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
+                    .map(|(ix, command)| StringMatchCandidate {
+                        id: ix,
+                        string: command.name.to_string(),
+                        char_bag: command.name.chars().collect(),
+                    })
                     .collect::<Vec<_>>();
                 let matches = if query.is_empty() {
                     candidates

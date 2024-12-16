@@ -218,7 +218,10 @@ impl Options {
     }
 
     fn match_candidates_for_args() -> [StringMatchCandidate; 1] {
-        [StringMatchCandidate::new(0, INCLUDE_WARNINGS_ARGUMENT)]
+        [StringMatchCandidate::new(
+            0,
+            INCLUDE_WARNINGS_ARGUMENT.to_string(),
+        )]
     }
 }
 

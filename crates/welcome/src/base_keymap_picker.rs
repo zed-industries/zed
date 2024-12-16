@@ -127,7 +127,11 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         let background = cx.background_executor().clone();
         let candidates = BaseKeymap::names()
             .enumerate()
-            .map(|(id, name)| StringMatchCandidate::new(id, name))
+            .map(|(id, name)| StringMatchCandidate {
+                id,
+                char_bag: name.into(),
+                string: name.into(),
+            })
             .collect::<Vec<_>>();
 
         cx.spawn(|this, mut cx| async move {

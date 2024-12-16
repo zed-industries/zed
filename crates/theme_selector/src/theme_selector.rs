@@ -230,7 +230,11 @@ impl PickerDelegate for ThemeSelectorDelegate {
             .themes
             .iter()
             .enumerate()
-            .map(|(id, meta)| StringMatchCandidate::new(id, &meta.name))
+            .map(|(id, meta)| StringMatchCandidate {
+                id,
+                char_bag: meta.name.as_ref().into(),
+                string: meta.name.to_string(),
+            })
             .collect::<Vec<_>>();
 
         cx.spawn(|this, mut cx| async move {

@@ -78,7 +78,10 @@ impl ProjectSymbolsDelegate {
         ));
         let sort_key_for_match = |mat: &StringMatch| {
             let symbol = &self.symbols[mat.candidate_id];
-            (Reverse(OrderedFloat(mat.score)), symbol.label.filter_text())
+            (
+                Reverse(OrderedFloat(mat.score)),
+                &symbol.label.text[symbol.label.filter_range.clone()],
+            )
         };
 
         visible_matches.sort_unstable_by_key(sort_key_for_match);
@@ -174,7 +177,10 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         .iter()
                         .enumerate()
                         .map(|(id, symbol)| {
-                            StringMatchCandidate::new(id, &symbol.label.filter_text())
+                            StringMatchCandidate::new(
+                                id,
+                                symbol.label.text[symbol.label.filter_range.clone()].to_string(),
+                            )
                         })
                         .partition(|candidate| {
                             project
@@ -307,7 +313,7 @@ mod tests {
                     let candidates = fake_symbols
                         .iter()
                         .enumerate()
-                        .map(|(id, symbol)| StringMatchCandidate::new(id, &symbol.name))
+                        .map(|(id, symbol)| StringMatchCandidate::new(id, symbol.name.clone()))
                         .collect::<Vec<_>>();
                     let matches = if params.query.is_empty() {
                         Vec::new()

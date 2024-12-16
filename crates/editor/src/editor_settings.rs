@@ -11,7 +11,6 @@ pub struct EditorSettings {
     pub current_line_highlight: CurrentLineHighlight,
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
-    pub hover_popover_delay: u64,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
@@ -197,10 +196,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
-    /// Time to wait before showing the informational hover box
-    ///
-    /// Default: 350
-    pub hover_popover_delay: Option<u64>,
+
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings

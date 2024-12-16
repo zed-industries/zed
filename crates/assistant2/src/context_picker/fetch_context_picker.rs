@@ -8,12 +8,12 @@ use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, Wea
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, ViewContext};
+use ui::{prelude::*, ListItem, ListItemSpacing, ViewContext};
 use workspace::Workspace;
 
 use crate::context::ContextKind;
 use crate::context_picker::ContextPicker;
-use crate::context_strip::ContextStrip;
+use crate::message_editor::MessageEditor;
 
 pub struct FetchContextPicker {
     picker: View<Picker<FetchContextPickerDelegate>>,
@@ -23,10 +23,10 @@ impl FetchContextPicker {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        context_strip: WeakView<ContextStrip>,
+        message_editor: WeakView<MessageEditor>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate = FetchContextPickerDelegate::new(context_picker, workspace, context_strip);
+        let delegate = FetchContextPickerDelegate::new(context_picker, workspace, message_editor);
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
@@ -55,7 +55,7 @@ enum ContentType {
 pub struct FetchContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
-    context_strip: WeakView<ContextStrip>,
+    message_editor: WeakView<MessageEditor>,
     url: String,
 }
 
@@ -63,12 +63,12 @@ impl FetchContextPickerDelegate {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        context_strip: WeakView<ContextStrip>,
+        message_editor: WeakView<MessageEditor>,
     ) -> Self {
         FetchContextPickerDelegate {
             context_picker,
             workspace,
-            context_strip,
+            message_editor,
             url: String::new(),
         }
     }
@@ -150,15 +150,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
-        if self.url.is_empty() {
-            0
-        } else {
-            1
-        }
-    }
-
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
-        "Enter the URL that you would like to fetch".into()
+        1
     }
 
     fn selected_index(&self) -> usize {
@@ -189,9 +181,9 @@ impl PickerDelegate for FetchContextPickerDelegate {
 
             this.update(&mut cx, |this, cx| {
                 this.delegate
-                    .context_strip
-                    .update(cx, |context_strip, _cx| {
-                        context_strip.insert_context(ContextKind::FetchedUrl, url, text);
+                    .message_editor
+                    .update(cx, |message_editor, _cx| {
+                        message_editor.insert_context(ContextKind::FetchedUrl, url, text);
                     })
             })??;
 
@@ -218,8 +210,9 @@ impl PickerDelegate for FetchContextPickerDelegate {
         Some(
             ListItem::new(ix)
                 .inset(true)
+                .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(Label::new(self.url.clone())),
+                .child(self.url.clone()),
         )
     }
 }
