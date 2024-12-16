@@ -9,7 +9,7 @@ use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
     FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
     MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, View,
-    VisualContext, WeakView,
+    VisualContext, WeakModel, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -97,6 +97,7 @@ pub struct BlockContext<'a, 'b> {
 pub struct TerminalView {
     terminal: Model<Terminal>,
     workspace: WeakView<Workspace>,
+    project: WeakModel<Project>,
     focus_handle: FocusHandle,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
@@ -141,6 +142,7 @@ impl TerminalView {
         terminal: Model<Terminal>,
         workspace: WeakView<Workspace>,
         workspace_id: Option<WorkspaceId>,
+        project: WeakModel<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let workspace_handle = workspace.clone();
@@ -160,6 +162,7 @@ impl TerminalView {
         Self {
             terminal,
             workspace: workspace_handle,
+            project,
             has_bell: false,
             focus_handle,
             context_menu: None,
@@ -1075,21 +1078,37 @@ impl Item for TerminalView {
 
     fn clone_on_split(
         &self,
-        _workspace_id: Option<WorkspaceId>,
-        _cx: &mut ViewContext<Self>,
+        workspace_id: Option<WorkspaceId>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        //From what I can tell, there's no  way to tell the current working
-        //Directory of the terminal from outside the shell. There might be
-        //solutions to this, but they are non-trivial and require more IPC
+        let window = cx.window_handle();
+        let terminal = self
+            .project
+            .update(cx, |project, cx| {
+                let terminal = self.terminal().read(cx);
+                let working_directory = terminal
+                    .working_directory()
+                    .or_else(|| Some(project.active_project_directory(cx)?.to_path_buf()));
+                let python_venv_directory = terminal.python_venv_directory.clone();
+                project.create_terminal_with_venv(
+                    TerminalKind::Shell(working_directory),
+                    python_venv_directory,
+                    window,
+                    cx,
+                )
+            })
+            .ok()?
+            .log_err()?;
 
-        // Some(TerminalContainer::new(
-        //     Err(anyhow::anyhow!("failed to instantiate terminal")),
-        //     workspace_id,
-        //     cx,
-        // ))
-
-        // TODO
-        None
+        Some(cx.new_view(|cx| {
+            TerminalView::new(
+                terminal,
+                self.workspace.clone(),
+                workspace_id,
+                self.project.clone(),
+                cx,
+            )
+        }))
     }
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
@@ -1218,7 +1237,15 @@ impl SerializableItem for TerminalView {
                 })?
                 .await?;
             cx.update(|cx| {
-                cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
+                cx.new_view(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        workspace,
+                        Some(workspace_id),
+                        project.downgrade(),
+                        cx,
+                    )
+                })
             })
         })
     }
