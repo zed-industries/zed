@@ -2431,7 +2431,7 @@ impl EditorElement {
                     .border_1()
                     .map(|div| {
                         let border_color = if is_selected {
-                            cx.theme().colors().text_accent
+                            cx.theme().colors().border_focused
                         } else {
                             cx.theme().colors().border
                         };
