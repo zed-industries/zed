@@ -30,6 +30,7 @@ use gpui::{
 };
 use ignore::IgnoreStack;
 use language::DiskState;
+use log::debug;
 use parking_lot::Mutex;
 use paths::local_settings_folder_relative_path;
 use postage::{
@@ -2440,6 +2441,18 @@ impl Snapshot {
             .map(|e| e.1)
     }
 
+    pub(crate) fn insert_repository_entry(&mut self, repository_entry: RepositoryEntry) {
+        let Some(entry) = self.entry_for_id(repository_entry.work_directory.0) else {
+            log::error!("Attempting to insert a repository without the corresponding worktree entry for it's work directory");
+            debug_assert!(false);
+            return;
+        };
+        self.repository_entries.insert(
+            RepositoryWorkDirectory(entry.path.clone()),
+            repository_entry,
+        );
+    }
+
     pub fn repository_and_work_directory_for_path(
         &self,
         path: &Path,
@@ -2939,7 +2952,7 @@ impl BackgroundScannerState {
         if let Some(mtime) = entry.mtime {
             // If an entry with the same inode was removed from the worktree during this scan,
             // then it *might* represent the same file or directory. But the OS might also have
-            // re-used the inode for a completely different file or directory.
+            // r*e-used the inode for a completely different file or directory.
             //
             // Conditionally reuse the old entry's id:
             // * if the mtime is the same, the file was probably been renamed.
@@ -3178,7 +3191,6 @@ impl BackgroundScannerState {
             RepositoryEntry {
                 work_directory: work_dir_id.into(),
                 branch: repository.branch_name().map(Into::into),
-                // TODO: Fill in this data structure
                 git_entries_by_path: Default::default(),
                 location_in_repo,
             },
@@ -3542,7 +3554,6 @@ pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GitEntry {
     pub path: RepoPath,
-    entry_id: Option<ProjectEntryId>,
     git_status: GitFileStatus,
 }
 
@@ -4471,11 +4482,6 @@ impl BackgroundScanner {
                     .always_included_entries
                     .push(entry.path.clone());
             }
-            // TODO: do this below
-            // Find this entrie's git repository
-            // Find this git repository's gitEntry for this
-            // Insert the new project id
-            // TODO: Track down other file entry creation and deletion phases, and make sure we clean up the git statuses as we go along
         }
 
         state.populate_dir(&job.path, new_entries, new_ignore);
@@ -4543,31 +4549,76 @@ impl BackgroundScanner {
         }
 
         // Group all relative paths by their git repository.
-        // let mut paths_by_git_repo = HashMap::default();
-        // for relative_path in relative_paths.iter() {
-        //     if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(relative_path) {
-        //         if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, relative_path) {
-        //             paths_by_git_repo
-        //                 .entry(repo.dot_git_dir_abs_path.clone())
-        //                 .or_insert_with(|| RepoPaths {
-        //                     repo: repo.repo_ptr.clone(),
-        //                     repo_paths: Vec::new(),
-        //                     relative_paths: Vec::new(),
-        //                 })
-        //                 .add_paths(relative_path, repo_path);
-        //         }
-        //     }
-        // }
+        let mut paths_by_git_repo = HashMap::default();
+        for relative_path in relative_paths.iter() {
+            dbg!(relative_path);
+            if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(relative_path) {
+                dbg!(&repo.dot_git_dir_abs_path);
+                if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, relative_path) {
+                    dbg!(&repo_path);
+                    // TODO: Remove workdirectoryEntry type (maybe) to remove unwrap
+                    let work_directory = state
+                        .snapshot
+                        .entry_for_id(repo_entry.work_directory.0)
+                        .unwrap()
+                        .path
+                        .clone();
 
-        // TODO: Move this to where it should be for the new data structure
-        // Now call `git status` once per repository and collect each file's git status.
-        // let mut git_statuses_by_relative_path =
-        //     paths_by_git_repo
-        //         .into_values()
-        //         .fold(HashMap::default(), |mut map, repo_paths| {
-        //             map.extend(repo_paths.into_git_file_statuses());
-        //             map
-        //         });
+                    paths_by_git_repo
+                        .entry(work_directory)
+                        .or_insert_with(|| RepoPaths {
+                            repo: repo.repo_ptr.clone(),
+                            repo_paths: Vec::new(),
+                            relative_paths: Vec::new(),
+                        })
+                        .add_paths(relative_path, repo_path);
+                }
+            }
+        }
+
+        // TODO: Should we do this outside of the state lock?
+        for (work_directory_path, paths) in paths_by_git_repo.into_iter() {
+            dbg!(&paths.relative_paths, &paths.repo_paths);
+            if let Ok(status) = paths.repo.status(&paths.repo_paths) {
+                let mut changed_path_statuses = Vec::with_capacity(status.entries.len());
+
+                for (repo_path, status) in status.entries.iter() {
+                    let ix = paths
+                        .relative_paths
+                        .iter()
+                        .enumerate()
+                        .find(|(_, path)| path == repo_path)
+                        .map(|(ix, path)| ix);
+
+                    if let Some(ix) = ix {
+                        paths.relative_paths.swap_remove(ix);
+                    }
+
+                    dbg!((&repo_path, &status));
+                    changed_path_statuses.push(Edit::Insert(GitEntry {
+                        path: repo_path.clone(),
+                        git_status: *status,
+                    }));
+                }
+
+                for path in paths.relative_paths {
+                    // TODO: relativize it
+                    changed_path_statuses.push(Edit::Remove(RepoPath(path)));
+                }
+                // Find the diff between status results, and paths
+                // and generate Edit::Remove() for them
+
+                // Update the statuses for new/updated paths associated with this repository
+                state.snapshot.repository_entries.update(
+                    &RepositoryWorkDirectory(work_directory_path),
+                    move |repository_entry| {
+                        repository_entry
+                            .git_entries_by_path
+                            .edit(changed_path_statuses, &())
+                    },
+                );
+            }
+        }
 
         for (path, metadata) in relative_paths.iter().zip(metadata.into_iter()) {
             let abs_path: Arc<Path> = root_abs_path.join(path).into();
@@ -4605,11 +4656,6 @@ impl BackgroundScanner {
                             fs_entry.kind = EntryKind::UnloadedDir;
                         }
                     }
-
-                    // Old usage of git_statuses_by_relative_path
-                    // if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
-                    //     fs_entry.git_status = git_statuses_by_relative_path.remove(path);
-                    // }
 
                     state.insert_entry(fs_entry.clone(), self.fs.as_ref(), self.watcher.as_ref());
                 }
@@ -4992,14 +5038,8 @@ impl BackgroundScanner {
                 Some(job.work_directory.0.join(path).into())
             };
 
-            let entry_id = project_path
-                .as_ref()
-                .and_then(|path| snapshot.entry_for_path(path))
-                .map(|entry| entry.id);
-
             new_entries_by_path.insert_or_replace(
                 GitEntry {
-                    entry_id,
                     path: path.clone(),
                     git_status: *status,
                 },
@@ -5207,18 +5247,6 @@ impl RepoPaths {
     fn add_paths(&mut self, relative_path: &Arc<Path>, repo_path: RepoPath) {
         self.relative_paths.push(relative_path.clone());
         self.repo_paths.push(repo_path);
-    }
-
-    fn into_git_file_statuses(self) -> HashMap<Arc<Path>, GitFileStatus> {
-        let mut statuses = HashMap::default();
-        if let Ok(status) = self.repo.status(&self.repo_paths) {
-            for (repo_path, relative_path) in self.repo_paths.into_iter().zip(self.relative_paths) {
-                if let Some(path_status) = status.get(&repo_path) {
-                    statuses.insert(relative_path, path_status);
-                }
-            }
-        }
-        statuses
     }
 }
 

@@ -2524,7 +2524,7 @@ async fn test_git_status(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_git_status_git_panel(cx: &mut TestAppContext) {
+async fn test_git_repository_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -2568,19 +2568,80 @@ async fn test_git_status_git_panel(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         let (dir, _) = snapshot.repositories().next().unwrap();
 
-        // Takes a work directory, and returns all file entries with a git status.
         let entries = snapshot.git_status(dir).unwrap();
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
         assert_eq!(entries[0].git_status, GitFileStatus::Modified);
-        assert!(entries[0].entry_id.is_some());
         assert_eq!(entries[1].path.as_ref(), Path::new("b.txt"));
+        // TODO: make this untracked;
         assert_eq!(entries[1].git_status, GitFileStatus::Added);
-        assert!(entries[1].entry_id.is_some());
         assert_eq!(entries[2].path.as_ref(), Path::new("d.txt"));
         assert_eq!(entries[2].git_status, GitFileStatus::Deleted);
-        assert!(entries[2].entry_id.is_none());
+    });
+
+    std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
+
+    dbg!("*************************************************");
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, cx| {
+        let snapshot = tree.snapshot();
+        let (dir, _) = snapshot.repositories().next().unwrap();
+
+        // Takes a work directory, and returns all file entries with a git status.
+        let entries = snapshot.git_status(dir).unwrap();
+
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
+        assert_eq!(entries[0].git_status, GitFileStatus::Modified);
+        assert_eq!(entries[1].path.as_ref(), Path::new("b.txt"));
+        // TODO: make this untracked
+        assert_eq!(entries[1].git_status, GitFileStatus::Added);
+        // Status updated
+        assert_eq!(entries[2].path.as_ref(), Path::new("c.txt"));
+        assert_eq!(entries[2].git_status, GitFileStatus::Modified);
+        assert_eq!(entries[3].path.as_ref(), Path::new("d.txt"));
+        assert_eq!(entries[3].git_status, GitFileStatus::Deleted);
+    });
+
+    git_add("a.txt", &repo);
+    git_add("c.txt", &repo);
+    git_remove_index(Path::new("d.txt"), &repo);
+    git_commit("Another commit", &repo);
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    dbg!("*************************************************");
+    std::fs::remove_file(work_dir.join("a.txt")).unwrap();
+    std::fs::remove_file(work_dir.join("b.txt")).unwrap();
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        let (dir, _) = snapshot.repositories().next().unwrap();
+        let entries = snapshot.git_status(dir).unwrap();
+
+        dbg!(&entries);
+
+        // Deleting an untracked entry, b.txt, should leave no status
+        // a.txt was tracked, and so should have a status
+        assert_eq!(
+            entries.len(),
+            1,
+            "Entries length was incorrect\n{:#?}",
+            &entries
+        );
+        assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
+        assert_eq!(entries[0].git_status, GitFileStatus::Deleted);
     });
 }
 
@@ -2590,7 +2651,7 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
 
     let root = temp_tree(json!({
-        "my-repo": {
+        "my-repo)": {
             // .git folder will go here
             "a.txt": "a",
             "sub-folder-1": {
@@ -2824,14 +2885,14 @@ fn git_init(path: &Path) -> git2::Repository {
 fn git_add<P: AsRef<Path>>(path: P, repo: &git2::Repository) {
     let path = path.as_ref();
     let mut index = repo.index().expect("Failed to get index");
-    index.add_path(path).expect("Failed to add a.txt");
+    index.add_path(path).expect("Failed to add file");
     index.write().expect("Failed to write index");
 }
 
 #[track_caller]
 fn git_remove_index(path: &Path, repo: &git2::Repository) {
     let mut index = repo.index().expect("Failed to get index");
-    index.remove_path(path).expect("Failed to add a.txt");
+    index.remove_path(path).expect("Failed to add file");
     index.write().expect("Failed to write index");
 }
 
