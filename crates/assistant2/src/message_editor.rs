@@ -1,31 +1,21 @@
-use std::rc::Rc;
-
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AppContext, FocusableView, Model, TextStyle, View, WeakModel, WeakView};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{
-    prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, IconButtonShape, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, Tooltip,
-};
+use ui::{prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, KeyBinding, Tooltip};
 use workspace::Workspace;
 
-use crate::context::{Context, ContextId, ContextKind};
-use crate::context_picker::ContextPicker;
+use crate::context_strip::ContextStrip;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::ui::ContextPill;
 use crate::{Chat, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
     editor: View<Editor>,
-    context: Vec<Context>,
-    next_context_id: ContextId,
-    context_picker: View<ContextPicker>,
-    pub(crate) context_picker_handle: PopoverMenuHandle<ContextPicker>,
+    context_strip: View<ContextStrip>,
     language_model_selector: View<LanguageModelSelector>,
     use_tools: bool,
 }
@@ -37,7 +27,6 @@ impl MessageEditor {
         thread: Model<Thread>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let weak_self = cx.view().downgrade();
         Self {
             thread,
             editor: cx.new_view(|cx| {
@@ -46,12 +35,8 @@ impl MessageEditor {
 
                 editor
             }),
-            context: Vec::new(),
-            next_context_id: ContextId(0),
-            context_picker: cx.new_view(|cx| {
-                ContextPicker::new(workspace.clone(), thread_store.clone(), weak_self, cx)
-            }),
-            context_picker_handle: PopoverMenuHandle::default(),
+            context_strip: cx
+                .new_view(|cx| ContextStrip::new(workspace.clone(), thread_store.clone(), cx)),
             language_model_selector: cx.new_view(|cx| {
                 LanguageModelSelector::new(
                     |model, _cx| {
@@ -62,20 +47,6 @@ impl MessageEditor {
             }),
             use_tools: false,
         }
-    }
-
-    pub fn insert_context(
-        &mut self,
-        kind: ContextKind,
-        name: impl Into<SharedString>,
-        text: impl Into<SharedString>,
-    ) {
-        self.context.push(Context {
-            id: self.next_context_id.post_inc(),
-            name: name.into(),
-            kind,
-            text: text.into(),
-        });
     }
 
     fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
@@ -104,7 +75,7 @@ impl MessageEditor {
             editor.clear(cx);
             text
         });
-        let context = self.context.drain(..).collect::<Vec<_>>();
+        let context = self.context_strip.update(cx, |this, _cx| this.drain());
 
         self.thread.update(cx, |thread, cx| {
             thread.insert_user_message(user_message, context, cx);
@@ -190,7 +161,6 @@ impl Render for MessageEditor {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
         let focus_handle = self.editor.focus_handle(cx);
-        let context_picker = self.context_picker.clone();
 
         v_flex()
             .key_context("MessageEditor")
@@ -199,48 +169,7 @@ impl Render for MessageEditor {
             .gap_2()
             .p_2()
             .bg(cx.theme().colors().editor_background)
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(
-                        PopoverMenu::new("context-picker")
-                            .menu(move |_cx| Some(context_picker.clone()))
-                            .trigger(
-                                IconButton::new("add-context", IconName::Plus)
-                                    .shape(IconButtonShape::Square)
-                                    .icon_size(IconSize::Small),
-                            )
-                            .attach(gpui::AnchorCorner::TopLeft)
-                            .anchor(gpui::AnchorCorner::BottomLeft)
-                            .offset(gpui::Point {
-                                x: px(0.0),
-                                y: px(-16.0),
-                            })
-                            .with_handle(self.context_picker_handle.clone()),
-                    )
-                    .children(self.context.iter().map(|context| {
-                        ContextPill::new(context.clone()).on_remove({
-                            let context = context.clone();
-                            Rc::new(cx.listener(move |this, _event, cx| {
-                                this.context.retain(|other| other.id != context.id);
-                                cx.notify();
-                            }))
-                        })
-                    }))
-                    .when(!self.context.is_empty(), |parent| {
-                        parent.child(
-                            IconButton::new("remove-all-context", IconName::Eraser)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::Small)
-                                .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
-                                .on_click(cx.listener(|this, _event, cx| {
-                                    this.context.clear();
-                                    cx.notify();
-                                })),
-                        )
-                    }),
-            )
+            .child(self.context_strip.clone())
             .child({
                 let settings = ThemeSettings::get_global(cx);
                 let text_style = TextStyle {
