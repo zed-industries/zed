@@ -1678,6 +1678,10 @@ impl CodeLabel {
     pub fn text(&self) -> &str {
         self.text.as_str()
     }
+
+    pub fn filter_text(&self) -> &str {
+        &self.text[self.filter_range.clone()]
+    }
 }
 
 impl From<String> for CodeLabel {

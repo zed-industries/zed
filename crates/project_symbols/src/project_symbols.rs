@@ -78,10 +78,7 @@ impl ProjectSymbolsDelegate {
         ));
         let sort_key_for_match = |mat: &StringMatch| {
             let symbol = &self.symbols[mat.candidate_id];
-            (
-                Reverse(OrderedFloat(mat.score)),
-                &symbol.label.text[symbol.label.filter_range.clone()],
-            )
+            (Reverse(OrderedFloat(mat.score)), symbol.label.filter_text())
         };
 
         visible_matches.sort_unstable_by_key(sort_key_for_match);
@@ -177,10 +174,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         .iter()
                         .enumerate()
                         .map(|(id, symbol)| {
-                            StringMatchCandidate::new(
-                                id,
-                                &symbol.label.text[symbol.label.filter_range.clone()],
-                            )
+                            StringMatchCandidate::new(id, &symbol.label.filter_text())
                         })
                         .partition(|candidate| {
                             project
