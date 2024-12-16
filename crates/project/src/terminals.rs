@@ -290,7 +290,7 @@ impl Project {
         })
     }
 
-    pub fn create_terminal_with_paths(
+    pub fn create_terminal_with_venv(
         &mut self,
         kind: TerminalKind,
         window: AnyWindowHandle,
