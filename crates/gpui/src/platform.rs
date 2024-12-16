@@ -70,6 +70,10 @@ pub use semantic_version::SemanticVersion;
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
+#[cfg(target_os = "windows")]
+pub use windows::{
+    get_app_single_instance_mutex_identifier, register_app_identifier, send_dock_action_message,
+};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::TestScreenCaptureSource;

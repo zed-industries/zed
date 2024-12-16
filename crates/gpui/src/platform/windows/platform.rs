@@ -9,6 +9,7 @@ use std::{
 use ::util::{paths::SanitizedPath, ResultExt};
 use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
+use collections::FxHashMap;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -25,7 +26,10 @@ use windows::{
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    UI::ViewManagement::UISettings,
+    UI::{
+        StartScreen::{JumpList, JumpListItem},
+        ViewManagement::UISettings,
+    },
 };
 
 use crate::*;
@@ -43,10 +47,13 @@ pub(crate) struct WindowsPlatform {
     windows_version: WindowsVersion,
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     validation_number: usize,
+    dock_action_event: Owned<HANDLE>,
+    dock_action_shared_memory: Owned<HANDLE>,
 }
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
+    dock_menu_actions: FxHashMap<String, Box<dyn Action>>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -64,10 +71,12 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
+        let dock_menu_actions = FxHashMap::default();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
+            dock_menu_actions,
             current_cursor,
         }
     }
@@ -96,6 +105,8 @@ impl WindowsPlatform {
         let raw_window_handles = RwLock::new(SmallVec::new());
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
         let validation_number = rand::random::<usize>();
+        let dock_action_event = create_dock_action_event();
+        let dock_action_shared_memory = create_dock_action_shared_memory();
 
         Self {
             state,
@@ -109,6 +120,8 @@ impl WindowsPlatform {
             windows_version,
             bitmap_factory,
             validation_number,
+            dock_action_event,
+            dock_action_shared_memory,
         }
     }
 
@@ -182,6 +195,56 @@ impl WindowsPlatform {
             main_receiver: self.main_receiver.clone(),
         }
     }
+
+    fn configure_jump_list(&self, menus: Vec<MenuItem>) -> Result<()> {
+        let jump_list = JumpList::LoadCurrentAsync()?.get()?;
+        let items = jump_list.Items()?;
+        items.Clear()?;
+        for item in menus {
+            let item = match item {
+                MenuItem::Separator => JumpListItem::CreateSeparator()?,
+                MenuItem::Submenu(_) => {
+                    log::error!("Set `MenuItemSubmenu` for dock menu on Windows is not supported.");
+                    continue;
+                }
+                MenuItem::Action { name, action, .. } => {
+                    let item_args =
+                        format!("--{} {}", APP_DOCK_ACTION_ARGUMENT, action.arguments());
+                    self.state
+                        .borrow_mut()
+                        .dock_menu_actions
+                        .insert(action.arguments().to_string(), action);
+                    JumpListItem::CreateWithArguments(
+                        &HSTRING::from(item_args),
+                        &HSTRING::from(name.as_ref()),
+                    )?
+                }
+            };
+            items.Append(&item)?;
+        }
+        jump_list.SaveAsync()?.get()?;
+        Ok(())
+    }
+
+    fn handle_instance_message(&self) {
+        let msg = read_dock_action_argument(*self.dock_action_shared_memory);
+
+        let mut lock = self.state.borrow_mut();
+        if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
+            let Some(action) = lock
+                .dock_menu_actions
+                .get(&msg)
+                .map(|action| action.boxed_clone())
+            else {
+                lock.callbacks.app_menu_action = Some(callback);
+                log::error!("Dock menu {msg} not found");
+                return;
+            };
+            drop(lock);
+            callback(&*action);
+            self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        }
+    }
 }
 
 impl Platform for WindowsPlatform {
@@ -212,7 +275,7 @@ impl Platform for WindowsPlatform {
         'a: loop {
             let wait_result = unsafe {
                 MsgWaitForMultipleObjects(
-                    Some(&[*vsync_event, self.dispatch_event]),
+                    Some(&[*vsync_event, self.dispatch_event, *self.dock_action_event]),
                     false,
                     INFINITE,
                     QS_ALLINPUT,
@@ -224,8 +287,10 @@ impl Platform for WindowsPlatform {
                 WAIT_EVENT(0) => self.redraw_all(),
                 // foreground tasks are dispatched
                 WAIT_EVENT(1) => self.run_foreground_tasks(),
+                // TODO:
+                WAIT_EVENT(2) => self.handle_instance_message(),
                 // Windows thread messages are posted
-                WAIT_EVENT(2) => {
+                WAIT_EVENT(3) => {
                     let mut msg = MSG::default();
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
@@ -443,7 +508,10 @@ impl Platform for WindowsPlatform {
 
     // todo(windows)
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
-    fn set_dock_menu(&self, _menus: Vec<MenuItem>, _keymap: &Keymap) {}
+
+    fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
+        self.configure_jump_list(menus).log_err();
+    }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
