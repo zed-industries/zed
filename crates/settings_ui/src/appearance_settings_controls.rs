@@ -4,7 +4,7 @@ use gpui::{AppContext, FontFeatures, FontWeight};
 use settings::{EditableSettingControl, Settings};
 use theme::{FontFamilyCache, SystemAppearance, ThemeMode, ThemeRegistry, ThemeSettings};
 use ui::{
-    prelude::*, CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer,
+    prelude::*, ToggleWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer,
     SettingsGroup, ToggleButton,
 };
 
@@ -368,7 +368,7 @@ impl RenderOnce for UiFontLigaturesControl {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let value = Self::read(cx);
 
-        CheckboxWithLabel::new(
+        ToggleWithLabel::new(
             "ui-font-ligatures",
             Label::new(self.name()),
             value.into(),

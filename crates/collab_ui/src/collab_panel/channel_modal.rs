@@ -11,7 +11,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, Avatar, CheckboxWithLabel, ContextMenu, ListItem, ListItemSpacing};
+use ui::{prelude::*, Avatar, ToggleWithLabel, ContextMenu, ListItem, ListItemSpacing};
 use util::TryFutureExt;
 use workspace::{notifications::DetachAndPromptErr, ModalView};
 
@@ -155,7 +155,7 @@ impl Render for ChannelModal {
                             .h(rems_from_px(22.))
                             .justify_between()
                             .line_height(rems(1.25))
-                            .child(CheckboxWithLabel::new(
+                            .child(ToggleWithLabel::new(
                                 "is-public",
                                 Label::new("Public").size(LabelSize::Small),
                                 if visibility == ChannelVisibility::Public {

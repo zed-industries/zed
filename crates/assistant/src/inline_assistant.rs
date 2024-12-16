@@ -57,7 +57,7 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip,
+    prelude::*, text_for_action, ToggleWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip,
 };
 use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
@@ -2145,7 +2145,7 @@ impl PromptEditor {
                 .child(
                     h_flex()
                         .justify_between()
-                        .child(CheckboxWithLabel::new(
+                        .child(ToggleWithLabel::new(
                             "dont-show-again",
                             Label::new("Don't show again"),
                             if dismissed_rate_limit_notice() {
