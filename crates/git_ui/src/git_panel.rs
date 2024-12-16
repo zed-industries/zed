@@ -188,12 +188,12 @@ impl GitPanel {
     }
 
     fn should_show_scrollbar(_cx: &AppContext) -> bool {
-        // todo!(): plug into settings
+        // TODO: plug into settings
         true
     }
 
     fn should_autohide_scrollbar(_cx: &AppContext) -> bool {
-        // todo!(): plug into settings
+        // TODO: plug into settings
         true
     }
 
@@ -255,34 +255,34 @@ impl GitPanel {
 
 impl GitPanel {
     fn stage_all(&mut self, _: &StageAll, _cx: &mut ViewContext<Self>) {
-        // todo!(): Implement stage all
+        // TODO: Implement stage all
         println!("Stage all triggered");
     }
 
     fn unstage_all(&mut self, _: &UnstageAll, _cx: &mut ViewContext<Self>) {
-        // todo!(): Implement unstage all
+        // TODO: Implement unstage all
         println!("Unstage all triggered");
     }
 
     fn discard_all(&mut self, _: &DiscardAll, _cx: &mut ViewContext<Self>) {
-        // todo!(): Implement discard all
+        // TODO: Implement discard all
         println!("Discard all triggered");
     }
 
     /// Commit all staged changes
     fn commit_staged_changes(&mut self, _: &CommitStagedChanges, _cx: &mut ViewContext<Self>) {
-        // todo!(): Implement commit all staged
+        // TODO: Implement commit all staged
         println!("Commit staged changes triggered");
     }
 
     /// Commit all changes, regardless of whether they are staged or not
     fn commit_all_changes(&mut self, _: &CommitAllChanges, _cx: &mut ViewContext<Self>) {
-        // todo!(): Implement commit all changes
+        // TODO: Implement commit all changes
         println!("Commit all changes triggered");
     }
 
     fn all_staged(&self) -> bool {
-        // todo!(): Implement all_staged
+        // TODO: Implement all_staged
         true
     }
 
@@ -378,7 +378,7 @@ impl GitPanel {
         }
     }
 
-    // todo!(): Update expanded directory state
+    // TODO: Update expanded directory state
     fn update_visible_entries(
         &mut self,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
