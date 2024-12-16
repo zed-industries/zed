@@ -110,6 +110,10 @@ impl AssistantPanel {
         self.local_timezone
     }
 
+    pub(crate) fn thread_store(&self) -> &Model<ThreadStore> {
+        &self.thread_store
+    }
+
     fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
         let thread = self
             .thread_store

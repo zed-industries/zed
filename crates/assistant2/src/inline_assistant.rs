@@ -1,4 +1,6 @@
 use crate::context_strip::ContextStrip;
+use crate::thread_store::ThreadStore;
+use crate::AssistantPanel;
 use crate::{
     assistant_settings::AssistantSettings,
     prompts::PromptBuilder,
@@ -25,7 +27,8 @@ use futures::{channel::mpsc, future::LocalBoxFuture, join, SinkExt, Stream, Stre
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakModel, WeakView,
+    WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -179,10 +182,16 @@ impl InlineAssistant {
     ) {
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
+                let thread_store = workspace
+                    .read(cx)
+                    .panel::<AssistantPanel>(cx)
+                    .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
+
                 editor.push_code_action_provider(
                     Rc::new(AssistantCodeActionProvider {
                         editor: cx.view().downgrade(),
                         workspace: workspace.downgrade(),
+                        thread_store,
                     }),
                     cx,
                 );
@@ -213,7 +222,11 @@ impl InlineAssistant {
         let handle_assist = |cx: &mut ViewContext<Workspace>| match inline_assist_target {
             InlineAssistTarget::Editor(active_editor) => {
                 InlineAssistant::update_global(cx, |assistant, cx| {
-                    assistant.assist(&active_editor, cx.view().downgrade(), cx)
+                    let thread_store = workspace
+                        .panel::<AssistantPanel>(cx)
+                        .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
+
+                    assistant.assist(&active_editor, cx.view().downgrade(), thread_store, cx)
                 })
             }
             InlineAssistTarget::Terminal(active_terminal) => {
@@ -266,6 +279,7 @@ impl InlineAssistant {
         &mut self,
         editor: &View<Editor>,
         workspace: WeakView<Workspace>,
+        thread_store: Option<WeakModel<ThreadStore>>,
         cx: &mut WindowContext,
     ) {
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
@@ -365,6 +379,7 @@ impl InlineAssistant {
                     codegen.clone(),
                     self.fs.clone(),
                     workspace.clone(),
+                    thread_store.clone(),
                     cx,
                 )
             });
@@ -432,6 +447,7 @@ impl InlineAssistant {
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
         workspace: WeakView<Workspace>,
+        thread_store: Option<WeakModel<ThreadStore>>,
         cx: &mut WindowContext,
     ) -> InlineAssistId {
         let assist_group_id = self.next_assist_group_id.post_inc();
@@ -468,6 +484,7 @@ impl InlineAssistant {
                 codegen.clone(),
                 self.fs.clone(),
                 workspace.clone(),
+                thread_store,
                 cx,
             )
         });
@@ -1699,6 +1716,7 @@ impl PromptEditor {
         codegen: Model<Codegen>,
         fs: Arc<dyn Fs>,
         workspace: WeakView<Workspace>,
+        thread_store: Option<WeakModel<ThreadStore>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
@@ -1723,7 +1741,7 @@ impl PromptEditor {
         let mut this = Self {
             id,
             editor: prompt_editor,
-            context_strip: cx.new_view(|cx| ContextStrip::new(workspace, None, cx)),
+            context_strip: cx.new_view(|cx| ContextStrip::new(workspace, thread_store, cx)),
             language_model_selector: cx.new_view(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
@@ -3298,6 +3316,7 @@ where
 struct AssistantCodeActionProvider {
     editor: WeakView<Editor>,
     workspace: WeakView<Workspace>,
+    thread_store: Option<WeakModel<ThreadStore>>,
 }
 
 impl CodeActionProvider for AssistantCodeActionProvider {
@@ -3362,6 +3381,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
     ) -> Task<Result<ProjectTransaction>> {
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
+        let thread_store = self.thread_store.clone();
         cx.spawn(|mut cx| async move {
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
@@ -3409,6 +3429,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     None,
                     true,
                     workspace,
+                    thread_store,
                     cx,
                 );
                 assistant.start_assist(assist_id, cx);
