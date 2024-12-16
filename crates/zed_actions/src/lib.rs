@@ -1,5 +1,6 @@
 use gpui::{actions, impl_actions};
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 // If the zed binary doesn't use anything in this crate, it will be optimized away
 // and the actions won't initialize. So we just provide an empty initialization function
@@ -90,19 +91,40 @@ pub struct OpenRecent {
 gpui::impl_actions!(projects, [OpenRecent]);
 gpui::actions!(projects, [OpenRemote]);
 
+/// Where to spawn the task in the UI.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RevealTarget {
+    /// In the central pane group, "main" editor area.
+    Center,
+    /// In the terminal dock, "regular" terminal items' place.
+    #[default]
+    Dock,
+}
+
 /// Spawn a task with name or open tasks modal
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct Spawn {
-    #[serde(default)]
-    /// Name of the task to spawn.
-    /// If it is not set, a modal with a list of available tasks is opened instead.
-    /// Defaults to None.
-    pub task_name: Option<String>,
+#[derive(Debug, PartialEq, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Spawn {
+    /// Spawns a task by the name given.
+    ByName {
+        task_name: String,
+        #[serde(default)]
+        reveal_target: Option<RevealTarget>,
+    },
+    /// Spawns a task via modal's selection.
+    ViaModal {
+        /// Selected task's `reveal_target` property override.
+        #[serde(default)]
+        reveal_target: Option<RevealTarget>,
+    },
 }
 
 impl Spawn {
     pub fn modal() -> Self {
-        Self { task_name: None }
+        Self::ViaModal {
+            reveal_target: None,
+        }
     }
 }
 

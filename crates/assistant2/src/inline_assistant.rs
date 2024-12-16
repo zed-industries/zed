@@ -45,6 +45,7 @@ use std::{
     iter, mem,
     ops::{Range, RangeInclusive},
     pin::Pin,
+    rc::Rc,
     sync::Arc,
     task::{self, Poll},
     time::Instant,
@@ -178,7 +179,7 @@ impl InlineAssistant {
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
                 editor.push_code_action_provider(
-                    Arc::new(AssistantCodeActionProvider {
+                    Rc::new(AssistantCodeActionProvider {
                         editor: cx.view().downgrade(),
                         workspace: workspace.downgrade(),
                     }),

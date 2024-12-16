@@ -1211,7 +1211,7 @@ impl BufferStore {
             return Task::ready(Err(anyhow!("buffer has no file")));
         };
 
-        match file.worktree.clone().read(cx) {
+        match file.worktree.read(cx) {
             Worktree::Local(worktree) => {
                 let Some(repo) = worktree.local_git_repo(file.path()) else {
                     return Task::ready(Err(anyhow!("no repository for buffer found")));

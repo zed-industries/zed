@@ -30,7 +30,6 @@ use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
-    notifications::NotifyResultExt,
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
@@ -78,7 +77,7 @@ pub fn init(cx: &mut AppContext) {
 
     register_serializable_item::<TerminalView>(cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
@@ -134,38 +133,8 @@ impl TerminalView {
         cx: &mut ViewContext<Workspace>,
     ) {
         let working_directory = default_working_directory(workspace, cx);
-
-        let window = cx.window_handle();
-        let project = workspace.project().downgrade();
-        cx.spawn(move |workspace, mut cx| async move {
-            let terminal = project
-                .update(&mut cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(working_directory), window, cx)
-                })
-                .ok()?
-                .await;
-            let terminal = workspace
-                .update(&mut cx, |workspace, cx| terminal.notify_err(workspace, cx))
-                .ok()
-                .flatten()?;
-
-            workspace
-                .update(&mut cx, |workspace, cx| {
-                    let view = cx.new_view(|cx| {
-                        TerminalView::new(
-                            terminal,
-                            workspace.weak_handle(),
-                            workspace.database_id(),
-                            cx,
-                        )
-                    });
-                    workspace.add_item_to_active_pane(Box::new(view), None, true, cx);
-                })
-                .ok();
-
-            Some(())
-        })
-        .detach()
+        TerminalPanel::add_center_terminal(workspace, TerminalKind::Shell(working_directory), cx)
+            .detach_and_log_err(cx);
     }
 
     pub fn new(

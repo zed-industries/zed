@@ -8,7 +8,7 @@ use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakView};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, WorktreeId};
-use ui::{prelude::*, ListItem, ListItemSpacing};
+use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
 
@@ -254,14 +254,29 @@ impl PickerDelegate for FileContextPickerDelegate {
         selected: bool,
         _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
+        let path_match = &self.matches[ix];
+        let file_name = path_match
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let directory = path_match
+            .path
+            .parent()
+            .map(|directory| format!("{}/", directory.to_string_lossy()));
 
         Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
-                .child(mat.path.to_string_lossy().to_string()),
+            ListItem::new(ix).inset(true).toggle_state(selected).child(
+                h_flex()
+                    .gap_2()
+                    .child(Label::new(file_name))
+                    .children(directory.map(|directory| {
+                        Label::new(directory)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    })),
+            ),
         )
     }
 }

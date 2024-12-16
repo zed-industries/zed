@@ -2768,7 +2768,6 @@ dependencies = [
  "language",
  "menu",
  "notifications",
- "parking_lot",
  "picker",
  "pretty_assertions",
  "project",
@@ -12635,6 +12634,7 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "util",
+ "zed_actions",
 ]
 
 [[package]]
@@ -16107,6 +16107,7 @@ name = "zed_actions"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "schemars",
  "serde",
 ]
 
