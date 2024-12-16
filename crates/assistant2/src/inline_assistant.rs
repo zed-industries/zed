@@ -1,3 +1,4 @@
+use crate::context::attach_context_to_message;
 use crate::context_strip::ContextStrip;
 use crate::thread_store::ThreadStore;
 use crate::AssistantPanel;
@@ -2713,15 +2714,19 @@ impl CodegenAlternative {
             .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
+        let mut request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: Vec::new(),
+            cache: false,
+        };
+        attach_context_to_message(&mut request_message, &[]);
+        request_message.content.push(prompt.into());
+
         Ok(LanguageModelRequest {
             tools: Vec::new(),
             stop: Vec::new(),
             temperature: None,
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![prompt.into()],
-                cache: false,
-            }],
+            messages: vec![request_message],
         })
     }
 
