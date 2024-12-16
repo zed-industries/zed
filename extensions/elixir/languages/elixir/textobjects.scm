@@ -14,7 +14,7 @@
     .
     "end")
 ]
-  (#make-range! "block.inner" @_do @_end)) @block.outer
+  (#make-range! "block.inside" @_do @_end)) @block.around
 
 ; Class Objects (Modules, Protocols)
 ; multiple children
@@ -30,7 +30,7 @@
     (_) @_end
     .
     "end")
-  (#make-range! "class.inner" @_do @_end)) @class.outer
+  (#make-range! "class.inside" @_do @_end)) @class.around
 
 ; single child match
 (call
@@ -41,14 +41,14 @@
   (do_block
     "do"
     .
-    (_) @class.inner
+    (_) @class.inside
     .
-    "end")) @class.outer
+    "end")) @class.around
 
 ; Function, Parameter, and Call Objects
 (anonymous_function
   (stab_clause
-    right: (body) @function.inner)) @function.outer
+    right: (body) @function.inside)) @function.around
 
 (call
   target: ((identifier) @_identifier
@@ -58,24 +58,24 @@
       (call
         [
           (arguments
-            (_) @parameter.inner
+            (_) @parameter.inside
             .
             "," @_delimiter)
           (arguments
-            ((_) @parameter.inner) @_delimiter .)
+            ((_) @parameter.inside) @_delimiter .)
         ]
-        (#make-range! "parameter.outer" @parameter.inner @_delimiter))
+        (#make-range! "parameter.around" @parameter.inside @_delimiter))
       (binary_operator
         left: (call
           [
             (arguments
-              (_) @parameter.inner
+              (_) @parameter.inside
               .
               "," @_delimiter)
             (arguments
-              ((_) @parameter.inner) @_delimiter .)
+              ((_) @parameter.inside) @_delimiter .)
           ]
-          (#make-range! "parameter.outer" @parameter.inner @_delimiter)))
+          (#make-range! "parameter.around" @parameter.inside @_delimiter)))
     ])
   [
     (do_block
@@ -92,7 +92,7 @@
       .
       "end")
   ]
-  (#make-range! "function.inner" @_do @_end)) @function.outer
+  (#make-range! "function.inside" @_do @_end)) @function.around
 
 (call
   target: ((identifier) @_identifier
@@ -118,7 +118,7 @@
       .
       "end")
   ]
-  (#make-range! "function.inner" @_do @_end)) @function.outer
+  (#make-range! "function.inside" @_do @_end)) @function.around
 
 (call
   target: ((identifier) @_identifier
@@ -128,28 +128,28 @@
       (call
         [
           (arguments
-            (_) @parameter.inner
+            (_) @parameter.inside
             .
             "," @_delimiter)
           (arguments
-            ((_) @parameter.inner) @_delimiter .)
+            ((_) @parameter.inside) @_delimiter .)
         ]
-        (#make-range! "parameter.outer" @parameter.inner @_delimiter))
+        (#make-range! "parameter.around" @parameter.inside @_delimiter))
       (binary_operator
         left: (call
           [
             (arguments
-              (_) @parameter.inner
+              (_) @parameter.inside
               .
               "," @_delimiter)
             (arguments
-              ((_) @parameter.inner) @_delimiter .)
+              ((_) @parameter.inside) @_delimiter .)
           ]
-          (#make-range! "parameter.outer" @parameter.inner @_delimiter)))
+          (#make-range! "parameter.around" @parameter.inside @_delimiter)))
     ]
     (keywords
       (pair
-        value: (_) @function.inner)))) @function.outer
+        value: (_) @function.inside)))) @function.around
 
 (call
   target: ((identifier) @_identifier
@@ -162,10 +162,10 @@
     ]
     (keywords
       (pair
-        value: (_) @function.inner)))) @function.outer
+        value: (_) @function.inside)))) @function.around
 
 ; Comment Objects
-(comment) @comment.outer
+(comment) @comment.around
 
 ; Documentation Objects
 (unary_operator
@@ -177,13 +177,13 @@
       [
         ; attributes style documentation
         ; @doc deprecated: "...."
-        (keywords) @comment.inner
+        (keywords) @comment.inside
         ; heredoc style documentation
         ; @moduledoc """"""
         (string
-          (quoted_content) @comment.inner)
-      ]))) @comment.outer
+          (quoted_content) @comment.inside)
+      ]))) @comment.around
 
 ; Regex Objects
 (sigil
-  (quoted_content) @regex.inner) @regex.outer
+  (quoted_content) @regex.inside) @regex.around
