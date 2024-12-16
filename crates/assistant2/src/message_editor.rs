@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{AppContext, FocusableView, Model, TextStyle, View, WeakView};
+use gpui::{AppContext, FocusableView, Model, TextStyle, View, WeakModel, WeakView};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use settings::Settings;
@@ -15,6 +15,7 @@ use workspace::Workspace;
 use crate::context::{Context, ContextId, ContextKind};
 use crate::context_picker::ContextPicker;
 use crate::thread::{RequestKind, Thread};
+use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 use crate::{Chat, ToggleModelSelector};
 
@@ -32,6 +33,7 @@ pub struct MessageEditor {
 impl MessageEditor {
     pub fn new(
         workspace: WeakView<Workspace>,
+        thread_store: WeakModel<ThreadStore>,
         thread: Model<Thread>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -46,7 +48,9 @@ impl MessageEditor {
             }),
             context: Vec::new(),
             next_context_id: ContextId(0),
-            context_picker: cx.new_view(|cx| ContextPicker::new(workspace.clone(), weak_self, cx)),
+            context_picker: cx.new_view(|cx| {
+                ContextPicker::new(workspace.clone(), thread_store.clone(), weak_self, cx)
+            }),
             context_picker_handle: PopoverMenuHandle::default(),
             language_model_selector: cx.new_view(|cx| {
                 LanguageModelSelector::new(
