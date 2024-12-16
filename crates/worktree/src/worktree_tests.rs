@@ -2538,11 +2538,9 @@ async fn test_git_status_git_panel(cx: &mut TestAppContext) {
 
     }));
 
-    let project_path = Path::new("project");
-
     // Set up git repository before creating the worktree.
     let work_dir = root.path().join("project");
-    let mut repo = git_init(work_dir.as_path());
+    let repo = git_init(work_dir.as_path());
     git_add("a.txt", &repo);
     git_add("c.txt", &repo);
     git_add("d.txt", &repo);
