@@ -221,19 +221,19 @@ impl InlineAssistant {
                 .map_or(false, |provider| provider.is_authenticated(cx))
         };
 
+        let thread_store = workspace
+            .panel::<AssistantPanel>(cx)
+            .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
+
         let handle_assist = |cx: &mut ViewContext<Workspace>| match inline_assist_target {
             InlineAssistTarget::Editor(active_editor) => {
                 InlineAssistant::update_global(cx, |assistant, cx| {
-                    let thread_store = workspace
-                        .panel::<AssistantPanel>(cx)
-                        .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
-
                     assistant.assist(&active_editor, cx.view().downgrade(), thread_store, cx)
                 })
             }
             InlineAssistTarget::Terminal(active_terminal) => {
                 TerminalInlineAssistant::update_global(cx, |assistant, cx| {
-                    assistant.assist(&active_terminal, cx.view().downgrade(), cx)
+                    assistant.assist(&active_terminal, cx.view().downgrade(), thread_store, cx)
                 })
             }
         };
