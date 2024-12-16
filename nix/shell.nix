@@ -7,6 +7,7 @@ in
 pkgs.mkShell rec {
   packages = [
     pkgs.clang
+    pkgs.mold
     pkgs.curl
     pkgs.cmake
     pkgs.perl
@@ -26,11 +27,14 @@ pkgs.mkShell rec {
       pkgs.sqlite
       pkgs.zlib
       pkgs.zstd
+      pkgs.vulkan-loader
       pkgs.rustToolchain
     ]
     ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
       pkgs.alsa-lib
       pkgs.libxkbcommon
+      pkgs.wayland
+      pkgs.xorg.libxcb
     ]
     ++ lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.apple-sdk_15;
 
