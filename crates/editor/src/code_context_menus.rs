@@ -4,7 +4,7 @@ use std::{cell::Cell, cmp::Reverse, ops::Range, rc::Rc};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
-    Model, MouseButton, Pixels, ScrollStrategy, SharedString, StrikethroughStyle, StyledText,
+    Model, Pixels, ScrollStrategy, SharedString, StrikethroughStyle, StyledText,
     UniformListScrollHandle, ViewContext, WeakView,
 };
 use language::Buffer;
@@ -17,7 +17,7 @@ use task::ResolvedTask;
 use ui::{
     h_flex, ActiveTheme as _, Color, FluentBuilder as _, InteractiveElement as _, IntoElement,
     Label, LabelCommon as _, LabelSize, ListItem, ParentElement as _, Popover,
-    StatefulInteractiveElement as _, Styled, StyledExt as _, Toggleable as _,
+    StatefulInteractiveElement as _, Styled, Toggleable as _,
 };
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -788,7 +788,7 @@ impl CodeActionsMenu {
     ) -> (ContextMenuOrigin, AnyElement) {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
-        let element = uniform_list(
+        let list = uniform_list(
             cx.view().clone(),
             "code_actions_menu",
             self.actions.len(),
@@ -800,27 +800,14 @@ impl CodeActionsMenu {
                     .enumerate()
                     .map(|(ix, action)| {
                         let item_ix = range.start + ix;
-                        let selected = selected_item == item_ix;
+                        let selected = item_ix == selected_item;
                         let colors = cx.theme().colors();
-                        div()
-                            .px_1()
-                            .rounded_md()
-                            .text_color(colors.text)
-                            .when(selected, |style| {
-                                style
-                                    .bg(colors.element_active)
-                                    .text_color(colors.text_accent)
-                            })
-                            .hover(|style| {
-                                style
-                                    .bg(colors.element_hover)
-                                    .text_color(colors.text_accent)
-                            })
-                            .whitespace_nowrap()
-                            .when_some(action.as_code_action(), |this, action| {
-                                this.on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |editor, _, cx| {
+                        div().min_w(px(220.)).max_w(px(540.)).child(
+                            ListItem::new(item_ix)
+                                .inset(true)
+                                .toggle_state(selected)
+                                .when_some(action.as_code_action(), |this, action| {
+                                    this.on_click(cx.listener(move |editor, _, cx| {
                                         cx.stop_propagation();
                                         if let Some(task) = editor.confirm_code_action(
                                             &ConfirmCodeAction {
@@ -830,17 +817,21 @@ impl CodeActionsMenu {
                                         ) {
                                             task.detach_and_log_err(cx)
                                         }
-                                    }),
-                                )
-                                // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
-                                .child(SharedString::from(
-                                    action.lsp_action.title.replace("\n", ""),
-                                ))
-                            })
-                            .when_some(action.as_task(), |this, task| {
-                                this.on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |editor, _, cx| {
+                                    }))
+                                    .child(
+                                        h_flex()
+                                            .overflow_hidden()
+                                            .child(
+                                                // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
+                                                action.lsp_action.title.replace("\n", ""),
+                                            )
+                                            .when(selected, |this| {
+                                                this.text_color(colors.text_accent)
+                                            }),
+                                    )
+                                })
+                                .when_some(action.as_task(), |this, task| {
+                                    this.on_click(cx.listener(move |editor, _, cx| {
                                         cx.stop_propagation();
                                         if let Some(task) = editor.confirm_code_action(
                                             &ConfirmCodeAction {
@@ -850,18 +841,23 @@ impl CodeActionsMenu {
                                         ) {
                                             task.detach_and_log_err(cx)
                                         }
-                                    }),
-                                )
-                                .child(SharedString::from(task.resolved_label.replace("\n", "")))
-                            })
+                                    }))
+                                    .child(
+                                        h_flex()
+                                            .overflow_hidden()
+                                            .child(task.resolved_label.replace("\n", ""))
+                                            .when(selected, |this| {
+                                                this.text_color(colors.text_accent)
+                                            }),
+                                    )
+                                }),
+                        )
                     })
                     .collect()
             },
         )
-        .elevation_1(cx)
-        .p_1()
-        .max_h(max_height)
         .occlude()
+        .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(
             self.actions
@@ -875,8 +871,9 @@ impl CodeActionsMenu {
                 })
                 .map(|(ix, _)| ix),
         )
-        .with_sizing_behavior(ListSizingBehavior::Infer)
-        .into_any_element();
+        .with_sizing_behavior(ListSizingBehavior::Infer);
+
+        let element = Popover::new().child(list).into_any_element();
 
         let cursor_position = if let Some(row) = self.deployed_from_indicator {
             ContextMenuOrigin::GutterIndicator(row)
