@@ -1832,13 +1832,12 @@ impl ProjectPanel {
                 Rename(Task<Result<CreatedEntry>>),
                 Copy(Task<Result<Option<Entry>>>),
             }
-            let mut paste_entry_tasks: IndexMap<
-                (ProjectEntryId, bool, Option<Range<usize>>),
-                PasteTask,
-            > = IndexMap::default();
+            let mut paste_entry_tasks: IndexMap<(ProjectEntryId, bool), PasteTask> =
+                IndexMap::default();
+            let mut disambiguation_range = None;
             let clip_is_cut = clipboard_entries.is_cut();
             for clipboard_entry in clipboard_entries.items() {
-                let (new_path, disambiguation_range) =
+                let (new_path, new_disambiguation_range) =
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
                 let is_same_worktree = clipboard_entry.worktree_id == worktree_id;
@@ -1874,24 +1873,25 @@ impl ProjectPanel {
                     PasteTask::Copy(task)
                 };
                 let needs_delete = !is_same_worktree && clip_is_cut;
-                paste_entry_tasks.insert((clip_entry_id, needs_delete, disambiguation_range), task);
+                paste_entry_tasks.insert((clip_entry_id, needs_delete), task);
+                disambiguation_range = new_disambiguation_range.or(disambiguation_range);
             }
+
+            let item_count = paste_entry_tasks.len();
 
             cx.spawn(|project_panel, mut cx| async move {
                 let mut last_succeed = None;
                 let mut need_delete_ids = Vec::new();
-                for ((entry_id, need_delete, disambiguation_range), task) in
-                    paste_entry_tasks.into_iter()
-                {
+                for ((entry_id, need_delete), task) in paste_entry_tasks.into_iter() {
                     match task {
                         PasteTask::Rename(task) => {
                             if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
-                                last_succeed = Some((entry.id, disambiguation_range));
+                                last_succeed = Some(entry.id);
                             }
                         }
                         PasteTask::Copy(task) => {
                             if let Some(Some(entry)) = task.await.log_err() {
-                                last_succeed = Some((entry.id, disambiguation_range));
+                                last_succeed = Some(entry.id);
                                 if need_delete {
                                     need_delete_ids.push(entry_id);
                                 }
@@ -1911,7 +1911,7 @@ impl ProjectPanel {
                         .await?;
                 }
                 // update selection
-                if let Some((entry_id, disambiguation_range)) = last_succeed {
+                if let Some(entry_id) = last_succeed {
                     project_panel
                         .update(&mut cx, |project_panel, cx| {
                             project_panel.selection = Some(SelectedEntry {
@@ -1919,9 +1919,9 @@ impl ProjectPanel {
                                 entry_id,
                             });
 
-                            // if the entry was disambiguated, open the rename editor
-                            if let Some(disambiguation_range) = disambiguation_range {
-                                project_panel.rename_impl(Some(disambiguation_range), cx);
+                            // if only one entry was pasted and it was disambiguated, open the rename editor
+                            if item_count == 1 && disambiguation_range.is_some() {
+                                project_panel.rename_impl(disambiguation_range, cx);
                             }
                         })
                         .ok();
@@ -2640,8 +2640,9 @@ impl ProjectPanel {
                     .clone();
 
                 let mut copy_tasks = Vec::new();
+                let mut disambiguation_range = None;
                 for selection in selections.items() {
-                    let (new_path, disambiguation_range) = self.create_paste_path(
+                    let (new_path, new_disambiguation_range) = self.create_paste_path(
                         selection,
                         (target_worktree.clone(), &target_entry),
                         cx,
@@ -2650,18 +2651,21 @@ impl ProjectPanel {
                     let task = self.project.update(cx, |project, cx| {
                         project.copy_entry(selection.entry_id, None, new_path, cx)
                     });
-                    copy_tasks.push((disambiguation_range, task));
+                    copy_tasks.push(task);
+                    disambiguation_range = new_disambiguation_range.or(disambiguation_range);
                 }
+
+                let item_count = copy_tasks.len();
 
                 cx.spawn(|project_panel, mut cx| async move {
                     let mut last_succeed = None;
-                    for (disambiguation_range, task) in copy_tasks.into_iter() {
+                    for task in copy_tasks.into_iter() {
                         if let Some(Some(entry)) = task.await.log_err() {
-                            last_succeed = Some((entry.id, disambiguation_range));
+                            last_succeed = Some(entry.id);
                         }
                     }
                     // update selection
-                    if let Some((entry_id, disambiguation_range)) = last_succeed {
+                    if let Some(entry_id) = last_succeed {
                         project_panel
                             .update(&mut cx, |project_panel, cx| {
                                 project_panel.selection = Some(SelectedEntry {
@@ -2669,9 +2673,9 @@ impl ProjectPanel {
                                     entry_id,
                                 });
 
-                                // if the entry was disambiguated, open the rename editor
-                                if let Some(disambiguation_range) = disambiguation_range {
-                                    project_panel.rename_impl(Some(disambiguation_range), cx);
+                                // if only one entry was dragged and it was disambiguated, open the rename editor
+                                if item_count == 1 && disambiguation_range.is_some() {
+                                    project_panel.rename_impl(disambiguation_range, cx);
                                 }
                             })
                             .ok();
@@ -5806,6 +5810,33 @@ mod tests {
                 "      d.txt",
             ],
             "Should copy dir1 as well as c.txt into dir2"
+        );
+
+        // Disambiguating multiple files should not open the rename editor.
+        select_path(&panel, "test/dir2", cx);
+        panel.update(cx, |panel, cx| {
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v test",
+                "    v dir1  <== marked",
+                "          a.txt",
+                "          b.txt",
+                "    v dir2",
+                "        v dir1",
+                "              a.txt",
+                "              b.txt",
+                "        > dir1 copy  <== selected",
+                "          c.txt",
+                "          c copy.txt",
+                "      c.txt  <== marked",
+                "      d.txt",
+            ],
+            "Should copy dir1 as well as c.txt into dir2 and disambiguate them without opening the rename editor"
         );
     }
 
