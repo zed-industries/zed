@@ -11963,10 +11963,32 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     );
 
     cx.update_editor(|editor, cx| {
-        for _ in 0..3 {
+        for _ in 0..2 {
             editor.go_to_next_hunk(&GoToHunk, cx);
             editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
         }
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+        - use some::mod;
+        + ˇuse some::modified;
+
+
+          fn main() {
+        -     println!("hello");
+        +     println!("hello there");
+
+        +     println!("around the");
+              println!("world");
+          }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_next_hunk(&GoToHunk, cx);
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(

@@ -312,7 +312,7 @@ impl DiffMap {
             let multibuffer_end =
                 multibuffer_snapshot.point_to_offset(Point::new(multibuffer_end.row + 1, 0));
             let expanded_multibuffer_start = multibuffer_start.saturating_sub(1);
-            let expanded_multibuffer_end = multibuffer_snapshot.len().min(multibuffer_end + 1);
+            let expanded_multibuffer_end = multibuffer_snapshot.len().min(multibuffer_end);
             let inlay_start = self
                 .snapshot
                 .inlay_snapshot
@@ -354,7 +354,13 @@ impl DiffMap {
 
         let mut changes = changes.into_iter().peekable();
         while let Some((mut edit, mut multibuffer_range, mut operation)) = changes.next() {
-            let to_skip = cursor.slice(&edit.old.start, Bias::Right, &());
+            let mut to_skip = cursor.slice(&edit.old.start, Bias::Left, &());
+            while cursor.end(&()).0 < edit.old.start
+                || (cursor.end(&()).0 == edit.old.start && cursor.start().0 < edit.old.start)
+            {
+                to_skip.extend(cursor.item().cloned(), &());
+                cursor.next(&());
+            }
             self.append_transforms(&mut new_transforms, to_skip);
 
             let mut delta = 0_isize;
@@ -780,7 +786,7 @@ impl DiffMapSnapshot {
         self.diffs.values().any(|diff| !diff.diff.is_empty())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn text(&self) -> String {
         self.chunks(DiffOffset(0)..self.len(), false, Highlights::default())
             .map(|c| c.text)

@@ -36,7 +36,7 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-use diff_map::{DiffMap, DiffMapSnapshot};
+use diff_map::{DiffMap, DiffMapSnapshot, DiffOffset, DiffPoint};
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
 use git::diff::DiffHunkStatus;
@@ -890,6 +890,11 @@ impl DisplaySnapshot {
             .to_offset(self.display_point_to_inlay_point(point, bias))
     }
 
+    pub fn display_point_to_diff_offset(&self, point: DisplayPoint, bias: Bias) -> DiffOffset {
+        self.diff_snapshot()
+            .to_offset(self.display_point_to_diff_point(point, bias))
+    }
+
     pub fn anchor_to_inlay_offset(&self, anchor: Anchor) -> InlayOffset {
         self.inlay_snapshot
             .to_inlay_offset(anchor.to_offset(&self.buffer_snapshot))
@@ -901,12 +906,16 @@ impl DisplaySnapshot {
     }
 
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
+        let diff_point = self.display_point_to_diff_point(point, bias);
+        self.diff_snapshot().to_inlay_point(diff_point)
+    }
+
+    fn display_point_to_diff_point(&self, point: DisplayPoint, bias: Bias) -> DiffPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
         let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
-        let diff_point = fold_point.to_diff_point(&self.fold_snapshot);
-        self.diff_snapshot().to_inlay_point(diff_point)
+        fold_point.to_diff_point(&self.fold_snapshot)
     }
 
     pub fn display_point_to_fold_point(&self, point: DisplayPoint, bias: Bias) -> FoldPoint {

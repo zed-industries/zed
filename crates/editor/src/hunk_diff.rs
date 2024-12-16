@@ -746,23 +746,15 @@ impl Editor {
     }
 
     pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) -> bool {
-        if self.diff_map.expand_all {
-            return false;
-        }
-        self.diff_map.hunk_update_tasks.clear();
-        self.clear_row_highlights::<DiffRowHighlight>();
-        let to_remove = self
-            .diff_map
-            .hunks
-            .drain(..)
-            .flat_map(|expanded_hunk| expanded_hunk.blocks.into_iter())
-            .collect::<HashSet<_>>();
-        if to_remove.is_empty() {
-            false
-        } else {
-            self.remove_blocks(to_remove, None, cx);
-            true
-        }
+        self.display_map.update(cx, |diff_map, cx| {
+            let ranges = vec![Anchor::min()..Anchor::max()];
+            if diff_map.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
+                diff_map.collapse_diff_hunks(ranges, cx);
+                true
+            } else {
+                false
+            }
+        })
     }
 
     pub(super) fn sync_expanded_diff_hunks(
