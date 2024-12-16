@@ -9,7 +9,7 @@ use gpui::{
     WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -41,27 +41,23 @@ impl ContextPicker {
     ) -> Self {
         let mut entries = vec![
             ContextPickerEntry {
-                name: "directory".into(),
-                description: "Insert any directory".into(),
+                name: "Directory".into(),
                 icon: IconName::Folder,
             },
             ContextPickerEntry {
-                name: "file".into(),
-                description: "Insert any file".into(),
+                name: "File".into(),
                 icon: IconName::File,
             },
             ContextPickerEntry {
-                name: "fetch".into(),
-                description: "Fetch content from URL".into(),
+                name: "Fetch".into(),
                 icon: IconName::Globe,
             },
         ];
 
         if thread_store.is_some() {
             entries.push(ContextPickerEntry {
-                name: "thread".into(),
-                description: "Insert any thread".into(),
-                icon: IconName::MessageBubbles,
+                name: "Thread".into(),
+                icon: IconName::MessageCircle,
             });
         }
 
@@ -119,7 +115,6 @@ impl Render for ContextPicker {
 #[derive(Clone)]
 struct ContextPickerEntry {
     name: SharedString,
-    description: SharedString,
     icon: IconName,
 }
 
@@ -161,7 +156,7 @@ impl PickerDelegate for ContextPickerDelegate {
             self.context_picker
                 .update(cx, |this, cx| {
                     match entry.name.to_string().as_str() {
-                        "file" => {
+                        "File" => {
                             this.mode = ContextPickerMode::File(cx.new_view(|cx| {
                                 FileContextPicker::new(
                                     self.context_picker.clone(),
@@ -171,7 +166,7 @@ impl PickerDelegate for ContextPickerDelegate {
                                 )
                             }));
                         }
-                        "fetch" => {
+                        "Fetch" => {
                             this.mode = ContextPickerMode::Fetch(cx.new_view(|cx| {
                                 FetchContextPicker::new(
                                     self.context_picker.clone(),
@@ -181,7 +176,7 @@ impl PickerDelegate for ContextPickerDelegate {
                                 )
                             }));
                         }
-                        "thread" => {
+                        "Thread" => {
                             if let Some(thread_store) = self.thread_store.as_ref() {
                                 this.mode = ContextPickerMode::Thread(cx.new_view(|cx| {
                                     ThreadContextPicker::new(
@@ -226,34 +221,13 @@ impl PickerDelegate for ContextPickerDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Dense)
                 .toggle_state(selected)
-                .tooltip({
-                    let description = entry.description.clone();
-                    move |cx| cx.new_view(|_cx| Tooltip::new(description.clone())).into()
-                })
                 .child(
-                    v_flex()
-                        .group(format!("context-entry-label-{ix}"))
-                        .w_full()
-                        .py_0p5()
+                    h_flex()
                         .min_w(px(250.))
                         .max_w(px(400.))
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .child(Icon::new(entry.icon).size(IconSize::XSmall))
-                                .child(
-                                    Label::new(entry.name.clone())
-                                        .single_line()
-                                        .size(LabelSize::Small),
-                                ),
-                        )
-                        .child(
-                            div().overflow_hidden().text_ellipsis().child(
-                                Label::new(entry.description.clone())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                        ),
+                        .gap_2()
+                        .child(Icon::new(entry.icon).size(IconSize::Small))
+                        .child(Label::new(entry.name.clone()).single_line()),
                 ),
         )
     }

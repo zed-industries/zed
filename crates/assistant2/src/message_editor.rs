@@ -35,7 +35,8 @@ impl MessageEditor {
             thread,
             editor: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(80, cx);
-                editor.set_placeholder_text("Ask anything or type @ to add context", cx);
+                editor.set_placeholder_text("Ask anything, @ to add context", cx);
+                editor.set_show_indent_guides(false, cx);
 
                 editor
             }),
@@ -112,8 +113,8 @@ impl MessageEditor {
     }
 
     fn render_language_model_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let focus_handle = self.language_model_selector.focus_handle(cx).clone();
 
         LanguageModelSelectorPopoverMenu::new(
             self.language_model_selector.clone(),
@@ -128,16 +129,8 @@ impl MessageEditor {
                                 .overflow_x_hidden()
                                 .flex_grow()
                                 .whitespace_nowrap()
-                                .child(match (active_provider, active_model) {
-                                    (Some(provider), Some(model)) => h_flex()
-                                        .gap_1()
-                                        .child(
-                                            Icon::new(
-                                                model.icon().unwrap_or_else(|| provider.icon()),
-                                            )
-                                            .color(Color::Muted)
-                                            .size(IconSize::XSmall),
-                                        )
+                                .child(match active_model {
+                                    Some(model) => h_flex()
                                         .child(
                                             Label::new(model.name().0)
                                                 .size(LabelSize::Small)
@@ -156,7 +149,9 @@ impl MessageEditor {
                                 .size(IconSize::XSmall),
                         ),
                 )
-                .tooltip(move |cx| Tooltip::for_action("Change Model", &ToggleModelSelector, cx)),
+                .tooltip(move |cx| {
+                    Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
+                }),
         )
     }
 }
@@ -170,8 +165,9 @@ impl FocusableView for MessageEditor {
 impl Render for MessageEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let font_size = TextSize::Default.rems(cx);
-        let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
+        let line_height = font_size.to_pixels(cx.rem_size()) * 1.5;
         let focus_handle = self.editor.focus_handle(cx);
+        let bg_color = cx.theme().colors().editor_background;
 
         v_flex()
             .key_context("MessageEditor")
@@ -179,9 +175,9 @@ impl Render for MessageEditor {
             .size_full()
             .gap_2()
             .p_2()
-            .bg(cx.theme().colors().editor_background)
+            .bg(bg_color)
             .child(self.context_strip.clone())
-            .child({
+            .child(div().id("thread_editor").overflow_y_scroll().h_12().child({
                 let settings = ThemeSettings::get_global(cx);
                 let text_style = TextStyle {
                     color: cx.theme().colors().editor_foreground,
@@ -196,17 +192,17 @@ impl Render for MessageEditor {
                 EditorElement::new(
                     &self.editor,
                     EditorStyle {
-                        background: cx.theme().colors().editor_background,
+                        background: bg_color,
                         local_player: cx.theme().players().local(),
                         text: text_style,
                         ..Default::default()
                     },
                 )
-            })
+            }))
             .child(
                 h_flex()
                     .justify_between()
-                    .child(h_flex().gap_2().child(CheckboxWithLabel::new(
+                    .child(CheckboxWithLabel::new(
                         "use-tools",
                         Label::new("Tools"),
                         self.use_tools.into(),
@@ -216,10 +212,10 @@ impl Render for MessageEditor {
                                 ToggleState::Unselected | ToggleState::Indeterminate => false,
                             };
                         }),
-                    )))
+                    ))
                     .child(
                         h_flex()
-                            .gap_2()
+                            .gap_1()
                             .child(self.render_language_model_selector(cx))
                             .child(
                                 ButtonLike::new("chat")

@@ -120,7 +120,11 @@ impl RenderOnce for PastThread {
 
         ListItem::new(("past-thread", self.thread.entity_id()))
             .outlined()
-            .start_slot(Icon::new(IconName::MessageBubbles))
+            .start_slot(
+                Icon::new(IconName::MessageCircle)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
             .spacing(ListItemSpacing::Sparse)
             .child(Label::new(summary).size(LabelSize::Small))
             .end_slot(
