@@ -1,5 +1,9 @@
 use crate::assistant_settings::AssistantSettings;
+use crate::context::attach_context_to_message;
+use crate::context_store::ContextStore;
+use crate::context_strip::ContextStrip;
 use crate::prompts::PromptBuilder;
+use crate::thread_store::ThreadStore;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
@@ -11,7 +15,7 @@ use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
     AppContext, Context, EventEmitter, FocusHandle, FocusableView, Global, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
+    Subscription, Task, TextStyle, UpdateGlobal, View, WeakModel, WeakView,
 };
 use language::Buffer;
 use language_model::{
@@ -83,6 +87,7 @@ impl TerminalInlineAssistant {
         &mut self,
         terminal_view: &View<TerminalView>,
         workspace: WeakView<Workspace>,
+        thread_store: Option<WeakModel<ThreadStore>>,
         cx: &mut WindowContext,
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
@@ -90,6 +95,7 @@ impl TerminalInlineAssistant {
         let prompt_buffer = cx.new_model(|cx| {
             MultiBuffer::singleton(cx.new_model(|cx| Buffer::local(String::new(), cx)), cx)
         });
+        let context_store = cx.new_model(|_cx| ContextStore::new());
         let codegen = cx.new_model(|_| Codegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new_view(|cx| {
@@ -99,6 +105,9 @@ impl TerminalInlineAssistant {
                 prompt_buffer.clone(),
                 codegen,
                 self.fs.clone(),
+                context_store.clone(),
+                workspace.clone(),
+                thread_store.clone(),
                 cx,
             )
         });
@@ -116,6 +125,7 @@ impl TerminalInlineAssistant {
             terminal_view,
             prompt_editor,
             workspace.clone(),
+            context_store,
             cx,
         );
 
@@ -246,12 +256,21 @@ impl TerminalInlineAssistant {
             &latest_output,
         )?;
 
+        let mut request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![],
+            cache: false,
+        };
+
+        let context = assist
+            .context_store
+            .update(cx, |this, _cx| this.context().clone());
+        attach_context_to_message(&mut request_message, context);
+
+        request_message.content.push(prompt.into());
+
         Ok(LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![prompt.into()],
-                cache: false,
-            }],
+            messages: vec![request_message],
             tools: Vec::new(),
             stop: Vec::new(),
             temperature: None,
@@ -362,6 +381,7 @@ struct TerminalInlineAssist {
     prompt_editor: Option<View<PromptEditor>>,
     codegen: Model<Codegen>,
     workspace: WeakView<Workspace>,
+    context_store: Model<ContextStore>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -371,6 +391,7 @@ impl TerminalInlineAssist {
         terminal: &View<TerminalView>,
         prompt_editor: View<PromptEditor>,
         workspace: WeakView<Workspace>,
+        context_store: Model<ContextStore>,
         cx: &mut WindowContext,
     ) -> Self {
         let codegen = prompt_editor.read(cx).codegen.clone();
@@ -379,6 +400,7 @@ impl TerminalInlineAssist {
             prompt_editor: Some(prompt_editor.clone()),
             codegen: codegen.clone(),
             workspace: workspace.clone(),
+            context_store,
             _subscriptions: vec![
                 cx.subscribe(&prompt_editor, |prompt_editor, event, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| {
@@ -437,6 +459,7 @@ struct PromptEditor {
     id: TerminalInlineAssistId,
     height_in_lines: u8,
     editor: View<Editor>,
+    context_strip: View<ContextStrip>,
     language_model_selector: View<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
@@ -452,11 +475,7 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let status = &self.codegen.read(cx).status;
-        let mut buttons = vec![Button::new("add-context", "Add Context")
-            .style(ButtonStyle::Filled)
-            .icon(IconName::Plus)
-            .icon_position(IconPosition::Start)
-            .into_any_element()];
+        let mut buttons = Vec::new();
 
         buttons.extend(match status {
             CodegenStatus::Idle => vec![
@@ -554,64 +573,69 @@ impl Render for PromptEditor {
             }
         });
 
-        h_flex()
-            .bg(cx.theme().colors().editor_background)
+        v_flex()
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .py_2()
-            .h_full()
-            .w_full()
-            .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(Self::secondary_confirm))
-            .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(Self::move_up))
-            .on_action(cx.listener(Self::move_down))
+            .size_full()
             .child(
                 h_flex()
-                    .w_12()
-                    .justify_center()
-                    .gap_2()
-                    .child(LanguageModelSelectorPopoverMenu::new(
-                        self.language_model_selector.clone(),
-                        IconButton::new("context", IconName::SettingsAlt)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |cx| {
-                                Tooltip::with_meta(
-                                    format!(
-                                        "Using {}",
-                                        LanguageModelRegistry::read_global(cx)
-                                            .active_model()
-                                            .map(|model| model.name().0)
-                                            .unwrap_or_else(|| "No model selected".into()),
-                                    ),
-                                    None,
-                                    "Change Model",
-                                    cx,
-                                )
-                            }),
-                    ))
-                    .children(
-                        if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
-                            let error_message = SharedString::from(error.to_string());
-                            Some(
-                                div()
-                                    .id("error")
-                                    .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
-                                    .child(
-                                        Icon::new(IconName::XCircle)
-                                            .size(IconSize::Small)
-                                            .color(Color::Error),
-                                    ),
-                            )
-                        } else {
-                            None
-                        },
-                    ),
+                    .bg(cx.theme().colors().editor_background)
+                    .on_action(cx.listener(Self::confirm))
+                    .on_action(cx.listener(Self::secondary_confirm))
+                    .on_action(cx.listener(Self::cancel))
+                    .on_action(cx.listener(Self::move_up))
+                    .on_action(cx.listener(Self::move_down))
+                    .child(
+                        h_flex()
+                            .w_12()
+                            .justify_center()
+                            .gap_2()
+                            .child(LanguageModelSelectorPopoverMenu::new(
+                                self.language_model_selector.clone(),
+                                IconButton::new("context", IconName::SettingsAlt)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |cx| {
+                                        Tooltip::with_meta(
+                                            format!(
+                                                "Using {}",
+                                                LanguageModelRegistry::read_global(cx)
+                                                    .active_model()
+                                                    .map(|model| model.name().0)
+                                                    .unwrap_or_else(|| "No model selected".into()),
+                                            ),
+                                            None,
+                                            "Change Model",
+                                            cx,
+                                        )
+                                    }),
+                            ))
+                            .children(
+                                if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
+                                    let error_message = SharedString::from(error.to_string());
+                                    Some(
+                                        div()
+                                            .id("error")
+                                            .tooltip(move |cx| {
+                                                Tooltip::text(error_message.clone(), cx)
+                                            })
+                                            .child(
+                                                Icon::new(IconName::XCircle)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Error),
+                                            ),
+                                    )
+                                } else {
+                                    None
+                                },
+                            ),
+                    )
+                    .child(div().flex_1().child(self.render_prompt_editor(cx)))
+                    .child(h_flex().gap_1().pr_4().children(buttons)),
             )
-            .child(div().flex_1().child(self.render_prompt_editor(cx)))
-            .child(h_flex().gap_1().pr_4().children(buttons))
+            .child(h_flex().child(self.context_strip.clone()))
     }
 }
 
@@ -631,6 +655,9 @@ impl PromptEditor {
         prompt_buffer: Model<MultiBuffer>,
         codegen: Model<Codegen>,
         fs: Arc<dyn Fs>,
+        context_store: Model<ContextStore>,
+        workspace: WeakView<Workspace>,
+        thread_store: Option<WeakModel<ThreadStore>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
@@ -652,6 +679,9 @@ impl PromptEditor {
             id,
             height_in_lines: 1,
             editor: prompt_editor,
+            context_strip: cx.new_view(|cx| {
+                ContextStrip::new(context_store, workspace.clone(), thread_store.clone(), cx)
+            }),
             language_model_selector: cx.new_view(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
