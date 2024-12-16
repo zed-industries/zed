@@ -1,6 +1,8 @@
 use ::settings::Settings;
+use call::ActiveCall;
+use client::proto::ChannelRole;
 use git::repository::GitFileStatus;
-use gpui::{actions, prelude::*, AppContext, Global, Hsla, Model};
+use gpui::{actions, prelude::*, AppContext, Global, Hsla, Model, ModelContext};
 use settings::GitPanelSettings;
 use ui::{Color, Icon, IconName, IntoElement, SharedString};
 
@@ -31,12 +33,74 @@ impl Global for GlobalGitState {}
 
 pub struct GitState {
     commit_message: Option<SharedString>,
+    co_authors: Vec<SharedString>,
+    include_co_authors: bool,
 }
 
 impl GitState {
     pub fn new() -> Self {
         GitState {
             commit_message: None,
+            co_authors: Vec::new(),
+            include_co_authors: true,
+        }
+    }
+
+    pub fn include_co_authors(&self) -> bool {
+        // todo!(): Add a setting or toggle for including co-authors automatically
+        self.include_co_authors
+    }
+
+    pub fn has_co_authors(&self) -> bool {
+        !self.co_authors.is_empty()
+    }
+
+    pub fn refresh_co_authors(&mut self, cx: &mut ModelContext<Self>) {
+        self.co_authors = ActiveCall::global(cx)
+            .read(cx)
+            .room()
+            .and_then(|room| {
+                let room = room.read(cx);
+                let mut participants = room.remote_participants().values().collect::<Vec<_>>();
+                participants.sort_by_key(|p| p.participant_index.0);
+
+                Some(
+                    participants
+                        .into_iter()
+                        .filter(|p| matches!(p.role, ChannelRole::Member | ChannelRole::Guest))
+                        .map(|p| p.user.github_login.clone().into())
+                        .collect(),
+                )
+            })
+            .unwrap_or_default();
+    }
+
+    pub fn message(&self) -> Option<SharedString> {
+        let mut message: String = "".into();
+
+        if let Some(commit_message) = &self.commit_message {
+            message.push_str(commit_message);
+        }
+
+        let already_co_authored = message.contains("Co-authored-by:");
+
+        if self.include_co_authors() && !already_co_authored {
+            let co_authors = &self
+                .co_authors
+                .clone()
+                .into_iter()
+                .map(|co_author| format!("Co-authored-by: {}", co_author))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            message.push_str("\n");
+            message.push_str(&co_authors);
+        };
+
+        if message.is_empty() {
+            None
+        } else {
+            Some(message.into())
         }
     }
 

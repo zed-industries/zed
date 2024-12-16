@@ -1,4 +1,5 @@
 use anyhow::Context;
+use call::ActiveCall;
 use collections::HashMap;
 use editor::Editor;
 use language::Buffer;
@@ -76,10 +77,13 @@ struct SerializedGitPanel {
 }
 
 pub struct GitPanel {
-    _workspace: WeakView<Workspace>,
+    _subscriptions: Vec<Subscription>,
     current_modifiers: Modifiers,
+    editor: View<Editor>,
+    expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
+    git_state: Model<GitState>,
     hide_scrollbar_task: Option<Task<()>>,
     pending_serialization: Task<Option<()>>,
     project: Model<Project>,
@@ -87,9 +91,6 @@ pub struct GitPanel {
     scrollbar_state: ScrollbarState,
     selected_item: Option<usize>,
     show_scrollbar: bool,
-    expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
-    git_state: Model<GitState>,
-    editor: View<Editor>,
 
     // The entries that are currently shown in the panel, aka
     // not hidden by folding or such
@@ -113,13 +114,15 @@ impl GitPanel {
         let git_state = GitState::get_global(cx);
 
         let fs = workspace.app_state().fs.clone();
-        let weak_workspace = workspace.weak_handle();
         let project = workspace.project().clone();
         let language_registry = workspace.app_state().languages.clone();
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let state = git_state.read(cx);
+            let active_call = ActiveCall::global(cx).clone();
+            let user_store = workspace.user_store().clone();
             let current_commit_message = state.commit_message.clone();
+            let mut subscriptions = Vec::new();
 
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
@@ -127,6 +130,8 @@ impl GitPanel {
                 this.hide_scrollbar(cx);
             })
             .detach();
+
+            // handle worktree changes
             cx.subscribe(&project, |this, _project, event, cx| match event {
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
@@ -142,6 +147,11 @@ impl GitPanel {
                 _ => {}
             })
             .detach();
+
+            subscriptions.push(cx.observe(&project, |_, _, cx| cx.notify()));
+            subscriptions
+                .push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
+            subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
             let editor = cx.new_view(|cx| {
                 let theme = ThemeSettings::get_global(cx);
@@ -195,7 +205,6 @@ impl GitPanel {
             let scroll_handle = UniformListScrollHandle::new();
 
             let mut this = Self {
-                _workspace: weak_workspace,
                 focus_handle: cx.focus_handle(),
                 fs,
                 pending_serialization: Task::ready(None),
@@ -212,6 +221,7 @@ impl GitPanel {
                 selected_item: None,
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
+                _subscriptions: subscriptions,
             };
             this.update_visible_entries(None, cx);
             this
@@ -284,6 +294,13 @@ impl GitPanel {
         cx: &mut ViewContext<Self>,
     ) {
         self.current_modifiers = event.modifiers;
+        cx.notify();
+    }
+
+    fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
+        let git_state = self.git_state.clone();
+        git_state.update(cx, |state, cx| state.refresh_co_authors(cx));
+
         cx.notify();
     }
 
@@ -590,7 +607,7 @@ impl GitPanel {
 
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let git_state = self.git_state.clone();
-        let commit_message = git_state.read(cx).commit_message.clone();
+        let commit_message = git_state.read(cx).message();
         let editor = self.editor.clone();
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
 
