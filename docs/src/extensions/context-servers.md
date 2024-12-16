@@ -16,6 +16,10 @@ A given extension may provide one or more context servers. Each context server m
 [context_servers.my-context-server]
 ```
 
+Each context server may also define the following properties:
+
+- `name`: A name for the context server.
+
 Then, in the Rust code for your extension, implement the `context_server_command` method on your extension:
 
 ```rust
