@@ -207,9 +207,7 @@ impl RenderOnce for LabelLike {
             .when(self.strikethrough, |this| this.line_through())
             .when(self.single_line, |this| this.whitespace_nowrap())
             .text_color(color)
-            .when(background.is_some(), |this| {
-                this.text_bg(background.unwrap())
-            })
+            .when_some(background, |this, background| this.text_bg(background))
             .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
             .children(self.children)
     }
