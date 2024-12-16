@@ -2151,8 +2151,20 @@ impl EditorElement {
                 prev_excerpt,
                 show_excerpt_controls,
                 height,
-                ..
             } => {
+                let block_start = DisplayPoint::new(block_row_start, 0).to_point(snapshot);
+                let block_end = DisplayPoint::new(block_row_start + *height, 0).to_point(snapshot);
+                let selected = selections
+                    .binary_search_by(|selection| {
+                        if selection.end <= block_start {
+                            Ordering::Less
+                        } else if selection.start >= block_end {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Equal
+                        }
+                    })
+                    .is_ok();
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
 
@@ -2181,6 +2193,7 @@ impl EditorElement {
                         first_excerpt,
                         header_padding,
                         true,
+                        selected,
                         jump_data,
                         cx,
                     ))
@@ -2192,7 +2205,6 @@ impl EditorElement {
                 show_excerpt_controls,
                 height,
                 starts_new_buffer,
-                ..
             } => {
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
@@ -2222,6 +2234,7 @@ impl EditorElement {
                         result = result.child(self.render_buffer_header(
                             next_excerpt,
                             header_padding,
+                            false,
                             false,
                             jump_data,
                             cx,
@@ -2380,6 +2393,7 @@ impl EditorElement {
         for_excerpt: &ExcerptInfo,
         header_padding: Pixels,
         is_folded: bool,
+        is_selected: bool,
         jump_data: JumpData,
         cx: &mut WindowContext,
     ) -> Div {
@@ -2415,7 +2429,14 @@ impl EditorElement {
                     .rounded_md()
                     .shadow_md()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .map(|div| {
+                        let border_color = if is_selected {
+                            cx.theme().colors().text_accent
+                        } else {
+                            cx.theme().colors().border
+                        };
+                        div.border_color(border_color)
+                    })
                     .bg(cx.theme().colors().editor_subheader_background)
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
                     .map(|header| {
