@@ -90,7 +90,7 @@ impl AssistantPanel {
         Self {
             active_view: ActiveView::Thread,
             workspace: workspace.clone(),
-            fs,
+            fs: fs.clone(),
             language_registry: language_registry.clone(),
             thread_store: thread_store.clone(),
             thread: cx.new_view(|cx| {
@@ -103,7 +103,13 @@ impl AssistantPanel {
                 )
             }),
             message_editor: cx.new_view(|cx| {
-                MessageEditor::new(workspace, thread_store.downgrade(), thread.clone(), cx)
+                MessageEditor::new(
+                    fs.clone(),
+                    workspace,
+                    thread_store.downgrade(),
+                    thread.clone(),
+                    cx,
+                )
             }),
             tools,
             local_timezone: UtcOffset::from_whole_seconds(
@@ -141,6 +147,7 @@ impl AssistantPanel {
         });
         self.message_editor = cx.new_view(|cx| {
             MessageEditor::new(
+                self.fs.clone(),
                 self.workspace.clone(),
                 self.thread_store.downgrade(),
                 thread,
@@ -170,6 +177,7 @@ impl AssistantPanel {
         });
         self.message_editor = cx.new_view(|cx| {
             MessageEditor::new(
+                self.fs.clone(),
                 self.workspace.clone(),
                 self.thread_store.downgrade(),
                 thread,
