@@ -3224,7 +3224,9 @@ impl ProjectPanel {
             .border_1()
             .border_r_2()
             .border_color(border_color)
-            .hover(|style| style.bg(bg_hover_color))
+            .when(!is_marked && !is_active, |div| {
+                div.hover(|style| style.bg(bg_hover_color))
+            })
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
@@ -3896,6 +3898,11 @@ impl Render for ProjectPanel {
                     } else if !this.focus_handle.contains_focused(cx) {
                         this.hide_scrollbar(cx);
                     }
+                }))
+                .on_click(cx.listener(|this, _event, cx| {
+                    cx.stop_propagation();
+                    this.selection = None;
+                    this.marked_entries.clear();
                 }))
                 .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
