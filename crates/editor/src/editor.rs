@@ -73,7 +73,7 @@ use fuzzy::StringMatchCandidate;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
-    CompletionsMenu, ContextMenuOrigin,
+    CompletionEntry, CompletionsMenu, ContextMenuOrigin,
 };
 use git::blame::GitBlame;
 use gpui::{
@@ -3707,7 +3707,7 @@ impl Editor {
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
-                    if menu.matches.is_empty() {
+                    if menu.entries.is_empty() {
                         None
                     } else {
                         Some(menu)
@@ -3731,6 +3731,11 @@ impl Editor {
                     if editor.focus_handle.is_focused(cx) && menu.is_some() {
                         let mut menu = menu.unwrap();
                         menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
+
+                        if editor.has_active_inline_completion() {
+                            menu.show_inline_completion_hint();
+                        }
+
                         *context_menu = Some(CodeContextMenu::Completions(menu));
                         drop(context_menu);
                         cx.notify();
@@ -3775,7 +3780,6 @@ impl Editor {
     ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
         use language::ToOffset as _;
 
-        self.discard_inline_completion(true, cx);
         let completions_menu =
             if let CodeContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
                 menu
@@ -3784,8 +3788,20 @@ impl Editor {
             };
 
         let mat = completions_menu
-            .matches
+            .entries
             .get(item_ix.unwrap_or(completions_menu.selected_item))?;
+
+        let mat = match mat {
+            CompletionEntry::InlineCompletionHint => {
+                self.accept_inline_completion(&AcceptInlineCompletion, cx);
+                return None;
+            }
+            CompletionEntry::Match(mat) => {
+                self.discard_inline_completion(true, cx);
+                mat
+            }
+        };
+
         let buffer_handle = completions_menu.buffer;
         let completions = completions_menu.completions.borrow_mut();
         let completion = completions.get(mat.candidate_id)?;
@@ -4783,6 +4799,13 @@ impl Editor {
             completion,
             invalidation_range,
         });
+
+        match self.context_menu.borrow_mut().as_mut() {
+            Some(CodeContextMenu::Completions(menu)) => {
+                menu.show_inline_completion_hint();
+            }
+            _ => {}
+        }
         cx.notify();
 
         Some(())

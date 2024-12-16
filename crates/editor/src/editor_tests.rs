@@ -8470,10 +8470,7 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
-                &["first", "last"]
-            );
+            assert_eq!(completion_menu_entries(&menu.entries), &["first", "last"]);
         } else {
             panic!("expected completion menu to be open");
         }
@@ -8566,7 +8563,7 @@ async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                completion_menu_entries(&menu.entries),
                 &["r", "ret", "Range", "return"]
             );
         } else {
@@ -10962,11 +10959,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
         match menu.as_ref().expect("should have the completions menu") {
             CodeContextMenu::Completions(completions_menu) => {
                 assert_eq!(
-                    completions_menu
-                        .matches
-                        .iter()
-                        .map(|c| c.string.as_str())
-                        .collect::<Vec<_>>(),
+                    completion_menu_entries(&completions_menu.entries),
                     vec!["Some(2)", "vec![2]"]
                 );
             }
@@ -11066,7 +11059,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                completion_menu_entries(&menu.entries),
                 &["bg-red", "bg-blue", "bg-yellow"]
             );
         } else {
@@ -11080,7 +11073,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                completion_menu_entries(&menu.entries),
                 &["bg-blue", "bg-yellow"]
             );
         } else {
@@ -11096,14 +11089,21 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
-                &["bg-yellow"]
-            );
+            assert_eq!(completion_menu_entries(&menu.entries), &["bg-yellow"]);
         } else {
             panic!("expected completion menu to be open");
         }
     });
+}
+
+fn completion_menu_entries(entries: &[CompletionEntry]) -> Vec<&str> {
+    entries
+        .iter()
+        .flat_map(|e| match e {
+            CompletionEntry::Match(mat) => Some(mat.string.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[gpui::test]
