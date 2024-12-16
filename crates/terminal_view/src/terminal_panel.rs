@@ -398,7 +398,13 @@ impl TerminalPanel {
 
             let terminal_view = Box::new(
                 cx.new_view(|cx| {
-                    TerminalView::new(terminal.clone(), weak_workspace.clone(), database_id, cx)
+                    TerminalView::new(
+                        terminal.clone(),
+                        weak_workspace.clone(),
+                        database_id,
+                        project.downgrade(),
+                        cx,
+                    )
                 })
                 .ok()?,
             );
@@ -724,6 +730,7 @@ impl TerminalPanel {
                         terminal.clone(),
                         workspace.weak_handle(),
                         workspace.database_id(),
+                        workspace.project().downgrade(),
                         cx,
                     )
                 });
@@ -763,6 +770,7 @@ impl TerminalPanel {
                         terminal.clone(),
                         workspace.weak_handle(),
                         workspace.database_id(),
+                        workspace.project().downgrade(),
                         cx,
                     )
                 }));
