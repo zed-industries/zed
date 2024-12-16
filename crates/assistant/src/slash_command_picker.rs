@@ -217,11 +217,10 @@ impl PickerDelegate for SlashCommandDelegate {
                                     )),
                             )
                             .child(
-                                div().overflow_hidden().text_ellipsis().child(
-                                    Label::new(info.description.clone())
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                ),
+                                Label::new(info.description.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .text_ellipsis(),
                             ),
                     ),
             ),

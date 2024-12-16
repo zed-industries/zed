@@ -449,18 +449,17 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .child(
-                        div().overflow_x_hidden().text_ellipsis().child(
-                            Label::new(format!(
-                                "{}: {}",
-                                if extension.authors.len() > 1 {
-                                    "Authors"
-                                } else {
-                                    "Author"
-                                },
-                                extension.authors.join(", ")
-                            ))
-                            .size(LabelSize::Small),
-                        ),
+                        Label::new(format!(
+                            "{}: {}",
+                            if extension.authors.len() > 1 {
+                                "Authors"
+                            } else {
+                                "Author"
+                            },
+                            extension.authors.join(", ")
+                        ))
+                        .size(LabelSize::Small)
+                        .text_ellipsis(),
                     )
                     .child(Label::new("<>").size(LabelSize::Small)),
             )
@@ -469,11 +468,10 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .children(extension.description.as_ref().map(|description| {
-                        div().overflow_x_hidden().text_ellipsis().child(
-                            Label::new(description.clone())
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        )
+                        Label::new(description.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                            .text_ellipsis()
                     }))
                     .children(repository_url.map(|repository_url| {
                         IconButton::new(
@@ -550,18 +548,17 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .child(
-                        div().overflow_x_hidden().text_ellipsis().child(
-                            Label::new(format!(
-                                "{}: {}",
-                                if extension.manifest.authors.len() > 1 {
-                                    "Authors"
-                                } else {
-                                    "Author"
-                                },
-                                extension.manifest.authors.join(", ")
-                            ))
-                            .size(LabelSize::Small),
-                        ),
+                        Label::new(format!(
+                            "{}: {}",
+                            if extension.manifest.authors.len() > 1 {
+                                "Authors"
+                            } else {
+                                "Author"
+                            },
+                            extension.manifest.authors.join(", ")
+                        ))
+                        .size(LabelSize::Small)
+                        .text_ellipsis(),
                     )
                     .child(
                         Label::new(format!(
@@ -576,11 +573,10 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .children(extension.manifest.description.as_ref().map(|description| {
-                        div().overflow_x_hidden().text_ellipsis().child(
-                            Label::new(description.clone())
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        )
+                        Label::new(description.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                            .text_ellipsis()
                     }))
                     .child(
                         h_flex()
