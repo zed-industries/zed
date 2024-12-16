@@ -1,3 +1,5 @@
+use crate::context_strip::ContextStrip;
+use crate::thread_store::ThreadStore;
 use crate::{
     assistant_settings::AssistantSettings,
     prompts::PromptBuilder,
@@ -24,7 +26,8 @@ use futures::{channel::mpsc, future::LocalBoxFuture, join, SinkExt, Stream, Stre
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakModel, WeakView,
+    WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -1456,6 +1459,7 @@ enum PromptEditorEvent {
 struct PromptEditor {
     id: InlineAssistId,
     editor: View<Editor>,
+    context_strip: View<ContextStrip>,
     language_model_selector: View<LanguageModelSelector>,
     edited_since_done: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -1570,91 +1574,105 @@ impl Render for PromptEditor {
             }
         });
 
-        h_flex()
-            .key_context("PromptEditor")
-            .bg(cx.theme().colors().editor_background)
-            .block_mouse_down()
-            .cursor(CursorStyle::Arrow)
-            .border_y_1()
-            .border_color(cx.theme().status().info_border)
-            .size_full()
-            .py(cx.line_height() / 2.5)
-            .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(Self::move_up))
-            .on_action(cx.listener(Self::move_down))
-            .capture_action(cx.listener(Self::cycle_prev))
-            .capture_action(cx.listener(Self::cycle_next))
+        v_flex()
             .child(
                 h_flex()
-                    .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
-                    .justify_center()
-                    .gap_2()
-                    .child(LanguageModelSelectorPopoverMenu::new(
-                        self.language_model_selector.clone(),
-                        IconButton::new("context", IconName::SettingsAlt)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |cx| {
-                                Tooltip::with_meta(
-                                    format!(
-                                        "Using {}",
-                                        LanguageModelRegistry::read_global(cx)
-                                            .active_model()
-                                            .map(|model| model.name().0)
-                                            .unwrap_or_else(|| "No model selected".into()),
-                                    ),
-                                    None,
-                                    "Change Model",
-                                    cx,
-                                )
-                            }),
-                    ))
-                    .map(|el| {
-                        let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx) else {
-                            return el;
-                        };
-
-                        let error_message = SharedString::from(error.to_string());
-                        if error.error_code() == proto::ErrorCode::RateLimitExceeded
-                            && cx.has_flag::<ZedPro>()
-                        {
-                            el.child(
-                                v_flex()
-                                    .child(
-                                        IconButton::new("rate-limit-error", IconName::XCircle)
-                                            .toggle_state(self.show_rate_limit_notice)
-                                            .shape(IconButtonShape::Square)
-                                            .icon_size(IconSize::Small)
-                                            .on_click(cx.listener(Self::toggle_rate_limit_notice)),
-                                    )
-                                    .children(self.show_rate_limit_notice.then(|| {
-                                        deferred(
-                                            anchored()
-                                                .position_mode(gpui::AnchoredPositionMode::Local)
-                                                .position(point(px(0.), px(24.)))
-                                                .anchor(gpui::AnchorCorner::TopLeft)
-                                                .child(self.render_rate_limit_notice(cx)),
+                    .key_context("PromptEditor")
+                    .bg(cx.theme().colors().editor_background)
+                    .block_mouse_down()
+                    .cursor(CursorStyle::Arrow)
+                    .border_y_1()
+                    .border_color(cx.theme().status().info_border)
+                    .size_full()
+                    .py(cx.line_height() / 2.5)
+                    .on_action(cx.listener(Self::confirm))
+                    .on_action(cx.listener(Self::cancel))
+                    .on_action(cx.listener(Self::move_up))
+                    .on_action(cx.listener(Self::move_down))
+                    .capture_action(cx.listener(Self::cycle_prev))
+                    .capture_action(cx.listener(Self::cycle_next))
+                    .child(
+                        h_flex()
+                            .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
+                            .justify_center()
+                            .gap_2()
+                            .child(LanguageModelSelectorPopoverMenu::new(
+                                self.language_model_selector.clone(),
+                                IconButton::new("context", IconName::SettingsAlt)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |cx| {
+                                        Tooltip::with_meta(
+                                            format!(
+                                                "Using {}",
+                                                LanguageModelRegistry::read_global(cx)
+                                                    .active_model()
+                                                    .map(|model| model.name().0)
+                                                    .unwrap_or_else(|| "No model selected".into()),
+                                            ),
+                                            None,
+                                            "Change Model",
+                                            cx,
                                         )
-                                    })),
-                            )
-                        } else {
-                            el.child(
-                                div()
-                                    .id("error")
-                                    .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
-                                    .child(
-                                        Icon::new(IconName::XCircle)
-                                            .size(IconSize::Small)
-                                            .color(Color::Error),
-                                    ),
-                            )
-                        }
-                    }),
+                                    }),
+                            ))
+                            .map(|el| {
+                                let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx)
+                                else {
+                                    return el;
+                                };
+
+                                let error_message = SharedString::from(error.to_string());
+                                if error.error_code() == proto::ErrorCode::RateLimitExceeded
+                                    && cx.has_flag::<ZedPro>()
+                                {
+                                    el.child(
+                                        v_flex()
+                                            .child(
+                                                IconButton::new(
+                                                    "rate-limit-error",
+                                                    IconName::XCircle,
+                                                )
+                                                .toggle_state(self.show_rate_limit_notice)
+                                                .shape(IconButtonShape::Square)
+                                                .icon_size(IconSize::Small)
+                                                .on_click(
+                                                    cx.listener(Self::toggle_rate_limit_notice),
+                                                ),
+                                            )
+                                            .children(self.show_rate_limit_notice.then(|| {
+                                                deferred(
+                                                    anchored()
+                                                        .position_mode(
+                                                            gpui::AnchoredPositionMode::Local,
+                                                        )
+                                                        .position(point(px(0.), px(24.)))
+                                                        .anchor(gpui::AnchorCorner::TopLeft)
+                                                        .child(self.render_rate_limit_notice(cx)),
+                                                )
+                                            })),
+                                    )
+                                } else {
+                                    el.child(
+                                        div()
+                                            .id("error")
+                                            .tooltip(move |cx| {
+                                                Tooltip::text(error_message.clone(), cx)
+                                            })
+                                            .child(
+                                                Icon::new(IconName::XCircle)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Error),
+                                            ),
+                                    )
+                                }
+                            }),
+                    )
+                    .child(div().flex_1().child(self.render_editor(cx)))
+                    .child(h_flex().gap_2().pr_6().children(buttons)),
             )
-            .child(div().flex_1().child(self.render_editor(cx)))
-            .child(h_flex().gap_2().pr_6().children(buttons))
+            .child(self.context_strip.clone())
     }
 }
 
@@ -1675,6 +1693,8 @@ impl PromptEditor {
         prompt_buffer: Model<MultiBuffer>,
         codegen: Model<Codegen>,
         fs: Arc<dyn Fs>,
+        workspace: WeakView<Workspace>,
+        thread_store: WeakModel<ThreadStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
@@ -1699,6 +1719,7 @@ impl PromptEditor {
         let mut this = Self {
             id,
             editor: prompt_editor,
+            context_strip: cx.new_view(|cx| ContextStrip::new(workspace, thread_store, cx)),
             language_model_selector: cx.new_view(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
