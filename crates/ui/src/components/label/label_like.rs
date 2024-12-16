@@ -176,12 +176,14 @@ impl RenderOnce for LabelLike {
             color.fade_out(1.0 - alpha);
         }
 
-        let background = self.background.map(|bg| bg.color(cx));
-        if let Some(mut background) = background {
+        let background = self.background.map(|background| {
+            let mut background = background.color(cx);
             if let Some(alpha) = self.alpha {
                 background.fade_out(1.0 - alpha);
             }
-        }
+
+            background
+        });
 
         self.base
             .map(|this| match self.size {
