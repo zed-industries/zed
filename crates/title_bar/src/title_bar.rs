@@ -6,9 +6,11 @@ mod window_controls;
 #[cfg(feature = "stories")]
 mod stories;
 
-use crate::application_menu::{
-    ApplicationMenu, NavigateApplicationMenuInDirection, OpenApplicationMenu,
-};
+use crate::application_menu::ApplicationMenu;
+
+#[cfg(not(target_os = "macos"))]
+use crate::application_menu::{NavigateApplicationMenuInDirection, OpenApplicationMenu};
+
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;

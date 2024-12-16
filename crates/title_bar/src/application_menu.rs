@@ -168,10 +168,12 @@ impl ApplicationMenu {
             })
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn open_menu(&mut self, action: &OpenApplicationMenu, _cx: &mut ViewContext<Self>) {
         self.pending_menu_open = Some(action.0.clone());
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn navigate_menus_in_direction(
         &mut self,
         action: &NavigateApplicationMenuInDirection,
