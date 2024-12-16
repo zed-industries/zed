@@ -23,7 +23,7 @@ async-pipe = { workspace = true, optional = true }
 async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "9aa5155d631bb1ac8faba5446244d98f855ff97f" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "0f4da80b6f4713d268922556425b669627373b3e" }
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
