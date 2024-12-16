@@ -23,6 +23,14 @@ pub struct DebuggerSettings {
     ///
     /// Default: 2000ms
     pub timeout: u64,
+    /// Whether to log messages between active debug adapters and Zed
+    ///
+    /// Default: true
+    pub log_dap_communications: bool,
+    /// Whether to format dap messages in when adding them to debug adapter logger
+    ///
+    /// Default: true
+    pub format_dap_log_messages: bool,
 }
 
 impl Default for DebuggerSettings {
@@ -32,6 +40,8 @@ impl Default for DebuggerSettings {
             save_breakpoints: true,
             stepping_granularity: SteppingGranularity::Line,
             timeout: 2000,
+            log_dap_communications: true,
+            format_dap_log_messages: true,
         }
     }
 }

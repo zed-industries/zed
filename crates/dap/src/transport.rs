@@ -112,10 +112,21 @@ impl TransportDelegate {
         let (client_tx, server_rx) = unbounded::<Message>();
         let (server_tx, client_rx) = unbounded::<Message>();
 
+        let log_dap_communications =
+            cx.update(|cx| DebuggerSettings::get_global(cx).log_dap_communications)
+                .with_context(|| "Failed to get Debugger Setting log dap communications error in transport::start_handlers. Defaulting to false")
+                .unwrap_or(false);
+
+        let log_handler = if log_dap_communications {
+            Some(self.log_handlers.clone())
+        } else {
+            None
+        };
+
         cx.update(|cx| {
             if let Some(stdout) = params.stdout.take() {
                 cx.background_executor()
-                    .spawn(Self::handle_adapter_log(stdout, self.log_handlers.clone()))
+                    .spawn(Self::handle_adapter_log(stdout, log_handler.clone()))
                     .detach_and_log_err(cx);
             }
 
@@ -124,7 +135,7 @@ impl TransportDelegate {
                     params.output,
                     client_tx,
                     self.pending_requests.clone(),
-                    self.log_handlers.clone(),
+                    log_handler.clone(),
                 ))
                 .detach_and_log_err(cx);
 
@@ -140,7 +151,7 @@ impl TransportDelegate {
                     client_rx,
                     self.current_requests.clone(),
                     self.pending_requests.clone(),
-                    self.log_handlers.clone(),
+                    log_handler.clone(),
                 ))
                 .detach_and_log_err(cx);
         })?;
@@ -178,7 +189,10 @@ impl TransportDelegate {
         }
     }
 
-    async fn handle_adapter_log<Stdout>(stdout: Stdout, log_handlers: LogHandlers) -> Result<()>
+    async fn handle_adapter_log<Stdout>(
+        stdout: Stdout,
+        log_handlers: Option<LogHandlers>,
+    ) -> Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
     {
@@ -197,9 +211,11 @@ impl TransportDelegate {
                 break Err(anyhow!("Debugger log stream closed"));
             }
 
-            for (kind, handler) in log_handlers.lock().iter_mut() {
-                if matches!(kind, LogKind::Adapter) {
-                    handler(IoKind::StdOut, line.as_str());
+            if let Some(log_handlers) = log_handlers.as_ref() {
+                for (kind, handler) in log_handlers.lock().iter_mut() {
+                    if matches!(kind, LogKind::Adapter) {
+                        handler(IoKind::StdOut, line.as_str());
+                    }
                 }
             }
 
@@ -220,7 +236,7 @@ impl TransportDelegate {
         client_rx: Receiver<Message>,
         current_requests: Requests,
         pending_requests: Requests,
-        log_handlers: LogHandlers,
+        log_handlers: Option<LogHandlers>,
     ) -> Result<()>
     where
         Stdin: AsyncWrite + Unpin + Send + 'static,
@@ -239,9 +255,11 @@ impl TransportDelegate {
                         Err(e) => break Err(e.into()),
                     };
 
-                    for (kind, log_handler) in log_handlers.lock().iter_mut() {
-                        if matches!(kind, LogKind::Rpc) {
-                            log_handler(IoKind::StdIn, &message);
+                    if let Some(log_handlers) = log_handlers.as_ref() {
+                        for (kind, log_handler) in log_handlers.lock().iter_mut() {
+                            if matches!(kind, LogKind::Rpc) {
+                                log_handler(IoKind::StdIn, &message);
+                            }
                         }
                     }
 
@@ -271,7 +289,7 @@ impl TransportDelegate {
         server_stdout: Stdout,
         client_tx: Sender<Message>,
         pending_requests: Requests,
-        log_handlers: LogHandlers,
+        log_handlers: Option<LogHandlers>,
     ) -> Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
@@ -281,7 +299,8 @@ impl TransportDelegate {
 
         let result = loop {
             let message =
-                Self::receive_server_message(&mut reader, &mut recv_buffer, &log_handlers).await;
+                Self::receive_server_message(&mut reader, &mut recv_buffer, log_handlers.as_ref())
+                    .await;
 
             match message {
                 Ok(Message::Response(res)) => {
@@ -362,7 +381,7 @@ impl TransportDelegate {
     async fn receive_server_message<Stdout>(
         reader: &mut BufReader<Stdout>,
         buffer: &mut String,
-        log_handlers: &LogHandlers,
+        log_handlers: Option<&LogHandlers>,
     ) -> Result<Message>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
@@ -404,9 +423,11 @@ impl TransportDelegate {
 
         let message = std::str::from_utf8(&content).context("invalid utf8 from server")?;
 
-        for (kind, log_handler) in log_handlers.lock().iter_mut() {
-            if matches!(kind, LogKind::Rpc) {
-                log_handler(IoKind::StdOut, &message);
+        if let Some(log_handlers) = log_handlers {
+            for (kind, log_handler) in log_handlers.lock().iter_mut() {
+                if matches!(kind, LogKind::Rpc) {
+                    log_handler(IoKind::StdOut, &message);
+                }
             }
         }
 
@@ -802,7 +823,7 @@ impl Transport for FakeTransport {
                 let message = TransportDelegate::receive_server_message(
                     &mut reader,
                     &mut buffer,
-                    &Default::default(),
+                    None,
                 )
                 .await;
 

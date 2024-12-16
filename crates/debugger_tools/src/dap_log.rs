@@ -1,5 +1,6 @@
 use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId},
+    debugger_settings::DebuggerSettings,
     transport::{IoKind, LogKind},
 };
 use editor::{Editor, EditorEvent};
@@ -13,11 +14,13 @@ use gpui::{
     View, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use project::{search::SearchQuery, Project};
+use settings::Settings as _;
 use std::{
     borrow::Cow,
     collections::{HashMap, VecDeque},
     sync::Arc,
 };
+use util::maybe;
 use workspace::{
     item::Item,
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
@@ -260,9 +263,21 @@ impl LogStore {
         while log_lines.len() >= RpcMessages::MESSAGE_QUEUE_LIMIT {
             log_lines.pop_front();
         }
-        let entry: &str = message.as_ref();
-        let entry = entry.to_string();
-        log_lines.push_back(message);
+
+        let format_messages = DebuggerSettings::get_global(cx).format_dap_log_messages;
+
+        let entry = if format_messages {
+            maybe!({
+                serde_json::to_string_pretty::<serde_json::Value>(
+                    &serde_json::from_str(&message).ok()?,
+                )
+                .ok()
+            })
+            .unwrap_or(message)
+        } else {
+            message
+        };
+        log_lines.push_back(entry.clone());
 
         cx.emit(Event::NewLogEntry { id, entry, kind });
     }
