@@ -202,6 +202,7 @@ impl RenderOnce for ListItem {
                     .when(self.selectable, |this| {
                         this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                            .when(self.outlined, |this| this.rounded_md())
                             .when(self.selected, |this| {
                                 this.bg(cx.theme().colors().ghost_element_selected)
                             })
