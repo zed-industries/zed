@@ -2886,7 +2886,9 @@ impl EditorElement {
                 } else {
                     let target_above =
                         DisplayRow(edit_start.row().0.saturating_sub(line_count as u32));
-                    let row_target = if visible_row_range.contains(&target_above) {
+                    let row_target = if visible_row_range
+                        .contains(&DisplayRow(target_above.0.saturating_sub(1)))
+                    {
                         target_above
                     } else {
                         DisplayRow(edit_end.row().0 + 1)
