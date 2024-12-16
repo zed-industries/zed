@@ -73,17 +73,17 @@ fn render_color_ribbon(color: Hsla) -> impl Element {
             let height = bounds.size.height;
             let horizontal_offset = height;
             let vertical_offset = px(height.0 / 2.0);
-            let mut path = Path::new(bounds.lower_left());
+            let mut path = Path::new(bounds.bottom_left());
             path.curve_to(
                 bounds.origin + point(horizontal_offset, vertical_offset),
                 bounds.origin + point(px(0.0), vertical_offset),
             );
-            path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
+            path.line_to(bounds.top_right() + point(-horizontal_offset, vertical_offset));
             path.curve_to(
-                bounds.lower_right(),
-                bounds.upper_right() + point(px(0.0), vertical_offset),
+                bounds.bottom_right(),
+                bounds.top_right() + point(px(0.0), vertical_offset),
             );
-            path.line_to(bounds.lower_left());
+            path.line_to(bounds.bottom_left());
             cx.paint_path(path, color);
         },
     )

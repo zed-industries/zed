@@ -53,8 +53,8 @@ impl Render for ContextStrip {
                             .icon_size(IconSize::Small)
                             .style(ui::ButtonStyle::Filled),
                     )
-                    .attach(gpui::AnchorCorner::TopLeft)
-                    .anchor(gpui::AnchorCorner::BottomLeft)
+                    .attach(gpui::Corner::TopLeft)
+                    .anchor(gpui::Corner::BottomLeft)
                     .offset(gpui::Point {
                         x: px(0.0),
                         y: px(-16.0),

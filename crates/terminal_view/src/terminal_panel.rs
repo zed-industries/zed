@@ -12,7 +12,7 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, Entity, EventEmitter,
+    actions, Action, AnyView, AppContext, AsyncWindowContext, Corner, Entity, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
     Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -141,7 +141,7 @@ impl TerminalPanel {
                                     .icon_size(IconSize::Small)
                                     .tooltip(|cx| Tooltip::text("New…", cx)),
                             )
-                            .anchor(AnchorCorner::TopRight)
+                            .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
                             .menu(move |cx| {
                                 let focus_handle = focus_handle.clone();
@@ -171,7 +171,7 @@ impl TerminalPanel {
                                     .icon_size(IconSize::Small)
                                     .tooltip(|cx| Tooltip::text("Split Pane", cx)),
                             )
-                            .anchor(AnchorCorner::TopRight)
+                            .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu({
                                 let split_context = split_context.clone();

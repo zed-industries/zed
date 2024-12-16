@@ -44,7 +44,7 @@ fn notification_window_options(
     let notification_margin_height = px(-48.);
 
     let bounds = gpui::Bounds::<Pixels> {
-        origin: screen.bounds().upper_right()
+        origin: screen.bounds().top_right()
             - point(
                 size.width + notification_margin_width,
                 notification_margin_height,

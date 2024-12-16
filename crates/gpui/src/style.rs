@@ -509,7 +509,7 @@ impl Style {
             } => None,
             _ => {
                 let mut min = bounds.origin;
-                let mut max = bounds.lower_right();
+                let mut max = bounds.bottom_right();
 
                 if self
                     .border_color
@@ -530,12 +530,12 @@ impl Style {
                     // x visible, y hidden
                     (true, false) => Bounds::from_corners(
                         point(min.x, bounds.origin.y),
-                        point(max.x, bounds.lower_right().y),
+                        point(max.x, bounds.bottom_right().y),
                     ),
                     // x hidden, y visible
                     (false, true) => Bounds::from_corners(
                         point(bounds.origin.x, min.y),
-                        point(bounds.lower_right().x, max.y),
+                        point(bounds.bottom_right().x, max.y),
                     ),
                     // both hidden
                     (false, false) => Bounds::from_corners(min, max),
@@ -604,19 +604,19 @@ impl Style {
 
             let top_bounds = Bounds::from_corners(
                 bounds.origin,
-                bounds.upper_right() + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
+                bounds.top_right() + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
             );
             let bottom_bounds = Bounds::from_corners(
-                bounds.lower_left() - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-                bounds.lower_right(),
+                bounds.bottom_left() - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
+                bounds.bottom_right(),
             );
             let left_bounds = Bounds::from_corners(
-                top_bounds.lower_left(),
+                top_bounds.bottom_left(),
                 bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
             );
             let right_bounds = Bounds::from_corners(
-                top_bounds.lower_right() - point(max_border_width, Pixels::ZERO),
-                bottom_bounds.upper_right(),
+                top_bounds.bottom_right() - point(max_border_width, Pixels::ZERO),
+                bottom_bounds.top_right(),
             );
 
             let mut background = self.border_color.unwrap_or_default();

@@ -31,13 +31,13 @@ use file_icons::FileIcons;
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClickEvent,
-    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementInputHandler, Entity, FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla,
-    InteractiveElement, IntoElement, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent,
-    ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription,
-    TextRun, TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
+    transparent_black, Action, AnyElement, AvailableSpace, Bounds, ClickEvent, ClipboardItem,
+    ContentMask, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler,
+    Entity, FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla, InteractiveElement, IntoElement,
+    Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
+    View, ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -706,7 +706,7 @@ impl EditorElement {
         let mut scroll_delta = gpui::Point::<f32>::default();
         let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
         let top = text_bounds.origin.y + vertical_margin;
-        let bottom = text_bounds.lower_left().y - vertical_margin;
+        let bottom = text_bounds.bottom_left().y - vertical_margin;
         if event.position.y < top {
             scroll_delta.y = -scale_vertical_mouse_autoscroll_delta(top - event.position.y);
         }
@@ -716,7 +716,7 @@ impl EditorElement {
 
         let horizontal_margin = position_map.line_height.min(text_bounds.size.width / 3.0);
         let left = text_bounds.origin.x + horizontal_margin;
-        let right = text_bounds.upper_right().x - horizontal_margin;
+        let right = text_bounds.top_right().x - horizontal_margin;
         if event.position.x < left {
             scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
         }
@@ -1213,7 +1213,7 @@ impl EditorElement {
 
         let track_bounds = Bounds::from_corners(
             point(self.scrollbar_left(&bounds), bounds.origin.y),
-            point(bounds.lower_right().x, bounds.lower_left().y),
+            point(bounds.bottom_right().x, bounds.bottom_left().y),
         );
 
         let settings = EditorSettings::get_global(cx);
@@ -2824,7 +2824,7 @@ impl EditorElement {
             list_origin.x = (cx.viewport_size().width - list_width).max(Pixels::ZERO);
         }
 
-        if list_origin.y + list_height > text_hitbox.lower_right().y {
+        if list_origin.y + list_height > text_hitbox.bottom_right().y {
             list_origin.y -= line_height + list_height;
         }
 
@@ -3067,7 +3067,7 @@ impl EditorElement {
                     anchored()
                         .position(position)
                         .child(context_menu)
-                        .anchor(AnchorCorner::TopLeft)
+                        .anchor(Corner::TopLeft)
                         .snap_to_window_with_margin(px(8.)),
                 )
                 .with_priority(1)
@@ -3132,7 +3132,7 @@ impl EditorElement {
         for mut hover_popover in hover_popovers {
             let size = hover_popover.layout_as_root(AvailableSpace::min_size(), cx);
             let horizontal_offset =
-                (text_hitbox.upper_right().x - (hovered_point.x + size.width)).min(Pixels::ZERO);
+                (text_hitbox.top_right().x - (hovered_point.x + size.width)).min(Pixels::ZERO);
 
             overall_height += HOVER_POPOVER_GAP + size.height;
 
@@ -4407,7 +4407,7 @@ impl EditorElement {
     }
 
     fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
-        bounds.upper_right().x - self.style.scrollbar_width
+        bounds.top_right().x - self.style.scrollbar_width
     }
 
     fn column_pixels(&self, column: usize, cx: &WindowContext) -> Pixels {
@@ -5488,7 +5488,7 @@ impl Element for EditorElement {
                         cx.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
                     let text_hitbox = cx.insert_hitbox(
                         Bounds {
-                            origin: gutter_hitbox.upper_right(),
+                            origin: gutter_hitbox.top_right(),
                             size: size(text_width, bounds.size.height),
                         },
                         false,
