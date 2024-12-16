@@ -5755,8 +5755,6 @@ impl Element for EditorElement {
                     let scroll_range_bounds = scrollbar_range_data.scroll_range;
                     let mut scroll_width = scroll_range_bounds.size.width;
 
-                    // let mut scroll_width =
-                    //     longest_line_width.max(max_visible_line_width) + overscroll.width;
 
                     let blocks = cx.with_element_namespace("blocks", |cx| {
                         self.render_blocks(
