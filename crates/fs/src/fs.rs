@@ -2049,7 +2049,6 @@ async fn execute_elevated_command(_command: &str) -> Result<()> {
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 async fn execute_elevated_command(command: &str) -> Result<()> {
     let pkexec_path = Path::new("/usr/bin/pkexec");
-    let script_path = PathBuf::from("/usr/libexec/zed/elevate.sh");
 
     if !pkexec_path.exists() {
         return Err(anyhow::anyhow!(
@@ -2058,17 +2057,17 @@ async fn execute_elevated_command(command: &str) -> Result<()> {
         ));
     }
 
-    if !script_path.exists() {
-        return Err(anyhow::anyhow!(
-            "Elevation script not found at {}",
-            script_path.display()
-        ));
-    }
-
     let mut cmd = Command::new(pkexec_path);
-    cmd.arg("--disable-internal-agent")
-        .arg(&script_path)
-        .arg(command);
+    cmd.arg("--disable-internal-agent");
+
+    let script_path = PathBuf::from("/usr/libexec/zed/elevate.sh");
+    if script_path.exists() {
+        // Custom message will be shown to user
+        cmd.arg(&script_path).arg(command);
+    } else {
+        // Default message will be shown to user
+        cmd.arg("/bin/bash").arg("-c").arg(command);
+    }
 
     let output = cmd.output().await?;
     if output.status.success() {
