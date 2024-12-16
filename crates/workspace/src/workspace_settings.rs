@@ -87,15 +87,15 @@ pub enum RestoreOnStartupBehavior {
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePanelModifiers>,
-    // Direction to split horizontally.
-    //
-    // Default: "up"
+    /// Direction to split horizontally.
+    ///
+    /// Default: "up"
     pub pane_split_direction_horizontal: Option<PaneSplitDirectionHorizontal>,
-    // Direction to split vertically.
-    //
-    // Default: "left"
+    /// Direction to split vertically.
+    ///
+    /// Default: "left"
     pub pane_split_direction_vertical: Option<PaneSplitDirectionVertical>,
-    // Centered layout related settings.
+    /// Centered layout related settings.
     pub centered_layout: Option<CenteredLayoutSettings>,
     /// Whether or not to prompt the user to confirm before closing the application.
     ///
