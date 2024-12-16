@@ -19,6 +19,7 @@
 
 mod block_map;
 mod crease_map;
+mod custom_highlights;
 mod diff_map;
 mod fold_map;
 mod inlay_map;
