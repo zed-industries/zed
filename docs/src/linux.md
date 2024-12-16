@@ -180,3 +180,5 @@ Polkit comes pre-installed with most desktop environments like GNOME and KDE. If
 - Ubuntu/Debian: `sudo apt install policykit-1`
 - Fedora: `sudo dnf install polkit`
 - Arch Linux: `sudo pacman -S polkit`
+
+It's recommended to run the install script again after installing polkit.
