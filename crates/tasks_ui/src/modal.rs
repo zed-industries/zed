@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
-use task::{ResolvedTask, TaskContext, TaskTemplate};
+use task::{ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
@@ -24,6 +24,7 @@ pub use zed_actions::{Rerun, Spawn};
 pub(crate) struct TasksModalDelegate {
     task_store: Model<TaskStore>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
+    task_overrides: Option<TaskOverrides>,
     last_used_candidate_index: Option<usize>,
     divider_index: Option<usize>,
     matches: Vec<StringMatch>,
@@ -34,12 +35,28 @@ pub(crate) struct TasksModalDelegate {
     placeholder_text: Arc<str>,
 }
 
+/// Task template amendments to do before resolving the context.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TaskOverrides {
+    /// See [`RevealTarget`].
+    pub(crate) reveal_target: Option<RevealTarget>,
+}
+
 impl TasksModalDelegate {
     fn new(
         task_store: Model<TaskStore>,
         task_context: TaskContext,
+        task_overrides: Option<TaskOverrides>,
         workspace: WeakView<Workspace>,
     ) -> Self {
+        let placeholder_text = if let Some(TaskOverrides {
+            reveal_target: Some(RevealTarget::Center),
+        }) = &task_overrides
+        {
+            Arc::from("Find a task, or run a command in the central pane")
+        } else {
+            Arc::from("Find a task, or run a command")
+        };
         Self {
             task_store,
             workspace,
@@ -50,7 +67,8 @@ impl TasksModalDelegate {
             selected_index: 0,
             prompt: String::default(),
             task_context,
-            placeholder_text: Arc::from("Find a task, or run a command"),
+            task_overrides,
+            placeholder_text,
         }
     }
 
@@ -61,14 +79,20 @@ impl TasksModalDelegate {
 
         let source_kind = TaskSourceKind::UserInput;
         let id_base = source_kind.to_id_base();
-        let new_oneshot = TaskTemplate {
+        let mut new_oneshot = TaskTemplate {
             label: self.prompt.clone(),
             command: self.prompt.clone(),
             ..TaskTemplate::default()
         };
+        if let Some(TaskOverrides {
+            reveal_target: Some(reveal_target),
+        }) = &self.task_overrides
+        {
+            new_oneshot.reveal_target = *reveal_target;
+        }
         Some((
             source_kind,
-            new_oneshot.resolve_task(&id_base, Default::default(), &self.task_context)?,
+            new_oneshot.resolve_task(&id_base, &self.task_context)?,
         ))
     }
 
@@ -100,12 +124,13 @@ impl TasksModal {
     pub(crate) fn new(
         task_store: Model<TaskStore>,
         task_context: TaskContext,
+        task_overrides: Option<TaskOverrides>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(task_store, task_context, workspace),
+                TasksModalDelegate::new(task_store, task_context, task_overrides, workspace),
                 cx,
             )
         });
@@ -257,9 +282,17 @@ impl PickerDelegate for TasksModalDelegate {
                     .as_ref()
                     .map(|candidates| candidates[ix].clone())
             });
-        let Some((task_source_kind, task)) = task else {
+        let Some((task_source_kind, mut task)) = task else {
             return;
         };
+        if let Some(TaskOverrides {
+            reveal_target: Some(reveal_target),
+        }) = &self.task_overrides
+        {
+            if let Some(resolved_task) = &mut task.resolved {
+                resolved_task.reveal_target = *reveal_target;
+            }
+        }
 
         self.workspace
             .update(cx, |workspace, cx| {
@@ -396,9 +429,18 @@ impl PickerDelegate for TasksModalDelegate {
     }
 
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
-        let Some((task_source_kind, task)) = self.spawn_oneshot() else {
+        let Some((task_source_kind, mut task)) = self.spawn_oneshot() else {
             return;
         };
+
+        if let Some(TaskOverrides {
+            reveal_target: Some(reveal_target),
+        }) = self.task_overrides
+        {
+            if let Some(resolved_task) = &mut task.resolved {
+                resolved_task.reveal_target = reveal_target;
+            }
+        }
         self.workspace
             .update(cx, |workspace, cx| {
                 schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
@@ -682,9 +724,9 @@ mod tests {
             "No query should be added to the list, as it was submitted with secondary action (that maps to omit_history = true)"
         );
 
-        cx.dispatch_action(Spawn {
-            task_name: Some("example task".to_string()),
-            target: None,
+        cx.dispatch_action(Spawn::ByName {
+            task_name: "example task".to_string(),
+            reveal_target: None,
         });
         let tasks_picker = workspace.update(cx, |workspace, cx| {
             workspace
@@ -995,7 +1037,7 @@ mod tests {
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) -> View<Picker<TasksModalDelegate>> {
-        cx.dispatch_action(Spawn::default());
+        cx.dispatch_action(Spawn::modal());
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<TasksModal>(cx)
