@@ -22,7 +22,7 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
     LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    SoftWrap, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -2398,6 +2398,8 @@ impl EditorElement {
             .as_ref()
             .and_then(|path| Some(path.parent()?.to_string_lossy().to_string() + "/"));
 
+        let focus_handle = self.editor.focus_handle(cx);
+
         div()
             .px(header_padding)
             .pt(header_padding)
@@ -2405,29 +2407,43 @@ impl EditorElement {
             .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
             .child(
                 h_flex()
-                    .id("path header block")
                     .size_full()
+                    .gap_2()
                     .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
-                    .px(gpui::px(12.))
+                    .pl_0p5()
+                    .pr_4()
                     .rounded_md()
                     .shadow_md()
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().editor_subheader_background)
-                    .justify_between()
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .map(|header| {
-                                let editor = self.editor.clone();
-                                let buffer_id = for_excerpt.buffer_id;
-                                let toggle_chevron_icon =
-                                    FileIcons::get_chevron_icon(!is_folded, cx)
-                                        .map(Icon::from_path);
-                                header.child(
+                    .map(|header| {
+                        let editor = self.editor.clone();
+                        let buffer_id = for_excerpt.buffer_id;
+                        let toggle_chevron_icon =
+                            FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
+                        header.child(
+                            div()
+                                .hover(|style| style.bg(cx.theme().colors().element_selected))
+                                .rounded_sm()
+                                .child(
                                     ButtonLike::new("toggle-buffer-fold")
+                                        .style(ui::ButtonStyle::Transparent)
+                                        .size(ButtonSize::Large)
+                                        .width(px(30.).into())
                                         .children(toggle_chevron_icon)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |cx| {
+                                                Tooltip::for_action_in(
+                                                    "Toggle Excerpt Fold",
+                                                    &ToggleFold,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            }
+                                        })
                                         .on_click(move |_, cx| {
                                             if is_folded {
                                                 editor.update(cx, |editor, cx| {
@@ -2439,8 +2455,14 @@ impl EditorElement {
                                                 });
                                             }
                                         }),
-                                )
-                            })
+                                ),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .id("path header block")
+                            .size_full()
+                            .justify_between()
                             .child(
                                 h_flex()
                                     .gap_2()
@@ -2456,21 +2478,31 @@ impl EditorElement {
                                                 .text_color(cx.theme().colors().text_muted),
                                         )
                                     }),
-                            ),
-                    )
-                    .child(Icon::new(IconName::ArrowUpRight))
-                    .cursor_pointer()
-                    .tooltip(|cx| Tooltip::for_action("Jump to File", &OpenExcerpts, cx))
-                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                    .on_click(cx.listener_for(&self.editor, {
-                        move |editor, e: &ClickEvent, cx| {
-                            editor.open_excerpts_common(
-                                Some(jump_data.clone()),
-                                e.down.modifiers.secondary(),
-                                cx,
-                            );
-                        }
-                    })),
+                            )
+                            .child(Icon::new(IconName::ArrowUpRight))
+                            .cursor_pointer()
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Jump To File",
+                                        &OpenExcerpts,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                            .on_click(cx.listener_for(&self.editor, {
+                                move |editor, e: &ClickEvent, cx| {
+                                    editor.open_excerpts_common(
+                                        Some(jump_data.clone()),
+                                        e.down.modifiers.secondary(),
+                                        cx,
+                                    );
+                                }
+                            })),
+                    ),
             )
     }
 
