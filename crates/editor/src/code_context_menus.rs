@@ -582,11 +582,6 @@ impl CompletionsMenu {
                                                 .child(Label::new("Zed Predict"))
                                                 .child(
                                                     div()
-                                                        // .font(
-                                                        //     theme::ThemeSettings::get_global(cx)
-                                                        //         .buffer_font
-                                                        //         .clone(),
-                                                        // )
                                                         .text_size(ui::TextSize::XSmall.rems(cx))
                                                         .text_color(
                                                             cx.theme().colors().text.opacity(0.8),
