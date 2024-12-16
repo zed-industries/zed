@@ -50,13 +50,6 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: r2 object put -f script/install.sh zed-open-source-website-assets/install.sh
 
-      - name: Deploy Setup Polkit
-        uses: cloudflare/wrangler-action@6d58852c35a27e6034745c5d0bc373d739014f7f # v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: r2 object put -f script/setup-polkit.sh zed-open-source-website-assets/setup-polkit.sh
-
       - name: Deploy Docs Workers
         uses: cloudflare/wrangler-action@6d58852c35a27e6034745c5d0bc373d739014f7f # v3
         with:

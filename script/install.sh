@@ -126,6 +126,72 @@ linux() {
     cp "$HOME/.local/zed$suffix.app/share/applications/zed$suffix.desktop" "${desktop_file_path}"
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
     sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
+
+    setup_polkit
+}
+
+setup_polkit() {
+    # Check if polkit is installed
+    if ! command -v pkexec >/dev/null 2>&1; then
+        echo
+        echo "Note: 'pkexec' not detected. You won't be able to edit root files in Zed."
+        echo "See https://zed.dev/docs/linux#root for more information."
+        echo
+        return 0
+    fi
+
+    # Prompt user
+    echo
+    echo "Zed needs sudo access to improve root file editing experience."
+    printf "Configure polkit? [Y/n] "
+    read -r response
+    response=${response:-Y} # Default to Yes if empty
+    echo
+
+    case "$response" in
+        [Yy]*)            
+            LIBEXEC_DIR="/usr/libexec/zed"
+            ELEVATE_SCRIPT="$LIBEXEC_DIR/elevate.sh"
+            POLKIT_DIR="/usr/share/polkit-1/actions"
+
+            ELEVATE_SCRIPT_CONTENT='#!/bin/bash
+eval "$@"'
+
+            POLICY_CONTENT='<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+"-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+"http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <action id="org.zed.app">
+    <description>Run Zed with elevated privileges</description>
+    <message>Zed needs temporary elevated access to make changes. Please enter your password.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/zed/elevate.sh</annotate>
+  </action>
+</policyconfig>'
+
+            # We only request sudo access now
+            if sudo mkdir -p "$LIBEXEC_DIR" && \
+                echo "$ELEVATE_SCRIPT_CONTENT" | sudo tee "$ELEVATE_SCRIPT" > /dev/null && \
+                sudo chmod 755 "$ELEVATE_SCRIPT" && \
+                sudo mkdir -p "$POLKIT_DIR" && \
+                echo "$POLICY_CONTENT" | sudo tee "$POLKIT_DIR/org.zed.app.policy" > /dev/null && \
+                sudo chmod 644 "$POLKIT_DIR/org.zed.app.policy"; then
+                echo "Successfully installed Zed polkit configuration"
+            else
+                echo "Failed to install Zed polkit configuration"
+            fi
+            ;;
+        *)
+            echo "Skipping polkit configuration"
+            ;;
+    esac
+
+    echo
 }
 
 macos() {
