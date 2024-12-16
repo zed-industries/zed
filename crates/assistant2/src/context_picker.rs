@@ -9,7 +9,7 @@ use gpui::{
     WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::Workspace;
 
