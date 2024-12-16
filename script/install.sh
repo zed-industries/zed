@@ -125,38 +125,7 @@ linux() {
     desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
     cp "$HOME/.local/zed$suffix.app/share/applications/zed$suffix.desktop" "${desktop_file_path}"
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
-    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
-
-    # Copy PolicyKit if pkexec is available
-    if command -v pkexec >/dev/null 2>&1; then
-        echo "Zed requires sudo access to setup polkit policy file and elevation script."
-
-        LIBEXEC_DIR="/usr/libexec/zed"
-        ELEVATE_SCRIPT="$LIBEXEC_DIR/elevate.sh"
-        POLKIT_DIR="/usr/share/polkit-1/actions"
-        LOCAL_POLICY_FILE="$HOME/.local/zed${suffix}.app/share/polkit-1/actions/org.zed.app.policy"
-        
-        # Install elevation script
-        if sudo mkdir -p "$LIBEXEC_DIR" && \
-           echo '#!/bin/bash' | sudo tee "$ELEVATE_SCRIPT" > /dev/null && \
-           echo 'eval "$@"' | sudo tee -a "$ELEVATE_SCRIPT" > /dev/null && \
-           sudo chmod 755 "$ELEVATE_SCRIPT"; then
-            echo "Successfully installed elevation script"
-        else
-            echo "Failed to install elevation script"
-            exit 1
-        fi
-
-        # Install polkit policy
-        if sudo mkdir -p "$POLKIT_DIR" && \
-            sudo cp "$LOCAL_POLICY_FILE" "$POLKIT_DIR/" && \
-            sudo chmod 644 "$POLKIT_DIR/org.zed.app.policy"; then
-            echo "Successfully set up policy file"
-        else
-            echo "Failed to set up policy file"
-            exit 1
-        fi
-    fi
+    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}" 
 }
 
 macos() {
