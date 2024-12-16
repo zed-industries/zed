@@ -2794,7 +2794,7 @@ impl EditorElement {
         style: &EditorStyle,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
-        const PADDING_X: Pixels = Pixels(25.);
+        const PADDING_X: Pixels = Pixels(24.);
         const PADDING_Y: Pixels = Pixels(2.);
 
         let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
@@ -2897,6 +2897,7 @@ impl EditorElement {
                 }
 
                 let (text, highlights) = inline_completion_popover_text(editor_snapshot, edits, cx);
+                let line_count = text.lines().count() + 1;
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -2914,7 +2915,8 @@ impl EditorElement {
                     .width
                 };
 
-                let text = gpui::StyledText::new(text).with_highlights(&style.text, highlights);
+                let styled_text =
+                    gpui::StyledText::new(text).with_highlights(&style.text, highlights);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
@@ -2922,15 +2924,38 @@ impl EditorElement {
                     .border_color(cx.theme().colors().border)
                     .rounded_md()
                     .px_1()
-                    .child(text)
+                    .child(styled_text)
                     .into_any();
 
-                let origin = text_bounds.origin
-                    + point(
-                        longest_line_width + PADDING_X - scroll_pixel_position.x,
-                        edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
-                    );
-                element.prepaint_as_root(origin, AvailableSpace::min_size(), cx);
+                let element_bounds = element.layout_as_root(AvailableSpace::min_size(), cx);
+                let is_fully_visible =
+                    editor_width >= longest_line_width + PADDING_X + element_bounds.width;
+
+                let origin = if is_fully_visible {
+                    text_bounds.origin
+                        + point(
+                            longest_line_width + PADDING_X - scroll_pixel_position.x,
+                            edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
+                        )
+                } else {
+                    let target_above =
+                        DisplayRow(edit_start.row().0.saturating_sub(line_count as u32));
+                    let row_target = if visible_row_range
+                        .contains(&DisplayRow(target_above.0.saturating_sub(1)))
+                    {
+                        target_above
+                    } else {
+                        DisplayRow(edit_end.row().0 + 1)
+                    };
+
+                    text_bounds.origin
+                        + point(
+                            -scroll_pixel_position.x,
+                            row_target.as_f32() * line_height - scroll_pixel_position.y,
+                        )
+                };
+
+                element.prepaint_as_root(origin, element_bounds.into(), cx);
                 Some(element)
             }
         }
