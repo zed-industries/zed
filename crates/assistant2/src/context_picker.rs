@@ -35,37 +35,42 @@ pub(super) struct ContextPicker {
 impl ContextPicker {
     pub fn new(
         workspace: WeakView<Workspace>,
-        thread_store: WeakModel<ThreadStore>,
+        thread_store: Option<WeakModel<ThreadStore>>,
         context_strip: WeakView<ContextStrip>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let mut entries = vec![
+            ContextPickerEntry {
+                name: "directory".into(),
+                description: "Insert any directory".into(),
+                icon: IconName::Folder,
+            },
+            ContextPickerEntry {
+                name: "file".into(),
+                description: "Insert any file".into(),
+                icon: IconName::File,
+            },
+            ContextPickerEntry {
+                name: "fetch".into(),
+                description: "Fetch content from URL".into(),
+                icon: IconName::Globe,
+            },
+        ];
+
+        if thread_store.is_some() {
+            entries.push(ContextPickerEntry {
+                name: "thread".into(),
+                description: "Insert any thread".into(),
+                icon: IconName::MessageBubbles,
+            });
+        }
+
         let delegate = ContextPickerDelegate {
             context_picker: cx.view().downgrade(),
             workspace,
             thread_store,
             context_strip,
-            entries: vec![
-                ContextPickerEntry {
-                    name: "directory".into(),
-                    description: "Insert any directory".into(),
-                    icon: IconName::Folder,
-                },
-                ContextPickerEntry {
-                    name: "file".into(),
-                    description: "Insert any file".into(),
-                    icon: IconName::File,
-                },
-                ContextPickerEntry {
-                    name: "fetch".into(),
-                    description: "Fetch content from URL".into(),
-                    icon: IconName::Globe,
-                },
-                ContextPickerEntry {
-                    name: "thread".into(),
-                    description: "Insert any thread".into(),
-                    icon: IconName::MessageBubbles,
-                },
-            ],
+            entries,
             selected_ix: 0,
         };
 
@@ -121,7 +126,7 @@ struct ContextPickerEntry {
 pub(crate) struct ContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
-    thread_store: WeakModel<ThreadStore>,
+    thread_store: Option<WeakModel<ThreadStore>>,
     context_strip: WeakView<ContextStrip>,
     entries: Vec<ContextPickerEntry>,
     selected_ix: usize,
@@ -177,14 +182,16 @@ impl PickerDelegate for ContextPickerDelegate {
                             }));
                         }
                         "thread" => {
-                            this.mode = ContextPickerMode::Thread(cx.new_view(|cx| {
-                                ThreadContextPicker::new(
-                                    self.thread_store.clone(),
-                                    self.context_picker.clone(),
-                                    self.context_strip.clone(),
-                                    cx,
-                                )
-                            }));
+                            if let Some(thread_store) = self.thread_store.as_ref() {
+                                this.mode = ContextPickerMode::Thread(cx.new_view(|cx| {
+                                    ThreadContextPicker::new(
+                                        thread_store.clone(),
+                                        self.context_picker.clone(),
+                                        self.context_strip.clone(),
+                                        cx,
+                                    )
+                                }));
+                            }
                         }
                         _ => {}
                     }

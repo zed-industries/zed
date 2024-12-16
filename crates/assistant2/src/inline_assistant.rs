@@ -1,5 +1,4 @@
 use crate::context_strip::ContextStrip;
-use crate::thread_store::ThreadStore;
 use crate::{
     assistant_settings::AssistantSettings,
     prompts::PromptBuilder,
@@ -26,8 +25,7 @@ use futures::{channel::mpsc, future::LocalBoxFuture, join, SinkExt, Stream, Stre
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakModel, WeakView,
-    WindowContext,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -366,6 +364,7 @@ impl InlineAssistant {
                     prompt_buffer.clone(),
                     codegen.clone(),
                     self.fs.clone(),
+                    workspace.clone(),
                     cx,
                 )
             });
@@ -468,6 +467,7 @@ impl InlineAssistant {
                 prompt_buffer.clone(),
                 codegen.clone(),
                 self.fs.clone(),
+                workspace.clone(),
                 cx,
             )
         });
@@ -1477,11 +1477,7 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let gutter_dimensions = *self.gutter_dimensions.lock();
-        let mut buttons = vec![Button::new("add-context", "Add Context")
-            .style(ButtonStyle::Filled)
-            .icon(IconName::Plus)
-            .icon_position(IconPosition::Start)
-            .into_any_element()];
+        let mut buttons = Vec::new();
         let codegen = self.codegen.read(cx);
         if codegen.alternative_count(cx) > 1 {
             buttons.push(self.render_cycle_controls(cx));
@@ -1575,16 +1571,16 @@ impl Render for PromptEditor {
         });
 
         v_flex()
+            .border_y_1()
+            .border_color(cx.theme().status().info_border)
+            .size_full()
+            .py(cx.line_height() / 2.5)
             .child(
                 h_flex()
                     .key_context("PromptEditor")
                     .bg(cx.theme().colors().editor_background)
                     .block_mouse_down()
                     .cursor(CursorStyle::Arrow)
-                    .border_y_1()
-                    .border_color(cx.theme().status().info_border)
-                    .size_full()
-                    .py(cx.line_height() / 2.5)
                     .on_action(cx.listener(Self::confirm))
                     .on_action(cx.listener(Self::cancel))
                     .on_action(cx.listener(Self::move_up))
@@ -1672,7 +1668,16 @@ impl Render for PromptEditor {
                     .child(div().flex_1().child(self.render_editor(cx)))
                     .child(h_flex().gap_2().pr_6().children(buttons)),
             )
-            .child(self.context_strip.clone())
+            .child(
+                h_flex()
+                    .child(
+                        h_flex()
+                            .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
+                            .justify_center()
+                            .gap_2(),
+                    )
+                    .child(self.context_strip.clone()),
+            )
     }
 }
 
@@ -1694,7 +1699,6 @@ impl PromptEditor {
         codegen: Model<Codegen>,
         fs: Arc<dyn Fs>,
         workspace: WeakView<Workspace>,
-        thread_store: WeakModel<ThreadStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
@@ -1719,7 +1723,7 @@ impl PromptEditor {
         let mut this = Self {
             id,
             editor: prompt_editor,
-            context_strip: cx.new_view(|cx| ContextStrip::new(workspace, thread_store, cx)),
+            context_strip: cx.new_view(|cx| ContextStrip::new(workspace, None, cx)),
             language_model_selector: cx.new_view(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(

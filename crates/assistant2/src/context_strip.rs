@@ -19,7 +19,7 @@ pub struct ContextStrip {
 impl ContextStrip {
     pub fn new(
         workspace: WeakView<Workspace>,
-        thread_store: WeakModel<ThreadStore>,
+        thread_store: Option<WeakModel<ThreadStore>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let weak_self = cx.view().downgrade();

@@ -35,8 +35,9 @@ impl MessageEditor {
 
                 editor
             }),
-            context_strip: cx
-                .new_view(|cx| ContextStrip::new(workspace.clone(), thread_store.clone(), cx)),
+            context_strip: cx.new_view(|cx| {
+                ContextStrip::new(workspace.clone(), Some(thread_store.clone()), cx)
+            }),
             language_model_selector: cx.new_view(|cx| {
                 LanguageModelSelector::new(
                     |model, _cx| {
