@@ -411,9 +411,19 @@ impl InlayMap {
     pub fn sync(
         &mut self,
         diff_map_snapshot: DiffMapSnapshot,
-        diff_edits: Vec<DiffEdit>,
+        mut diff_edits: Vec<DiffEdit>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
+
+        if diff_edits.is_empty()
+            && snapshot.buffer().trailing_excerpt_update_count()
+                != diff_map_snapshot.buffer().trailing_excerpt_update_count()
+        {
+            diff_edits.push(Edit {
+                old: snapshot.diff_map_snapshot.len()..snapshot.diff_map_snapshot.len(),
+                new: diff_map_snapshot.len()..diff_map_snapshot.len(),
+            });
+        }
 
         let mut inlay_edits = Patch::default();
         let mut new_transforms = SumTree::default();
@@ -593,7 +603,6 @@ impl InlayMap {
             if self.inlays.is_empty() || rng.gen() {
                 let position = snapshot.buffer().random_byte_range(0, rng).start;
                 let anchor = snapshot.buffer().anchor_at(position, Bias::Left);
-                let position = snapshot.diff_map_snapshot.to_diff_offset(position);
                 let bias = if rng.gen() { Bias::Left } else { Bias::Right };
                 let len = if rng.gen_bool(0.01) {
                     0

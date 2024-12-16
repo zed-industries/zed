@@ -170,7 +170,7 @@ impl DiffMap {
     pub fn sync(
         &mut self,
         multibuffer_snapshot: MultiBufferSnapshot,
-        mut buffer_edits: Vec<text::Edit<usize>>,
+        buffer_edits: Vec<text::Edit<usize>>,
         cx: &mut ModelContext<Self>,
     ) -> (DiffMapSnapshot, Vec<DiffEdit>) {
         let changes = buffer_edits
@@ -178,33 +178,7 @@ impl DiffMap {
             .map(|edit| (edit.clone(), ChangeKind::InputEdited))
             .collect::<Vec<_>>();
 
-        let snapshot = &mut self.snapshot;
-        if buffer_edits.is_empty()
-            && snapshot.buffer.trailing_excerpt_update_count()
-                != multibuffer_snapshot.trailing_excerpt_update_count()
-        {
-            buffer_edits.push(Edit {
-                old: snapshot.buffer.len()..snapshot.buffer.len(),
-                new: multibuffer_snapshot.len()..multibuffer_snapshot.len(),
-            });
-        }
-
-        if buffer_edits.is_empty() {
-            if snapshot.buffer.edit_count() != multibuffer_snapshot.edit_count()
-                || snapshot.buffer.non_text_state_update_count()
-                    != multibuffer_snapshot.non_text_state_update_count()
-                || snapshot.buffer.trailing_excerpt_update_count()
-                    != multibuffer_snapshot.trailing_excerpt_update_count()
-            {
-                snapshot.version += 1;
-            }
-
-            snapshot.buffer = multibuffer_snapshot;
-            return (snapshot.clone(), Vec::new());
-        }
-
-        snapshot.buffer = multibuffer_snapshot.clone();
-
+        self.snapshot.buffer = multibuffer_snapshot.clone();
         self.recompute_transforms(changes, cx);
 
         (
@@ -352,14 +326,14 @@ impl DiffMap {
         let mut edits = Patch::default();
 
         let mut changes = changes.into_iter().peekable();
+        let mut delta = 0_isize;
         while let Some((mut edit, mut operation)) = changes.next() {
             let to_skip = cursor.slice(&edit.old.start, Bias::Right, &());
             self.append_transforms(&mut new_transforms, to_skip);
 
-            let mut delta = 0_isize;
             let mut end_of_current_insert = 0;
             loop {
-                let multibuffer_range = edit.old.clone();
+                let multibuffer_range = edit.new.clone();
                 let edit_old_start =
                     cursor.start().1 + DiffOffset(edit.old.start - cursor.start().0);
                 let mut edit_old_end =
