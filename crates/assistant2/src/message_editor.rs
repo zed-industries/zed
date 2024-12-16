@@ -7,6 +7,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, KeyBinding, Tooltip};
 use workspace::Workspace;
 
+use crate::context_store::ContextStore;
 use crate::context_strip::ContextStrip;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
@@ -15,6 +16,7 @@ use crate::{Chat, ToggleModelSelector};
 pub struct MessageEditor {
     thread: Model<Thread>,
     editor: View<Editor>,
+    context_store: Model<ContextStore>,
     context_strip: View<ContextStrip>,
     language_model_selector: View<LanguageModelSelector>,
     use_tools: bool,
@@ -27,6 +29,8 @@ impl MessageEditor {
         thread: Model<Thread>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let context_store = cx.new_model(|_cx| ContextStore::new());
+
         Self {
             thread,
             editor: cx.new_view(|cx| {
@@ -35,8 +39,15 @@ impl MessageEditor {
 
                 editor
             }),
-            context_strip: cx
-                .new_view(|cx| ContextStrip::new(workspace.clone(), thread_store.clone(), cx)),
+            context_store: context_store.clone(),
+            context_strip: cx.new_view(|cx| {
+                ContextStrip::new(
+                    context_store,
+                    workspace.clone(),
+                    Some(thread_store.clone()),
+                    cx,
+                )
+            }),
             language_model_selector: cx.new_view(|cx| {
                 LanguageModelSelector::new(
                     |model, _cx| {
@@ -75,7 +86,7 @@ impl MessageEditor {
             editor.clear(cx);
             text
         });
-        let context = self.context_strip.update(cx, |this, _cx| this.drain());
+        let context = self.context_store.update(cx, |this, _cx| this.drain());
 
         self.thread.update(cx, |thread, cx| {
             thread.insert_user_message(user_message, context, cx);

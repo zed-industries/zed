@@ -1,60 +1,45 @@
 use std::rc::Rc;
 
-use gpui::{View, WeakModel, WeakView};
+use gpui::{Model, View, WeakModel, WeakView};
 use ui::{prelude::*, IconButtonShape, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
-use crate::context::{Context, ContextId, ContextKind};
 use crate::context_picker::ContextPicker;
+use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 
 pub struct ContextStrip {
-    context: Vec<Context>,
-    next_context_id: ContextId,
+    context_store: Model<ContextStore>,
     context_picker: View<ContextPicker>,
     pub(crate) context_picker_handle: PopoverMenuHandle<ContextPicker>,
 }
 
 impl ContextStrip {
     pub fn new(
+        context_store: Model<ContextStore>,
         workspace: WeakView<Workspace>,
-        thread_store: WeakModel<ThreadStore>,
+        thread_store: Option<WeakModel<ThreadStore>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let weak_self = cx.view().downgrade();
-
         Self {
-            context: Vec::new(),
-            next_context_id: ContextId(0),
+            context_store: context_store.clone(),
             context_picker: cx.new_view(|cx| {
-                ContextPicker::new(workspace.clone(), thread_store.clone(), weak_self, cx)
+                ContextPicker::new(
+                    workspace.clone(),
+                    thread_store.clone(),
+                    context_store.downgrade(),
+                    cx,
+                )
             }),
             context_picker_handle: PopoverMenuHandle::default(),
         }
-    }
-
-    pub fn drain(&mut self) -> Vec<Context> {
-        self.context.drain(..).collect()
-    }
-
-    pub fn insert_context(
-        &mut self,
-        kind: ContextKind,
-        name: impl Into<SharedString>,
-        text: impl Into<SharedString>,
-    ) {
-        self.context.push(Context {
-            id: self.next_context_id.post_inc(),
-            name: name.into(),
-            kind,
-            text: text.into(),
-        });
     }
 }
 
 impl Render for ContextStrip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let context = self.context_store.read(cx).context();
         let context_picker = self.context_picker.clone();
 
         h_flex()
@@ -76,25 +61,31 @@ impl Render for ContextStrip {
                     })
                     .with_handle(self.context_picker_handle.clone()),
             )
-            .children(self.context.iter().map(|context| {
+            .children(context.iter().map(|context| {
                 ContextPill::new(context.clone()).on_remove({
                     let context = context.clone();
-                    Rc::new(cx.listener(move |this, _event, cx| {
-                        this.context.retain(|other| other.id != context.id);
+                    let context_store = self.context_store.clone();
+                    Rc::new(cx.listener(move |_this, _event, cx| {
+                        context_store.update(cx, |this, _cx| {
+                            this.remove_context(&context.id);
+                        });
                         cx.notify();
                     }))
                 })
             }))
-            .when(!self.context.is_empty(), |parent| {
+            .when(!context.is_empty(), |parent| {
                 parent.child(
                     IconButton::new("remove-all-context", IconName::Eraser)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
-                        .on_click(cx.listener(|this, _event, cx| {
-                            this.context.clear();
-                            cx.notify();
-                        })),
+                        .on_click({
+                            let context_store = self.context_store.clone();
+                            cx.listener(move |_this, _event, cx| {
+                                context_store.update(cx, |this, _cx| this.clear());
+                                cx.notify();
+                            })
+                        }),
                 )
             })
     }
