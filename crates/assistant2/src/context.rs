@@ -28,9 +28,9 @@ pub enum ContextKind {
     Thread,
 }
 
-pub fn attach_context_to_message<'a>(
+pub fn attach_context_to_message(
     message: &mut LanguageModelRequestMessage,
-    context: impl IntoIterator<Item = &'a Context>,
+    context: impl IntoIterator<Item = Context>,
 ) {
     let mut file_context = String::new();
     let mut fetch_context = String::new();

@@ -192,7 +192,7 @@ impl Thread {
             }
 
             if let Some(context) = self.context_for_message(message.id) {
-                attach_context_to_message(&mut request_message, context);
+                attach_context_to_message(&mut request_message, context.clone());
             }
 
             if !message.text.is_empty() {

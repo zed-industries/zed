@@ -16,7 +16,7 @@ use workspace::Workspace;
 use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
-use crate::context_strip::ContextStrip;
+use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 
 #[derive(Debug, Clone)]
@@ -36,7 +36,7 @@ impl ContextPicker {
     pub fn new(
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
-        context_strip: WeakView<ContextStrip>,
+        context_store: WeakModel<ContextStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut entries = vec![
@@ -69,7 +69,7 @@ impl ContextPicker {
             context_picker: cx.view().downgrade(),
             workspace,
             thread_store,
-            context_strip,
+            context_store,
             entries,
             selected_ix: 0,
         };
@@ -127,7 +127,7 @@ pub(crate) struct ContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
     thread_store: Option<WeakModel<ThreadStore>>,
-    context_strip: WeakView<ContextStrip>,
+    context_store: WeakModel<ContextStore>,
     entries: Vec<ContextPickerEntry>,
     selected_ix: usize,
 }
@@ -166,7 +166,7 @@ impl PickerDelegate for ContextPickerDelegate {
                                 FileContextPicker::new(
                                     self.context_picker.clone(),
                                     self.workspace.clone(),
-                                    self.context_strip.clone(),
+                                    self.context_store.clone(),
                                     cx,
                                 )
                             }));
@@ -176,7 +176,7 @@ impl PickerDelegate for ContextPickerDelegate {
                                 FetchContextPicker::new(
                                     self.context_picker.clone(),
                                     self.workspace.clone(),
-                                    self.context_strip.clone(),
+                                    self.context_store.clone(),
                                     cx,
                                 )
                             }));
@@ -187,7 +187,7 @@ impl PickerDelegate for ContextPickerDelegate {
                                     ThreadContextPicker::new(
                                         thread_store.clone(),
                                         self.context_picker.clone(),
-                                        self.context_strip.clone(),
+                                        self.context_store.clone(),
                                         cx,
                                     )
                                 }));

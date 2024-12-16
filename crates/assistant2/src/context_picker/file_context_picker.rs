@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakView};
+use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, WorktreeId};
 use ui::{prelude::*, ListItem};
@@ -14,7 +14,7 @@ use workspace::Workspace;
 
 use crate::context::ContextKind;
 use crate::context_picker::ContextPicker;
-use crate::context_strip::ContextStrip;
+use crate::context_store::ContextStore;
 
 pub struct FileContextPicker {
     picker: View<Picker<FileContextPickerDelegate>>,
@@ -24,10 +24,10 @@ impl FileContextPicker {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        context_strip: WeakView<ContextStrip>,
+        context_store: WeakModel<ContextStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate = FileContextPickerDelegate::new(context_picker, workspace, context_strip);
+        let delegate = FileContextPickerDelegate::new(context_picker, workspace, context_store);
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
@@ -49,7 +49,7 @@ impl Render for FileContextPicker {
 pub struct FileContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
-    context_strip: WeakView<ContextStrip>,
+    context_store: WeakModel<ContextStore>,
     matches: Vec<PathMatch>,
     selected_index: usize,
 }
@@ -58,12 +58,12 @@ impl FileContextPickerDelegate {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        context_strip: WeakView<ContextStrip>,
+        context_store: WeakModel<ContextStore>,
     ) -> Self {
         Self {
             context_picker,
             workspace,
-            context_strip,
+            context_store,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -214,7 +214,7 @@ impl PickerDelegate for FileContextPickerDelegate {
             let buffer = open_buffer_task.await?;
 
             this.update(&mut cx, |this, cx| {
-                this.delegate.context_strip.update(cx, |context_strip, cx| {
+                this.delegate.context_store.update(cx, |context_store, cx| {
                     let mut text = String::new();
                     text.push_str(&codeblock_fence_for_path(Some(&path), None));
                     text.push_str(&buffer.read(cx).text());
@@ -224,7 +224,7 @@ impl PickerDelegate for FileContextPickerDelegate {
 
                     text.push_str("```\n");
 
-                    context_strip.insert_context(
+                    context_store.insert_context(
                         ContextKind::File,
                         path.to_string_lossy().to_string(),
                         text,

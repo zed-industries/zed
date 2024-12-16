@@ -1,4 +1,5 @@
 use crate::context::attach_context_to_message;
+use crate::context_store::ContextStore;
 use crate::context_strip::ContextStrip;
 use crate::thread_store::ThreadStore;
 use crate::AssistantPanel;
@@ -359,11 +360,13 @@ impl InlineAssistant {
         let mut assist_to_focus = None;
         for range in codegen_ranges {
             let assist_id = self.next_assist_id.post_inc();
+            let context_store = cx.new_model(|_cx| ContextStore::new());
             let codegen = cx.new_model(|cx| {
                 Codegen::new(
                     editor.read(cx).buffer().clone(),
                     range.clone(),
                     None,
+                    context_store.clone(),
                     self.telemetry.clone(),
                     self.prompt_builder.clone(),
                     cx,
@@ -379,6 +382,7 @@ impl InlineAssistant {
                     prompt_buffer.clone(),
                     codegen.clone(),
                     self.fs.clone(),
+                    context_store,
                     workspace.clone(),
                     thread_store.clone(),
                     cx,
@@ -464,11 +468,14 @@ impl InlineAssistant {
             range.end = range.end.bias_right(&snapshot);
         }
 
+        let context_store = cx.new_model(|_cx| ContextStore::new());
+
         let codegen = cx.new_model(|cx| {
             Codegen::new(
                 editor.read(cx).buffer().clone(),
                 range.clone(),
                 initial_transaction_id,
+                context_store.clone(),
                 self.telemetry.clone(),
                 self.prompt_builder.clone(),
                 cx,
@@ -484,6 +491,7 @@ impl InlineAssistant {
                 prompt_buffer.clone(),
                 codegen.clone(),
                 self.fs.clone(),
+                context_store,
                 workspace.clone(),
                 thread_store,
                 cx,
@@ -1716,6 +1724,7 @@ impl PromptEditor {
         prompt_buffer: Model<MultiBuffer>,
         codegen: Model<Codegen>,
         fs: Arc<dyn Fs>,
+        context_store: Model<ContextStore>,
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         cx: &mut ViewContext<Self>,
@@ -1742,7 +1751,9 @@ impl PromptEditor {
         let mut this = Self {
             id,
             editor: prompt_editor,
-            context_strip: cx.new_view(|cx| ContextStrip::new(workspace, thread_store, cx)),
+            context_strip: cx.new_view(|cx| {
+                ContextStrip::new(context_store, workspace.clone(), thread_store.clone(), cx)
+            }),
             language_model_selector: cx.new_view(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
@@ -2337,6 +2348,7 @@ pub struct Codegen {
     buffer: Model<MultiBuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
+    context_store: Model<ContextStore>,
     telemetry: Arc<Telemetry>,
     builder: Arc<PromptBuilder>,
     is_insertion: bool,
@@ -2347,6 +2359,7 @@ impl Codegen {
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
+        context_store: Model<ContextStore>,
         telemetry: Arc<Telemetry>,
         builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
@@ -2356,6 +2369,7 @@ impl Codegen {
                 buffer.clone(),
                 range.clone(),
                 false,
+                Some(context_store.clone()),
                 Some(telemetry.clone()),
                 builder.clone(),
                 cx,
@@ -2370,6 +2384,7 @@ impl Codegen {
             buffer,
             range,
             initial_transaction_id,
+            context_store,
             telemetry,
             builder,
         };
@@ -2442,6 +2457,7 @@ impl Codegen {
                     self.buffer.clone(),
                     self.range.clone(),
                     false,
+                    Some(self.context_store.clone()),
                     Some(self.telemetry.clone()),
                     self.builder.clone(),
                     cx,
@@ -2521,6 +2537,7 @@ pub struct CodegenAlternative {
     status: CodegenStatus,
     generation: Task<()>,
     diff: Diff,
+    context_store: Option<Model<ContextStore>>,
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
     builder: Arc<PromptBuilder>,
@@ -2559,6 +2576,7 @@ impl CodegenAlternative {
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
         active: bool,
+        context_store: Option<Model<ContextStore>>,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
@@ -2596,6 +2614,7 @@ impl CodegenAlternative {
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             diff: Diff::default(),
+            context_store,
             telemetry,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
             builder,
@@ -2681,7 +2700,11 @@ impl CodegenAlternative {
         Ok(())
     }
 
-    fn build_request(&self, user_prompt: String, cx: &AppContext) -> Result<LanguageModelRequest> {
+    fn build_request(
+        &self,
+        user_prompt: String,
+        cx: &mut AppContext,
+    ) -> Result<LanguageModelRequest> {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let language = buffer.language_at(self.range.start);
         let language_name = if let Some(language) = language.as_ref() {
@@ -2719,7 +2742,12 @@ impl CodegenAlternative {
             content: Vec::new(),
             cache: false,
         };
-        attach_context_to_message(&mut request_message, &[]);
+
+        if let Some(context_store) = &self.context_store {
+            let context = context_store.update(cx, |this, _cx| this.context().clone());
+            attach_context_to_message(&mut request_message, context);
+        }
+
         request_message.content.push(prompt.into());
 
         Ok(LanguageModelRequest {
@@ -3520,6 +3548,7 @@ mod tests {
                 range.clone(),
                 true,
                 None,
+                None,
                 prompt_builder,
                 cx,
             )
@@ -3583,6 +3612,7 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 true,
+                None,
                 None,
                 prompt_builder,
                 cx,
@@ -3651,6 +3681,7 @@ mod tests {
                 range.clone(),
                 true,
                 None,
+                None,
                 prompt_builder,
                 cx,
             )
@@ -3717,6 +3748,7 @@ mod tests {
                 range.clone(),
                 true,
                 None,
+                None,
                 prompt_builder,
                 cx,
             )
@@ -3771,6 +3803,7 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 false,
+                None,
                 None,
                 prompt_builder,
                 cx,
