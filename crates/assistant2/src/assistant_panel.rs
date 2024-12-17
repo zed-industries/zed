@@ -257,7 +257,7 @@ impl Panel for AssistantPanel {
     }
 
     fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
-        Some(IconName::ZedAssistant)
+        Some(IconName::ZedAssistant2)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
