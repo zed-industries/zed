@@ -1003,6 +1003,18 @@ where
             size: self.size.clone() + size(double_amount.clone(), double_amount),
         }
     }
+
+    /// Extends the bounds different amounts in each direction.
+    pub fn extend(&self, amount: Edges<T>) -> Bounds<T> {
+        Bounds {
+            origin: self.origin.clone() - point(amount.left.clone(), amount.top.clone()),
+            size: self.size.clone()
+                + size(
+                    amount.left.clone() + amount.right.clone(),
+                    amount.top.clone() + amount.bottom.clone(),
+                ),
+        }
+    }
 }
 
 impl<T> Bounds<T>
@@ -1094,6 +1106,21 @@ impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output =
         let top_left = self.origin.min(&other.origin);
         let bottom_right = self.bottom_right().max(&other.bottom_right());
         Bounds::from_corners(top_left, bottom_right)
+    }
+}
+
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Add<T, Output = T> + Sub<T, Output = T> + Default,
+{
+    /// Computes the space available within outer bounds.
+    pub fn space_within(&self, outer: &Self) -> Edges<T> {
+        Edges {
+            top: self.top().clone() - outer.top().clone(),
+            right: outer.right().clone() - self.right().clone(),
+            bottom: outer.bottom().clone() - self.bottom().clone(),
+            left: self.left().clone() - outer.left().clone(),
+        }
     }
 }
 
