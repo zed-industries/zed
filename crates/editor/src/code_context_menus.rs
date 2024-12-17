@@ -13,9 +13,7 @@ use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::{CodeAction, Completion, TaskSourceKind};
-use settings::Settings;
 use task::ResolvedTask;
-use theme::ThemeSettings;
 use ui::{prelude::*, Color, IntoElement, ListItem, Popover, Styled};
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -565,12 +563,11 @@ impl CompletionsMenu {
                                     .toggle_state(item_ix == selected_item)
                                     .start_slot(Icon::new(IconName::ZedPredict))
                                     .child(
-                                        div()
-                                            .font(ThemeSettings::get_global(cx).buffer_font.clone())
-                                            .child(format!(
-                                                "{} Completion",
-                                                SharedString::new_static(provider_name)
-                                            )),
+                                        StyledText::new(format!(
+                                            "{} Completion",
+                                            SharedString::new_static(provider_name)
+                                        ))
+                                        .with_highlights(&style.text, None),
                                     )
                                     .on_click(cx.listener(move |editor, _event, cx| {
                                         cx.stop_propagation();
