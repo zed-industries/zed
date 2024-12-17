@@ -446,7 +446,7 @@ impl InlayMap {
 
             // Push the unchanged prefix.
             let prefix_start = DiffOffset(new_transforms.summary().input.len);
-            let prefix_end = DiffOffset(diff_edit.new.start.0);
+            let prefix_end = diff_edit.new.start;
             push_isomorphic(
                 &mut new_transforms,
                 diff_map_snapshot.text_summary_for_range(prefix_start..prefix_end),
@@ -974,7 +974,7 @@ impl InlaySnapshot {
 
         let max_point = self.diff_map_snapshot.max_point();
         let mut diff_point = cursor.start().1;
-        let buffer_row = if row == 0 {
+        let diff_row = if row == 0 {
             0
         } else {
             match cursor.item() {
@@ -989,7 +989,7 @@ impl InlaySnapshot {
         InlayBufferRows {
             transforms: cursor,
             inlay_row: inlay_point.row(),
-            diff_rows: self.diff_map_snapshot.row_infos(buffer_row),
+            diff_rows: self.diff_map_snapshot.row_infos(diff_row),
             max_point,
         }
     }

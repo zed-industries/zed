@@ -30,18 +30,19 @@ struct ChangeSetState {
 struct DiffSnapshot {
     diff: git::diff::BufferDiff,
     base_text: language::BufferSnapshot,
+    base_text_version: usize,
 }
 
 #[derive(Clone)]
 pub struct DiffMapSnapshot {
     diffs: TreeMap<BufferId, DiffSnapshot>,
-    transforms: SumTree<DiffTransform>,
+    pub(crate) transforms: SumTree<DiffTransform>,
     pub(crate) version: usize,
     pub(crate) buffer: MultiBufferSnapshot,
 }
 
 #[derive(Debug, Clone)]
-enum DiffTransform {
+pub(crate) enum DiffTransform {
     BufferContent {
         summary: TextSummary,
         is_inserted_hunk: bool,
@@ -55,7 +56,7 @@ enum DiffTransform {
 }
 
 #[derive(Debug, Clone)]
-struct DiffTransformSummary {
+pub(crate) struct DiffTransformSummary {
     multibuffer_map: TextSummary,
     diff_map: TextSummary,
 }
@@ -97,7 +98,7 @@ pub struct DiffMapRows<'a> {
 pub type DiffEdit = text::Edit<DiffOffset>;
 
 enum ChangeKind {
-    DiffUpdated,
+    DiffUpdated { base_changed: bool },
     InputEdited,
     ExpandOrCollapseHunks { range: Range<usize>, expand: bool },
 }
@@ -199,6 +200,13 @@ impl DiffMap {
             .base_text
             .as_ref()
             .map(|buffer| buffer.read(cx).snapshot());
+        let base_text_version_changed = self
+            .snapshot
+            .diffs
+            .get(&buffer_id)
+            .map_or(true, |snapshot| {
+                snapshot.base_text_version != change_set.base_text_version
+            });
 
         if let Some(base_text) = base_text.clone() {
             self.snapshot.diffs.insert(
@@ -206,6 +214,7 @@ impl DiffMap {
                 DiffSnapshot {
                     diff: diff.clone(),
                     base_text,
+                    base_text_version: change_set.base_text_version,
                 },
             );
         } else {
@@ -225,7 +234,9 @@ impl DiffMap {
                         old: multibuffer_start..multibuffer_end,
                         new: multibuffer_start..multibuffer_end,
                     },
-                    ChangeKind::DiffUpdated,
+                    ChangeKind::DiffUpdated {
+                        base_changed: base_text_version_changed,
+                    },
                 )
             })
             .collect();
@@ -328,7 +339,14 @@ impl DiffMap {
         let mut changes = changes.into_iter().peekable();
         let mut delta = 0_isize;
         while let Some((mut edit, mut operation)) = changes.next() {
-            let to_skip = cursor.slice(&edit.old.start, Bias::Right, &());
+            let mut to_skip = cursor.slice(&edit.old.start, Bias::Left, &());
+            while cursor.end(&()).0 < edit.old.start
+                || (cursor.end(&()).0 == edit.old.start && cursor.start().0 < edit.old.start)
+            {
+                to_skip.extend(cursor.item().cloned(), &());
+                cursor.next(&());
+            }
+
             self.append_transforms(&mut new_transforms, to_skip);
 
             let mut end_of_current_insert = 0;
@@ -411,18 +429,24 @@ impl DiffMap {
                             let hunk_is_deletion =
                                 hunk_start_buffer_offset == hunk_end_buffer_offset;
 
-                            let mut should_expand_hunk =
-                                was_previously_expanded || self.all_hunks_expanded;
-                            if let ChangeKind::ExpandOrCollapseHunks { range, expand } = &operation
-                            {
-                                let intersects = hunk_is_deletion
-                                    || (hunk_start_buffer_offset < range.end
-                                        && hunk_end_buffer_offset > range.start);
-                                if *expand {
-                                    should_expand_hunk |= intersects;
-                                } else {
-                                    should_expand_hunk &= !intersects;
+                            let should_expand_hunk = match &operation {
+                                ChangeKind::DiffUpdated { base_changed: true } => {
+                                    self.all_hunks_expanded
                                 }
+                                ChangeKind::ExpandOrCollapseHunks { range, expand } => {
+                                    let intersects = hunk_is_deletion
+                                        || (hunk_start_buffer_offset < range.end
+                                            && hunk_end_buffer_offset > range.start);
+                                    if *expand {
+                                        was_previously_expanded
+                                            || self.all_hunks_expanded
+                                            || intersects
+                                    } else {
+                                        !intersects
+                                            && (was_previously_expanded || self.all_hunks_expanded)
+                                    }
+                                }
+                                _ => was_previously_expanded || self.all_hunks_expanded,
                             };
 
                             if should_expand_hunk {
@@ -1047,7 +1071,7 @@ impl DiffMapSnapshot {
         let mut cursor = self.transforms.cursor::<(DiffPoint, Point)>(&());
         cursor.seek(&diff_point, Bias::Right, &());
 
-        let (diff_transform_start, inlay_transform_start) = cursor.start().clone();
+        let (diff_transform_start, buffer_transform_start) = cursor.start().clone();
 
         let overshoot = if matches!(cursor.item(), Some(DiffTransform::BufferContent { .. })) {
             diff_point.row() - diff_transform_start.row()
@@ -1056,7 +1080,7 @@ impl DiffMapSnapshot {
         };
         let input_buffer_rows = self
             .buffer
-            .buffer_rows(MultiBufferRow(inlay_transform_start.row + overshoot));
+            .buffer_rows(MultiBufferRow(buffer_transform_start.row + overshoot));
 
         DiffMapRows {
             diff_point,
