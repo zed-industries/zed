@@ -2901,32 +2901,38 @@ impl EditorElement {
         else {
             return;
         };
-        let target_offset = match context_menu_origin {
-            crate::ContextMenuOrigin::EditorPoint(display_point) => {
-                let cursor_row_layout =
-                    &line_layouts[display_point.row().minus(start_row) as usize];
-                gpui::Point {
-                    x: cursor_row_layout.x_for_index(display_point.column() as usize)
-                        - scroll_pixel_position.x,
-                    y: display_point.row().next_row().as_f32() * line_height
-                        - scroll_pixel_position.y,
+        let target_position = content_origin
+            + match context_menu_origin {
+                crate::ContextMenuOrigin::EditorPoint(display_point) => {
+                    let cursor_row_layout =
+                        &line_layouts[display_point.row().minus(start_row) as usize];
+                    gpui::Point {
+                        x: cmp::max(
+                            px(0.),
+                            cursor_row_layout.x_for_index(display_point.column() as usize)
+                                - scroll_pixel_position.x,
+                        ),
+                        y: cmp::max(
+                            px(0.),
+                            display_point.row().next_row().as_f32() * line_height
+                                - scroll_pixel_position.y,
+                        ),
+                    }
                 }
-            }
-            crate::ContextMenuOrigin::GutterIndicator(row) => {
-                // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
-                // text field.
-                gpui::Point {
-                    x: -gutter_overshoot,
-                    y: row.next_row().as_f32() * line_height - scroll_pixel_position.y,
+                crate::ContextMenuOrigin::GutterIndicator(row) => {
+                    // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
+                    // text field.
+                    gpui::Point {
+                        x: -gutter_overshoot,
+                        y: row.next_row().as_f32() * line_height - scroll_pixel_position.y,
+                    }
                 }
-            }
-        };
+            };
 
         // If the context menu's max height won't fit below, then flip it above the line and display
         // it in reverse order. If the available space above is less than below.
         let unconstrained_max_height = line_height * 12. + POPOVER_Y_PADDING;
         let min_height = line_height * 3. + POPOVER_Y_PADDING;
-        let target_position = content_origin + target_offset;
         let bottom_y_when_flipped = target_position.y - line_height;
         let available_above = bottom_y_when_flipped - text_hitbox.top();
         let available_below = text_hitbox.bottom() - target_position.y;
