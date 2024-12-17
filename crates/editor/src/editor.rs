@@ -11346,7 +11346,7 @@ impl Editor {
 
     pub fn copy_file_name_with_extension(&mut self, _: &CopyFileNameWithExtension, cx: &mut ViewContext<Self>) {
         if let Some(file) = self.target_file(cx) {
-            if let Some(file_name) = file.path.file_name() {
+            if let Some(file_name) = file.path().file_name() {
                 if let Some(name) = file_name.to_str() {
                     cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
                 }
