@@ -19,8 +19,8 @@ use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, Event, EventRequestBody,
-    EventWrapper, ExtensionEvent, InlineCompletionEvent, InlineCompletionRating,
-    InlineCompletionRatingEvent, ReplEvent, SettingEvent,
+    EventWrapper, InlineCompletionEvent, InlineCompletionRating, InlineCompletionRatingEvent,
+    ReplEvent, SettingEvent,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -402,13 +402,6 @@ impl Telemetry {
         });
 
         self.report_event(event)
-    }
-
-    pub fn report_extension_event(self: &Arc<Self>, extension_id: Arc<str>, version: Arc<str>) {
-        self.report_event(Event::Extension(ExtensionEvent {
-            extension_id,
-            version,
-        }))
     }
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
