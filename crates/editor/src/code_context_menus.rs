@@ -401,9 +401,9 @@ impl CompletionsMenu {
         let selected_item = self.selected_item;
         let style = style.clone();
 
-        let multiline_docs = if show_completion_documentation {
-            match &self.entries[selected_item] {
-                CompletionEntry::Match(mat) => match &completions[mat.candidate_id].documentation {
+        let multiline_docs = match &self.entries[selected_item] {
+            CompletionEntry::Match(mat) if show_completion_documentation => {
+                match &completions[mat.candidate_id].documentation {
                     Some(Documentation::MultiLinePlainText(text)) => {
                         Some(div().child(SharedString::from(text.clone())))
                     }
@@ -420,26 +420,25 @@ impl CompletionsMenu {
                         Some(div().child("No documentation"))
                     }
                     _ => None,
-                },
-                CompletionEntry::InlineCompletionHint(hint) => Some(match &hint.text {
-                    InlineCompletionText::Edit { text, highlights } => div()
-                        .my_1()
-                        .rounded_md()
-                        .bg(cx.theme().colors().editor_background)
-                        .child(
-                            gpui::StyledText::new(text.clone())
-                                .with_highlights(&style.text, highlights.clone()),
-                        ),
-                    InlineCompletionText::Move(text) => div().child(text.clone()),
-                }),
+                }
             }
-        } else {
-            None
+            CompletionEntry::InlineCompletionHint(hint) => Some(match &hint.text {
+                InlineCompletionText::Edit { text, highlights } => div()
+                    .my_1()
+                    .rounded_md()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        gpui::StyledText::new(text.clone())
+                            .with_highlights(&style.text, highlights.clone()),
+                    ),
+                InlineCompletionText::Move(text) => div().child(text.clone()),
+            }),
+            _ => None,
         };
 
         let aside_contents = if let Some(multiline_docs) = multiline_docs {
             Some(multiline_docs)
-        } else if self.aside_was_displayed.get() {
+        } else if show_completion_documentation && self.aside_was_displayed.get() {
             Some(div().child("Fetching documentation..."))
         } else {
             None
