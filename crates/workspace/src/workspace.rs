@@ -2846,12 +2846,10 @@ impl Workspace {
     }
 
     fn move_item_to_pane_at_index(&mut self, action: &MoveItemToPane, cx: &mut ViewContext<Self>) {
-        let panes = self.center.panes();
-        let source_pane = self.active_pane.clone();
-        let Some(target_pane) = panes.get(action.destination).map(|p| (*p).clone()) else {
+        let Some(&target_pane) = self.center.panes().get(action.destination) else {
             return;
         };
-        move_active_item(&source_pane, &target_pane, action.focus, true, cx);
+        move_active_item(&self.active_pane, target_pane, action.focus, true, cx);
     }
 
     pub fn activate_next_pane(&mut self, cx: &mut WindowContext) {
@@ -2978,8 +2976,7 @@ impl Workspace {
         cx: &mut WindowContext,
     ) {
         if let Some(destination) = self.find_pane_in_direction(action.direction, cx) {
-            let source = self.active_pane.clone();
-            move_active_item(&source, &destination, action.focus, true, cx);
+            move_active_item(&self.active_pane, &destination, action.focus, true, cx);
         }
     }
 
@@ -3003,14 +3000,14 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(to) = self.find_pane_in_direction(direction, cx) {
-            self.center.swap(&self.active_pane.clone(), &to);
+            self.center.swap(&self.active_pane, &to);
             cx.notify();
         }
     }
 
     pub fn resize_pane(&mut self, axis: gpui::Axis, amount: Pixels, cx: &mut ViewContext<Self>) {
         self.center
-            .resize(&self.active_pane.clone(), axis, amount, &self.bounds);
+            .resize(&self.active_pane, axis, amount, &self.bounds);
         cx.notify();
     }
 
