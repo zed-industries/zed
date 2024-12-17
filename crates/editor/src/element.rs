@@ -2370,6 +2370,7 @@ impl EditorElement {
                         }
                     } else {
                         let editor = self.editor.clone();
+                        let focus_handle = self.editor.focus_handle(cx);
                         result = result.child(
                             h_flex()
                                 .id("excerpt header block")
@@ -2407,8 +2408,8 @@ impl EditorElement {
                                 .tooltip({
                                     let jump_data = jump_data.clone();
                                     move |cx| {
-                                        let jump_message = format!(
-                                            "Jump to {}:L{}",
+                                        let jump_location = format!(
+                                            "{}:L{}",
                                             match &jump_data.path {
                                                 Some(project_path) =>
                                                     project_path.path.display().to_string(),
@@ -2433,7 +2434,13 @@ impl EditorElement {
                                             },
                                             jump_data.position.row + 1
                                         );
-                                        Tooltip::for_action(jump_message, &OpenExcerpts, cx)
+                                        Tooltip::with_meta_in(
+                                            "Jump to Location",
+                                            Some(&OpenExcerpts),
+                                            jump_location,
+                                            &focus_handle,
+                                            cx,
+                                        )
                                     }
                                 })
                                 .child(
