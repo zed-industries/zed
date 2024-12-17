@@ -2427,7 +2427,7 @@ impl Editor {
             cx.notify();
             return;
         }
-        if self.dismiss_menus_and_popups(false, true, cx) {
+        if self.dismiss_menus_and_popups(true, cx) {
             return;
         }
 
@@ -2442,7 +2442,6 @@ impl Editor {
 
     pub fn dismiss_menus_and_popups(
         &mut self,
-        keep_inline_completion: bool,
         should_report_inline_completion_event: bool,
         cx: &mut ViewContext<Self>,
     ) -> bool {
@@ -2466,9 +2465,7 @@ impl Editor {
             return true;
         }
 
-        if !keep_inline_completion
-            && self.discard_inline_completion(should_report_inline_completion_event, cx)
-        {
+        if self.discard_inline_completion(should_report_inline_completion_event, cx) {
             return true;
         }
 
