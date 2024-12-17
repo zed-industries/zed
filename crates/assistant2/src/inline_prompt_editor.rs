@@ -35,7 +35,7 @@ pub enum PromptMode {
 }
 
 impl PromptMode {
-    fn tooltip_start(self) -> &'static str {
+    fn start_label(self) -> &'static str {
         match self {
             PromptMode::Generate { .. } => "Generate",
             PromptMode::Transform => "Transform",
@@ -78,12 +78,9 @@ pub fn render_cancel_button<T: EventEmitter<PromptEditorEvent>>(
                     .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                     .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
                     .into_any_element(),
-                IconButton::new("start", IconName::SparkleAlt)
+                Button::new("start", mode.start_label())
+                    .icon(IconName::Return)
                     .icon_color(Color::Muted)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(move |cx| {
-                        Tooltip::for_action(mode.tooltip_start(), &menu::Confirm, cx)
-                    })
                     .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)))
                     .into_any_element(),
             ]
