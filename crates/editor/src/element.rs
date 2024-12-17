@@ -3030,6 +3030,7 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_context_menu_aside(
         &self,
         text_hitbox: &Hitbox,
@@ -3060,7 +3061,7 @@ impl EditorElement {
 
         let fit_horizontally_within = |available: Edges<Pixels>, wanted: Size<Pixels>| {
             // Prefer to fit to the right, then on the same side of the line as the menu, then on
-            // the other side of hte line.
+            // the other side of the line.
             if wanted.width < available.right {
                 Some(right_position)
             } else if !y_is_flipped && wanted.height < available.bottom {
