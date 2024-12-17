@@ -961,7 +961,11 @@ fn expand_row_range_to_ancestor_with_limit(
     };
     let ancestor_range = ancestor.byte_range().to_point(&snapshot);
     if !ancestor_range.contains_inclusive(&input_range) {
-        log::error!("AST ancestor range ({:?}) expected to include the query range ({:?}), but it does not.", ancestor_range, input_range);
+        log::error!(
+            "AST ancestor range ({:?}) does not include query range ({:?}).",
+            ancestor_range,
+            input_range
+        );
         return input_row_range;
     }
     let ancestor_row_count = ancestor_range.end.row - ancestor_range.start.row;
