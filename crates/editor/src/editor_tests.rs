@@ -12601,7 +12601,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12624,7 +12624,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12648,7 +12648,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12673,7 +12673,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12699,7 +12699,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12720,7 +12720,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 }
@@ -12792,7 +12792,7 @@ async fn test_edits_around_expanded_deletion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12815,7 +12815,7 @@ async fn test_edits_around_expanded_deletion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12838,7 +12838,7 @@ async fn test_edits_around_expanded_deletion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12862,7 +12862,7 @@ async fn test_edits_around_expanded_deletion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 }

@@ -103,6 +103,7 @@ pub struct DiffMapRows<'a> {
 
 pub type DiffEdit = text::Edit<DiffOffset>;
 
+#[derive(Debug)]
 enum ChangeKind {
     DiffUpdated { base_changed: bool },
     InputEdited,
@@ -429,13 +430,23 @@ impl DiffMap {
                             }
 
                             let mut was_previously_expanded = false;
+                            let mut previous_expanded_summary = TextSummary::default();
                             if cursor.start().0 == hunk_start_multibuffer_offset {
-                                was_previously_expanded = match cursor.item() {
-                                    Some(DiffTransform::DeletedHunk { .. }) => true,
+                                match cursor.item() {
+                                    Some(DiffTransform::DeletedHunk {
+                                        summary_including_newline,
+                                        ..
+                                    }) => {
+                                        was_previously_expanded = true;
+                                        previous_expanded_summary =
+                                            summary_including_newline.clone();
+                                    }
                                     Some(DiffTransform::BufferContent {
                                         is_inserted_hunk, ..
-                                    }) => *is_inserted_hunk,
-                                    None => false,
+                                    }) => {
+                                        was_previously_expanded = *is_inserted_hunk;
+                                    }
+                                    None => {}
                                 };
                             }
 
@@ -480,17 +491,21 @@ impl DiffMap {
                                         needs_newline = true;
                                     }
 
-                                    if !was_previously_expanded {
+                                    if !was_previously_expanded
+                                        || base_text_summary != previous_expanded_summary
+                                    {
                                         let hunk_overshoot =
                                             hunk_start_multibuffer_offset - cursor.start().0;
-                                        let old_offset =
+                                        let old_start =
                                             cursor.start().1 + DiffOffset(hunk_overshoot);
+                                        let old_end =
+                                            old_start + DiffOffset(previous_expanded_summary.len);
                                         let new_start =
                                             DiffOffset(new_transforms.summary().diff_map.len);
                                         let new_end = new_start + diff_byte_range;
                                         delta += diff_byte_range.0 as isize;
                                         let edit = Edit {
-                                            old: old_offset..old_offset,
+                                            old: old_start..old_end,
                                             new: new_start..new_end,
                                         };
                                         edits.push(edit);
