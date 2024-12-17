@@ -28,7 +28,7 @@ use crate::{
     render_parsed_markdown, split_words, styled_runs_for_code_label, CodeActionProvider,
     CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, ResolvedTasks,
 };
-use crate::{AcceptInlineCompletion, InlineCompletionText};
+use crate::{AcceptInlineCompletion, InlineCompletionMenuHint};
 
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
@@ -153,10 +153,7 @@ pub struct CompletionsMenu {
 #[derive(Clone, Debug)]
 pub(crate) enum CompletionEntry {
     Match(StringMatch),
-    InlineCompletionHint {
-        provider_name: SharedString,
-        hint: Option<InlineCompletionText>,
-    },
+    InlineCompletionHint(InlineCompletionMenuHint),
 }
 
 impl CompletionsMenu {
@@ -304,15 +301,9 @@ impl CompletionsMenu {
         cx.notify();
     }
 
-    pub fn show_inline_completion_hint(
-        &mut self,
-        provider_name: SharedString,
-        hint: Option<InlineCompletionText>,
-    ) {
-        let hint = CompletionEntry::InlineCompletionHint {
-            provider_name,
-            hint,
-        };
+    pub fn show_inline_completion_hint(&mut self, hint: InlineCompletionMenuHint) {
+        let hint = CompletionEntry::InlineCompletionHint(hint);
+
         self.entries = match self.entries.first() {
             Some(CompletionEntry::InlineCompletionHint { .. }) => {
                 let mut entries = Vec::from(&*self.entries);
@@ -365,7 +356,7 @@ impl CompletionsMenu {
         }
     }
 
-    fn visible(&self) -> bool {
+    pub fn visible(&self) -> bool {
         !self.entries.is_empty()
     }
 
@@ -430,14 +421,14 @@ impl CompletionsMenu {
                     }
                     _ => None,
                 },
-                CompletionEntry::InlineCompletionHint { hint, .. } => hint.as_ref().map(|hint| {
+                CompletionEntry::InlineCompletionHint(hint) => hint.text.as_ref().map(|text| {
                     div()
                         .my_1()
                         .rounded_md()
                         .bg(cx.theme().colors().editor_background)
                         .child(
-                            gpui::StyledText::new(hint.text.clone())
-                                .with_highlights(&style.text, hint.highlights.clone()),
+                            gpui::StyledText::new(text.text.clone())
+                                .with_highlights(&style.text, text.highlights.clone()),
                         )
                 }),
             }
@@ -565,7 +556,10 @@ impl CompletionsMenu {
                                         .end_slot::<Label>(documentation_label),
                                 )
                             }
-                            CompletionEntry::InlineCompletionHint { provider_name, .. } => div()
+                            CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint {
+                                provider_name,
+                                ..
+                            }) => div()
                                 .min_w(px(250.))
                                 .max_w(px(500.))
                                 .pb_1()
@@ -582,7 +576,7 @@ impl CompletionsMenu {
                                                 cx,
                                             );
                                         }))
-                                        .child(Label::new(provider_name.clone()))
+                                        .child(Label::new(SharedString::new_static(provider_name)))
                                         .end_slot(
                                             Label::new("tab to accept")
                                                 .ml_4()
@@ -703,22 +697,9 @@ impl CompletionsMenu {
         }
         drop(completions);
 
-        let mut new_entries: Vec<_> = matches
-            .into_iter()
-            .map(|mat| CompletionEntry::Match(mat))
-            .collect();
-        if let Some(CompletionEntry::InlineCompletionHint {
-            provider_name,
-            hint,
-        }) = self.entries.first()
-        {
-            new_entries.insert(
-                0,
-                CompletionEntry::InlineCompletionHint {
-                    provider_name: provider_name.clone(),
-                    hint: hint.clone(),
-                },
-            );
+        let mut new_entries: Vec<_> = matches.into_iter().map(CompletionEntry::Match).collect();
+        if let Some(CompletionEntry::InlineCompletionHint(hint)) = self.entries.first() {
+            new_entries.insert(0, CompletionEntry::InlineCompletionHint(hint.clone()));
         }
 
         self.entries = new_entries.into();

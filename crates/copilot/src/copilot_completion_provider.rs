@@ -55,6 +55,10 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         "copilot"
     }
 
+    fn display_name() -> &'static str {
+        "Copilot"
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,

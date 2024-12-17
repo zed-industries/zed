@@ -457,6 +457,12 @@ pub fn make_suggestion_styles(cx: &WindowContext) -> InlineCompletionStyles {
 
 type CompletionId = usize;
 
+#[derive(Debug, Clone)]
+struct InlineCompletionMenuHint {
+    provider_name: &'static str,
+    text: Option<InlineCompletionText>,
+}
+
 #[derive(Clone, Debug)]
 struct InlineCompletionText {
     text: SharedString,
@@ -466,12 +472,6 @@ struct InlineCompletionText {
 enum InlineCompletion {
     Edit(Vec<(Range<Anchor>, String)>),
     Move(Anchor),
-}
-
-impl InlineCompletion {
-    fn is_edit(&self) -> bool {
-        matches!(self, InlineCompletion::Edit(_))
-    }
 }
 
 struct InlineCompletionState {
@@ -3719,11 +3719,7 @@ impl Editor {
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
-                    if menu.entries.is_empty() {
-                        None
-                    } else {
-                        Some(menu)
-                    }
+                    menu.visible().then_some(menu)
                 } else {
                     None
                 };
@@ -3741,16 +3737,12 @@ impl Editor {
 
                     if editor.focus_handle.is_focused(cx) && menu.is_some() {
                         let mut menu = menu.unwrap();
+                        menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
 
-                        if editor.has_active_inline_completion() {
-                            if let Some(provider) = editor.inline_completion_provider() {
-                                let provider_name = provider.name();
-                                let hint = editor.inline_completion_text(cx);
-                                menu.show_inline_completion_hint(provider_name.into(), hint);
-                            }
+                        if let Some(hint) = editor.inline_completion_menu_hint(cx) {
+                            menu.show_inline_completion_hint(hint);
                         }
 
-                        menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
                         *editor.context_menu.borrow_mut() =
                             Some(CodeContextMenu::Completions(menu));
 
@@ -4819,13 +4811,13 @@ impl Editor {
         });
 
         if self.has_active_completions_menu() {
-            let provider_name = provider.name().into();
-            let hint = self.inline_completion_text(cx);
-            match self.context_menu.borrow_mut().as_mut() {
-                Some(CodeContextMenu::Completions(menu)) => {
-                    menu.show_inline_completion_hint(provider_name, hint);
+            if let Some(hint) = self.inline_completion_menu_hint(cx) {
+                match self.context_menu.borrow_mut().as_mut() {
+                    Some(CodeContextMenu::Completions(menu)) => {
+                        menu.show_inline_completion_hint(hint);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
@@ -4834,25 +4826,27 @@ impl Editor {
         Some(())
     }
 
-    fn inline_completion_text(
+    fn inline_completion_menu_hint(
         &mut self,
         cx: &mut ViewContext<Self>,
-    ) -> Option<InlineCompletionText> {
-        if self
-            .active_inline_completion
-            .as_ref()
-            .map_or(true, |state| !state.completion.is_edit())
-        {
-            return None;
-        }
+    ) -> Option<InlineCompletionMenuHint> {
+        if self.has_active_inline_completion() {
+            let provider_name = self.inline_completion_provider()?.display_name();
+            let editor_snapshot = self.snapshot(cx);
 
-        let editor_snapshot = self.snapshot(cx);
+            let text = match &self.active_inline_completion.as_ref()?.completion {
+                InlineCompletion::Edit(edits) => {
+                    Some(inline_completion_text(&editor_snapshot, edits, cx))
+                }
+                _ => None,
+            };
 
-        match &self.active_inline_completion.as_ref()?.completion {
-            InlineCompletion::Edit(edits) => {
-                Some(inline_completion_text(&editor_snapshot, edits, cx))
-            }
-            _ => None,
+            Some(InlineCompletionMenuHint {
+                provider_name,
+                text,
+            })
+        } else {
+            None
         }
     }
 
