@@ -34,11 +34,12 @@ use util::ResultExt;
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
     Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, FocusId, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem,
-    View, ViewContext, Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor, Global, KeyBinding, Keymap,
+    Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
+    WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -445,6 +446,7 @@ impl AppContext {
         self.defer(move |_| activate());
         subscription
     }
+
     pub(crate) fn observe_internal<W, E>(
         &mut self,
         entity: &E,
@@ -573,6 +575,12 @@ impl AppContext {
                 }
             }
         })
+    }
+
+    /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
+    /// for elements rendered within this window.
+    pub fn focus_handle(&self) -> FocusHandle {
+        FocusHandle::new(&self.focus_handles)
     }
 
     /// Instructs the platform to activate the application by bringing it to the foreground.
