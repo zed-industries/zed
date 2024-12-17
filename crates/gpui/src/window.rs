@@ -3,7 +3,7 @@ use crate::{
     AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Background, Bounds,
     BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, InputHandler,
+    FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler,
     IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent,
     KeystrokeObserver, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
@@ -3808,7 +3808,7 @@ impl<'a> WindowContext<'a> {
 
     /// Read information about the GPU backing this window.
     /// Currently returns None on Mac and Windows.
-    pub fn gpu_specs(&self) -> Option<GPUSpecs> {
+    pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.window.platform_window.gpu_specs()
     }
 }

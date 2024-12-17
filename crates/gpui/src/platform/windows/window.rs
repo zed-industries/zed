@@ -770,7 +770,7 @@ impl PlatformWindow for WindowsWindow {
         self.0.hwnd
     }
 
-    fn gpu_specs(&self) -> Option<GPUSpecs> {
+    fn gpu_specs(&self) -> Option<GpuSpecs> {
         Some(self.0.state.borrow().renderer.gpu_specs())
     }
 

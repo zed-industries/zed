@@ -264,7 +264,7 @@ fn initialize_linux_file_watcher(cx: &mut ViewContext<Workspace>) {
 }
 
 fn show_software_emulation_warning_if_needed(
-    specs: gpui::GPUSpecs,
+    specs: gpui::GpuSpecs,
     cx: &mut ViewContext<Workspace>,
 ) {
     if specs.is_software_emulated && std::env::var("ZED_ALLOW_EMULATED_GPU").is_err() {
