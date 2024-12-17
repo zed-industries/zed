@@ -531,7 +531,6 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
-    pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
@@ -809,7 +808,6 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
-            focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -931,17 +929,11 @@ impl<'a> WindowContext<'a> {
         self.window.removed = true;
     }
 
-    /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
-    /// for elements rendered within this window.
-    pub fn focus_handle(&self) -> FocusHandle {
-        FocusHandle::new(&self.window.focus_handles)
-    }
-
     /// Obtain the currently focused [`FocusHandle`]. If no elements are focused, returns `None`.
     pub fn focused(&self) -> Option<FocusHandle> {
         self.window
             .focus
-            .and_then(|id| FocusHandle::for_id(id, &self.window.focus_handles))
+            .and_then(|id| FocusHandle::for_id(id, &self.app.focus_handles))
     }
 
     /// Move focus to the element associated with the given [`FocusHandle`].
@@ -3021,7 +3013,7 @@ impl<'a> WindowContext<'a> {
                         let event = FocusOutEvent {
                             blurred: WeakFocusHandle {
                                 id: blurred_id,
-                                handles: Arc::downgrade(&cx.window.focus_handles),
+                                handles: Arc::downgrade(&cx.app.focus_handles),
                             },
                         };
                         listener(event, cx)
@@ -4439,7 +4431,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                             let event = FocusOutEvent {
                                 blurred: WeakFocusHandle {
                                     id: blurred_id,
-                                    handles: Arc::downgrade(&cx.window.focus_handles),
+                                    handles: Arc::downgrade(&cx.app.focus_handles),
                                 },
                             };
                             listener(view, event, cx)
