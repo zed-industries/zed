@@ -10,7 +10,7 @@ use std::{
     cmp::{self, PartialOrd},
     fmt,
     hash::Hash,
-    ops::{Add, Div, Mul, MulAssign, Sub},
+    ops::{Add, Div, Mul, MulAssign, Neg, Sub},
 };
 
 use crate::{AppContext, DisplayId};
@@ -755,6 +755,25 @@ impl Bounds<Pixels> {
 
 impl<T> Bounds<T>
 where
+    T: Clone + Debug + Default,
+{
+    /// Creates a new `Bounds` with the specified origin and size.
+    ///
+    /// # Arguments
+    ///
+    /// * `origin` - A `Point<T>` representing the origin of the bounds.
+    /// * `size` - A `Size<T>` representing the size of the bounds.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Bounds<T>` that has the given origin and size.
+    pub fn new(origin: Point<T>, size: Size<T>) -> Self {
+        Bounds { origin, size }
+    }
+}
+
+impl<T> Bounds<T>
+where
     T: Clone + Debug + Sub<Output = T> + Default,
 {
     /// Constructs a `Bounds` from two corner points: the top left and bottom right corners.
@@ -823,25 +842,25 @@ where
 
         Bounds { origin, size }
     }
+}
 
-    /// Creates a new `Bounds` with the specified origin and size.
-    ///
-    /// # Arguments
-    ///
-    /// * `origin` - A `Point<T>` representing the origin of the bounds.
-    /// * `size` - A `Size<T>` representing the size of the bounds.
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Bounds<T>` that has the given origin and size.
-    pub fn new(origin: Point<T>, size: Size<T>) -> Self {
-        Bounds { origin, size }
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Sub<T, Output = T> + Default + Half,
+{
+    /// Creates a new bounds centered at the given point.
+    pub fn centered_at(center: Point<T>, size: Size<T>) -> Self {
+        let origin = Point {
+            x: center.x - size.width.half(),
+            y: center.y - size.height.half(),
+        };
+        Self::new(origin, size)
     }
 }
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T> + Default + Half,
+    T: Clone + Debug + PartialOrd + Add<T, Output = T> + Default,
 {
     /// Checks if this `Bounds` intersects with another `Bounds`.
     ///
@@ -885,49 +904,12 @@ where
             && self.origin.y < their_lower_right.y
             && my_lower_right.y > other.origin.y
     }
+}
 
-    /// Dilates the bounds by a specified amount in all directions.
-    ///
-    /// This method expands the bounds by the given `amount`, increasing the size
-    /// and adjusting the origin so that the bounds grow outwards equally in all directions.
-    /// The resulting bounds will have its width and height increased by twice the `amount`
-    /// (since it grows in both directions), and the origin will be moved by `-amount`
-    /// in both the x and y directions.
-    ///
-    /// # Arguments
-    ///
-    /// * `amount` - The amount by which to dilate the bounds.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use gpui::{Bounds, Point, Size};
-    /// let mut bounds = Bounds {
-    ///     origin: Point { x: 10, y: 10 },
-    ///     size: Size { width: 10, height: 10 },
-    /// };
-    /// bounds.dilate(5);
-    /// assert_eq!(bounds, Bounds {
-    ///     origin: Point { x: 5, y: 5 },
-    ///     size: Size { width: 20, height: 20 },
-    /// });
-    /// ```
-    pub fn dilate(&mut self, amount: T) {
-        self.origin.x = self.origin.x.clone() - amount.clone();
-        self.origin.y = self.origin.y.clone() - amount.clone();
-        let double_amount = amount.clone() + amount;
-        self.size.width = self.size.width.clone() + double_amount.clone();
-        self.size.height = self.size.height.clone() + double_amount;
-    }
-
-    /// inset the bounds by a specified amount
-    /// Note that this may panic if T does not support negative values
-    pub fn inset(&self, amount: T) -> Self {
-        let mut result = self.clone();
-        result.dilate(T::default() - amount);
-        result
-    }
-
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Add<T, Output = T> + Default + Half,
+{
     /// Returns the center point of the bounds.
     ///
     /// Calculates the center by taking the origin's x and y coordinates and adding half the width and height
@@ -955,7 +937,12 @@ where
             y: self.origin.y.clone() + self.size.height.clone().half(),
         }
     }
+}
 
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Add<T, Output = T> + Default,
+{
     /// Calculates the half perimeter of a rectangle defined by the bounds.
     ///
     /// The half perimeter is calculated as the sum of the width and the height of the rectangle.
@@ -977,14 +964,56 @@ where
     pub fn half_perimeter(&self) -> T {
         self.size.width.clone() + self.size.height.clone()
     }
+}
 
-    /// centered_at creates a new bounds centered at the given point.
-    pub fn centered_at(center: Point<T>, size: Size<T>) -> Self {
-        let origin = Point {
-            x: center.x - size.width.half(),
-            y: center.y - size.height.half(),
-        };
-        Self::new(origin, size)
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Add<T, Output = T> + Sub<Output = T> + Default,
+{
+    /// Dilates the bounds by a specified amount in all directions.
+    ///
+    /// This method expands the bounds by the given `amount`, increasing the size
+    /// and adjusting the origin so that the bounds grow outwards equally in all directions.
+    /// The resulting bounds will have its width and height increased by twice the `amount`
+    /// (since it grows in both directions), and the origin will be moved by `-amount`
+    /// in both the x and y directions.
+    ///
+    /// # Arguments
+    ///
+    /// * `amount` - The amount by which to dilate the bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gpui::{Bounds, Point, Size};
+    /// let mut bounds = Bounds {
+    ///     origin: Point { x: 10, y: 10 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// bounds.dilate(5);
+    /// assert_eq!(bounds, Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 20, height: 20 },
+    /// });
+    /// ```
+    pub fn dilate(&self, amount: T) -> Bounds<T> {
+        let double_amount = amount.clone() + amount.clone();
+        Bounds {
+            origin: self.origin.clone() - point(amount.clone(), amount),
+            size: self.size.clone() + size(double_amount.clone(), double_amount),
+        }
+    }
+}
+
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Add<T, Output = T> + Sub<T, Output = T> + Neg<Output = T> + Default,
+{
+    /// Inset the bounds by a specified amount. Equivalent to `dilate` with the amount negated.
+    ///
+    /// Note that this may panic if T does not support negative values.
+    pub fn inset(&self, amount: T) -> Self {
+        self.dilate(-amount)
     }
 }
 
@@ -1107,6 +1136,34 @@ where
         Self {
             origin: self.origin / rhs.clone(),
             size: self.size / rhs,
+        }
+    }
+}
+
+impl<T> Add<Point<T>> for Bounds<T>
+where
+    T: Add<T, Output = T> + Default + Clone + Debug,
+{
+    type Output = Self;
+
+    fn add(self, rhs: Point<T>) -> Self {
+        Self {
+            origin: self.origin + rhs,
+            size: self.size,
+        }
+    }
+}
+
+impl<T> Sub<Point<T>> for Bounds<T>
+where
+    T: Sub<T, Output = T> + Default + Clone + Debug,
+{
+    type Output = Self;
+
+    fn sub(self, rhs: Point<T>) -> Self {
+        Self {
+            origin: self.origin - rhs,
+            size: self.size,
         }
     }
 }
