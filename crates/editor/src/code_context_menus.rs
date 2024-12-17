@@ -14,11 +14,7 @@ use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::{CodeAction, Completion, TaskSourceKind};
 use task::ResolvedTask;
-use ui::{
-    h_flex, ActiveTheme as _, Color, FluentBuilder as _, InteractiveElement as _, IntoElement,
-    Label, LabelCommon as _, LabelSize, ListItem, ParentElement as _, Popover,
-    StatefulInteractiveElement as _, Styled, Toggleable as _,
-};
+use ui::{prelude::*, Color, IntoElement, ListItem, Popover, Styled};
 use util::ResultExt as _;
 use workspace::Workspace;
 
@@ -425,8 +421,10 @@ impl CompletionsMenu {
             CompletionEntry::InlineCompletionHint(hint) => Some(match &hint.text {
                 InlineCompletionText::Edit { text, highlights } => div()
                     .my_1()
-                    .rounded_md()
+                    .rounded(px(6.))
                     .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border_variant)
                     .child(
                         gpui::StyledText::new(text.clone())
                             .with_highlights(&style.text, highlights.clone()),
@@ -451,9 +449,8 @@ impl CompletionsMenu {
                 .flex_1()
                 .px_1p5()
                 .py_1()
-                .min_w(px(260.))
                 .max_w(px(640.))
-                .w(px(500.))
+                .w(px(450.))
                 .overflow_y_scroll()
                 .occlude()
         });
@@ -513,6 +510,7 @@ impl CompletionsMenu {
                                             (range, highlight)
                                         }),
                                 );
+
                                 let completion_label =
                                     StyledText::new(completion.label.text.clone())
                                         .with_highlights(&style.text, highlights);
@@ -559,25 +557,26 @@ impl CompletionsMenu {
                             CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint {
                                 provider_name,
                                 ..
-                            }) => div()
-                                .min_w(px(250.))
-                                .max_w(px(500.))
-                                .pb_1()
-                                .border_b_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .child(
-                                    ListItem::new("inline-completion")
-                                        .inset(true)
-                                        .toggle_state(item_ix == selected_item)
-                                        .on_click(cx.listener(move |editor, _event, cx| {
-                                            cx.stop_propagation();
-                                            editor.accept_inline_completion(
-                                                &AcceptInlineCompletion {},
-                                                cx,
-                                            );
-                                        }))
-                                        .child(Label::new(SharedString::new_static(provider_name))),
-                                ),
+                            }) => div().min_w(px(250.)).max_w(px(500.)).child(
+                                ListItem::new("inline-completion")
+                                    .inset(true)
+                                    .toggle_state(item_ix == selected_item)
+                                    .start_slot(Icon::new(IconName::ZedPredict))
+                                    .child(
+                                        StyledText::new(format!(
+                                            "{} Completion",
+                                            SharedString::new_static(provider_name)
+                                        ))
+                                        .with_highlights(&style.text, None),
+                                    )
+                                    .on_click(cx.listener(move |editor, _event, cx| {
+                                        cx.stop_propagation();
+                                        editor.accept_inline_completion(
+                                            &AcceptInlineCompletion {},
+                                            cx,
+                                        );
+                                    })),
+                            ),
                         }
                     })
                     .collect()
