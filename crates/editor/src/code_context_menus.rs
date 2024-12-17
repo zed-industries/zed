@@ -350,9 +350,7 @@ impl CompletionsMenu {
                 })
                 .detach();
             }
-            CompletionEntry::InlineCompletionHint { .. } => {
-                println!("todo: noop for now");
-            }
+            CompletionEntry::InlineCompletionHint { .. } => {}
         }
     }
 
@@ -393,8 +391,10 @@ impl CompletionsMenu {
 
                     len
                 }
-                //TODO compute this the correct way
-                CompletionEntry::InlineCompletionHint { .. } => 30,
+                CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint {
+                    provider_name,
+                    ..
+                }) => provider_name.len(),
             })
             .map(|(ix, _)| ix);
 
@@ -577,13 +577,7 @@ impl CompletionsMenu {
                                                 cx,
                                             );
                                         }))
-                                        .child(Label::new(SharedString::new_static(provider_name)))
-                                        .end_slot(
-                                            Label::new("tab to accept")
-                                                .ml_4()
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        ),
+                                        .child(Label::new(SharedString::new_static(provider_name))),
                                 ),
                         }
                     })
