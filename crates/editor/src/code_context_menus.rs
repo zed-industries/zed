@@ -559,25 +559,22 @@ impl CompletionsMenu {
                             CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint {
                                 provider_name,
                                 ..
-                            }) => div()
-                                .min_w(px(250.))
-                                .max_w(px(500.))
-                                .pb_1()
-                                .border_b_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .child(
-                                    ListItem::new("inline-completion")
-                                        .inset(true)
-                                        .toggle_state(item_ix == selected_item)
-                                        .on_click(cx.listener(move |editor, _event, cx| {
-                                            cx.stop_propagation();
-                                            editor.accept_inline_completion(
-                                                &AcceptInlineCompletion {},
-                                                cx,
-                                            );
-                                        }))
-                                        .child(Label::new(SharedString::new_static(provider_name))),
-                                ),
+                            }) => div().min_w(px(250.)).max_w(px(500.)).child(
+                                ListItem::new("inline-completion")
+                                    .inset(true)
+                                    .toggle_state(item_ix == selected_item)
+                                    .on_click(cx.listener(move |editor, _event, cx| {
+                                        cx.stop_propagation();
+                                        editor.accept_inline_completion(
+                                            &AcceptInlineCompletion {},
+                                            cx,
+                                        );
+                                    }))
+                                    .child(
+                                        StyledText::new(SharedString::new_static(provider_name))
+                                            .with_highlights(&style.text, None),
+                                    ),
+                            ),
                         }
                     })
                     .collect()
