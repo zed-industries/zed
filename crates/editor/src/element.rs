@@ -2500,7 +2500,7 @@ impl EditorElement {
                                         )
                                     }),
                             )
-                            .child(Icon::new(IconName::ArrowUpRight))
+                            .child(Icon::new(IconName::ArrowUpRight).size(IconSize::Small))
                             .cursor_pointer()
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
