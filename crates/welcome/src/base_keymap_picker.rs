@@ -127,11 +127,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         let background = cx.background_executor().clone();
         let candidates = BaseKeymap::names()
             .enumerate()
-            .map(|(id, name)| StringMatchCandidate {
-                id,
-                char_bag: name.into(),
-                string: name.into(),
-            })
+            .map(|(id, name)| StringMatchCandidate::new(id, name))
             .collect::<Vec<_>>();
 
         cx.spawn(|this, mut cx| async move {
@@ -208,7 +204,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(HighlightedLabel::new(
                     keymap_match.string.clone(),
                     keymap_match.positions.clone(),

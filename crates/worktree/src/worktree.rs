@@ -104,7 +104,6 @@ pub enum CreatedEntry {
 pub struct LoadedFile {
     pub file: Arc<File>,
     pub text: String,
-    pub diff_base: Option<String>,
 }
 
 pub struct LoadedBinaryFile {
@@ -410,23 +409,10 @@ impl Worktree {
                     abs_path
                         .file_name()
                         .map_or(String::new(), |f| f.to_string_lossy().to_string()),
-                    abs_path,
+                    abs_path.clone(),
                 ),
                 root_file_handle,
             };
-
-            if let Some(metadata) = metadata {
-                snapshot.insert_entry(
-                    Entry::new(
-                        Arc::from(Path::new("")),
-                        &metadata,
-                        &next_entry_id,
-                        snapshot.root_char_bag,
-                        None,
-                    ),
-                    fs.as_ref(),
-                );
-            }
 
             let worktree_id = snapshot.id();
             let settings_location = Some(SettingsLocation {
@@ -446,10 +432,26 @@ impl Worktree {
             })
             .detach();
 
+            let share_private_files = false;
+            if let Some(metadata) = metadata {
+                let mut entry = Entry::new(
+                    Arc::from(Path::new("")),
+                    &metadata,
+                    &next_entry_id,
+                    snapshot.root_char_bag,
+                    None,
+                );
+                if !metadata.is_dir {
+                    entry.is_private = !share_private_files
+                        && settings.is_path_private(abs_path.file_name().unwrap().as_ref());
+                }
+                snapshot.insert_entry(entry, fs.as_ref());
+            }
+
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
             let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
             let mut worktree = LocalWorktree {
-                share_private_files: false,
+                share_private_files,
                 next_entry_id,
                 snapshot,
                 is_scanning: watch::channel_with(true),
@@ -703,6 +705,30 @@ impl Worktree {
             Worktree::Local(this) => this.load_file(path, cx),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
+            }
+        }
+    }
+
+    pub fn load_staged_file(&self, path: &Path, cx: &AppContext) -> Task<Result<Option<String>>> {
+        match self {
+            Worktree::Local(this) => {
+                let path = Arc::from(path);
+                let snapshot = this.snapshot();
+                cx.background_executor().spawn(async move {
+                    if let Some(repo) = snapshot.repository_for_path(&path) {
+                        if let Some(repo_path) = repo.relativize(&snapshot, &path).log_err() {
+                            if let Some(git_repo) =
+                                snapshot.git_repositories.get(&*repo.work_directory)
+                            {
+                                return Ok(git_repo.repo_ptr.load_index_text(&repo_path));
+                            }
+                        }
+                    }
+                    Ok(None)
+                })
+            }
+            Worktree::Remote(_) => {
+                Task::ready(Err(anyhow!("remote worktrees can't yet load staged files")))
             }
         }
     }
@@ -1362,28 +1388,9 @@ impl LocalWorktree {
         let entry = self.refresh_entry(path.clone(), None, cx);
         let is_private = self.is_path_private(path.as_ref());
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, _cx| async move {
             let abs_path = abs_path?;
             let text = fs.load(&abs_path).await?;
-            let mut index_task = None;
-            let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
-            if let Some(repo) = snapshot.repository_for_path(&path) {
-                if let Some(repo_path) = repo.relativize(&snapshot, &path).log_err() {
-                    if let Some(git_repo) = snapshot.git_repositories.get(&*repo.work_directory) {
-                        let git_repo = git_repo.repo_ptr.clone();
-                        index_task = Some(
-                            cx.background_executor()
-                                .spawn(async move { git_repo.load_index_text(&repo_path) }),
-                        );
-                    }
-                }
-            }
-
-            let diff_base = if let Some(index_task) = index_task {
-                index_task.await
-            } else {
-                None
-            };
 
             let worktree = this
                 .upgrade()
@@ -1413,11 +1420,7 @@ impl LocalWorktree {
                 }
             };
 
-            Ok(LoadedFile {
-                file,
-                text,
-                diff_base,
-            })
+            Ok(LoadedFile { file, text })
         })
     }
 
@@ -2530,6 +2533,12 @@ impl Snapshot {
         self.entry_for_path("")
     }
 
+    pub fn root_dir(&self) -> Option<Arc<Path>> {
+        self.root_entry()
+            .filter(|entry| entry.is_dir())
+            .map(|_| self.abs_path().clone())
+    }
+
     pub fn root_name(&self) -> &str {
         &self.root_name
     }
@@ -3109,13 +3118,9 @@ impl BackgroundScannerState {
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
 
-        let actual_repo_path = repository.path();
-        let actual_dot_git_dir_abs_path: Arc<Path> = Arc::from(
-            actual_repo_path
-                .ancestors()
-                .find(|ancestor| ancestor.file_name() == Some(&*DOT_GIT))?,
-        );
+        let actual_repo_path = repository.dot_git_dir();
 
+        let actual_dot_git_dir_abs_path = smol::block_on(find_git_dir(&actual_repo_path, fs))?;
         watcher.add(&actual_repo_path).log_err()?;
 
         let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path.as_ref() == dot_git_abs_path
@@ -3159,6 +3164,31 @@ impl BackgroundScannerState {
 
         Some((work_directory, repository))
     }
+}
+
+async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
+    if path.file_name() == Some(&*DOT_GIT) {
+        return true;
+    }
+
+    // If we're in a bare repository, we are not inside a `.git` folder. In a
+    // bare repository, the root folder contains what would normally be in the
+    // `.git` folder.
+    let head_metadata = fs.metadata(&path.join("HEAD")).await;
+    if !matches!(head_metadata, Ok(Some(_))) {
+        return false;
+    }
+    let config_metadata = fs.metadata(&path.join("config")).await;
+    matches!(config_metadata, Ok(Some(_)))
+}
+
+async fn find_git_dir(path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
+    for ancestor in path.ancestors() {
+        if is_git_dir(ancestor, fs).await {
+            return Some(Arc::from(ancestor));
+        }
+    }
+    None
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
@@ -3967,7 +3997,7 @@ impl BackgroundScanner {
                         } else if fsmonitor_parse_state == Some(FsMonitorParseState::Cookies) && file_name == Some(*FSMONITOR_DAEMON) {
                             fsmonitor_parse_state = Some(FsMonitorParseState::FsMonitor);
                             false
-                        } else if fsmonitor_parse_state != Some(FsMonitorParseState::FsMonitor) && file_name == Some(*DOT_GIT) {
+                        } else if fsmonitor_parse_state != Some(FsMonitorParseState::FsMonitor) && smol::block_on(is_git_dir(ancestor, self.fs.as_ref())) {
                             true
                         } else {
                             fsmonitor_parse_state.take();

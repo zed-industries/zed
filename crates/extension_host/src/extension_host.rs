@@ -32,7 +32,7 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage, Rope,
     QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
@@ -162,6 +162,7 @@ pub struct ExtensionIndexLanguageEntry {
     pub extension: Arc<str>,
     pub path: PathBuf,
     pub matcher: LanguageMatcher,
+    pub hidden: bool,
     pub grammar: Option<Arc<str>>,
 }
 
@@ -1000,14 +1001,13 @@ impl ExtensionStore {
             extensions_to_unload.len() - reload_count
         );
 
-        if let Some(telemetry) = &self.telemetry {
-            for extension_id in &extensions_to_load {
-                if let Some(extension) = new_index.extensions.get(extension_id) {
-                    telemetry.report_extension_event(
-                        extension_id.clone(),
-                        extension.manifest.version.clone(),
-                    );
-                }
+        for extension_id in &extensions_to_load {
+            if let Some(extension) = new_index.extensions.get(extension_id) {
+                telemetry::event!(
+                    "Extension Loaded",
+                    extension_id,
+                    version = extension.manifest.version
+                );
             }
         }
 
@@ -1097,6 +1097,7 @@ impl ExtensionStore {
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
+                language.hidden,
                 Arc::new(move || {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
@@ -1324,6 +1325,7 @@ impl ExtensionStore {
                         extension: extension_id.clone(),
                         path: relative_path,
                         matcher: config.matcher,
+                        hidden: config.hidden,
                         grammar: config.grammar,
                     },
                 );
@@ -1384,6 +1386,7 @@ impl ExtensionStore {
     fn prepare_remote_extension(
         &mut self,
         extension_id: Arc<str>,
+        is_dev: bool,
         tmp_dir: PathBuf,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
@@ -1394,26 +1397,45 @@ impl ExtensionStore {
         };
         let fs = self.fs.clone();
         cx.background_executor().spawn(async move {
-            for well_known_path in ["extension.toml", "extension.json", "extension.wasm"] {
-                if fs.is_file(&src_dir.join(well_known_path)).await {
-                    fs.copy_file(
-                        &src_dir.join(well_known_path),
-                        &tmp_dir.join(well_known_path),
-                        fs::CopyOptions::default(),
-                    )
-                    .await?
-                }
+            const EXTENSION_TOML: &str = "extension.toml";
+            const EXTENSION_WASM: &str = "extension.wasm";
+            const CONFIG_TOML: &str = "config.toml";
+
+            if is_dev {
+                let manifest_toml = toml::to_string(&loaded_extension.manifest)?;
+                fs.save(
+                    &tmp_dir.join(EXTENSION_TOML),
+                    &Rope::from(manifest_toml),
+                    language::LineEnding::Unix,
+                )
+                .await?;
+            } else {
+                fs.copy_file(
+                    &src_dir.join(EXTENSION_TOML),
+                    &tmp_dir.join(EXTENSION_TOML),
+                    fs::CopyOptions::default(),
+                )
+                .await?
+            }
+
+            if fs.is_file(&src_dir.join(EXTENSION_WASM)).await {
+                fs.copy_file(
+                    &src_dir.join(EXTENSION_WASM),
+                    &tmp_dir.join(EXTENSION_WASM),
+                    fs::CopyOptions::default(),
+                )
+                .await?
             }
 
             for language_path in loaded_extension.manifest.languages.iter() {
                 if fs
-                    .is_file(&src_dir.join(language_path).join("config.toml"))
+                    .is_file(&src_dir.join(language_path).join(CONFIG_TOML))
                     .await
                 {
                     fs.create_dir(&tmp_dir.join(language_path)).await?;
                     fs.copy_file(
-                        &src_dir.join(language_path).join("config.toml"),
-                        &tmp_dir.join(language_path).join("config.toml"),
+                        &src_dir.join(language_path).join(CONFIG_TOML),
+                        &tmp_dir.join(language_path).join(CONFIG_TOML),
                         fs::CopyOptions::default(),
                     )
                     .await?
@@ -1459,6 +1481,7 @@ impl ExtensionStore {
             this.update(cx, |this, cx| {
                 this.prepare_remote_extension(
                     missing_extension.id.clone().into(),
+                    missing_extension.dev,
                     tmp_dir.path().to_owned(),
                     cx,
                 )
@@ -1472,6 +1495,11 @@ impl ExtensionStore {
                     client.upload_directory(tmp_dir.path().to_owned(), dest_dir.clone(), cx)
                 })?
                 .await?;
+
+            log::info!(
+                "Finished uploading extension {}",
+                missing_extension.clone().id
+            );
 
             client
                 .update(cx, |client, _cx| {

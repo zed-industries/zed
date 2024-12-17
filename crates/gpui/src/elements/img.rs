@@ -8,7 +8,8 @@ use anyhow::{anyhow, Result};
 
 use futures::{AsyncReadExt, Future};
 use image::{
-    codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat,
+    codecs::{gif::GifDecoder, webp::WebPDecoder},
+    AnimationDecoder, DynamicImage, Frame, ImageBuffer, ImageError, ImageFormat, Rgba,
 };
 use smallvec::SmallVec;
 use std::{
@@ -541,6 +542,34 @@ impl Asset for ImageAssetLoader {
                         }
 
                         frames
+                    }
+                    ImageFormat::WebP => {
+                        let mut decoder = WebPDecoder::new(Cursor::new(&bytes))?;
+
+                        if decoder.has_animation() {
+                            let _ = decoder.set_background_color(Rgba([0, 0, 0, 0]));
+                            let mut frames = SmallVec::new();
+
+                            for frame in decoder.into_frames() {
+                                let mut frame = frame?;
+                                // Convert from RGBA to BGRA.
+                                for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                    pixel.swap(0, 2);
+                                }
+                                frames.push(frame);
+                            }
+
+                            frames
+                        } else {
+                            let mut data = DynamicImage::from_decoder(decoder)?.into_rgba8();
+
+                            // Convert from RGBA to BGRA.
+                            for pixel in data.chunks_exact_mut(4) {
+                                pixel.swap(0, 2);
+                            }
+
+                            SmallVec::from_elem(Frame::new(data), 1)
+                        }
                     }
                     _ => {
                         let mut data =

@@ -9,16 +9,16 @@ pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
+    pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
-    pub show_completions_on_input: bool,
-    pub show_completion_documentation: bool,
-    pub completion_documentation_secondary_query_debounce: u64,
+    pub hover_popover_delay: u64,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
     pub scroll_beyond_last_line: ScrollBeyondLastLine,
     pub vertical_scroll_margin: f32,
     pub autoscroll_on_clicks: bool,
+    pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
@@ -106,6 +106,7 @@ pub struct Scrollbar {
     pub search_results: bool,
     pub diagnostics: bool,
     pub cursors: bool,
+    pub axes: ScrollbarAxes,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -131,6 +132,21 @@ pub enum ShowScrollbar {
     Always,
     /// Never show the scrollbar.
     Never,
+}
+
+/// Forcefully enable or disable the scrollbar for each axis
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub struct ScrollbarAxes {
+    /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+    ///
+    /// Default: true
+    pub horizontal: bool,
+
+    /// When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+    ///
+    /// Default: true
+    pub vertical: bool,
 }
 
 /// The key to use for adding multiple cursors
@@ -188,27 +204,20 @@ pub struct EditorSettingsContent {
     ///
     /// Default: all
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    /// The debounce delay before querying highlights from the language
+    /// server based on the current cursor location.
+    ///
+    /// Default: 75
+    pub lsp_highlight_debounce: Option<u64>,
     /// Whether to show the informational hover box when moving the mouse
     /// over symbols in the editor.
     ///
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
-
-    /// Whether to pop the completions menu while typing in an editor without
-    /// explicitly requesting it.
+    /// Time to wait before showing the informational hover box
     ///
-    /// Default: true
-    pub show_completions_on_input: Option<bool>,
-    /// Whether to display inline and alongside documentation for items in the
-    /// completions menu.
-    ///
-    /// Default: true
-    pub show_completion_documentation: Option<bool>,
-    /// The debounce delay before re-querying the language server for completion
-    /// documentation when not included in original completion list.
-    ///
-    /// Default: 300 ms
-    pub completion_documentation_secondary_query_debounce: Option<u64>,
+    /// Default: 350
+    pub hover_popover_delay: Option<u64>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -227,6 +236,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub autoscroll_on_clicks: Option<bool>,
+    /// The number of characters to keep on either side when scrolling with the mouse.
+    ///
+    /// Default: 5.
+    pub horizontal_scroll_margin: Option<f32>,
     /// Scroll sensitivity multiplier. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling.
     ///
@@ -336,6 +349,22 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub cursors: Option<bool>,
+    /// Forcefully enable or disable the scrollbar for each axis
+    pub axes: Option<ScrollbarAxesContent>,
+}
+
+/// Forcefully enable or disable the scrollbar for each axis
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ScrollbarAxesContent {
+    /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+    ///
+    /// Default: true
+    horizontal: Option<bool>,
+
+    /// When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+    ///
+    /// Default: true
+    vertical: Option<bool>,
 }
 
 /// Gutter related settings

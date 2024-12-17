@@ -16,8 +16,8 @@ use editor::{
 };
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
-    SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
+    FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement,
+    Render, SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
     WeakView, WindowContext,
 };
 use language::{
@@ -45,6 +45,9 @@ use workspace::{
 };
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
+
+struct IncludeWarnings(bool);
+impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
@@ -117,6 +120,7 @@ impl ProjectDiagnosticsEditor {
 
     fn new_with_context(
         context: u32,
+        include_warnings: bool,
         project_handle: Model<Project>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
@@ -134,27 +138,16 @@ impl ProjectDiagnosticsEditor {
                     language_server_id,
                     path,
                 } => {
-                    let max_severity = this.max_severity();
-                    let has_diagnostics_to_display = project.read(cx).lsp_store().read(cx).diagnostics_for_buffer(path)
-                        .into_iter().flatten()
-                        .filter(|(server_id, _)| language_server_id == server_id)
-                        .flat_map(|(_, diagnostics)| diagnostics)
-                        .any(|diagnostic| diagnostic.diagnostic.severity <= max_severity);
+                    this.paths_to_update
+                        .insert((path.clone(), Some(*language_server_id)));
+                    this.summary = project.read(cx).diagnostic_summary(false, cx);
+                    cx.emit(EditorEvent::TitleChanged);
 
-                    if has_diagnostics_to_display {
-                        this.paths_to_update
-                            .insert((path.clone(), Some(*language_server_id)));
-                        this.summary = project.read(cx).diagnostic_summary(false, cx);
-                        cx.emit(EditorEvent::TitleChanged);
-
-                        if this.editor.focus_handle(cx).contains_focused(cx) || this.focus_handle.contains_focused(cx) {
-                            log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
-                        } else {
-                            log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
-                            this.update_stale_excerpts(cx);
-                        }
+                    if this.editor.focus_handle(cx).contains_focused(cx) || this.focus_handle.contains_focused(cx) {
+                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
                     } else {
-                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. no diagnostics to display");
+                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
+                        this.update_stale_excerpts(cx);
                     }
                 }
                 _ => {}
@@ -186,19 +179,24 @@ impl ProjectDiagnosticsEditor {
             }
         })
         .detach();
+        cx.observe_global::<IncludeWarnings>(|this, cx| {
+            this.include_warnings = cx.global::<IncludeWarnings>().0;
+            this.update_all_excerpts(cx);
+        })
+        .detach();
 
         let project = project_handle.read(cx);
         let mut this = Self {
             project: project_handle.clone(),
             context,
             summary: project.diagnostic_summary(false, cx),
+            include_warnings,
             workspace,
             excerpts,
             focus_handle,
             editor,
             path_states: Default::default(),
             paths_to_update: Default::default(),
-            include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
             update_excerpts_task: None,
             _subscription: project_event_subscription,
         };
@@ -243,11 +241,13 @@ impl ProjectDiagnosticsEditor {
 
     fn new(
         project_handle: Model<Project>,
+        include_warnings: bool,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self::new_with_context(
             editor::DEFAULT_MULTIBUFFER_CONTEXT,
+            include_warnings,
             project_handle,
             workspace,
             cx,
@@ -259,8 +259,19 @@ impl ProjectDiagnosticsEditor {
             workspace.activate_item(&existing, true, true, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
+
+            let include_warnings = match cx.try_global::<IncludeWarnings>() {
+                Some(include_warnings) => include_warnings.0,
+                None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
+            };
+
             let diagnostics = cx.new_view(|cx| {
-                ProjectDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
+                ProjectDiagnosticsEditor::new(
+                    workspace.project().clone(),
+                    include_warnings,
+                    workspace_handle,
+                    cx,
+                )
             });
             workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, cx);
         }
@@ -268,6 +279,7 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
+        cx.set_global(IncludeWarnings(self.include_warnings));
         self.update_all_excerpts(cx);
         cx.notify();
     }
@@ -340,12 +352,16 @@ impl ProjectDiagnosticsEditor {
             ExcerptId::min()
         };
 
-        let max_severity = self.max_severity();
         let path_state = &mut self.path_states[path_ix];
         let mut new_group_ixs = Vec::new();
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_remove = HashSet::default();
         let mut first_excerpt_id = None;
+        let max_severity = if self.include_warnings {
+            DiagnosticSeverity::WARNING
+        } else {
+            DiagnosticSeverity::ERROR
+        };
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, cx| {
             let mut old_groups = mem::take(&mut path_state.diagnostic_groups)
                 .into_iter()
@@ -634,14 +650,6 @@ impl ProjectDiagnosticsEditor {
             prev_path = Some(path);
         }
     }
-
-    fn max_severity(&self) -> DiagnosticSeverity {
-        if self.include_warnings {
-            DiagnosticSeverity::WARNING
-        } else {
-            DiagnosticSeverity::ERROR
-        }
-    }
 }
 
 impl FocusableView for ProjectDiagnosticsEditor {
@@ -740,7 +748,12 @@ impl Item for ProjectDiagnosticsEditor {
         Self: Sized,
     {
         Some(cx.new_view(|cx| {
-            ProjectDiagnosticsEditor::new(self.project.clone(), self.workspace.clone(), cx)
+            ProjectDiagnosticsEditor::new(
+                self.project.clone(),
+                self.include_warnings,
+                self.workspace.clone(),
+                cx,
+            )
         }))
     }
 

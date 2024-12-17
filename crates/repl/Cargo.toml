@@ -16,6 +16,7 @@ doctest = false
 alacritty_terminal.workspace = true
 anyhow.workspace = true
 async-dispatcher.workspace = true
+async-tungstenite = { workspace = true, features = ["async-std", "async-tls"] }
 base64.workspace = true
 client.workspace = true
 collections.workspace = true
@@ -42,6 +43,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+telemetry.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
 theme.workspace = true

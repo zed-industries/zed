@@ -6,6 +6,7 @@ mod test;
 mod change_list;
 mod command;
 mod digraph;
+mod helix;
 mod indent;
 mod insert;
 mod mode_indicator;
@@ -337,6 +338,7 @@ impl Vim {
 
             normal::register(editor, cx);
             insert::register(editor, cx);
+            helix::register(editor, cx);
             motion::register(editor, cx);
             command::register(editor, cx);
             replace::register(editor, cx);
@@ -470,6 +472,7 @@ impl Vim {
                 | Operator::Replace
                 | Operator::Indent
                 | Operator::Outdent
+                | Operator::AutoIndent
                 | Operator::Lowercase
                 | Operator::Uppercase
                 | Operator::OppositeCase
@@ -623,14 +626,29 @@ impl Vim {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
             Mode::Normal => {
-                if self.operator_stack.is_empty() {
-                    CursorShape::Block
+                if let Some(operator) = self.operator_stack.last() {
+                    match operator {
+                        // Navigation operators -> Block cursor
+                        Operator::FindForward { .. }
+                        | Operator::FindBackward { .. }
+                        | Operator::Mark
+                        | Operator::Jump { .. }
+                        | Operator::Register
+                        | Operator::RecordRegister
+                        | Operator::ReplayRegister => CursorShape::Block,
+
+                        // All other operators -> Underline cursor
+                        _ => CursorShape::Underline,
+                    }
                 } else {
-                    CursorShape::Underline
+                    // No operator active -> Block cursor
+                    CursorShape::Block
                 }
             }
             Mode::Replace => CursorShape::Underline,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
+            Mode::HelixNormal | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                CursorShape::Block
+            }
             Mode::Insert => CursorShape::Bar,
         }
     }
@@ -644,9 +662,12 @@ impl Vim {
                     true
                 }
             }
-            Mode::Normal | Mode::Replace | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                false
-            }
+            Mode::Normal
+            | Mode::HelixNormal
+            | Mode::Replace
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock => false,
         }
     }
 
@@ -656,9 +677,12 @@ impl Vim {
 
     pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
-            Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::Replace => {
-                false
-            }
+            Mode::Insert
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock
+            | Mode::Replace
+            | Mode::HelixNormal => false,
             Mode::Normal => true,
         }
     }
@@ -669,6 +693,7 @@ impl Vim {
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
             Mode::Insert => "insert",
             Mode::Replace => "replace",
+            Mode::HelixNormal => "helix_normal",
         }
         .to_string();
 
@@ -997,7 +1022,7 @@ impl Vim {
                     })
                 });
             }
-            Mode::Insert | Mode::Replace => {}
+            Mode::Insert | Mode::Replace | Mode::HelixNormal => {}
         }
     }
 
@@ -1150,6 +1175,15 @@ impl Vim {
                 if self.mode == Mode::Replace {
                     self.multi_replace(text, cx)
                 }
+
+                if self.mode == Mode::Normal {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.accept_inline_completion(
+                            &editor::actions::AcceptInlineCompletion {},
+                            cx,
+                        );
+                    });
+                }
             }
         }
     }
@@ -1162,7 +1196,10 @@ impl Vim {
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
-            editor.set_inline_completions_enabled(matches!(vim.mode, Mode::Insert | Mode::Replace));
+            editor.set_inline_completions_enabled(matches!(
+                vim.mode,
+                Mode::Insert | Mode::Normal | Mode::Replace
+            ));
         });
         cx.notify()
     }
@@ -1187,6 +1224,7 @@ struct VimSettings {
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
+    pub highlight_on_yank_duration: u64,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1196,6 +1234,7 @@ struct VimSettingsContent {
     pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
+    pub highlight_on_yank_duration: Option<u64>,
 }
 
 impl Settings for VimSettings {

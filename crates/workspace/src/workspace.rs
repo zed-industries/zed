@@ -92,12 +92,8 @@ use task::SpawnInTerminal;
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::{
-    div, h_flex, px, BorrowAppContext, Context as _, Div, FluentBuilder, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
-    VisualContext as _, WindowContext,
-};
-use util::{paths::SanitizedPath, ResultExt, TryFutureExt};
+use ui::prelude::*;
+use util::{paths::SanitizedPath, serde::default_true, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -180,6 +176,20 @@ pub struct SetBottomDockLayout(pub BottomDockLayout);
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SwapPaneInDirection(pub SplitDirection);
 
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct MoveItemToPane {
+    pub destination: usize,
+    #[serde(default = "default_true")]
+    pub focus: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct MoveItemToPaneInDirection {
+    pub direction: SplitDirection,
+    #[serde(default = "default_true")]
+    pub focus: bool,
+}
+
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveAll {
@@ -229,6 +239,8 @@ impl_actions!(
         ActivatePaneInDirection,
         CloseAllItemsAndPanes,
         CloseInactiveTabsAndPanes,
+        MoveItemToPane,
+        MoveItemToPaneInDirection,
         OpenTerminal,
         Reload,
         Save,
@@ -601,7 +613,6 @@ impl AppState {
         use node_runtime::NodeRuntime;
         use session::Session;
         use settings::SettingsStore;
-        use ui::Context as _;
 
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
@@ -695,7 +706,9 @@ pub enum Event {
     },
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
-    SpawnTask(Box<SpawnInTerminal>),
+    SpawnTask {
+        action: Box<SpawnInTerminal>,
+    },
     OpenBundledFile {
         text: Cow<'static, str>,
         title: &'static str,
@@ -815,7 +828,7 @@ impl Workspace {
                     this.collaborator_left(*peer_id, cx);
                 }
 
-                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
+                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(cx);
                     this.serialize_workspace(cx);
                 }
@@ -837,7 +850,7 @@ impl Workspace {
                     cx.remove_window();
                 }
 
-                project::Event::DeletedEntry(entry_id) => {
+                project::Event::DeletedEntry(_, entry_id) => {
                     for pane in this.panes.iter() {
                         pane.update(cx, |pane, cx| {
                             pane.handle_deleted_project_item(*entry_id, cx)
@@ -1671,7 +1684,7 @@ impl Workspace {
         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
         if self.project.read(cx).is_local() {
-            Task::Ready(Some(Ok(callback(self, cx))))
+            Task::ready(Ok(callback(self, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
             let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, cx);
@@ -2849,6 +2862,13 @@ impl Workspace {
         }
     }
 
+    fn move_item_to_pane_at_index(&mut self, action: &MoveItemToPane, cx: &mut ViewContext<Self>) {
+        let Some(&target_pane) = self.center.panes().get(action.destination) else {
+            return;
+        };
+        move_active_item(&self.active_pane, target_pane, action.focus, true, cx);
+    }
+
     pub fn activate_next_pane(&mut self, cx: &mut WindowContext) {
         let panes = self.center.panes();
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
@@ -2967,6 +2987,16 @@ impl Workspace {
         }
     }
 
+    pub fn move_item_to_pane_in_direction(
+        &mut self,
+        action: &MoveItemToPaneInDirection,
+        cx: &mut WindowContext,
+    ) {
+        if let Some(destination) = self.find_pane_in_direction(action.direction, cx) {
+            move_active_item(&self.active_pane, &destination, action.focus, true, cx);
+        }
+    }
+
     pub fn bounding_box_for_pane(&self, pane: &View<Pane>) -> Option<Bounds<Pixels>> {
         self.center.bounding_box_for_pane(pane)
     }
@@ -2987,14 +3017,14 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(to) = self.find_pane_in_direction(direction, cx) {
-            self.center.swap(&self.active_pane.clone(), &to);
+            self.center.swap(&self.active_pane, &to);
             cx.notify();
         }
     }
 
     pub fn resize_pane(&mut self, axis: gpui::Axis, amount: Pixels, cx: &mut ViewContext<Self>) {
         self.center
-            .resize(&self.active_pane.clone(), axis, amount, &self.bounds);
+            .resize(&self.active_pane, axis, amount, &self.bounds);
         cx.notify();
     }
 
@@ -3740,7 +3770,7 @@ impl Workspace {
 
             let mut new_item = task.await?;
             pane.update(cx, |pane, cx| {
-                let mut item_ix_to_remove = None;
+                let mut item_to_remove = None;
                 for (ix, item) in pane.items().enumerate() {
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         match new_item.dedup(item.as_ref(), cx) {
@@ -3750,7 +3780,7 @@ impl Workspace {
                                 break;
                             }
                             Some(item::Dedup::ReplaceExisting) => {
-                                item_ix_to_remove = Some(ix);
+                                item_to_remove = Some((ix, item.item_id()));
                                 break;
                             }
                             None => {}
@@ -3758,8 +3788,8 @@ impl Workspace {
                     }
                 }
 
-                if let Some(ix) = item_ix_to_remove {
-                    pane.remove_item(ix, false, false, cx);
+                if let Some((ix, id)) = item_to_remove {
+                    pane.remove_item(id, false, false, cx);
                     pane.add_item(new_item.boxed_clone(), false, false, Some(ix), cx);
                 }
             })?;
@@ -3961,6 +3991,17 @@ impl Workspace {
         None
     }
 
+    #[cfg(target_os = "windows")]
+    fn shared_screen_for_peer(
+        &self,
+        _peer_id: PeerId,
+        _pane: &View<Pane>,
+        _cx: &mut WindowContext,
+    ) -> Option<View<SharedScreen>> {
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
@@ -3979,7 +4020,7 @@ impl Workspace {
             }
         }
 
-        Some(cx.new_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
+        Some(cx.new_view(|cx| SharedScreen::new(track, peer_id, user.clone(), cx)))
     }
 
     pub fn on_window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
@@ -4161,30 +4202,30 @@ impl Workspace {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.persistent_name().to_string());
             let left_dock_zoom = left_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.is_zoomed(cx))
                 .unwrap_or(false);
 
             let right_dock = this.right_dock.read(cx);
             let right_visible = right_dock.is_open();
             let right_active_panel = right_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.persistent_name().to_string());
             let right_dock_zoom = right_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.is_zoomed(cx))
                 .unwrap_or(false);
 
             let bottom_dock = this.bottom_dock.read(cx);
             let bottom_visible = bottom_dock.is_open();
             let bottom_active_panel = bottom_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.persistent_name().to_string());
             let bottom_dock_zoom = bottom_dock
-                .visible_panel()
+                .active_panel()
                 .map(|panel| panel.is_zoomed(cx))
                 .unwrap_or(false);
 
@@ -4417,6 +4458,7 @@ impl Workspace {
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
+            .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, cx);
@@ -4445,6 +4487,11 @@ impl Workspace {
             .on_action(
                 cx.listener(|workspace, action: &ActivatePaneInDirection, cx| {
                     workspace.activate_pane_in_direction(action.0, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|workspace, action: &MoveItemToPaneInDirection, cx| {
+                    workspace.move_item_to_pane_in_direction(action, cx)
                 }),
             )
             .on_action(cx.listener(|workspace, action: &SwapPaneInDirection, cx| {
@@ -6359,6 +6406,34 @@ pub fn move_item(
     });
 }
 
+pub fn move_active_item(
+    source: &View<Pane>,
+    destination: &View<Pane>,
+    focus_destination: bool,
+    close_if_empty: bool,
+    cx: &mut WindowContext<'_>,
+) {
+    if source == destination {
+        return;
+    }
+    let Some(active_item) = source.read(cx).active_item() else {
+        return;
+    };
+    source.update(cx, |source_pane, cx| {
+        let item_id = active_item.item_id();
+        source_pane.remove_item(item_id, false, close_if_empty, cx);
+        destination.update(cx, |target_pane, cx| {
+            target_pane.add_item(
+                active_item,
+                focus_destination,
+                focus_destination,
+                Some(target_pane.items_len()),
+                cx,
+            );
+        });
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
@@ -8031,7 +8106,7 @@ mod tests {
     }
 
     mod register_project_item_tests {
-        use ui::Context as _;
+        use gpui::Context as _;
 
         use super::*;
 

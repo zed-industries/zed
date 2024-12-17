@@ -203,6 +203,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     extension: "zed-ruby".into(),
                     path: "languages/erb".into(),
                     grammar: Some("embedded_template".into()),
+                    hidden: false,
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["erb".into()],
                         first_line_pattern: None,
@@ -215,6 +216,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     extension: "zed-ruby".into(),
                     path: "languages/ruby".into(),
                     grammar: Some("ruby".into()),
+                    hidden: false,
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["rb".into()],
                         first_line_pattern: None,
@@ -621,9 +623,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         None,
     );
 
-    let buffer = project
+    let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer(project_dir.join("test.gleam"), cx)
+            project.open_local_buffer_with_lsp(project_dir.join("test.gleam"), cx)
         })
         .await
         .unwrap();

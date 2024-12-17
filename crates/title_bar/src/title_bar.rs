@@ -19,6 +19,7 @@ use gpui::{
 };
 use project::{Project, RepositoryEntry};
 use rpc::proto;
+use settings::Settings as _;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -600,7 +601,11 @@ impl TitleBar {
                         .child(
                             h_flex()
                                 .gap_0p5()
-                                .child(Avatar::new(user.avatar_uri.clone()))
+                                .children(
+                                    workspace::WorkspaceSettings::get_global(cx)
+                                        .show_user_picture
+                                        .then(|| Avatar::new(user.avatar_uri.clone())),
+                                )
                                 .child(
                                     Icon::new(IconName::ChevronDown)
                                         .size(IconSize::Small)
@@ -610,7 +615,7 @@ impl TitleBar {
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                 )
-                .anchor(gpui::AnchorCorner::TopRight)
+                .anchor(gpui::Corner::TopRight)
         } else {
             PopoverMenu::new("user-menu")
                 .menu(|cx| {

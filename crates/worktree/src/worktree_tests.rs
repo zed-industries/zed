@@ -12,7 +12,13 @@ use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use serde_json::json;
 use settings::{Settings, SettingsStore};
-use std::{env, fmt::Write, mem, path::Path, sync::Arc};
+use std::{
+    env,
+    fmt::Write,
+    mem,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::{test::temp_tree, ResultExt};
 
 #[gpui::test]
@@ -532,14 +538,20 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 1);
     });
 
+    let path = PathBuf::from("/root/one/node_modules/c/lib");
+
     // No work happens when files and directories change within an unloaded directory.
     let prev_fs_call_count = fs.read_dir_call_count() + fs.metadata_call_count();
-    fs.create_dir("/root/one/node_modules/c/lib".as_ref())
-        .await
-        .unwrap();
+    // When we open a directory, we check each ancestor whether it's a git
+    // repository. That means we have an fs.metadata call per ancestor that we
+    // need to subtract here.
+    let ancestors = path.ancestors().count();
+
+    fs.create_dir(path.as_ref()).await.unwrap();
     cx.executor().run_until_parked();
+
     assert_eq!(
-        fs.read_dir_call_count() + fs.metadata_call_count() - prev_fs_call_count,
+        fs.read_dir_call_count() + fs.metadata_call_count() - prev_fs_call_count - ancestors,
         0
     );
 }
@@ -2698,6 +2710,29 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
             (Path::new("f/no-status.txt"), None),
         ],
     );
+}
+
+#[gpui::test]
+async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/", json!({".env": "PRIVATE=secret\n"}))
+        .await;
+    let tree = Worktree::local(
+        Path::new("/.env"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.read_with(cx, |tree, _| {
+        let entry = tree.entry_for_path("").unwrap();
+        assert!(entry.is_private);
+    });
 }
 
 #[track_caller]

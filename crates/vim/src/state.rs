@@ -26,6 +26,7 @@ pub enum Mode {
     Visual,
     VisualLine,
     VisualBlock,
+    HelixNormal,
 }
 
 impl Display for Mode {
@@ -37,6 +38,7 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
+            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
         }
     }
 }
@@ -46,6 +48,7 @@ impl Mode {
         match self {
             Mode::Normal | Mode::Insert | Mode::Replace => false,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
+            Mode::HelixNormal => false,
         }
     }
 }
@@ -72,6 +75,7 @@ pub enum Operator {
     Jump { line: bool },
     Indent,
     Outdent,
+    AutoIndent,
     Rewrap,
     Lowercase,
     Uppercase,
@@ -465,6 +469,7 @@ impl Operator {
             Operator::Jump { line: true } => "'",
             Operator::Jump { line: false } => "`",
             Operator::Indent => ">",
+            Operator::AutoIndent => "eq",
             Operator::Rewrap => "gq",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
@@ -485,6 +490,7 @@ impl Operator {
             Operator::Literal {
                 prefix: Some(prefix),
             } => format!("^V{prefix}"),
+            Operator::AutoIndent => "=".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -510,6 +516,7 @@ impl Operator {
             | Operator::Rewrap
             | Operator::Indent
             | Operator::Outdent
+            | Operator::AutoIndent
             | Operator::Lowercase
             | Operator::Uppercase
             | Operator::Object { .. }

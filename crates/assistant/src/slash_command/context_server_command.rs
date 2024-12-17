@@ -164,7 +164,7 @@ impl SlashCommand for ContextServerSlashCommand {
                     .messages
                     .into_iter()
                     .filter_map(|msg| match msg.content {
-                        context_server::types::MessageContent::Text { text } => Some(text),
+                        context_server::types::MessageContent::Text { text, .. } => Some(text),
                         _ => None,
                     })
                     .collect::<Vec<String>>()

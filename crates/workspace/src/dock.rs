@@ -3,10 +3,10 @@ use crate::{status_bar::StatusItemView, Workspace};
 use crate::{DraggedDock, Event, Pane};
 use client::proto;
 use gpui::{
-    deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, Entity, EntityId,
-    EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, MouseDownEvent,
-    MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    deferred, div, px, Action, AnyView, AppContext, Axis, Corner, Entity, EntityId, EventEmitter,
+    FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -719,10 +719,8 @@ impl Render for PanelButtons {
         let dock_position = dock.position;
 
         let (menu_anchor, menu_attach) = match dock.position {
-            DockPosition::Left => (AnchorCorner::BottomLeft, AnchorCorner::TopLeft),
-            DockPosition::Bottom | DockPosition::Right => {
-                (AnchorCorner::BottomRight, AnchorCorner::TopRight)
-            }
+            DockPosition::Left => (Corner::BottomLeft, Corner::TopLeft),
+            DockPosition::Bottom | DockPosition::Right => (Corner::BottomRight, Corner::TopRight),
         };
 
         let buttons = dock
@@ -781,7 +779,7 @@ impl Render for PanelButtons {
                         .trigger(
                             IconButton::new(name, icon)
                                 .icon_size(IconSize::Small)
-                                .selected(is_active_button)
+                                .toggle_state(is_active_button)
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, cx| cx.dispatch_action(action.boxed_clone())

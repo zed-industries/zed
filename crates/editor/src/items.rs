@@ -733,11 +733,11 @@ impl Item for Editor {
         project: Model<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.report_editor_event("save", None, cx);
+        self.report_editor_event("Editor Saved", None, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         let buffers = buffers
             .into_iter()
-            .map(|handle| handle.read(cx).diff_base_buffer().unwrap_or(handle.clone()))
+            .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))
             .collect::<HashSet<_>>();
         cx.spawn(|this, mut cx| async move {
             if format {
@@ -805,7 +805,7 @@ impl Item for Editor {
             .path
             .extension()
             .map(|a| a.to_string_lossy().to_string());
-        self.report_editor_event("save", file_extension, cx);
+        self.report_editor_event("Editor Saved", file_extension, cx);
 
         project.update(cx, |project, cx| project.save_buffer_as(buffer, path, cx))
     }

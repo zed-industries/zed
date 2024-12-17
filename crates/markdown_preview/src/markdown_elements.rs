@@ -18,22 +18,19 @@ pub enum ParsedMarkdownElement {
 }
 
 impl ParsedMarkdownElement {
-    pub fn source_range(&self) -> Range<usize> {
-        match self {
+    pub fn source_range(&self) -> Option<Range<usize>> {
+        Some(match self {
             Self::Heading(heading) => heading.source_range.clone(),
             Self::ListItem(list_item) => list_item.source_range.clone(),
             Self::Table(table) => table.source_range.clone(),
             Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
             Self::CodeBlock(code_block) => code_block.source_range.clone(),
-            Self::Paragraph(text) => match &text[0] {
+            Self::Paragraph(text) => match text.get(0)? {
                 MarkdownParagraphChunk::Text(t) => t.source_range.clone(),
-                MarkdownParagraphChunk::Image(image) => match image {
-                    Image::Web { source_range, .. } => source_range.clone(),
-                    Image::Path { source_range, .. } => source_range.clone(),
-                },
+                MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
             },
             Self::HorizontalRule(range) => range.clone(),
-        }
+        })
     }
 
     pub fn is_list_item(&self) -> bool {
@@ -289,104 +286,27 @@ impl Display for Link {
 /// A Markdown Image
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
-pub enum Image {
-    Web {
-        source_range: Range<usize>,
-        /// The URL of the Image.
-        url: String,
-        /// Link URL if exists.
-        link: Option<Link>,
-        /// alt text if it exists
-        alt_text: Option<ParsedMarkdownText>,
-    },
-    ///  Image path on the filesystem.
-    Path {
-        source_range: Range<usize>,
-        /// The path as provided in the Markdown document.
-        display_path: PathBuf,
-        /// The absolute path to the item.
-        path: PathBuf,
-        /// Link URL if exists.
-        link: Option<Link>,
-        /// alt text if it exists
-        alt_text: Option<ParsedMarkdownText>,
-    },
+pub struct Image {
+    pub link: Link,
+    pub source_range: Range<usize>,
+    pub alt_text: Option<SharedString>,
 }
 
 impl Image {
     pub fn identify(
+        text: String,
         source_range: Range<usize>,
         file_location_directory: Option<PathBuf>,
-        text: String,
-        link: Option<Link>,
-    ) -> Option<Image> {
-        if text.starts_with("http") {
-            return Some(Image::Web {
-                source_range,
-                url: text,
-                link,
-                alt_text: None,
-            });
-        }
-        let path = PathBuf::from(&text);
-        if path.is_absolute() {
-            return Some(Image::Path {
-                source_range,
-                display_path: path.clone(),
-                path,
-                link,
-                alt_text: None,
-            });
-        }
-        if let Some(file_location_directory) = file_location_directory {
-            let display_path = path;
-            let path = file_location_directory.join(text);
-            return Some(Image::Path {
-                source_range,
-                display_path,
-                path,
-                link,
-                alt_text: None,
-            });
-        }
-        None
+    ) -> Option<Self> {
+        let link = Link::identify(file_location_directory, text)?;
+        Some(Self {
+            source_range,
+            link,
+            alt_text: None,
+        })
     }
 
-    pub fn with_alt_text(&self, alt_text: ParsedMarkdownText) -> Self {
-        match self {
-            Image::Web {
-                ref source_range,
-                ref url,
-                ref link,
-                ..
-            } => Image::Web {
-                source_range: source_range.clone(),
-                url: url.clone(),
-                link: link.clone(),
-                alt_text: Some(alt_text),
-            },
-            Image::Path {
-                ref source_range,
-                ref display_path,
-                ref path,
-                ref link,
-                ..
-            } => Image::Path {
-                source_range: source_range.clone(),
-                display_path: display_path.clone(),
-                path: path.clone(),
-                link: link.clone(),
-                alt_text: Some(alt_text),
-            },
-        }
-    }
-}
-
-impl Display for Image {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Image::Web { url, .. } => write!(f, "{}", url),
-            Image::Path { display_path, .. } => write!(f, "{}", display_path.display()),
-        }
+    pub fn set_alt_text(&mut self, alt_text: SharedString) {
+        self.alt_text = Some(alt_text);
     }
 }

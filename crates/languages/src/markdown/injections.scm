@@ -8,3 +8,7 @@
 
 ((html_block) @content
   (#set! "language" "html"))
+
+((minus_metadata) @content (#set! "language" "yaml"))
+
+((plus_metadata) @content (#set! "language" "toml"))

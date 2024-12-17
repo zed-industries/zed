@@ -132,7 +132,7 @@ pub trait Fs: Send + Sync {
     async fn is_case_sensitive(&self) -> Result<bool>;
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeFs {
+    fn as_fake(&self) -> Arc<FakeFs> {
         panic!("called as_fake on a real fs");
     }
 }
@@ -695,10 +695,13 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
         let watcher = Arc::new(linux_watcher::LinuxWatcher::new(tx, pending_paths.clone()));
 
-        watcher.add(&path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
-        if let Some(parent) = path.parent() {
-            // watch the parent dir so we can tell when settings.json is created
-            watcher.add(parent).log_err();
+        if watcher.add(path).is_err() {
+            // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
+            if let Some(parent) = path.parent() {
+                if let Err(e) = watcher.add(parent) {
+                    log::warn!("Failed to watch: {e}");
+                }
+            }
         }
 
         // Check if path is a symlink and follow the target parent
@@ -777,7 +780,10 @@ impl Fs for RealFs {
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
-        let repo = git2::Repository::open(dotgit_path).log_err()?;
+        // with libgit2, we can open git repo from an existing work dir
+        // https://libgit2.org/docs/reference/main/repository/git_repository_open.html
+        let workdir_root = dotgit_path.parent()?;
+        let repo = git2::Repository::open(workdir_root).log_err()?;
         Some(Arc::new(RealGitRepository::new(
             repo,
             self.git_binary_path.clone(),
@@ -840,6 +846,7 @@ impl Watcher for RealWatcher {
 
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeFs {
+    this: std::sync::Weak<Self>,
     // Use an unfair lock to ensure tests are deterministic.
     state: Mutex<FakeFsState>,
     executor: gpui::BackgroundExecutor,
@@ -1022,7 +1029,8 @@ impl FakeFs {
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
         let (tx, mut rx) = smol::channel::bounded::<PathBuf>(10);
 
-        let this = Arc::new(Self {
+        let this = Arc::new_cyclic(|this| Self {
+            this: this.clone(),
             executor: executor.clone(),
             state: Mutex::new(FakeFsState {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
@@ -1474,7 +1482,8 @@ struct FakeHandle {
 #[cfg(any(test, feature = "test-support"))]
 impl FileHandle for FakeHandle {
     fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf> {
-        let state = fs.as_fake().state.lock();
+        let fs = fs.as_fake();
+        let state = fs.state.lock();
         let Some(target) = state.moves.get(&self.inode) else {
             anyhow::bail!("fake fd not moved")
         };
@@ -1970,8 +1979,8 @@ impl Fs for FakeFs {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeFs {
-        self
+    fn as_fake(&self) -> Arc<FakeFs> {
+        self.this.upgrade().unwrap()
     }
 }
 

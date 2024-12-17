@@ -1,27 +1,27 @@
 use crate::markdown_elements::{
-    HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
+    HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
     ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
     ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
-    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
+    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
     div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
     ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length,
-    Modifiers, ParentElement, Resource, SharedString, Styled, StyledText, TextStyle, WeakView,
-    WindowContext,
+    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, View,
+    WeakView, WindowContext,
 };
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
-    path::Path,
     sync::Arc,
     vec,
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, v_flex, Checkbox, Clickable, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, LinkPreview, Selection, StatefulInteractiveElement, StyledExt, StyledImage,
-    Tooltip, VisibleOnHover,
+    h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
+    FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
+    LabelSize, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage, ToggleState,
+    Tooltip, ViewContext, VisibleOnHover, VisualContext as _,
 };
 use workspace::Workspace;
 
@@ -180,9 +180,9 @@ fn render_markdown_list_item(
                 Checkbox::new(
                     "checkbox",
                     if *checked {
-                        Selection::Selected
+                        ToggleState::Selected
                     } else {
-                        Selection::Unselected
+                        ToggleState::Unselected
                     },
                 )
                 .when_some(
@@ -192,8 +192,8 @@ fn render_markdown_list_item(
                             let range = range.clone();
                             move |selection, cx| {
                                 let checked = match selection {
-                                    Selection::Selected => true,
-                                    Selection::Unselected => false,
+                                    ToggleState::Selected => true,
+                                    ToggleState::Unselected => false,
                                     _ => return,
                                 };
 
@@ -207,15 +207,7 @@ fn render_markdown_list_item(
             )
             .hover(|s| s.cursor_pointer())
             .tooltip(|cx| {
-                let secondary_modifier = Keystroke {
-                    key: "".to_string(),
-                    modifiers: Modifiers::secondary_key(),
-                    key_char: None,
-                };
-                Tooltip::text(
-                    format!("{}-click to toggle the checkbox", secondary_modifier),
-                    cx,
-                )
+                InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", cx).into()
             })
             .into_any_element(),
     };
@@ -393,6 +385,7 @@ fn render_markdown_code_block(
                 cx.write_to_clipboard(ClipboardItem::new_string(contents.to_string()));
             }
         })
+        .tooltip(|cx| Tooltip::text("Copy code block", cx))
         .visible_on_hover("markdown-block");
 
     cx.with_common_p(div())
@@ -505,91 +498,43 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
             }
 
             MarkdownParagraphChunk::Image(image) => {
-                let (link, source_range, image_source, alt_text) = match image {
-                    Image::Web {
-                        link,
-                        source_range,
-                        url,
-                        alt_text,
-                    } => (
-                        link,
-                        source_range,
-                        Resource::Uri(url.clone().into()),
-                        alt_text,
-                    ),
-                    Image::Path {
-                        link,
-                        source_range,
-                        path,
-                        alt_text,
-                        ..
-                    } => {
-                        let image_path = Path::new(path.to_str().unwrap());
-                        (
-                            link,
-                            source_range,
-                            Resource::Path(Arc::from(image_path)),
-                            alt_text,
-                        )
-                    }
+                let image_resource = match image.link.clone() {
+                    Link::Web { url } => Resource::Uri(url.into()),
+                    Link::Path { path, .. } => Resource::Path(Arc::from(path)),
                 };
 
-                let element_id = cx.next_id(source_range);
+                let element_id = cx.next_id(&image.source_range);
 
-                match link {
-                    None => {
-                        let fallback_workspace = workspace_clone.clone();
-                        let fallback_syntax_theme = syntax_theme.clone();
-                        let fallback_text_style = text_style.clone();
-                        let fallback_alt_text = alt_text.clone();
-                        let element_id_new = element_id.clone();
-                        let element = div()
-                            .child(img(ImageSource::Resource(image_source)).with_fallback({
-                                move || {
-                                    fallback_text(
-                                        fallback_alt_text.clone().unwrap(),
-                                        element_id.clone(),
-                                        &fallback_syntax_theme,
-                                        code_span_bg_color,
-                                        fallback_workspace.clone(),
-                                        &fallback_text_style,
-                                    )
-                                }
-                            }))
-                            .id(element_id_new)
-                            .into_any();
-                        any_element.push(element);
-                    }
-                    Some(link) => {
-                        let link_click = link.clone();
-                        let link_tooltip = link.clone();
-                        let fallback_workspace = workspace_clone.clone();
-                        let fallback_syntax_theme = syntax_theme.clone();
-                        let fallback_text_style = text_style.clone();
-                        let fallback_alt_text = alt_text.clone();
-                        let element_id_new = element_id.clone();
-                        let image_element = div()
-                            .child(img(ImageSource::Resource(image_source)).with_fallback({
-                                move || {
-                                    fallback_text(
-                                        fallback_alt_text.clone().unwrap(),
-                                        element_id.clone(),
-                                        &fallback_syntax_theme,
-                                        code_span_bg_color,
-                                        fallback_workspace.clone(),
-                                        &fallback_text_style,
-                                    )
-                                }
-                            }))
-                            .id(element_id_new)
-                            .tooltip(move |cx| LinkPreview::new(&link_tooltip.to_string(), cx))
-                            .on_click({
-                                let workspace = workspace_clone.clone();
-                                move |_event, window_cx| match &link_click {
-                                    Link::Web { url } => window_cx.open_url(url),
+                let image_element = div()
+                    .id(element_id)
+                    .cursor_pointer()
+                    .child(img(ImageSource::Resource(image_resource)).with_fallback({
+                        let alt_text = image.alt_text.clone();
+                        {
+                            move || div().children(alt_text.clone()).into_any_element()
+                        }
+                    }))
+                    .tooltip({
+                        let link = image.link.clone();
+                        move |cx| {
+                            InteractiveMarkdownElementTooltip::new(
+                                Some(link.to_string()),
+                                "open image",
+                                cx,
+                            )
+                            .into()
+                        }
+                    })
+                    .on_click({
+                        let workspace = workspace_clone.clone();
+                        let link = image.link.clone();
+                        move |_, cx| {
+                            if cx.modifiers().secondary() {
+                                match &link {
+                                    Link::Web { url } => cx.open_url(url),
                                     Link::Path { path, .. } => {
                                         if let Some(workspace) = &workspace {
-                                            _ = workspace.update(window_cx, |workspace, cx| {
+                                            _ = workspace.update(cx, |workspace, cx| {
                                                 workspace
                                                     .open_abs_path(path.clone(), false, cx)
                                                     .detach();
@@ -597,11 +542,11 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                         }
                                     }
                                 }
-                            })
-                            .into_any();
-                        any_element.push(image_element);
-                    }
-                }
+                            }
+                        }
+                    })
+                    .into_any();
+                any_element.push(image_element);
             }
         }
     }
@@ -614,79 +559,49 @@ fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     div().pt_3().pb_3().child(rule).into_any()
 }
 
-fn fallback_text(
-    parsed: ParsedMarkdownText,
-    source_range: ElementId,
-    syntax_theme: &theme::SyntaxTheme,
-    code_span_bg_color: Hsla,
-    workspace: Option<WeakView<Workspace>>,
-    text_style: &TextStyle,
-) -> AnyElement {
-    let element_id = source_range;
+struct InteractiveMarkdownElementTooltip {
+    tooltip_text: Option<SharedString>,
+    action_text: String,
+}
 
-    let highlights = gpui::combine_highlights(
-        parsed.highlights.iter().filter_map(|(range, highlight)| {
-            let highlight = highlight.to_highlight_style(syntax_theme)?;
-            Some((range.clone(), highlight))
-        }),
-        parsed
-            .regions
-            .iter()
-            .zip(&parsed.region_ranges)
-            .filter_map(|(region, range)| {
-                if region.code {
-                    Some((
-                        range.clone(),
-                        HighlightStyle {
-                            background_color: Some(code_span_bg_color),
-                            ..Default::default()
-                        },
-                    ))
-                } else {
-                    None
-                }
-            }),
-    );
-    let mut links = Vec::new();
-    let mut link_ranges = Vec::new();
-    for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
-        if let Some(link) = region.link.clone() {
-            links.push(link);
-            link_ranges.push(range.clone());
-        }
+impl InteractiveMarkdownElementTooltip {
+    pub fn new(
+        tooltip_text: Option<String>,
+        action_text: &str,
+        cx: &mut WindowContext,
+    ) -> View<Self> {
+        let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
+
+        cx.new_view(|_| Self {
+            tooltip_text,
+            action_text: action_text.to_string(),
+        })
     }
-    let element = div()
-        .child(
-            InteractiveText::new(
-                element_id,
-                StyledText::new(parsed.contents.clone()).with_highlights(text_style, highlights),
+}
+
+impl Render for InteractiveMarkdownElementTooltip {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        tooltip_container(cx, |el, _| {
+            let secondary_modifier = Keystroke {
+                modifiers: Modifiers::secondary_key(),
+                ..Default::default()
+            };
+
+            el.child(
+                v_flex()
+                    .gap_1()
+                    .when_some(self.tooltip_text.clone(), |this, text| {
+                        this.child(Label::new(text).size(LabelSize::Small))
+                    })
+                    .child(
+                        Label::new(format!(
+                            "{}-click to {}",
+                            secondary_modifier, self.action_text
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
             )
-            .tooltip({
-                let links = links.clone();
-                let link_ranges = link_ranges.clone();
-                move |idx, cx| {
-                    for (ix, range) in link_ranges.iter().enumerate() {
-                        if range.contains(&idx) {
-                            return Some(LinkPreview::new(&links[ix].to_string(), cx));
-                        }
-                    }
-                    None
-                }
-            })
-            .on_click(
-                link_ranges,
-                move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
-                    Link::Web { url } => window_cx.open_url(url),
-                    Link::Path { path, .. } => {
-                        if let Some(workspace) = &workspace {
-                            _ = workspace.update(window_cx, |workspace, cx| {
-                                workspace.open_abs_path(path.clone(), false, cx).detach();
-                            });
-                        }
-                    }
-                },
-            ),
-        )
-        .into_any();
-    return element;
+        })
+    }
 }

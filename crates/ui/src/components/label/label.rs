@@ -56,20 +56,6 @@ impl Label {
             single_line: false,
         }
     }
-
-    /// Make the label display in a single line mode
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ui::prelude::*;
-    ///
-    /// let my_label = Label::new("Hello, World!").single_line();
-    /// ```
-    pub fn single_line(mut self) -> Self {
-        self.single_line = true;
-        self
-    }
 }
 
 // Style methods.
@@ -175,6 +161,17 @@ impl LabelCommon for Label {
 
     fn underline(mut self, underline: bool) -> Self {
         self.base = self.base.underline(underline);
+        self
+    }
+
+    fn text_ellipsis(mut self) -> Self {
+        self.base = self.base.text_ellipsis();
+        self
+    }
+
+    fn single_line(mut self) -> Self {
+        self.single_line = true;
+        self.base = self.base.single_line();
         self
     }
 }

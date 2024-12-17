@@ -39,6 +39,7 @@ collections.workspace = true
 convert_case.workspace = true
 db.workspace = true
 emojis.workspace = true
+feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -71,6 +72,7 @@ smol.workspace = true
 snippet.workspace = true
 sum_tree.workspace = true
 task.workspace = true
+telemetry.workspace = true
 text.workspace = true
 time.workspace = true
 time_format.workspace = true
@@ -84,6 +86,7 @@ unindent = { workspace = true, optional = true }
 ui.workspace = true
 url.workspace = true
 util.workspace = true
+uuid.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
@@ -97,6 +100,7 @@ project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 text = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-html.workspace = true
