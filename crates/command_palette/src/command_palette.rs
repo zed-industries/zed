@@ -36,6 +36,9 @@ pub struct CommandPalette {
     picker: View<Picker<CommandPaletteDelegate>>,
 }
 
+/// Removes subsequent whitespace characters and double colons from the query.
+///
+/// This improves the likelihood of a match by either humanized name or keymap-style name.
 fn normalize_query(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut last_char = None;
@@ -43,7 +46,9 @@ fn normalize_query(input: &str) -> String {
     for char in input.trim().chars() {
         match (last_char, char) {
             (Some(':'), ':') => continue,
-            (Some(last_char), char) if last_char.is_whitespace() && char.is_whitespace() => continue,
+            (Some(last_char), char) if last_char.is_whitespace() && char.is_whitespace() => {
+                continue
+            }
             _ => {
                 last_char = Some(char);
             }
@@ -471,6 +476,25 @@ mod tests {
         assert_eq!(
             humanize_action_name("go_to_line::Deploy"),
             "go to line: deploy"
+        );
+    }
+
+    #[test]
+    fn test_normalize_query() {
+        assert_eq!(normalize_query("editor: backspace"), "editor: backspace");
+        assert_eq!(normalize_query("editor:  backspace"), "editor: backspace");
+        assert_eq!(normalize_query("editor:    backspace"), "editor: backspace");
+        assert_eq!(
+            normalize_query("editor::GoToDefinition"),
+            "editor:GoToDefinition"
+        );
+        assert_eq!(
+            normalize_query("editor::::GoToDefinition"),
+            "editor:GoToDefinition"
+        );
+        assert_eq!(
+            normalize_query("editor: :GoToDefinition"),
+            "editor: :GoToDefinition"
         );
     }
 
