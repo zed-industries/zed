@@ -12,7 +12,7 @@ use crate::ui::ContextPill;
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
     context_picker: View<ContextPicker>,
-    pub(crate) context_picker_handle: PopoverMenuHandle<ContextPicker>,
+    context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
 }
 
 impl ContextStrip {
@@ -20,6 +20,7 @@ impl ContextStrip {
         context_store: Model<ContextStore>,
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
+        context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
@@ -32,7 +33,7 @@ impl ContextStrip {
                     cx,
                 )
             }),
-            context_picker_handle: PopoverMenuHandle::default(),
+            context_picker_menu_handle,
         }
     }
 }
@@ -59,7 +60,7 @@ impl Render for ContextStrip {
                         x: px(0.0),
                         y: px(-16.0),
                     })
-                    .with_handle(self.context_picker_handle.clone()),
+                    .with_handle(self.context_picker_menu_handle.clone()),
             )
             .children(context.iter().map(|context| {
                 ContextPill::new(context.clone()).on_remove({
