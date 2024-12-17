@@ -18,9 +18,8 @@ use std::io::Write;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, Event, EventRequestBody,
-    EventWrapper, InlineCompletionEvent, InlineCompletionRating, InlineCompletionRatingEvent,
-    SettingEvent,
+    AppEvent, AssistantEvent, CallEvent, EditEvent, Event, EventRequestBody, EventWrapper,
+    InlineCompletionEvent, InlineCompletionRating, InlineCompletionRatingEvent, SettingEvent,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -421,15 +420,6 @@ impl Telemetry {
 
             self.report_event(event);
         }
-    }
-
-    pub fn report_action_event(self: &Arc<Self>, source: &'static str, action: String) {
-        let event = Event::Action(ActionEvent {
-            source: source.to_string(),
-            action,
-        });
-
-        self.report_event(event)
     }
 
     pub fn report_discovered_project_events(
