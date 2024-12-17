@@ -460,13 +460,16 @@ type CompletionId = usize;
 #[derive(Debug, Clone)]
 struct InlineCompletionMenuHint {
     provider_name: &'static str,
-    text: Option<InlineCompletionText>,
+    text: InlineCompletionText,
 }
 
 #[derive(Clone, Debug)]
-struct InlineCompletionText {
-    text: SharedString,
-    highlights: Vec<(Range<usize>, HighlightStyle)>,
+enum InlineCompletionText {
+    Move(SharedString),
+    Edit {
+        text: SharedString,
+        highlights: Vec<(Range<usize>, HighlightStyle)>,
+    },
 }
 
 enum InlineCompletion {
@@ -4836,9 +4839,16 @@ impl Editor {
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
                 InlineCompletion::Edit(edits) => {
-                    Some(inline_completion_text(&editor_snapshot, edits, cx))
+                    inline_completion_edit_text(&editor_snapshot, edits, cx)
                 }
-                _ => None,
+                InlineCompletion::Move(target) => {
+                    let target_point =
+                        target.to_point(&editor_snapshot.display_snapshot.buffer_snapshot);
+                    let target_line = target_point.row + 1;
+                    InlineCompletionText::Move(
+                        format!("Jump to edit in line {}", target_line).into(),
+                    )
+                }
             };
 
             Some(InlineCompletionMenuHint {
@@ -14553,7 +14563,7 @@ pub fn diagnostic_block_renderer(
     })
 }
 
-fn inline_completion_text(
+fn inline_completion_edit_text(
     editor_snapshot: &EditorSnapshot,
     edits: &Vec<(Range<Anchor>, String)>,
     cx: &WindowContext,
@@ -14605,7 +14615,7 @@ fn inline_completion_text(
             .map(|chunk| chunk.text),
     );
 
-    InlineCompletionText {
+    InlineCompletionText::Edit {
         text: text.into(),
         highlights,
     }

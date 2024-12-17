@@ -28,7 +28,7 @@ use crate::{
     render_parsed_markdown, split_words, styled_runs_for_code_label, CodeActionProvider,
     CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, ResolvedTasks,
 };
-use crate::{AcceptInlineCompletion, InlineCompletionMenuHint};
+use crate::{AcceptInlineCompletion, InlineCompletionMenuHint, InlineCompletionText};
 
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
@@ -421,15 +421,16 @@ impl CompletionsMenu {
                     }
                     _ => None,
                 },
-                CompletionEntry::InlineCompletionHint(hint) => hint.text.as_ref().map(|text| {
-                    div()
+                CompletionEntry::InlineCompletionHint(hint) => Some(match &hint.text {
+                    InlineCompletionText::Edit { text, highlights } => div()
                         .my_1()
                         .rounded_md()
                         .bg(cx.theme().colors().editor_background)
                         .child(
-                            gpui::StyledText::new(text.text.clone())
-                                .with_highlights(&style.text, text.highlights.clone()),
-                        )
+                            gpui::StyledText::new(text.clone())
+                                .with_highlights(&style.text, highlights.clone()),
+                        ),
+                    InlineCompletionText::Move(text) => div().child(text.clone()),
                 }),
             }
         } else {

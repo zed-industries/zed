@@ -14382,8 +14382,11 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
                     ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
                 let edits = vec![(edit_range, " beautiful".to_string())];
 
-                let InlineCompletionText { text, highlights } =
-                    inline_completion_text(&snapshot, &edits, cx);
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
 
                 assert_eq!(text, "Hello, beautiful world!");
                 assert_eq!(highlights.len(), 1);
@@ -14413,8 +14416,11 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
                     "That".to_string(),
                 )];
 
-                let InlineCompletionText { text, highlights } =
-                    inline_completion_text(&snapshot, &edits, cx);
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
 
                 assert_eq!(text, "That is a test.");
                 assert_eq!(highlights.len(), 1);
@@ -14451,8 +14457,11 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
                     ),
                 ];
 
-                let InlineCompletionText { text, highlights } =
-                    inline_completion_text(&snapshot, &edits, cx);
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
 
                 assert_eq!(text, "Greetings, world and universe!");
                 assert_eq!(highlights.len(), 2);
@@ -14500,8 +14509,11 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
                     ),
                 ];
 
-                let InlineCompletionText { text, highlights } =
-                    inline_completion_text(&snapshot, &edits, cx);
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
 
                 assert_eq!(text, "Second modified\nNew third line\nFourth updated line");
                 assert_eq!(highlights.len(), 3);

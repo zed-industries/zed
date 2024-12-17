@@ -2891,10 +2891,6 @@ impl EditorElement {
         const PADDING_X: Pixels = Pixels(24.);
         const PADDING_Y: Pixels = Pixels(2.);
 
-        if self.editor.read(cx).has_active_completions_menu() {
-            return None;
-        }
-
         let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
 
         match &active_inline_completion.completion {
@@ -2971,6 +2967,10 @@ impl EditorElement {
                 }
             }
             InlineCompletion::Edit(edits) => {
+                if self.editor.read(cx).has_active_completions_menu() {
+                    return None;
+                }
+
                 let edit_start = edits
                     .first()
                     .unwrap()
@@ -2994,8 +2994,12 @@ impl EditorElement {
                     return None;
                 }
 
-                let hint = crate::inline_completion_text(editor_snapshot, edits, cx);
-                let line_count = hint.text.lines().count() + 1;
+                let crate::InlineCompletionText::Edit { text, highlights } =
+                    crate::inline_completion_edit_text(editor_snapshot, edits, cx)
+                else {
+                    return None;
+                };
+                let line_count = text.lines().count() + 1;
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -3013,8 +3017,8 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text = gpui::StyledText::new(hint.text.clone())
-                    .with_highlights(&style.text, hint.highlights);
+                let styled_text =
+                    gpui::StyledText::new(text.clone()).with_highlights(&style.text, highlights);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
