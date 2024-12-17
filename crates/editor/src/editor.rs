@@ -458,7 +458,7 @@ pub fn make_suggestion_styles(cx: &WindowContext) -> InlineCompletionStyles {
 type CompletionId = usize;
 
 #[derive(Clone, Debug)]
-struct InlineCompletionHint {
+struct InlineCompletionText {
     text: SharedString,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
@@ -466,6 +466,12 @@ struct InlineCompletionHint {
 enum InlineCompletion {
     Edit(Vec<(Range<Anchor>, String)>),
     Move(Anchor),
+}
+
+impl InlineCompletion {
+    fn is_edit(&self) -> bool {
+        matches!(self, InlineCompletion::Edit(_))
+    }
 }
 
 struct InlineCompletionState {
@@ -3739,7 +3745,7 @@ impl Editor {
                         if editor.has_active_inline_completion() {
                             if let Some(provider) = editor.inline_completion_provider() {
                                 let provider_name = provider.name();
-                                let hint = editor.inline_completion_hint(cx);
+                                let hint = editor.inline_completion_text(cx);
                                 menu.show_inline_completion_hint(provider_name.into(), hint);
                             }
                         }
@@ -3763,19 +3769,6 @@ impl Editor {
         });
 
         self.completion_tasks.push((id, task));
-    }
-
-    pub fn inline_completion_hint(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<InlineCompletionHint> {
-        let editor_snapshot = self.snapshot(cx);
-        let InlineCompletion::Edit(edits) = &self.active_inline_completion.as_ref()?.completion
-        else {
-            return None;
-        };
-
-        Some(inline_completion_hint(&editor_snapshot, edits, cx))
     }
 
     pub fn confirm_completion(
@@ -4826,18 +4819,41 @@ impl Editor {
         });
 
         if self.has_active_completions_menu() {
-            let provider_name = provider.name();
-            let hint = self.inline_completion_hint(cx);
+            let provider_name = provider.name().into();
+            let hint = self.inline_completion_text(cx);
             match self.context_menu.borrow_mut().as_mut() {
                 Some(CodeContextMenu::Completions(menu)) => {
-                    menu.show_inline_completion_hint(provider_name.into(), hint);
+                    menu.show_inline_completion_hint(provider_name, hint);
                 }
                 _ => {}
             }
         }
+
         cx.notify();
 
         Some(())
+    }
+
+    fn inline_completion_text(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<InlineCompletionText> {
+        if self
+            .active_inline_completion
+            .as_ref()
+            .map_or(true, |state| !state.completion.is_edit())
+        {
+            return None;
+        }
+
+        let editor_snapshot = self.snapshot(cx);
+
+        match &self.active_inline_completion.as_ref()?.completion {
+            InlineCompletion::Edit(edits) => {
+                Some(inline_completion_text(&editor_snapshot, edits, cx))
+            }
+            _ => None,
+        }
     }
 
     fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
@@ -14543,11 +14559,11 @@ pub fn diagnostic_block_renderer(
     })
 }
 
-pub(crate) fn inline_completion_hint(
+fn inline_completion_text(
     editor_snapshot: &EditorSnapshot,
     edits: &Vec<(Range<Anchor>, String)>,
     cx: &WindowContext,
-) -> InlineCompletionHint {
+) -> InlineCompletionText {
     let edit_start = edits
         .first()
         .unwrap()
@@ -14595,7 +14611,7 @@ pub(crate) fn inline_completion_hint(
             .map(|chunk| chunk.text),
     );
 
-    InlineCompletionHint {
+    InlineCompletionText {
         text: text.into(),
         highlights,
     }

@@ -28,7 +28,7 @@ use crate::{
     render_parsed_markdown, split_words, styled_runs_for_code_label, CodeActionProvider,
     CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, ResolvedTasks,
 };
-use crate::{AcceptInlineCompletion, InlineCompletionHint};
+use crate::{AcceptInlineCompletion, InlineCompletionText};
 
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
@@ -155,7 +155,7 @@ pub(crate) enum CompletionEntry {
     Match(StringMatch),
     InlineCompletionHint {
         provider_name: SharedString,
-        hint: Option<InlineCompletionHint>,
+        hint: Option<InlineCompletionText>,
     },
 }
 
@@ -220,7 +220,7 @@ impl CompletionsMenu {
             .enumerate()
             .map(|(id, completion)| StringMatchCandidate::new(id, &completion))
             .collect();
-        let matches = choices
+        let entries = choices
             .iter()
             .enumerate()
             .map(|(id, completion)| {
@@ -239,7 +239,7 @@ impl CompletionsMenu {
             buffer,
             completions: RefCell::new(completions).into(),
             match_candidates,
-            entries: matches,
+            entries,
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: false,
@@ -307,23 +307,26 @@ impl CompletionsMenu {
     pub fn show_inline_completion_hint(
         &mut self,
         provider_name: SharedString,
-        hint: Option<InlineCompletionHint>,
+        hint: Option<InlineCompletionText>,
     ) {
-        let mut new_entries = Vec::from(&*self.entries);
         let hint = CompletionEntry::InlineCompletionHint {
             provider_name,
             hint,
         };
-        if matches!(
-            self.entries.first(),
-            Some(CompletionEntry::InlineCompletionHint { .. })
-        ) {
-            new_entries[0] = hint;
-        } else {
-            new_entries.insert(0, hint);
+        self.entries = match self.entries.first() {
+            Some(CompletionEntry::InlineCompletionHint { .. }) => {
+                let mut entries = Vec::from(&*self.entries);
+                entries[0] = hint;
+                entries
+            }
+            _ => {
+                let mut entries = Vec::with_capacity(self.entries.len() + 1);
+                entries.push(hint);
+                entries.extend_from_slice(&self.entries);
+                entries
+            }
         }
-
-        self.entries = new_entries.into();
+        .into();
         self.selected_item = 0;
     }
 
