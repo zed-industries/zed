@@ -9,19 +9,19 @@
 //! This module defines a Project Tree.
 
 use std::{
-    collections::BTreeMap,
+    collections::{hash_map::Entry, BTreeMap},
     path::Path,
     sync::{Arc, OnceLock},
 };
 
 use collections::HashMap;
 use gpui::{AppContext, Context as _, Model};
-use language::{LanguageName, LanguageRegistry};
+use language::{Attach, LanguageName, LanguageRegistry};
 use lsp::LanguageServerName;
 
 use crate::{LanguageServerId, ProjectPath};
 
-use super::ProjectTree;
+use super::{AdapterWrapper, ProjectTree};
 
 pub type AbsWorkspaceRootPath = Arc<Path>;
 
@@ -32,26 +32,6 @@ pub struct LanguageServerTree {
     instances: HashMap<ProjectPath, BTreeMap<LanguageServerName, LanguageServerTreeNode>>,
     // shared_instances: BTreeMap<WorktreeId, BTreeMap<LanguageServerName, LanguageServerId>>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Attach {
-    /// Create a single language server instance per subproject root.
-    InstancePerRoot,
-    /// Use one shared language server instance for all subprojects within a project.
-    Shared,
-}
-
-impl Attach {
-    fn root_path(&self, root_subproject_path: ProjectPath) -> ProjectPath {
-        match self {
-            Attach::InstancePerRoot => root_subproject_path,
-            Attach::Shared => ProjectPath {
-                worktree_id: root_subproject_path.worktree_id,
-                path: Arc::from(Path::new("")),
-            },
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -83,11 +63,11 @@ impl LanguageServerTree {
             attach_kind_cache: Default::default(),
         })
     }
-    fn attach_kind(&mut self, name: LanguageServerName) -> Attach {
+    fn attach_kind(&mut self, adapter: &AdapterWrapper) -> Attach {
         *self
             .attach_kind_cache
-            .entry(name)
-            .or_insert_with(|| Attach::Shared)
+            .entry(adapter.0.name.clone())
+            .or_insert_with(|| adapter.0.attach_kind())
         // todo: query lspadapter for it.
     }
 
@@ -101,12 +81,12 @@ impl LanguageServerTree {
             .project_tree
             .update(cx, |this, cx| this.root_for_path(path, &language, cx));
 
-        roots.into_iter().map(|(adapter_name, root_path)| {
-            let attach = self.attach_kind(adapter_name.clone());
+        roots.into_iter().map(|(adapter, root_path)| {
+            let attach = self.attach_kind(&adapter);
             self.instances
                 .entry(root_path)
                 .or_default()
-                .entry(adapter_name)
+                .entry(adapter.0.name.clone())
                 .or_insert_with(|| LanguageServerTreeNode::new(attach))
                 .clone()
         })

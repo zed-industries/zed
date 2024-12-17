@@ -13,7 +13,7 @@ use std::{
 
 use collections::HashMap;
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
-use language::{LanguageName, LanguageRegistry};
+use language::{CachedLspAdapter, LanguageName, LanguageRegistry};
 use lsp::LanguageServerName;
 use settings::WorktreeId;
 use worktree::{Event as WorktreeEvent, Worktree};
@@ -73,6 +73,28 @@ pub struct ProjectTree {
     _subscriptions: [Subscription; 1],
 }
 
+#[derive(Clone)]
+struct AdapterWrapper(Arc<CachedLspAdapter>);
+impl PartialEq for AdapterWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.name.eq(&other.0.name)
+    }
+}
+
+impl PartialOrd for AdapterWrapper {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.0.name.partial_cmp(&other.0.name)
+    }
+}
+
+impl Ord for AdapterWrapper {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.name.cmp(&other.0.name)
+    }
+}
+
+impl Eq for AdapterWrapper {}
+
 impl ProjectTree {
     fn new(
         languages: Arc<LanguageRegistry>,
@@ -91,7 +113,7 @@ impl ProjectTree {
         ProjectPath { worktree_id, path }: ProjectPath,
         language_name: &LanguageName,
         cx: &mut AppContext,
-    ) -> BTreeMap<LanguageServerName, ProjectPath> {
+    ) -> BTreeMap<AdapterWrapper, ProjectPath> {
         let mut roots = BTreeMap::default();
         let adapters = self.languages.lsp_adapters(&language_name);
         let worktree_roots = match self.root_points.entry(worktree_id) {
@@ -131,14 +153,17 @@ impl ProjectTree {
                                     adapter.find_closest_project_root(worktree_id, path.clone());
                                 vacant_entry.insert(root.is_some());
                                 if let Some(root) = root {
-                                    roots.insert(adapter.name.clone(), (worktree_id, root).into());
+                                    roots.insert(
+                                        AdapterWrapper(adapter.clone()),
+                                        (worktree_id, root).into(),
+                                    );
                                 }
                             }
                             TreeEntry::Occupied(occupied_entry) => {
                                 let is_root = *occupied_entry.get();
                                 if is_root {
                                     roots.insert(
-                                        adapter.name.clone(),
+                                        AdapterWrapper(adapter.clone()),
                                         (worktree_id, ancestor).into(),
                                     );
                                 }
