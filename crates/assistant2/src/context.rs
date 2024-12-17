@@ -73,5 +73,7 @@ pub fn attach_context_to_message(
         context_text.push_str(&thread_context);
     }
 
-    message.content.push(MessageContent::Text(context_text));
+    if !context_text.is_empty() {
+        message.content.push(MessageContent::Text(context_text));
+    }
 }
