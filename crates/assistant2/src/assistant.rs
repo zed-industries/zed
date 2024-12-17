@@ -6,6 +6,7 @@ mod context_picker;
 mod context_store;
 mod context_strip;
 mod inline_assistant;
+mod inline_prompt_editor;
 mod message_editor;
 mod prompts;
 mod streaming_diff;
