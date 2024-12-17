@@ -758,9 +758,9 @@ impl SplitDirection {
     pub fn edge(&self, rect: Bounds<Pixels>) -> Pixels {
         match self {
             Self::Up => rect.origin.y,
-            Self::Down => rect.lower_left().y,
-            Self::Left => rect.lower_left().x,
-            Self::Right => rect.lower_right().x,
+            Self::Down => rect.bottom_left().y,
+            Self::Left => rect.bottom_left().x,
+            Self::Right => rect.bottom_right().x,
         }
     }
 
@@ -771,7 +771,7 @@ impl SplitDirection {
                 size: size(bounds.size.width, length),
             },
             Self::Down => Bounds {
-                origin: point(bounds.lower_left().x, bounds.lower_left().y - length),
+                origin: point(bounds.bottom_left().x, bounds.bottom_left().y - length),
                 size: size(bounds.size.width, length),
             },
             Self::Left => Bounds {
@@ -779,7 +779,7 @@ impl SplitDirection {
                 size: size(length, bounds.size.height),
             },
             Self::Right => Bounds {
-                origin: point(bounds.lower_right().x - length, bounds.lower_left().y),
+                origin: point(bounds.bottom_right().x - length, bounds.bottom_left().y),
                 size: size(length, bounds.size.height),
             },
         }

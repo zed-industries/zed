@@ -67,8 +67,8 @@ impl Render for ContextStrip {
                                 )
                             }),
                     )
-                    .attach(gpui::AnchorCorner::TopLeft)
-                    .anchor(gpui::AnchorCorner::BottomLeft)
+                    .attach(gpui::Corner::TopLeft)
+                    .anchor(gpui::Corner::BottomLeft)
                     .offset(gpui::Point {
                         x: px(0.0),
                         y: px(-16.0),

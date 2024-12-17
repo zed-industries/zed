@@ -1556,7 +1556,7 @@ impl Render for PromptEditor {
                                             anchored()
                                                 .position_mode(gpui::AnchoredPositionMode::Local)
                                                 .position(point(px(0.), px(24.)))
-                                                .anchor(gpui::AnchorCorner::TopLeft)
+                                                .anchor(gpui::Corner::TopLeft)
                                                 .child(self.render_rate_limit_notice(cx)),
                                         )
                                     })),

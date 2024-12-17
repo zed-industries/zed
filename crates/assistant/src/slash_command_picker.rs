@@ -316,8 +316,8 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
         PopoverMenu::new("model-switcher")
             .menu(move |_cx| Some(picker_view.clone()))
             .trigger(self.trigger)
-            .attach(gpui::AnchorCorner::TopLeft)
-            .anchor(gpui::AnchorCorner::BottomLeft)
+            .attach(gpui::Corner::TopLeft)
+            .anchor(gpui::Corner::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-16.0),
