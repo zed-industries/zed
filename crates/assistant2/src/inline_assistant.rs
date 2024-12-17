@@ -665,7 +665,7 @@ impl InlineAssistant {
                 self.dismiss_assist(assist_id, cx);
             }
             PromptEditorEvent::Resized { .. } => {
-                // This only matters for the terminal inline
+                // This only matters for the terminal inline assistant
             }
         }
     }
@@ -1757,6 +1757,7 @@ impl PromptEditor {
         } else {
             "Transform"
         };
+
         let assistant_panel_keybinding = ui::text_for_action(&crate::ToggleFocus, cx)
             .map(|keybinding| format!("{keybinding} to chat ― "))
             .unwrap_or_default();
