@@ -4,8 +4,8 @@ use std::{cell::Cell, cmp::Reverse, ops::Range, rc::Rc};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
-    Model, Pixels, ScrollStrategy, SharedString, StrikethroughStyle, StyledText,
-    UniformListScrollHandle, ViewContext, WeakView,
+    Model, ScrollStrategy, SharedString, StrikethroughStyle, StyledText, UniformListScrollHandle,
+    ViewContext, WeakView,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -106,22 +106,24 @@ impl CodeContextMenu {
         }
     }
 
+    pub fn origin(&self, cursor_position: DisplayPoint) -> ContextMenuOrigin {
+        match self {
+            CodeContextMenu::Completions(menu) => menu.origin(cursor_position),
+            CodeContextMenu::CodeActions(menu) => menu.origin(cursor_position),
+        }
+    }
     pub fn render(
         &self,
-        cursor_position: DisplayPoint,
         style: &EditorStyle,
-        max_height: Pixels,
+        max_height_in_lines: u32,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
-    ) -> (ContextMenuOrigin, AnyElement) {
+    ) -> AnyElement {
         match self {
-            CodeContextMenu::Completions(menu) => (
-                ContextMenuOrigin::EditorPoint(cursor_position),
-                menu.render(style, max_height, workspace, cx),
-            ),
-            CodeContextMenu::CodeActions(menu) => {
-                menu.render(cursor_position, style, max_height, cx)
+            CodeContextMenu::Completions(menu) => {
+                menu.render(style, max_height_in_lines, workspace, cx)
             }
+            CodeContextMenu::CodeActions(menu) => menu.render(style, max_height_in_lines, cx),
         }
     }
 }
@@ -322,13 +324,19 @@ impl CompletionsMenu {
         !self.matches.is_empty()
     }
 
+    fn origin(&self, cursor_position: DisplayPoint) -> ContextMenuOrigin {
+        ContextMenuOrigin::EditorPoint(cursor_position)
+    }
+
     fn render(
         &self,
         style: &EditorStyle,
-        max_height: Pixels,
+        max_height_in_lines: u32,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
+        let max_height = max_height_in_lines as f32 * cx.line_height();
+
         let completions = self.completions.borrow_mut();
         let show_completion_documentation = self.show_completion_documentation;
         let widest_completion_ix = self
@@ -496,7 +504,7 @@ impl CompletionsMenu {
             },
         )
         .occlude()
-        .max_h(max_height)
+        .max_h(max_height_in_lines as f32 * cx.line_height())
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix)
         .with_sizing_behavior(ListSizingBehavior::Infer);
@@ -779,13 +787,20 @@ impl CodeActionsMenu {
         !self.actions.is_empty()
     }
 
+    fn origin(&self, cursor_position: DisplayPoint) -> ContextMenuOrigin {
+        if let Some(row) = self.deployed_from_indicator {
+            ContextMenuOrigin::GutterIndicator(row)
+        } else {
+            ContextMenuOrigin::EditorPoint(cursor_position)
+        }
+    }
+
     fn render(
         &self,
-        cursor_position: DisplayPoint,
         _style: &EditorStyle,
-        max_height: Pixels,
+        max_height_in_lines: u32,
         cx: &mut ViewContext<Editor>,
-    ) -> (ContextMenuOrigin, AnyElement) {
+    ) -> AnyElement {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
         let list = uniform_list(
@@ -857,7 +872,7 @@ impl CodeActionsMenu {
             },
         )
         .occlude()
-        .max_h(max_height)
+        .max_h(max_height_in_lines as f32 * cx.line_height())
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(
             self.actions
@@ -873,14 +888,6 @@ impl CodeActionsMenu {
         )
         .with_sizing_behavior(ListSizingBehavior::Infer);
 
-        let element = Popover::new().child(list).into_any_element();
-
-        let cursor_position = if let Some(row) = self.deployed_from_indicator {
-            ContextMenuOrigin::GutterIndicator(row)
-        } else {
-            ContextMenuOrigin::EditorPoint(cursor_position)
-        };
-
-        (cursor_position, element)
+        Popover::new().child(list).into_any_element()
     }
 }

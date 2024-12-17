@@ -1382,18 +1382,16 @@ impl Editor {
         if self.pending_rename.is_some() {
             key_context.add("renaming");
         }
-        if self.context_menu_visible() {
-            match self.context_menu.borrow().as_ref() {
-                Some(CodeContextMenu::Completions(_)) => {
-                    key_context.add("menu");
-                    key_context.add("showing_completions")
-                }
-                Some(CodeContextMenu::CodeActions(_)) => {
-                    key_context.add("menu");
-                    key_context.add("showing_code_actions")
-                }
-                None => {}
+        match self.context_menu.borrow().as_ref() {
+            Some(CodeContextMenu::Completions(_)) => {
+                key_context.add("menu");
+                key_context.add("showing_completions")
             }
+            Some(CodeContextMenu::CodeActions(_)) => {
+                key_context.add("menu");
+                key_context.add("showing_code_actions")
+            }
+            None => {}
         }
 
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
@@ -4999,6 +4997,7 @@ impl Editor {
             }))
     }
 
+    #[cfg(feature = "test-support")]
     pub fn context_menu_visible(&self) -> bool {
         self.context_menu
             .borrow()
@@ -5006,21 +5005,30 @@ impl Editor {
             .map_or(false, |menu| menu.visible())
     }
 
+    fn context_menu_origin(&self, cursor_position: DisplayPoint) -> Option<ContextMenuOrigin> {
+        self.context_menu
+            .borrow()
+            .as_ref()
+            .map(|menu| menu.origin(cursor_position))
+    }
+
     fn render_context_menu(
         &self,
-        cursor_position: DisplayPoint,
         style: &EditorStyle,
-        max_height: Pixels,
+        max_height_in_lines: u32,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(ContextMenuOrigin, AnyElement)> {
-        self.context_menu.borrow().as_ref().map(|menu| {
-            menu.render(
-                cursor_position,
-                style,
-                max_height,
-                self.workspace.as_ref().map(|(w, _)| w.clone()),
-                cx,
-            )
+    ) -> Option<AnyElement> {
+        self.context_menu.borrow().as_ref().and_then(|menu| {
+            if menu.visible() {
+                Some(menu.render(
+                    style,
+                    max_height_in_lines,
+                    self.workspace.as_ref().map(|(w, _)| w.clone()),
+                    cx,
+                ))
+            } else {
+                None
+            }
         })
     }
 
