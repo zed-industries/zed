@@ -243,6 +243,13 @@ impl DiffMap {
         self.recompute_transforms(changes, cx);
     }
 
+    pub(super) fn has_multiple_hunks(&self) -> bool {
+        self.snapshot
+            .diff_hunks_in_range(Anchor::min()..Anchor::max())
+            .nth(1)
+            .is_some()
+    }
+
     pub(super) fn has_expanded_diff_hunks_in_ranges(
         &self,
         ranges: &[Range<multi_buffer::Anchor>],
@@ -386,7 +393,7 @@ impl DiffMap {
                                 excerpt_buffer_range.start.to_offset(buffer);
                             let hunk_start_multibuffer_offset = excerpt_range.start
                                 + hunk_start_buffer_offset
-                                - excerpt_buffer_range_start_offset;
+                                    .saturating_sub(excerpt_buffer_range_start_offset);
 
                             self.push_buffer_content_transform(
                                 &mut new_transforms,

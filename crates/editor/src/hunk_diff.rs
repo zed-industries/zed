@@ -7,11 +7,10 @@ use gpui::{
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+    MultiBufferSnapshot, ToPoint,
 };
 use project::buffer_store::BufferChangeSet;
 use std::{ops::Range, sync::Arc};
-use sum_tree::TreeMap;
 use text::OffsetRangeExt;
 use ui::{
     prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
@@ -38,7 +37,6 @@ pub(super) struct HoveredHunk {
 pub(super) struct DiffMap {
     pub(crate) hunks: Vec<ExpandedHunk>,
     pub(crate) diff_bases: HashMap<BufferId, DiffBaseState>,
-    pub(crate) snapshot: DiffMapSnapshot,
     hunk_update_tasks: HashMap<Option<BufferId>, Task<()>>,
     expand_all: bool,
 }
@@ -51,9 +49,6 @@ pub(super) struct ExpandedHunk {
     pub status: DiffHunkStatus,
     pub folded: bool,
 }
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct DiffMapSnapshot(TreeMap<BufferId, git::diff::BufferDiff>);
 
 pub(crate) struct DiffBaseState {
     pub(crate) change_set: Model<BufferChangeSet>,
@@ -75,54 +70,7 @@ pub enum DisplayDiffHunk {
     },
 }
 
-impl DiffMapSnapshot {
-    pub fn diff_hunks<'a>(
-        &'a self,
-        buffer_snapshot: &'a MultiBufferSnapshot,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
-        self.diff_hunks_in_range(0..buffer_snapshot.len(), buffer_snapshot)
-    }
-
-    pub fn diff_hunks_in_range<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-        buffer_snapshot: &'a MultiBufferSnapshot,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
-        let range = range.start.to_offset(buffer_snapshot)..range.end.to_offset(buffer_snapshot);
-        buffer_snapshot
-            .excerpts_for_range(range.clone())
-            .filter_map(move |excerpt| {
-                let buffer = excerpt.buffer();
-                let buffer_id = buffer.remote_id();
-                let diff = self.0.get(&buffer_id)?;
-                let buffer_range = excerpt.map_range_to_buffer(range.clone());
-                let buffer_range =
-                    buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
-                Some(
-                    diff.hunks_intersecting_range(buffer_range, excerpt.buffer())
-                        .map(move |hunk| {
-                            let start =
-                                excerpt.map_point_from_buffer(Point::new(hunk.row_range.start, 0));
-                            let end =
-                                excerpt.map_point_from_buffer(Point::new(hunk.row_range.end, 0));
-                            MultiBufferDiffHunk {
-                                row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
-                                buffer_id,
-                                buffer_range: hunk.buffer_range.clone(),
-                                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                            }
-                        }),
-                )
-            })
-            .flatten()
-    }
-}
-
 impl Editor {
-    // pub fn set_expand_all_diff_hunks(&mut self) {
-    //     self.diff_map.expand_all = true;
-    // }
-
     pub(super) fn toggle_hovered_hunk(
         &mut self,
         hovered_hunk: &HoveredHunk,
@@ -402,10 +350,8 @@ impl Editor {
         }
     }
 
-    fn has_multiple_hunks(&self, cx: &AppContext) -> bool {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let mut hunks = self.diff_map.snapshot.diff_hunks(&snapshot);
-        hunks.nth(1).is_some()
+    fn has_multiple_hunks(&self, cx: &mut WindowContext) -> bool {
+        self.display_map.read(cx).has_multiple_hunks(cx)
     }
 
     fn hunk_header_block(

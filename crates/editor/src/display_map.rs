@@ -42,7 +42,8 @@ pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
+    AnyElement, AppContext, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels,
+    UnderlineStyle,
 };
 pub(crate) use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
@@ -389,6 +390,10 @@ impl DisplayMap {
         self.diff_map.update(cx, |diff_map, cx| {
             diff_map.add_change_set(change_set, cx);
         });
+    }
+
+    pub fn has_multiple_hunks(&self, cx: &AppContext) -> bool {
+        self.diff_map.read(cx).has_multiple_hunks()
     }
 
     pub fn has_expanded_diff_hunks_in_ranges(

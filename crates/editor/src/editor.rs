@@ -13024,6 +13024,7 @@ pub fn hunks_for_ranges(
         let query_rows =
             MultiBufferRow(query_range.start.row)..MultiBufferRow(query_range.end.row + 1);
         for hunk in snapshot
+            .diff_snapshot()
             .diff_hunks_in_range(Point::new(query_rows.start.0, 0)..Point::new(query_rows.end.0, 0))
         {
             // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
