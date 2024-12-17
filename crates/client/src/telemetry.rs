@@ -20,7 +20,7 @@ use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, Event, EventRequestBody,
     EventWrapper, InlineCompletionEvent, InlineCompletionRating, InlineCompletionRatingEvent,
-    ReplEvent, SettingEvent,
+    SettingEvent,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -476,21 +476,6 @@ impl Telemetry {
         for project_type_name in project_type_names {
             self.report_app_event(format!("open {} project", project_type_name));
         }
-    }
-
-    pub fn report_repl_event(
-        self: &Arc<Self>,
-        kernel_language: String,
-        kernel_status: String,
-        repl_session_id: String,
-    ) {
-        let event = Event::Repl(ReplEvent {
-            kernel_language,
-            kernel_status,
-            repl_session_id,
-        });
-
-        self.report_event(event)
     }
 
     fn report_event(self: &Arc<Self>, event: Event) {

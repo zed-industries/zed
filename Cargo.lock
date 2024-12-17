@@ -10402,6 +10402,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "telemetry",
  "terminal",
  "terminal_view",
  "theme",
