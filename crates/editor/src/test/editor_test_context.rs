@@ -360,18 +360,21 @@ impl EditorTestContext {
             .split('\n')
             .zip(line_infos)
             .map(|(line, info)| {
-                let marker = match info.diff_status {
+                let mut marker = match info.diff_status {
                     Some(DiffHunkStatus::Added) => "+ ",
                     Some(DiffHunkStatus::Removed) => "- ",
                     Some(DiffHunkStatus::Modified) => unreachable!(),
                     None => {
-                        if has_diff && !line.trim().is_empty() {
+                        if has_diff {
                             "  "
                         } else {
                             ""
                         }
                     }
                 };
+                if line.is_empty() {
+                    marker = marker.trim();
+                }
                 format!("{marker}{line}")
             })
             .collect::<Vec<_>>()
