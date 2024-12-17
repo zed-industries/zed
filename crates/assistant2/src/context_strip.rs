@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use gpui::{Model, View, WeakModel, WeakView};
+use gpui::{FocusHandle, Model, View, WeakModel, WeakView};
 use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
@@ -8,11 +8,13 @@ use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
+use crate::ToggleContextPicker;
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
     context_picker: View<ContextPicker>,
-    pub(crate) context_picker_handle: PopoverMenuHandle<ContextPicker>,
+    context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
+    focus_handle: FocusHandle,
 }
 
 impl ContextStrip {
@@ -20,6 +22,8 @@ impl ContextStrip {
         context_store: Model<ContextStore>,
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
+        focus_handle: FocusHandle,
+        context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
@@ -32,7 +36,8 @@ impl ContextStrip {
                     cx,
                 )
             }),
-            context_picker_handle: PopoverMenuHandle::default(),
+            context_picker_menu_handle,
+            focus_handle,
         }
     }
 }
@@ -41,6 +46,7 @@ impl Render for ContextStrip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let context = self.context_store.read(cx).context();
         let context_picker = self.context_picker.clone();
+        let focus_handle = self.focus_handle.clone();
 
         h_flex()
             .flex_wrap()
@@ -51,7 +57,15 @@ impl Render for ContextStrip {
                     .trigger(
                         IconButton::new("add-context", IconName::Plus)
                             .icon_size(IconSize::Small)
-                            .style(ui::ButtonStyle::Filled),
+                            .style(ui::ButtonStyle::Filled)
+                            .tooltip(move |cx| {
+                                Tooltip::for_action_in(
+                                    "Add Context",
+                                    &ToggleContextPicker,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }),
                     )
                     .attach(gpui::AnchorCorner::TopLeft)
                     .anchor(gpui::AnchorCorner::BottomLeft)
@@ -59,7 +73,7 @@ impl Render for ContextStrip {
                         x: px(0.0),
                         y: px(-16.0),
                     })
-                    .with_handle(self.context_picker_handle.clone()),
+                    .with_handle(self.context_picker_menu_handle.clone()),
             )
             .children(context.iter().map(|context| {
                 ContextPill::new(context.clone()).on_remove({

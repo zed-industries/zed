@@ -14,17 +14,19 @@ use ui::{
 use workspace::Workspace;
 
 use crate::assistant_settings::AssistantSettings;
+use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::context_strip::ContextStrip;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, ToggleModelSelector};
+use crate::{Chat, ToggleContextPicker, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
     editor: View<Editor>,
     context_store: Model<ContextStore>,
     context_strip: View<ContextStrip>,
+    context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     language_model_selector: View<LanguageModelSelector>,
     language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     use_tools: bool,
@@ -39,25 +41,31 @@ impl MessageEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let context_store = cx.new_model(|_cx| ContextStore::new());
+        let context_picker_menu_handle = PopoverMenuHandle::default();
+
+        let editor = cx.new_view(|cx| {
+            let mut editor = Editor::auto_height(80, cx);
+            editor.set_placeholder_text("Ask anything, @ to add context", cx);
+            editor.set_show_indent_guides(false, cx);
+
+            editor
+        });
 
         Self {
             thread,
-            editor: cx.new_view(|cx| {
-                let mut editor = Editor::auto_height(80, cx);
-                editor.set_placeholder_text("Ask anything, @ to add context", cx);
-                editor.set_show_indent_guides(false, cx);
-
-                editor
-            }),
+            editor: editor.clone(),
             context_store: context_store.clone(),
             context_strip: cx.new_view(|cx| {
                 ContextStrip::new(
                     context_store,
                     workspace.clone(),
                     Some(thread_store.clone()),
+                    editor.focus_handle(cx),
+                    context_picker_menu_handle.clone(),
                     cx,
                 )
             }),
+            context_picker_menu_handle,
             language_model_selector: cx.new_view(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
@@ -78,6 +86,10 @@ impl MessageEditor {
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
         self.language_model_selector_menu_handle.toggle(cx);
+    }
+
+    fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
+        self.context_picker_menu_handle.toggle(cx);
     }
 
     fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
@@ -193,6 +205,7 @@ impl Render for MessageEditor {
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::toggle_model_selector))
+            .on_action(cx.listener(Self::toggle_context_picker))
             .size_full()
             .gap_2()
             .p_2()

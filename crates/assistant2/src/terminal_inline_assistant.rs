@@ -1,9 +1,11 @@
 use crate::assistant_settings::AssistantSettings;
 use crate::context::attach_context_to_message;
+use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::context_strip::ContextStrip;
 use crate::prompts::PromptBuilder;
 use crate::thread_store::ThreadStore;
+use crate::ToggleContextPicker;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
@@ -29,7 +31,7 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{prelude::*, text_for_action, IconButtonShape, Tooltip};
+use ui::{prelude::*, text_for_action, IconButtonShape, PopoverMenuHandle, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -460,6 +462,7 @@ struct PromptEditor {
     height_in_lines: u8,
     editor: View<Editor>,
     context_strip: View<ContextStrip>,
+    context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     language_model_selector: View<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
@@ -580,7 +583,9 @@ impl Render for PromptEditor {
             .size_full()
             .child(
                 h_flex()
+                    .key_context("PromptEditor")
                     .bg(cx.theme().colors().editor_background)
+                    .on_action(cx.listener(Self::toggle_context_picker))
                     .on_action(cx.listener(Self::confirm))
                     .on_action(cx.listener(Self::secondary_confirm))
                     .on_action(cx.listener(Self::cancel))
@@ -674,14 +679,23 @@ impl PromptEditor {
             editor.set_placeholder_text(Self::placeholder_text(cx), cx);
             editor
         });
+        let context_picker_menu_handle = PopoverMenuHandle::default();
 
         let mut this = Self {
             id,
             height_in_lines: 1,
-            editor: prompt_editor,
+            editor: prompt_editor.clone(),
             context_strip: cx.new_view(|cx| {
-                ContextStrip::new(context_store, workspace.clone(), thread_store.clone(), cx)
+                ContextStrip::new(
+                    context_store,
+                    workspace.clone(),
+                    thread_store.clone(),
+                    prompt_editor.focus_handle(cx),
+                    context_picker_menu_handle.clone(),
+                    cx,
+                )
             }),
+            context_picker_menu_handle,
             language_model_selector: cx.new_view(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
@@ -788,6 +802,10 @@ impl PromptEditor {
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
         }
+    }
+
+    fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
+        self.context_picker_menu_handle.toggle(cx);
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
