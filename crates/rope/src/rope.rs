@@ -989,6 +989,14 @@ impl TextSummary {
             column: self.last_line_len_utf16,
         }
     }
+
+    pub fn add_newline(&mut self) {
+        self.len += 1;
+        self.len_utf16 += OffsetUtf16(self.len_utf16.0 + 1);
+        self.last_line_chars = 0;
+        self.last_line_len_utf16 = 0;
+        self.lines += Point::new(1, 0);
+    }
 }
 
 impl<'a> From<&'a str> for TextSummary {

@@ -9,7 +9,12 @@ use multi_buffer::{
     MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use project::buffer_store::BufferChangeSet;
-use std::{any::TypeId, mem, ops::Range, sync::Arc};
+use std::{
+    any::TypeId,
+    mem::{self},
+    ops::Range,
+    sync::Arc,
+};
 use sum_tree::{Cursor, SumTree, TreeMap};
 use text::{Bias, Edit, Patch, Point, TextSummary, ToOffset as _};
 
@@ -48,10 +53,11 @@ pub(crate) enum DiffTransform {
         is_inserted_hunk: bool,
     },
     DeletedHunk {
-        summary: TextSummary,
+        summary_including_newline: TextSummary,
         buffer_id: BufferId,
         base_text_byte_range: Range<usize>,
         base_text_start: Point,
+        needs_newline: bool,
     },
 }
 
@@ -460,6 +466,20 @@ impl DiffMap {
                                 if hunk.diff_base_byte_range.len() > 0
                                     && hunk_start_buffer_offset >= change_start_buffer_offset
                                 {
+                                    let mut text_cursor = base_text.as_rope().cursor(0);
+                                    let base_text_start = text_cursor
+                                        .summary::<Point>(hunk.diff_base_byte_range.start);
+                                    let mut base_text_summary = text_cursor
+                                        .summary::<TextSummary>(hunk.diff_base_byte_range.end);
+                                    let mut needs_newline = false;
+                                    let mut diff_byte_range =
+                                        DiffOffset(hunk.diff_base_byte_range.len());
+                                    if base_text_summary.last_line_chars > 0 {
+                                        diff_byte_range.0 += 1;
+                                        base_text_summary.add_newline();
+                                        needs_newline = true;
+                                    }
+
                                     if !was_previously_expanded {
                                         let hunk_overshoot =
                                             hunk_start_multibuffer_offset - cursor.start().0;
@@ -467,9 +487,8 @@ impl DiffMap {
                                             cursor.start().1 + DiffOffset(hunk_overshoot);
                                         let new_start =
                                             DiffOffset(new_transforms.summary().diff_map.len);
-                                        let new_end =
-                                            new_start + DiffOffset(hunk.diff_base_byte_range.len());
-                                        delta += hunk.diff_base_byte_range.len() as isize;
+                                        let new_end = new_start + diff_byte_range;
+                                        delta += diff_byte_range.0 as isize;
                                         let edit = Edit {
                                             old: old_offset..old_offset,
                                             new: new_start..new_end,
@@ -477,17 +496,13 @@ impl DiffMap {
                                         edits.push(edit);
                                     }
 
-                                    let mut text_cursor = base_text.as_rope().cursor(0);
-                                    let base_text_start = text_cursor
-                                        .summary::<Point>(hunk.diff_base_byte_range.start);
-                                    let base_text_summary = text_cursor
-                                        .summary::<TextSummary>(hunk.diff_base_byte_range.end);
                                     new_transforms.push(
                                         DiffTransform::DeletedHunk {
                                             base_text_byte_range: hunk.diff_base_byte_range.clone(),
-                                            summary: base_text_summary,
+                                            summary_including_newline: base_text_summary,
                                             buffer_id,
                                             base_text_start,
+                                            needs_newline,
                                         },
                                         &(),
                                     );
@@ -821,18 +836,30 @@ impl DiffMapSnapshot {
             DiffTransform::DeletedHunk {
                 buffer_id,
                 base_text_byte_range,
+                needs_newline,
                 ..
             } => {
                 let buffer_start =
                     base_text_byte_range.start + (diff_start - diff_transform_start).0;
-                let buffer_end = base_text_byte_range.start + (diff_end - diff_transform_start).0;
+                let mut buffer_end =
+                    base_text_byte_range.start + (diff_end - diff_transform_start).0;
                 let Some(buffer_diff) = self.diffs.get(buffer_id) else {
                     panic!("{:?} is in non-extant deleted hunk", range.start)
                 };
 
-                buffer_diff
+                if *needs_newline && diff_end == diff_transform_end {
+                    buffer_end -= 1;
+                }
+
+                let mut summary = buffer_diff
                     .base_text
-                    .text_summary_for_range(buffer_start..buffer_end)
+                    .text_summary_for_range::<TextSummary, _>(buffer_start..buffer_end);
+
+                if *needs_newline && diff_end == diff_transform_end {
+                    summary.add_newline();
+                }
+
+                summary
             }
         };
         if range.end < diff_transform_end {
@@ -860,6 +887,7 @@ impl DiffMapSnapshot {
             DiffTransform::DeletedHunk {
                 base_text_byte_range,
                 buffer_id,
+                needs_newline,
                 ..
             } => {
                 let buffer_end = base_text_byte_range.start + (range.end - diff_transform_start).0;
@@ -867,9 +895,17 @@ impl DiffMapSnapshot {
                     panic!("{:?} is in non-extant deleted hunk", range.end)
                 };
 
-                buffer_diff
+                let mut result = buffer_diff
                     .base_text
-                    .text_summary_for_range(base_text_byte_range.start..buffer_end)
+                    .text_summary_for_range::<TextSummary, _>(
+                        base_text_byte_range.start..buffer_end,
+                    );
+
+                if *needs_newline && buffer_end == base_text_byte_range.end + 1 {
+                    result.add_newline();
+                }
+
+                result
             }
         };
 
@@ -1163,6 +1199,7 @@ impl<'a> Iterator for DiffMapChunks<'a> {
             DiffTransform::DeletedHunk {
                 buffer_id,
                 base_text_byte_range,
+                needs_newline,
                 ..
             } => {
                 let hunk_start_offset = self.cursor.start().0;
@@ -1190,9 +1227,18 @@ impl<'a> Iterator for DiffMapChunks<'a> {
                     )
                 };
 
-                let chunk = chunks.next()?;
-                self.offset.0 += chunk.text.len();
-                self.diff_base_chunks = Some((*buffer_id, chunks));
+                let chunk = if let Some(chunk) = chunks.next() {
+                    self.offset.0 += chunk.text.len();
+                    self.diff_base_chunks = Some((*buffer_id, chunks));
+                    chunk
+                } else {
+                    debug_assert!(needs_newline);
+                    self.offset.0 += "\n".len();
+                    Chunk {
+                        text: "\n",
+                        ..Default::default()
+                    }
+                };
                 Some(chunk)
             }
         }
@@ -1261,7 +1307,10 @@ impl sum_tree::Item for DiffTransform {
                 multibuffer_map: summary.clone(),
                 diff_map: summary.clone(),
             },
-            DiffTransform::DeletedHunk { summary, .. } => DiffTransformSummary {
+            DiffTransform::DeletedHunk {
+                summary_including_newline: summary,
+                ..
+            } => DiffTransformSummary {
                 multibuffer_map: TextSummary::default(),
                 diff_map: summary.clone(),
             },
@@ -1807,6 +1856,87 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_expand_no_newline(cx: &mut TestAppContext) {
+        cx.update(init_test);
+
+        let base_text = "todo";
+        let text = indoc!(
+            "
+            one
+            two
+            "
+        );
+
+        let (diff_map, mut diff_snapshot, deps) = build_diff_map(text, Some(base_text), cx);
+        assert_eq!(diff_snapshot.text(), "one\ntwo\n");
+        assert_eq!(
+            diff_snapshot
+                .row_infos(0)
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
+            [Some(0), Some(1), Some(2)]
+        );
+
+        diff_map.update(cx, |diff_map, cx| {
+            diff_map.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+        });
+
+        let sync = diff_map.update(cx, |diff_map, cx| {
+            diff_map.sync(deps.multibuffer_snapshot.clone(), vec![], cx)
+        });
+        assert_new_snapshot(
+            &mut diff_snapshot,
+            sync,
+            indoc!(
+                "
+                - todo
+                + one
+                + two
+                "
+            ),
+        );
+
+        assert_eq!(diff_snapshot.text(), "todo\none\ntwo\n");
+
+        assert_eq!(
+            diff_snapshot
+                .row_infos(0)
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
+            [None, Some(0), Some(1), Some(2)]
+        );
+        assert_eq!(
+            diff_snapshot
+                .row_infos(1)
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
+            [Some(0), Some(1), Some(2)]
+        );
+
+        for (point, offset) in [
+            (DiffPoint::new(0, 4), DiffOffset(4)),
+            (DiffPoint::new(1, 0), DiffOffset(5)),
+            (DiffPoint::new(1, 1), DiffOffset(6)),
+        ] {
+            assert_eq!(diff_snapshot.offset_to_point(offset), point);
+            assert_eq!(diff_snapshot.point_to_offset(point), offset);
+        }
+
+        assert_eq!(
+            diff_snapshot.clip_point(DiffPoint::new(0, 5), Bias::Left),
+            DiffPoint::new(0, 4)
+        );
+        assert_eq!(
+            diff_snapshot.to_diff_point(Point::new(0, 0)),
+            DiffPoint::new(1, 0)
+        );
+        assert_eq!(
+            diff_snapshot.to_multibuffer_point(DiffPoint::new(0, 4)),
+            Point::new(0, 0)
+        );
+    }
+
+    #[gpui::test]
     fn test_expand_collapse_at_positions_adjacent_to_hunks(cx: &mut TestAppContext) {
         cx.update(init_test);
 
@@ -2106,7 +2236,7 @@ mod tests {
         );
     }
 
-    #[track_caller]
+    // #[track_caller]
     fn assert_new_snapshot(
         snapshot: &mut DiffMapSnapshot,
         (new_snapshot, edits): (DiffMapSnapshot, Vec<Edit<DiffOffset>>),
