@@ -468,44 +468,7 @@ fn register_actions(
         .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
             theme::reset_buffer_font_size(cx)
         })
-        .register_action(|_, _: &install_cli::Install, cx| {
-            cx.spawn(|workspace, mut cx| async move {
-                if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                    const PROMPT_DETAIL: &str = "If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else.";
-
-                    let prompt = cx.prompt(
-                        PromptLevel::Warning,
-                        "CLI should already be installed",
-                        Some(PROMPT_DETAIL),
-                        &["Ok"],
-                    );
-                    cx.background_executor().spawn(prompt).detach();
-                    return Ok(());
-                }
-                let path = install_cli::install_cli(cx.deref())
-                    .await
-                    .context("error creating CLI symlink")?;
-
-                workspace.update(&mut cx, |workspace, cx| {
-                    struct InstalledZedCli;
-
-                    workspace.show_toast(
-                        Toast::new(
-                            NotificationId::unique::<InstalledZedCli>(),
-                            format!(
-                                "Installed `zed` to {}. You can launch {} from your terminal.",
-                                path.to_string_lossy(),
-                                ReleaseChannel::global(cx).display_name()
-                            ),
-                        ),
-                        cx,
-                    )
-                })?;
-                register_zed_scheme(&cx).await.log_err();
-                Ok(())
-            })
-            .detach_and_prompt_err("Error installing zed cli", cx, |_, _| None);
-        })
+        .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, cx| {
             cx.spawn(|workspace, mut cx| async move {
                 register_zed_scheme(&cx).await?;
@@ -749,6 +712,45 @@ fn about(_: &mut Workspace, _: &zed_actions::About, cx: &mut gpui::ViewContext<W
 
 fn test_panic(_: &TestPanic, _: &mut AppContext) {
     panic!("Ran the TestPanic action")
+}
+
+fn install_cli(_: &mut Workspace, _: &install_cli::Install, cx: &mut ViewContext<Workspace>) {
+    const LINUX_PROMPT_DETAIL: &str = "If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else.";
+
+    cx.spawn(|workspace, mut cx| async move {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            let prompt = cx.prompt(
+                PromptLevel::Warning,
+                "CLI should already be installed",
+                Some(LINUX_PROMPT_DETAIL),
+                &["Ok"],
+            );
+            cx.background_executor().spawn(prompt).detach();
+            return Ok(());
+        }
+        let path = install_cli::install_cli(cx.deref())
+            .await
+            .context("error creating CLI symlink")?;
+
+        workspace.update(&mut cx, |workspace, cx| {
+            struct InstalledZedCli;
+
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<InstalledZedCli>(),
+                    format!(
+                        "Installed `zed` to {}. You can launch {} from your terminal.",
+                        path.to_string_lossy(),
+                        ReleaseChannel::global(cx).display_name()
+                    ),
+                ),
+                cx,
+            )
+        })?;
+        register_zed_scheme(&cx).await.log_err();
+        Ok(())
+    })
+    .detach_and_prompt_err("Error installing zed cli", cx, |_, _| None);
 }
 
 fn quit(_: &Quit, cx: &mut AppContext) {
