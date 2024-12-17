@@ -1,26 +1,30 @@
 mod fetch_context_picker;
 mod file_context_picker;
+mod thread_context_picker;
 
 use std::sync::Arc;
 
 use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, SharedString, Task, View,
-    WeakView,
+    WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::Workspace;
 
 use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
-use crate::message_editor::MessageEditor;
+use crate::context_picker::thread_context_picker::ThreadContextPicker;
+use crate::context_store::ContextStore;
+use crate::thread_store::ThreadStore;
 
 #[derive(Debug, Clone)]
 enum ContextPickerMode {
     Default,
     File(View<FileContextPicker>),
     Fetch(View<FetchContextPicker>),
+    Thread(View<ThreadContextPicker>),
 }
 
 pub(super) struct ContextPicker {
@@ -31,30 +35,38 @@ pub(super) struct ContextPicker {
 impl ContextPicker {
     pub fn new(
         workspace: WeakView<Workspace>,
-        message_editor: WeakView<MessageEditor>,
+        thread_store: Option<WeakModel<ThreadStore>>,
+        context_store: WeakModel<ContextStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let mut entries = vec![
+            ContextPickerEntry {
+                name: "Directory".into(),
+                icon: IconName::Folder,
+            },
+            ContextPickerEntry {
+                name: "File".into(),
+                icon: IconName::File,
+            },
+            ContextPickerEntry {
+                name: "Fetch".into(),
+                icon: IconName::Globe,
+            },
+        ];
+
+        if thread_store.is_some() {
+            entries.push(ContextPickerEntry {
+                name: "Thread".into(),
+                icon: IconName::MessageCircle,
+            });
+        }
+
         let delegate = ContextPickerDelegate {
             context_picker: cx.view().downgrade(),
-            workspace: workspace.clone(),
-            message_editor: message_editor.clone(),
-            entries: vec![
-                ContextPickerEntry {
-                    name: "directory".into(),
-                    description: "Insert any directory".into(),
-                    icon: IconName::Folder,
-                },
-                ContextPickerEntry {
-                    name: "file".into(),
-                    description: "Insert any file".into(),
-                    icon: IconName::File,
-                },
-                ContextPickerEntry {
-                    name: "fetch".into(),
-                    description: "Fetch content from URL".into(),
-                    icon: IconName::Globe,
-                },
-            ],
+            workspace,
+            thread_store,
+            context_store,
+            entries,
             selected_ix: 0,
         };
 
@@ -81,6 +93,7 @@ impl FocusableView for ContextPicker {
             ContextPickerMode::Default => self.picker.focus_handle(cx),
             ContextPickerMode::File(file_picker) => file_picker.focus_handle(cx),
             ContextPickerMode::Fetch(fetch_picker) => fetch_picker.focus_handle(cx),
+            ContextPickerMode::Thread(thread_picker) => thread_picker.focus_handle(cx),
         }
     }
 }
@@ -94,6 +107,7 @@ impl Render for ContextPicker {
                 ContextPickerMode::Default => parent.child(self.picker.clone()),
                 ContextPickerMode::File(file_picker) => parent.child(file_picker.clone()),
                 ContextPickerMode::Fetch(fetch_picker) => parent.child(fetch_picker.clone()),
+                ContextPickerMode::Thread(thread_picker) => parent.child(thread_picker.clone()),
             })
     }
 }
@@ -101,14 +115,14 @@ impl Render for ContextPicker {
 #[derive(Clone)]
 struct ContextPickerEntry {
     name: SharedString,
-    description: SharedString,
     icon: IconName,
 }
 
 pub(crate) struct ContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
-    message_editor: WeakView<MessageEditor>,
+    thread_store: Option<WeakModel<ThreadStore>>,
+    context_store: WeakModel<ContextStore>,
     entries: Vec<ContextPickerEntry>,
     selected_ix: usize,
 }
@@ -142,25 +156,37 @@ impl PickerDelegate for ContextPickerDelegate {
             self.context_picker
                 .update(cx, |this, cx| {
                     match entry.name.to_string().as_str() {
-                        "file" => {
+                        "File" => {
                             this.mode = ContextPickerMode::File(cx.new_view(|cx| {
                                 FileContextPicker::new(
                                     self.context_picker.clone(),
                                     self.workspace.clone(),
-                                    self.message_editor.clone(),
+                                    self.context_store.clone(),
                                     cx,
                                 )
                             }));
                         }
-                        "fetch" => {
+                        "Fetch" => {
                             this.mode = ContextPickerMode::Fetch(cx.new_view(|cx| {
                                 FetchContextPicker::new(
                                     self.context_picker.clone(),
                                     self.workspace.clone(),
-                                    self.message_editor.clone(),
+                                    self.context_store.clone(),
                                     cx,
                                 )
                             }));
+                        }
+                        "Thread" => {
+                            if let Some(thread_store) = self.thread_store.as_ref() {
+                                this.mode = ContextPickerMode::Thread(cx.new_view(|cx| {
+                                    ThreadContextPicker::new(
+                                        thread_store.clone(),
+                                        self.context_picker.clone(),
+                                        self.context_store.clone(),
+                                        cx,
+                                    )
+                                }));
+                            }
                         }
                         _ => {}
                     }
@@ -175,7 +201,9 @@ impl PickerDelegate for ContextPickerDelegate {
         self.context_picker
             .update(cx, |this, cx| match this.mode {
                 ContextPickerMode::Default => cx.emit(DismissEvent),
-                ContextPickerMode::File(_) | ContextPickerMode::Fetch(_) => {}
+                ContextPickerMode::File(_)
+                | ContextPickerMode::Fetch(_)
+                | ContextPickerMode::Thread(_) => {}
             })
             .log_err();
     }
@@ -193,34 +221,13 @@ impl PickerDelegate for ContextPickerDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Dense)
                 .toggle_state(selected)
-                .tooltip({
-                    let description = entry.description.clone();
-                    move |cx| cx.new_view(|_cx| Tooltip::new(description.clone())).into()
-                })
                 .child(
-                    v_flex()
-                        .group(format!("context-entry-label-{ix}"))
-                        .w_full()
-                        .py_0p5()
+                    h_flex()
                         .min_w(px(250.))
                         .max_w(px(400.))
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .child(Icon::new(entry.icon).size(IconSize::XSmall))
-                                .child(
-                                    Label::new(entry.name.clone())
-                                        .single_line()
-                                        .size(LabelSize::Small),
-                                ),
-                        )
-                        .child(
-                            div().overflow_hidden().text_ellipsis().child(
-                                Label::new(entry.description.clone())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                        ),
+                        .gap_2()
+                        .child(Icon::new(entry.icon).size(IconSize::Small))
+                        .child(Label::new(entry.name.clone()).single_line()),
                 ),
         )
     }

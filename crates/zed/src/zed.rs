@@ -314,12 +314,13 @@ pub fn initialize_workspace(
             workspace_handle.update(&mut cx, |workspace, cx| {
                 if let Some(assistant_panel) = assistant_panel {
                     workspace.add_panel(assistant_panel, cx);
+                    workspace.register_action(assistant::AssistantPanel::inline_assist);
                 }
 
                 if let Some(assistant2_panel) = assistant2_panel {
                     workspace.add_panel(assistant2_panel, cx);
+                    workspace.register_action(assistant2::InlineAssistant::inline_assist);
                 }
-
             })
         })
         .detach();

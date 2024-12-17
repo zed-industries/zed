@@ -29,14 +29,17 @@ impl RenderOnce for ContextPill {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
             .gap_1()
-            .px_1()
+            .pl_1p5()
+            .pr_0p5()
+            .pb(px(1.))
             .border_1()
-            .border_color(cx.theme().colors().border)
+            .border_color(cx.theme().colors().border.opacity(0.5))
+            .bg(cx.theme().colors().element_background)
             .rounded_md()
             .child(Label::new(self.context.name.clone()).size(LabelSize::Small))
             .when_some(self.on_remove, |parent, on_remove| {
                 parent.child(
-                    IconButton::new("remove", IconName::Close)
+                    IconButton::new(("remove", self.context.id.0), IconName::Close)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .on_click({

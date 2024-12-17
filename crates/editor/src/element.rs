@@ -22,7 +22,7 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
     LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    SoftWrap, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -31,13 +31,13 @@ use file_icons::FileIcons;
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClickEvent,
-    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementInputHandler, Entity, FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla,
-    InteractiveElement, IntoElement, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent,
-    ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription,
-    TextRun, TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
+    transparent_black, Action, AnyElement, AvailableSpace, Bounds, ClickEvent, ClipboardItem,
+    ContentMask, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler,
+    Entity, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, View,
+    ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -70,8 +70,8 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, Appearance, PlayerColor};
-use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
+use ui::{prelude::*, POPOVER_Y_PADDING};
 use unicode_segmentation::UnicodeSegmentation;
 use util::RangeExt;
 use util::ResultExt;
@@ -706,7 +706,7 @@ impl EditorElement {
         let mut scroll_delta = gpui::Point::<f32>::default();
         let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
         let top = text_bounds.origin.y + vertical_margin;
-        let bottom = text_bounds.lower_left().y - vertical_margin;
+        let bottom = text_bounds.bottom_left().y - vertical_margin;
         if event.position.y < top {
             scroll_delta.y = -scale_vertical_mouse_autoscroll_delta(top - event.position.y);
         }
@@ -716,7 +716,7 @@ impl EditorElement {
 
         let horizontal_margin = position_map.line_height.min(text_bounds.size.width / 3.0);
         let left = text_bounds.origin.x + horizontal_margin;
-        let right = text_bounds.upper_right().x - horizontal_margin;
+        let right = text_bounds.top_right().x - horizontal_margin;
         if event.position.x < left {
             scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
         }
@@ -1213,7 +1213,7 @@ impl EditorElement {
 
         let track_bounds = Bounds::from_corners(
             point(self.scrollbar_left(&bounds), bounds.origin.y),
-            point(bounds.lower_right().x, bounds.lower_left().y),
+            point(bounds.bottom_right().x, bounds.bottom_left().y),
         );
 
         let settings = EditorSettings::get_global(cx);
@@ -2151,8 +2151,20 @@ impl EditorElement {
                 prev_excerpt,
                 show_excerpt_controls,
                 height,
-                ..
             } => {
+                let block_start = DisplayPoint::new(block_row_start, 0).to_point(snapshot);
+                let block_end = DisplayPoint::new(block_row_start + *height, 0).to_point(snapshot);
+                let selected = selections
+                    .binary_search_by(|selection| {
+                        if selection.end <= block_start {
+                            Ordering::Less
+                        } else if selection.start >= block_end {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Equal
+                        }
+                    })
+                    .is_ok();
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
 
@@ -2181,6 +2193,7 @@ impl EditorElement {
                         first_excerpt,
                         header_padding,
                         true,
+                        selected,
                         jump_data,
                         cx,
                     ))
@@ -2192,7 +2205,6 @@ impl EditorElement {
                 show_excerpt_controls,
                 height,
                 starts_new_buffer,
-                ..
             } => {
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
@@ -2222,6 +2234,7 @@ impl EditorElement {
                         result = result.child(self.render_buffer_header(
                             next_excerpt,
                             header_padding,
+                            false,
                             false,
                             jump_data,
                             cx,
@@ -2380,6 +2393,7 @@ impl EditorElement {
         for_excerpt: &ExcerptInfo,
         header_padding: Pixels,
         is_folded: bool,
+        is_selected: bool,
         jump_data: JumpData,
         cx: &mut WindowContext,
     ) -> Div {
@@ -2398,6 +2412,8 @@ impl EditorElement {
             .as_ref()
             .and_then(|path| Some(path.parent()?.to_string_lossy().to_string() + "/"));
 
+        let focus_handle = self.editor.focus_handle(cx);
+
         div()
             .px(header_padding)
             .pt(header_padding)
@@ -2405,29 +2421,50 @@ impl EditorElement {
             .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
             .child(
                 h_flex()
-                    .id("path header block")
                     .size_full()
+                    .gap_2()
                     .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
-                    .px(gpui::px(12.))
+                    .pl_0p5()
+                    .pr_4()
                     .rounded_md()
                     .shadow_md()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .map(|div| {
+                        let border_color = if is_selected {
+                            cx.theme().colors().border_focused
+                        } else {
+                            cx.theme().colors().border
+                        };
+                        div.border_color(border_color)
+                    })
                     .bg(cx.theme().colors().editor_subheader_background)
-                    .justify_between()
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .map(|header| {
-                                let editor = self.editor.clone();
-                                let buffer_id = for_excerpt.buffer_id;
-                                let toggle_chevron_icon =
-                                    FileIcons::get_chevron_icon(!is_folded, cx)
-                                        .map(Icon::from_path);
-                                header.child(
+                    .map(|header| {
+                        let editor = self.editor.clone();
+                        let buffer_id = for_excerpt.buffer_id;
+                        let toggle_chevron_icon =
+                            FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
+                        header.child(
+                            div()
+                                .hover(|style| style.bg(cx.theme().colors().element_selected))
+                                .rounded_sm()
+                                .child(
                                     ButtonLike::new("toggle-buffer-fold")
+                                        .style(ui::ButtonStyle::Transparent)
+                                        .size(ButtonSize::Large)
+                                        .width(px(30.).into())
                                         .children(toggle_chevron_icon)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |cx| {
+                                                Tooltip::for_action_in(
+                                                    "Toggle Excerpt Fold",
+                                                    &ToggleFold,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            }
+                                        })
                                         .on_click(move |_, cx| {
                                             if is_folded {
                                                 editor.update(cx, |editor, cx| {
@@ -2439,8 +2476,14 @@ impl EditorElement {
                                                 });
                                             }
                                         }),
-                                )
-                            })
+                                ),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .id("path header block")
+                            .size_full()
+                            .justify_between()
                             .child(
                                 h_flex()
                                     .gap_2()
@@ -2456,21 +2499,31 @@ impl EditorElement {
                                                 .text_color(cx.theme().colors().text_muted),
                                         )
                                     }),
-                            ),
-                    )
-                    .child(Icon::new(IconName::ArrowUpRight))
-                    .cursor_pointer()
-                    .tooltip(|cx| Tooltip::for_action("Jump to File", &OpenExcerpts, cx))
-                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                    .on_click(cx.listener_for(&self.editor, {
-                        move |editor, e: &ClickEvent, cx| {
-                            editor.open_excerpts_common(
-                                Some(jump_data.clone()),
-                                e.down.modifiers.secondary(),
-                                cx,
-                            );
-                        }
-                    })),
+                            )
+                            .child(Icon::new(IconName::ArrowUpRight).size(IconSize::Small))
+                            .cursor_pointer()
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Jump To File",
+                                        &OpenExcerpts,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                            .on_click(cx.listener_for(&self.editor, {
+                                move |editor, e: &ClickEvent, cx| {
+                                    editor.open_excerpts_common(
+                                        Some(jump_data.clone()),
+                                        e.down.modifiers.secondary(),
+                                        cx,
+                                    );
+                                }
+                            })),
+                    ),
             )
     }
 
@@ -2718,7 +2771,6 @@ impl EditorElement {
     fn layout_context_menu(
         &self,
         line_height: Pixels,
-        hitbox: &Hitbox,
         text_hitbox: &Hitbox,
         content_origin: gpui::Point<Pixels>,
         start_row: DisplayRow,
@@ -2727,56 +2779,98 @@ impl EditorElement {
         newest_selection_head: DisplayPoint,
         gutter_overshoot: Pixels,
         cx: &mut WindowContext,
-    ) -> bool {
-        let max_height = cmp::min(
-            12. * line_height,
-            cmp::max(3. * line_height, (hitbox.size.height - line_height) / 2.),
-        );
-        let Some((position, mut context_menu)) = self.editor.update(cx, |editor, cx| {
-            if editor.context_menu_visible() {
-                editor.render_context_menu(newest_selection_head, &self.style, max_height, cx)
-            } else {
-                None
-            }
-        }) else {
-            return false;
+    ) {
+        let Some(context_menu_origin) = self
+            .editor
+            .read(cx)
+            .context_menu_origin(newest_selection_head)
+        else {
+            return;
         };
-
-        let context_menu_size = context_menu.layout_as_root(AvailableSpace::min_size(), cx);
-
-        let (x, y) = match position {
-            crate::ContextMenuOrigin::EditorPoint(point) => {
-                let cursor_row_layout = &line_layouts[point.row().minus(start_row) as usize];
-                let x = cursor_row_layout.x_for_index(point.column() as usize)
-                    - scroll_pixel_position.x;
-                let y = point.row().next_row().as_f32() * line_height - scroll_pixel_position.y;
-                (x, y)
+        let target_offset = match context_menu_origin {
+            crate::ContextMenuOrigin::EditorPoint(display_point) => {
+                let cursor_row_layout =
+                    &line_layouts[display_point.row().minus(start_row) as usize];
+                gpui::Point {
+                    x: cursor_row_layout.x_for_index(display_point.column() as usize)
+                        - scroll_pixel_position.x,
+                    y: display_point.row().next_row().as_f32() * line_height
+                        - scroll_pixel_position.y,
+                }
             }
             crate::ContextMenuOrigin::GutterIndicator(row) => {
                 // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
                 // text field.
-                let x = -gutter_overshoot;
-                let y = row.next_row().as_f32() * line_height - scroll_pixel_position.y;
-                (x, y)
+                gpui::Point {
+                    x: -gutter_overshoot,
+                    y: row.next_row().as_f32() * line_height - scroll_pixel_position.y,
+                }
             }
         };
 
-        let mut list_origin = content_origin + point(x, y);
-        let list_width = context_menu_size.width;
-        let list_height = context_menu_size.height;
+        // If the context menu's max height won't fit below, then flip it above the line and display
+        // it in reverse order. If the available space above is less than below.
+        let unconstrained_max_height = line_height * 12. + POPOVER_Y_PADDING;
+        let min_height = line_height * 3. + POPOVER_Y_PADDING;
+        let target_position = content_origin + target_offset;
+        let y_overflows_below = target_position.y + unconstrained_max_height > text_hitbox.bottom();
+        let bottom_y_when_flipped = target_position.y - line_height;
+        let available_above = bottom_y_when_flipped - text_hitbox.top();
+        let available_below = text_hitbox.bottom() - target_position.y;
+        let mut y_is_flipped = y_overflows_below && available_above > available_below;
+        let mut max_height = cmp::min(
+            unconstrained_max_height,
+            if y_is_flipped {
+                available_above
+            } else {
+                available_below
+            },
+        );
 
-        // Snap the right edge of the list to the right edge of the window if
-        // its horizontal bounds overflow.
-        if list_origin.x + list_width > cx.viewport_size().width {
-            list_origin.x = (cx.viewport_size().width - list_width).max(Pixels::ZERO);
+        // If less than 3 lines fit within the text bounds, instead fit within the window.
+        if max_height < 3. * line_height {
+            let available_above = bottom_y_when_flipped;
+            let available_below = cx.viewport_size().height - target_position.y;
+            if available_below > 3. * line_height {
+                y_is_flipped = false;
+                max_height = min_height;
+            } else if available_above > 3. * line_height {
+                y_is_flipped = true;
+                max_height = min_height;
+            } else if available_above > available_below {
+                y_is_flipped = true;
+                max_height = available_above;
+            } else {
+                y_is_flipped = false;
+                max_height = available_below;
+            }
         }
 
-        if list_origin.y + list_height > text_hitbox.lower_right().y {
-            list_origin.y -= line_height + list_height;
-        }
+        let max_height_in_lines = ((max_height - POPOVER_Y_PADDING) / line_height).floor() as u32;
 
-        cx.defer_draw(context_menu, list_origin, 1);
-        true
+        let Some(mut menu) = self.editor.update(cx, |editor, cx| {
+            editor.render_context_menu(&self.style, max_height_in_lines, cx)
+        }) else {
+            return;
+        };
+
+        let menu_size = menu.layout_as_root(AvailableSpace::min_size(), cx);
+        let menu_position = gpui::Point {
+            x: if target_position.x + menu_size.width > cx.viewport_size().width {
+                // Snap the right edge of the list to the right edge of the window if its horizontal bounds
+                // overflow.
+                (cx.viewport_size().width - menu_size.width).max(Pixels::ZERO)
+            } else {
+                target_position.x
+            },
+            y: if y_is_flipped {
+                bottom_y_when_flipped - menu_size.height
+            } else {
+                target_position.y
+            },
+        };
+
+        cx.defer_draw(menu, menu_position, 1);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2873,6 +2967,10 @@ impl EditorElement {
                 }
             }
             InlineCompletion::Edit(edits) => {
+                if self.editor.read(cx).has_active_completions_menu() {
+                    return None;
+                }
+
                 let edit_start = edits
                     .first()
                     .unwrap()
@@ -2896,7 +2994,11 @@ impl EditorElement {
                     return None;
                 }
 
-                let (text, highlights) = inline_completion_popover_text(editor_snapshot, edits, cx);
+                let crate::InlineCompletionText::Edit { text, highlights } =
+                    crate::inline_completion_edit_text(editor_snapshot, edits, cx)
+                else {
+                    return None;
+                };
                 let line_count = text.lines().count() + 1;
 
                 let longest_row =
@@ -2916,7 +3018,7 @@ impl EditorElement {
                 };
 
                 let styled_text =
-                    gpui::StyledText::new(text).with_highlights(&style.text, highlights);
+                    gpui::StyledText::new(text.clone()).with_highlights(&style.text, highlights);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
@@ -3014,7 +3116,7 @@ impl EditorElement {
                     anchored()
                         .position(position)
                         .child(context_menu)
-                        .anchor(AnchorCorner::TopLeft)
+                        .anchor(Corner::TopLeft)
                         .snap_to_window_with_margin(px(8.)),
                 )
                 .with_priority(1)
@@ -3079,7 +3181,7 @@ impl EditorElement {
         for mut hover_popover in hover_popovers {
             let size = hover_popover.layout_as_root(AvailableSpace::min_size(), cx);
             let horizontal_offset =
-                (text_hitbox.upper_right().x - (hovered_point.x + size.width)).min(Pixels::ZERO);
+                (text_hitbox.top_right().x - (hovered_point.x + size.width)).min(Pixels::ZERO);
 
             overall_height += HOVER_POPOVER_GAP + size.height;
 
@@ -4354,7 +4456,7 @@ impl EditorElement {
     }
 
     fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
-        bounds.upper_right().x - self.style.scrollbar_width
+        bounds.top_right().x - self.style.scrollbar_width
     }
 
     fn column_pixels(&self, column: usize, cx: &WindowContext) -> Pixels {
@@ -4423,61 +4525,6 @@ fn jump_data(
         path: jump_path,
         line_offset_from_top,
     }
-}
-
-fn inline_completion_popover_text(
-    editor_snapshot: &EditorSnapshot,
-    edits: &Vec<(Range<Anchor>, String)>,
-    cx: &WindowContext,
-) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
-    let edit_start = edits
-        .first()
-        .unwrap()
-        .0
-        .start
-        .to_display_point(editor_snapshot);
-
-    let mut text = String::new();
-    let mut offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
-    let mut highlights = Vec::new();
-    for (old_range, new_text) in edits {
-        let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
-        text.extend(
-            editor_snapshot
-                .buffer_snapshot
-                .chunks(offset..old_offset_range.start, false)
-                .map(|chunk| chunk.text),
-        );
-        offset = old_offset_range.end;
-
-        let start = text.len();
-        text.push_str(new_text);
-        let end = text.len();
-        highlights.push((
-            start..end,
-            HighlightStyle {
-                background_color: Some(cx.theme().status().created_background),
-                ..Default::default()
-            },
-        ));
-    }
-
-    let edit_end = edits
-        .last()
-        .unwrap()
-        .0
-        .end
-        .to_display_point(editor_snapshot);
-    let end_of_line = DisplayPoint::new(edit_end.row(), editor_snapshot.line_len(edit_end.row()))
-        .to_offset(editor_snapshot, Bias::Right);
-    text.extend(
-        editor_snapshot
-            .buffer_snapshot
-            .chunks(offset..end_of_line, false)
-            .map(|chunk| chunk.text),
-    );
-
-    (text, highlights)
 }
 
 fn all_edits_insertions_or_deletions(
@@ -5435,7 +5482,7 @@ impl Element for EditorElement {
                         cx.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
                     let text_hitbox = cx.insert_hitbox(
                         Bounds {
-                            origin: gutter_hitbox.upper_right(),
+                            origin: gutter_hitbox.top_right(),
                             size: size(text_width, bounds.size.height),
                         },
                         false,
@@ -5840,13 +5887,11 @@ impl Element for EditorElement {
                                 rows_with_hunk_bounds
                             },
                         );
-                    let mut _context_menu_visible = false;
                     let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         if (start_row..end_row).contains(&newest_selection_head.row()) {
-                            _context_menu_visible = self.layout_context_menu(
+                            self.layout_context_menu(
                                 line_height,
-                                &hitbox,
                                 &text_hitbox,
                                 content_origin,
                                 start_row,
@@ -7228,161 +7273,6 @@ mod tests {
 
                 editor_width += resize_step;
             }
-        }
-    }
-
-    #[gpui::test]
-    fn test_inline_completion_popover_text(cx: &mut TestAppContext) {
-        init_test(cx, |_| {});
-
-        // Test case 1: Simple insertion
-        {
-            let window = cx.add_window(|cx| {
-                let buffer = MultiBuffer::build_simple("Hello, world!", cx);
-                Editor::new(EditorMode::Full, buffer, None, true, cx)
-            });
-            let cx = &mut VisualTestContext::from_window(*window, cx);
-
-            window
-                .update(cx, |editor, cx| {
-                    let snapshot = editor.snapshot(cx);
-                    let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 6))
-                        ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
-                    let edits = vec![(edit_range, " beautiful".to_string())];
-
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
-
-                    assert_eq!(text, "Hello, beautiful world!");
-                    assert_eq!(highlights.len(), 1);
-                    assert_eq!(highlights[0].0, 6..16);
-                    assert_eq!(
-                        highlights[0].1.background_color,
-                        Some(cx.theme().status().created_background)
-                    );
-                })
-                .unwrap();
-        }
-
-        // Test case 2: Replacement
-        {
-            let window = cx.add_window(|cx| {
-                let buffer = MultiBuffer::build_simple("This is a test.", cx);
-                Editor::new(EditorMode::Full, buffer, None, true, cx)
-            });
-            let cx = &mut VisualTestContext::from_window(*window, cx);
-
-            window
-                .update(cx, |editor, cx| {
-                    let snapshot = editor.snapshot(cx);
-                    let edits = vec![(
-                        snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
-                            ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 4)),
-                        "That".to_string(),
-                    )];
-
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
-
-                    assert_eq!(text, "That is a test.");
-                    assert_eq!(highlights.len(), 1);
-                    assert_eq!(highlights[0].0, 0..4);
-                    assert_eq!(
-                        highlights[0].1.background_color,
-                        Some(cx.theme().status().created_background)
-                    );
-                })
-                .unwrap();
-        }
-
-        // Test case 3: Multiple edits
-        {
-            let window = cx.add_window(|cx| {
-                let buffer = MultiBuffer::build_simple("Hello, world!", cx);
-                Editor::new(EditorMode::Full, buffer, None, true, cx)
-            });
-            let cx = &mut VisualTestContext::from_window(*window, cx);
-
-            window
-                .update(cx, |editor, cx| {
-                    let snapshot = editor.snapshot(cx);
-                    let edits = vec![
-                        (
-                            snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
-                                ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 5)),
-                            "Greetings".into(),
-                        ),
-                        (
-                            snapshot.buffer_snapshot.anchor_after(Point::new(0, 12))
-                                ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 12)),
-                            " and universe".into(),
-                        ),
-                    ];
-
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
-
-                    assert_eq!(text, "Greetings, world and universe!");
-                    assert_eq!(highlights.len(), 2);
-                    assert_eq!(highlights[0].0, 0..9);
-                    assert_eq!(highlights[1].0, 16..29);
-                    assert_eq!(
-                        highlights[0].1.background_color,
-                        Some(cx.theme().status().created_background)
-                    );
-                    assert_eq!(
-                        highlights[1].1.background_color,
-                        Some(cx.theme().status().created_background)
-                    );
-                })
-                .unwrap();
-        }
-
-        // Test case 4: Multiple lines with edits
-        {
-            let window = cx.add_window(|cx| {
-                let buffer = MultiBuffer::build_simple(
-                    "First line\nSecond line\nThird line\nFourth line",
-                    cx,
-                );
-                Editor::new(EditorMode::Full, buffer, None, true, cx)
-            });
-            let cx = &mut VisualTestContext::from_window(*window, cx);
-
-            window
-                .update(cx, |editor, cx| {
-                    let snapshot = editor.snapshot(cx);
-                    let edits = vec![
-                        (
-                            snapshot.buffer_snapshot.anchor_before(Point::new(1, 7))
-                                ..snapshot.buffer_snapshot.anchor_before(Point::new(1, 11)),
-                            "modified".to_string(),
-                        ),
-                        (
-                            snapshot.buffer_snapshot.anchor_before(Point::new(2, 0))
-                                ..snapshot.buffer_snapshot.anchor_before(Point::new(2, 10)),
-                            "New third line".to_string(),
-                        ),
-                        (
-                            snapshot.buffer_snapshot.anchor_before(Point::new(3, 6))
-                                ..snapshot.buffer_snapshot.anchor_before(Point::new(3, 6)),
-                            " updated".to_string(),
-                        ),
-                    ];
-
-                    let (text, highlights) = inline_completion_popover_text(&snapshot, &edits, cx);
-
-                    assert_eq!(text, "Second modified\nNew third line\nFourth updated line");
-                    assert_eq!(highlights.len(), 3);
-                    assert_eq!(highlights[0].0, 7..15); // "modified"
-                    assert_eq!(highlights[1].0, 16..30); // "New third line"
-                    assert_eq!(highlights[2].0, 37..45); // " updated"
-
-                    for highlight in &highlights {
-                        assert_eq!(
-                            highlight.1.background_color,
-                            Some(cx.theme().status().created_background)
-                        );
-                    }
-                })
-                .unwrap();
         }
     }
 

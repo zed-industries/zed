@@ -13,7 +13,7 @@ This extension can be [installed as a dev extension](./developing-extensions.htm
 A given extension may provide one or more context servers. Each context server must be registered in the `extension.toml`:
 
 ```toml
-[context-servers.my-context-server]
+[context_servers.my-context-server]
 ```
 
 Then, in the Rust code for your extension, implement the `context_server_command` method on your extension:

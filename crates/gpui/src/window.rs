@@ -2281,9 +2281,7 @@ impl<'a> WindowContext<'a> {
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         for shadow in shadows {
-            let mut shadow_bounds = bounds;
-            shadow_bounds.origin += shadow.offset;
-            shadow_bounds.dilate(shadow.spread_radius);
+            let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
             self.window.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
