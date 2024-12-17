@@ -36,6 +36,12 @@ pub fn init(cx: &mut AppContext) {
                         panel.update(cx, |panel, cx| panel.new_thread(cx));
                         workspace.focus_panel::<AssistantPanel>(cx);
                     }
+                })
+                .register_action(|workspace, _: &OpenHistory, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(cx);
+                        panel.update(cx, |panel, cx| panel.open_history(cx));
+                    }
                 });
         },
     )
@@ -162,6 +168,12 @@ impl AssistantPanel {
             )
         });
         self.message_editor.focus_handle(cx).focus(cx);
+    }
+
+    fn open_history(&mut self, cx: &mut ViewContext<Self>) {
+        self.active_view = ActiveView::History;
+        self.history.focus_handle(cx).focus(cx);
+        cx.notify();
     }
 
     pub(crate) fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
@@ -579,9 +591,7 @@ impl Render for AssistantPanel {
                 this.new_thread(cx);
             }))
             .on_action(cx.listener(|this, _: &OpenHistory, cx| {
-                this.active_view = ActiveView::History;
-                this.history.focus_handle(cx).focus(cx);
-                cx.notify();
+                this.open_history(cx);
             }))
             .child(self.render_toolbar(cx))
             .map(|parent| match self.active_view {
