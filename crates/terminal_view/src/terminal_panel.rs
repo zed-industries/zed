@@ -26,8 +26,8 @@ use terminal::{
     Terminal,
 };
 use ui::{
-    div, h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconSize,
-    InteractiveElement, PopoverMenu, Selectable, Tooltip,
+    div, h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconPosition,
+    IconSize, InteractiveElement, PopoverMenu, Selectable, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -35,9 +35,10 @@ use workspace::{
     item::SerializableItem,
     move_item, pane,
     ui::IconName,
-    ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane, DraggedTab,
-    ItemId, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight,
-    SplitUp, SwapPaneInDirection, ToggleBottomDockLayout, ToggleZoom, Workspace,
+    ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane,
+    BottomDockLayout, DraggedTab, ItemId, NewTerminal, Pane, PaneGroup, SetBottomDockLayout,
+    SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneInDirection, ToggleZoom,
+    Workspace,
 };
 
 use anyhow::Result;
@@ -151,24 +152,25 @@ impl TerminalPanel {
                             )
                             .anchor(AnchorCorner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
-                            .menu(move |cx| {
+                            .menu({
                                 let focus_handle = focus_handle.clone();
-                                let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.context(focus_handle.clone())
-                                        .action(
-                                            "New Terminal",
-                                            workspace::NewTerminal.boxed_clone(),
-                                        )
-                                        // We want the focus to go back to terminal panel once task modal is dismissed,
-                                        // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                        // context menu will be gone the moment we spawn the modal.
-                                        .action(
-                                            "Spawn task",
-                                            zed_actions::Spawn::modal().boxed_clone(),
-                                        )
-                                });
-
-                                Some(menu)
+                                move |cx| {
+                                    ContextMenu::build(cx, |menu, _| {
+                                        menu.context(focus_handle.clone())
+                                            .action(
+                                                "New Terminal",
+                                                workspace::NewTerminal.boxed_clone(),
+                                            )
+                                            // We want the focus to go back to terminal panel once task modal is dismissed,
+                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                            // context menu will be gone the moment we spawn the modal.
+                                            .action(
+                                                "Spawn task",
+                                                zed_actions::Spawn::modal().boxed_clone(),
+                                            )
+                                    })
+                                    .into()
+                                }
                             }),
                     )
                     .child(
@@ -197,25 +199,102 @@ impl TerminalPanel {
                                 }
                             }),
                     )
-                    .child({
-                        let layout = workspace
-                            .update(cx, |workspace, _| workspace.is_bottom_dock_full_width())
-                            .unwrap_or(false);
-                        IconButton::new("toggle_extended", IconName::ChevronsLeftRight)
-                            .icon_size(IconSize::Small)
-                            .selected(layout)
-                            .selected_icon(IconName::ChevronsRightLeft)
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.dispatch_action(workspace::ToggleBottomDockLayout.boxed_clone());
-                            }))
-                            .tooltip(move |cx| {
-                                Tooltip::for_action(
-                                    if layout { "Shrink Dock" } else { "Expand Dock" },
-                                    &ToggleBottomDockLayout,
-                                    cx,
-                                )
-                            })
-                    })
+                    .child(
+                        PopoverMenu::new("bottom-dock-layout-popover")
+                            .trigger(
+                                IconButton::new("toggle_extended", IconName::ChevronsLeftRight)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("Layout Mode", cx)),
+                            )
+                            .anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.layout_mode_context_menu_handle.clone())
+                            .menu({
+                                let workspace = workspace.clone();
+                                move |cx| {
+                                    let current_layout = workspace
+                                        .update(cx, |workspace, _cx| workspace.bottom_dock_layout())
+                                        .unwrap_or_default();
+
+                                    let focus_handle = focus_handle.clone();
+                                    ContextMenu::build(cx, move |menu, _| {
+                                        menu.context(focus_handle)
+                                            .toggleable_entry(
+                                                "Contained",
+                                                current_layout == BottomDockLayout::Contained,
+                                                IconPosition::End,
+                                                Some(
+                                                    SetBottomDockLayout(
+                                                        BottomDockLayout::Contained,
+                                                    )
+                                                    .boxed_clone(),
+                                                ),
+                                                |cx| {
+                                                    cx.dispatch_action(
+                                                        SetBottomDockLayout(
+                                                            BottomDockLayout::Contained,
+                                                        )
+                                                        .boxed_clone(),
+                                                    )
+                                                },
+                                            )
+                                            .toggleable_entry(
+                                                "Full",
+                                                current_layout == BottomDockLayout::Full,
+                                                IconPosition::End,
+                                                Some(
+                                                    SetBottomDockLayout(BottomDockLayout::Full)
+                                                        .boxed_clone(),
+                                                ),
+                                                |cx| {
+                                                    cx.dispatch_action(
+                                                        SetBottomDockLayout(BottomDockLayout::Full)
+                                                            .boxed_clone(),
+                                                    )
+                                                },
+                                            )
+                                            .toggleable_entry(
+                                                "Left Aligned",
+                                                current_layout == BottomDockLayout::LeftAligned,
+                                                IconPosition::End,
+                                                Some(
+                                                    workspace::SetBottomDockLayout(
+                                                        BottomDockLayout::LeftAligned,
+                                                    )
+                                                    .boxed_clone(),
+                                                ),
+                                                |cx| {
+                                                    cx.dispatch_action(
+                                                        workspace::SetBottomDockLayout(
+                                                            BottomDockLayout::LeftAligned,
+                                                        )
+                                                        .boxed_clone(),
+                                                    )
+                                                },
+                                            )
+                                            .toggleable_entry(
+                                                "Right Aligned",
+                                                current_layout == BottomDockLayout::RightAligned,
+                                                IconPosition::End,
+                                                Some(
+                                                    workspace::SetBottomDockLayout(
+                                                        BottomDockLayout::RightAligned,
+                                                    )
+                                                    .boxed_clone(),
+                                                ),
+                                                |cx| {
+                                                    cx.dispatch_action(
+                                                        workspace::SetBottomDockLayout(
+                                                            BottomDockLayout::RightAligned,
+                                                        )
+                                                        .boxed_clone(),
+                                                    )
+                                                },
+                                            )
+                                    })
+                                    .into()
+                                }
+                            }),
+                    )
                     .child({
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
