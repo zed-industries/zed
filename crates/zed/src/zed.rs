@@ -157,7 +157,7 @@ pub fn initialize_workspace(
 
         if let Some(specs) = cx.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
-            show_software_enumation_warning_if_needed(specs, cx);
+            show_software_emulation_warning_if_needed(specs, cx);
         }
 
         let inline_completion_button = cx.new_view(|cx| {
@@ -263,7 +263,7 @@ fn initialize_linux_file_watcher(cx: &mut ViewContext<Workspace>) {
     }
 }
 
-fn show_software_enumation_warning_if_needed(
+fn show_software_emulation_warning_if_needed(
     specs: gpui::GPUSpecs,
     cx: &mut ViewContext<Workspace>,
 ) {
