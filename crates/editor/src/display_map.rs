@@ -56,7 +56,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
 use project::buffer_store::BufferChangeSet;
 use serde::Deserialize;
@@ -80,12 +80,6 @@ use wrap_map::{WrapMap, WrapSnapshot};
 pub enum FoldStatus {
     Folded,
     Foldable,
-}
-
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct RowInfo {
-    pub buffer_row: Option<u32>,
-    pub diff_status: Option<DiffHunkStatus>,
 }
 
 pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
