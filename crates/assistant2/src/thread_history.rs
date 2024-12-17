@@ -66,10 +66,10 @@ impl Render for ThreadHistory {
                                 threads[range]
                                     .iter()
                                     .map(|thread| {
-                                        PastThread::new(
+                                        h_flex().w_full().pb_1().child(PastThread::new(
                                             thread.clone(),
                                             history.assistant_panel.clone(),
-                                        )
+                                        ))
                                     })
                                     .collect()
                             },
