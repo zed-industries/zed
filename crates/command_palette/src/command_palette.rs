@@ -36,21 +36,21 @@ pub struct CommandPalette {
     picker: View<Picker<CommandPaletteDelegate>>,
 }
 
-fn trim_consecutive_whitespaces(input: &str) -> String {
+fn normalize_query(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
-    let mut last_char_was_whitespace = false;
+    let mut last_char = None;
 
     for char in input.trim().chars() {
-        if char.is_whitespace() {
-            if !last_char_was_whitespace {
-                result.push(char);
+        match (last_char, char) {
+            (Some(':'), ':') => continue,
+            (Some(last_char), char) if last_char.is_whitespace() && char.is_whitespace() => continue,
+            _ => {
+                last_char = Some(char);
             }
-            last_char_was_whitespace = true;
-        } else {
-            result.push(char);
-            last_char_was_whitespace = false;
         }
+        result.push(char);
     }
+
     result
 }
 
@@ -271,7 +271,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
-            let query = trim_consecutive_whitespaces(query.as_str());
+            let query = normalize_query(query.as_str());
             async move {
                 commands.sort_by_key(|action| {
                     (
@@ -542,6 +542,40 @@ mod tests {
         });
         palette.update(cx, |palette, _| {
             assert!(palette.delegate.matches.is_empty())
+        });
+    }
+    #[gpui::test]
+    async fn test_normalized_matches(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+        let editor = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_text("abc", cx);
+            editor
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
+            editor.update(cx, |editor, cx| editor.focus(cx))
+        });
+
+        // Test normalize (trimming whitespace and double colons)
+        cx.simulate_keystrokes("cmd-shift-p");
+
+        let palette = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        cx.simulate_input("Editor::    Backspace");
+        palette.update(cx, |palette, _| {
+            assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
         });
     }
 
