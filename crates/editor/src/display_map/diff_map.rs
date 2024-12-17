@@ -27,7 +27,7 @@ pub(crate) struct DiffMap {
 }
 
 struct ChangeSetState {
-    _change_set: Model<BufferChangeSet>,
+    change_set: Model<BufferChangeSet>,
     _subscription: Subscription,
 }
 
@@ -170,9 +170,15 @@ impl DiffMap {
             buffer_id,
             ChangeSetState {
                 _subscription: cx.observe(&change_set, Self::buffer_diff_changed),
-                _change_set: change_set,
+                change_set,
             },
         );
+    }
+
+    pub fn diff_base_for(&self, buffer_id: BufferId) -> Option<&Model<BufferChangeSet>> {
+        self.diff_bases
+            .get(&buffer_id)
+            .map(|state| &state.change_set)
     }
 
     pub fn sync(

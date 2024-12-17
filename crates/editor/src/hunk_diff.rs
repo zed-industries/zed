@@ -20,9 +20,9 @@ use util::RangeExt;
 use workspace::Item;
 
 use crate::{
-    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyAllDiffHunks,
-    ApplyDiffHunk, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight,
-    DisplayRow, DisplaySnapshot, Editor, EditorElement, GoToHunk, GoToPrevHunk, RevertFile,
+    editor_settings::CurrentLineHighlight, hunk_status, ApplyAllDiffHunks, ApplyDiffHunk,
+    BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow,
+    DisplaySnapshot, Editor, EditorElement, GoToHunk, GoToPrevHunk, RevertFile,
     RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
@@ -326,7 +326,8 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let snapshot = self.snapshot(cx);
-        let hunks = hunks_for_selections(&snapshot, &self.selections.all(cx));
+        let ranges = self.selections.all(cx).into_iter().map(|s| s.range());
+        let hunks = snapshot.hunks_for_ranges(ranges);
         let mut ranges_by_buffer = HashMap::default();
         self.transact(cx, |editor, cx| {
             for hunk in hunks {

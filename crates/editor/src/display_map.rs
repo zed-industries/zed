@@ -71,7 +71,7 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
-use text::LineIndent;
+use text::{BufferId, LineIndent};
 use ui::{px, SharedString, WindowContext};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -416,6 +416,14 @@ impl DisplayMap {
 
     pub fn collapse_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut ModelContext<Self>) {
         self.update_diff_map(cx, |diff_map, cx| diff_map.collapse_diff_hunks(ranges, cx))
+    }
+
+    pub fn diff_base_for<'a>(
+        &'a self,
+        buffer_id: BufferId,
+        cx: &'a AppContext,
+    ) -> Option<&'a Model<BufferChangeSet>> {
+        self.diff_map.read(cx).diff_base_for(buffer_id)
     }
 
     fn update_diff_map(
