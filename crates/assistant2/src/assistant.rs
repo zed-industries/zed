@@ -15,7 +15,6 @@ mod thread_history;
 mod thread_store;
 mod ui;
 
-use std::any::TypeId;
 use std::sync::Arc;
 
 use client::Client;
@@ -79,10 +78,6 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mu
 }
 
 fn feature_gate_assistant2_actions(cx: &mut AppContext) {
-    const ASSISTANT1_NAMESPACE: &str = "assistant";
-
-    let inline_assist_actions = [TypeId::of::<zed_actions::InlineAssist>()];
-
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(NAMESPACE);
     });
@@ -91,17 +86,10 @@ fn feature_gate_assistant2_actions(cx: &mut AppContext) {
         if is_enabled {
             CommandPaletteFilter::update_global(cx, |filter, _cx| {
                 filter.show_namespace(NAMESPACE);
-                filter.hide_namespace(ASSISTANT1_NAMESPACE);
-
-                // We're hiding all of the `assistant: ` actions, but we want to
-                // keep the inline assist action around so we can use the same
-                // one in Assistant2.
-                filter.show_action_types(inline_assist_actions.iter());
             });
         } else {
             CommandPaletteFilter::update_global(cx, |filter, _cx| {
                 filter.hide_namespace(NAMESPACE);
-                filter.show_namespace(ASSISTANT1_NAMESPACE);
             });
         }
     })
