@@ -920,6 +920,12 @@ impl DisplaySnapshot {
         fold_point.to_inlay_point(&self.fold_snapshot)
     }
 
+    fn diff_point_to_display_point(&self, diff_point: DiffPoint, bias: Bias) -> DisplayPoint {
+        let inlay_point = self.inlay_snapshot.to_inlay_point(diff_point);
+        let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
+        self.fold_point_to_display_point(fold_point)
+    }
+
     fn display_point_to_diff_point(&self, point: DisplayPoint, bias: Bias) -> DiffPoint {
         self.inlay_snapshot
             .to_diff_point(self.display_point_to_inlay_point(point, bias))
@@ -1160,6 +1166,22 @@ impl DisplaySnapshot {
                 offset -= ch.len_utf8();
                 (ch, offset)
             })
+    }
+
+    pub fn anchor_before(&self, point: DisplayPoint) -> DisplayAnchor {
+        let diff_point = self.display_point_to_diff_point(point, Bias::Left);
+        self.diff_snapshot().point_to_anchor(diff_point, Bias::Left)
+    }
+
+    pub fn anchor_after(&self, point: DisplayPoint) -> DisplayAnchor {
+        let diff_point = self.display_point_to_diff_point(point, Bias::Left);
+        self.diff_snapshot()
+            .point_to_anchor(diff_point, Bias::Right)
+    }
+
+    pub fn anchor_to_point(&self, anchor: DisplayAnchor) -> DisplayPoint {
+        let diff_point = self.diff_snapshot().anchor_to_point(anchor);
+        self.diff_point_to_display_point(diff_point, Bias::Left)
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
@@ -1408,6 +1430,43 @@ impl DisplaySnapshot {
 
     pub(crate) fn diff_snapshot(&self) -> &DiffMapSnapshot {
         &self.inlay_snapshot.diff_map_snapshot
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
+pub struct DisplayAnchor {
+    pub anchor: multi_buffer::Anchor,
+    pub diff_base_anchor: Option<text::Anchor>,
+}
+
+impl DisplayAnchor {
+    pub fn min() -> Self {
+        Self {
+            anchor: multi_buffer::Anchor::min(),
+            diff_base_anchor: None,
+        }
+    }
+
+    pub fn max() -> Self {
+        Self {
+            anchor: multi_buffer::Anchor::max(),
+            diff_base_anchor: None,
+        }
+    }
+}
+
+pub trait DisplayCoordinate {
+    fn to_display_anchor(self, map: &DisplaySnapshot) -> DisplayAnchor;
+}
+
+impl DisplayCoordinate for DisplayAnchor {
+    fn to_display_anchor(self, _: &DisplaySnapshot) -> DisplayAnchor {
+        self
+    }
+}
+impl DisplayCoordinate for DisplayPoint {
+    fn to_display_anchor(self, map: &DisplaySnapshot) -> DisplayAnchor {
+        map.anchor_before(self)
     }
 }
 

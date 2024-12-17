@@ -1,4 +1,4 @@
-use super::custom_highlights::CustomHighlightsChunks;
+use super::{custom_highlights::CustomHighlightsChunks, DisplayAnchor};
 use crate::RowInfo;
 use collections::HashMap;
 use git::diff::DiffHunkStatus;
@@ -6,7 +6,7 @@ use gpui::{AppContext, Context as _, HighlightStyle, Model, ModelContext, Subscr
 use language::{BufferChunks, BufferId, Chunk};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow, MultiBufferRows,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+    MultiBufferSnapshot, ToOffset, ToPoint as _,
 };
 use project::buffer_store::BufferChangeSet;
 use std::{
@@ -16,7 +16,8 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{Cursor, SumTree, TreeMap};
-use text::{Bias, Edit, Patch, Point, TextSummary, ToOffset as _};
+use text::{Bias, Edit, Patch, Point, TextSummary, ToOffset as _, ToPoint as _};
+use util::debug_panic;
 
 pub(crate) struct DiffMap {
     snapshot: DiffMapSnapshot,
@@ -1040,6 +1041,83 @@ impl DiffMapSnapshot {
         }
     }
 
+    pub fn point_to_anchor(&self, point: DiffPoint, bias: Bias) -> DisplayAnchor {
+        let mut cursor = self.transforms.cursor::<(DiffPoint, Point)>(&());
+        cursor.seek(&point, Bias::Right, &());
+        let (diff_start, multibuffer_start) = *cursor.start();
+        match cursor.item() {
+            Some(DiffTransform::BufferContent { .. }) => {
+                let multibuffer_point = multibuffer_start + (point - diff_start).0;
+                DisplayAnchor {
+                    anchor: self.buffer.anchor_at(multibuffer_point, bias),
+                    diff_base_anchor: None,
+                }
+            }
+            Some(DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_start,
+                ..
+            }) => {
+                let diff_base_point = *base_text_start + (point - diff_start).0;
+                let diff_base_anchor = if let Some(diff_base_snapshot) = self.diffs.get(&buffer_id)
+                {
+                    Some(
+                        diff_base_snapshot
+                            .base_text
+                            .anchor_at(diff_base_point, bias),
+                    )
+                } else {
+                    debug_panic!("{} is missing diff base", buffer_id);
+                    None
+                };
+
+                DisplayAnchor {
+                    anchor: self.buffer.anchor_at(multibuffer_start, Bias::Left),
+                    diff_base_anchor,
+                }
+            }
+            None => {
+                panic!("{:?} is out of range", point)
+            }
+        }
+    }
+
+    pub fn anchor_to_point(&self, anchor: DisplayAnchor) -> DiffPoint {
+        let multibuffer_point = anchor.anchor.to_point(&self.buffer);
+
+        let mut cursor = self.transforms.cursor::<(Point, DiffPoint)>(&());
+        cursor.seek(&multibuffer_point, Bias::Left, &());
+
+        if let Some(DiffTransform::DeletedHunk {
+            buffer_id,
+            base_text_start,
+            ..
+        }) = cursor.item()
+        {
+            if let Some(diff_base_anchor) = anchor.diff_base_anchor {
+                if let Some(diff_base_snapshot) = self.diffs.get(&buffer_id) {
+                    if diff_base_anchor.buffer_id == Some(diff_base_snapshot.base_text.remote_id())
+                    {
+                        let (_, diff_start) = *cursor.start();
+                        let base_text_point =
+                            diff_base_anchor.to_point(&diff_base_snapshot.base_text);
+                        return diff_start + DiffPoint(base_text_point - base_text_start);
+                    }
+                }
+            } else {
+                cursor.next(&())
+            }
+        }
+
+        debug_assert!(matches!(
+            cursor.item(),
+            Some(DiffTransform::BufferContent { .. })
+        ));
+
+        let (multibuffer_start, diff_start) = *cursor.start();
+        diff_start + DiffPoint(multibuffer_point - multibuffer_start)
+    }
+
     pub fn to_multibuffer_offset(&self, offset: DiffOffset) -> usize {
         let mut cursor = self.transforms.cursor::<(DiffOffset, usize)>(&());
         cursor.seek(&offset, Bias::Right, &());
@@ -1941,6 +2019,17 @@ mod tests {
         ] {
             assert_eq!(diff_snapshot.offset_to_point(offset), point);
             assert_eq!(diff_snapshot.point_to_offset(point), offset);
+        }
+
+        for point in [
+            DiffPoint::new(0, 4),
+            DiffPoint::new(1, 0),
+            DiffPoint::new(1, 1),
+        ] {
+            let anchor = diff_snapshot.point_to_anchor(point, Bias::Left);
+            dbg!(&anchor);
+            let actual = diff_snapshot.anchor_to_point(anchor);
+            assert_eq!(point, actual);
         }
 
         assert_eq!(
