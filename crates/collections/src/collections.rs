@@ -1,5 +1,3 @@
-use rustc_hash::FxBuildHasher;
-
 #[cfg(feature = "test-support")]
 pub type HashMap<K, V> = FxHashMap<K, V>;
 
@@ -7,10 +5,10 @@ pub type HashMap<K, V> = FxHashMap<K, V>;
 pub type HashSet<T> = FxHashSet<T>;
 
 #[cfg(feature = "test-support")]
-pub type IndexMap<K, V> = indexmap::IndexMap<K, V, FxBuildHasher>;
+pub type IndexMap<K, V> = indexmap::IndexMap<K, V, rustc_hash::FxBuildHasher>;
 
 #[cfg(feature = "test-support")]
-pub type IndexSet<T> = indexmap::IndexSet<T, FxBuildHasher>;
+pub type IndexSet<T> = indexmap::IndexSet<T, rustc_hash::FxBuildHasher>;
 
 #[cfg(not(feature = "test-support"))]
 pub type HashMap<K, V> = std::collections::HashMap<K, V>;

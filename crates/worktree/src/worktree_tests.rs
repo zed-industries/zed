@@ -1497,10 +1497,14 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+
+    dbg!(snapshot.git_status(&Path::new("")));
+
+    dbg!("******************************************");
     check_propagated_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Modified)),
+            (Path::new(""), Some(GitFileStatus::Modified)), // This is testing our propogation stuff, which we just said we wouldn't do
             (Path::new("a.txt"), None),
             (Path::new("b/c.txt"), Some(GitFileStatus::Modified)),
         ],
@@ -2399,11 +2403,11 @@ async fn test_git_status(cx: &mut TestAppContext) {
 
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
-            Some(GitFileStatus::Added)
+            Some(GitFileStatus::Untracked)
         );
         assert_eq!(
             snapshot.status_for_file(project_path.join(F_TXT)),
-            Some(GitFileStatus::Added)
+            Some(GitFileStatus::Untracked)
         );
     });
 
@@ -2433,7 +2437,7 @@ async fn test_git_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(
             snapshot.status_for_file(project_path.join(F_TXT)),
-            Some(GitFileStatus::Added)
+            Some(GitFileStatus::Untracked)
         );
         assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
         assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
@@ -2455,13 +2459,14 @@ async fn test_git_status(cx: &mut TestAppContext) {
         assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
-            Some(GitFileStatus::Added)
+            Some(GitFileStatus::Untracked)
         );
         assert_eq!(
             snapshot.status_for_file(project_path.join(E_TXT)),
             Some(GitFileStatus::Modified)
         );
     });
+    dbg!("***********************************");
 
     std::fs::remove_file(work_dir.join(B_TXT)).unwrap();
     std::fs::remove_dir_all(work_dir.join("c")).unwrap();
@@ -2587,7 +2592,7 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
         .await;
     cx.executor().run_until_parked();
 
-    tree.read_with(cx, |tree, cx| {
+    tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
         let (dir, _) = snapshot.repositories().next().unwrap();
 
@@ -2857,15 +2862,16 @@ fn check_propagated_statuses(
     snapshot: &Snapshot,
     expected_statuses: &[(&Path, Option<GitFileStatus>)],
 ) {
-    let mut entries = expected_statuses
+    let entries = expected_statuses
         .iter()
         .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
         .collect::<Vec<_>>();
-    snapshot.propagate_git_statuses(&mut entries);
+    let statuses = snapshot.propagate_git_statuses(&entries);
     assert_eq!(
         entries
             .iter()
-            .map(|e| (e.path.as_ref(), snapshot.status_for_file(e.path.as_ref())))
+            .enumerate()
+            .map(|(ix, e)| (e.path.as_ref(), statuses[ix]))
             .collect::<Vec<_>>(),
         expected_statuses
     );

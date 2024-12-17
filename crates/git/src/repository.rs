@@ -38,8 +38,7 @@ pub trait GitRepository: Send + Sync {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
-    //fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
-    fn status(&self, path_prefixes: &mut dyn Iterator<Item = &RepoPath>) -> Result<GitStatus>;
+    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -134,7 +133,7 @@ impl GitRepository for RealGitRepository {
         Some(self.repository.lock().head().ok()?.target()?.to_string())
     }
 
-    fn status(&self, path_prefixes: &mut dyn Iterator<Item = &RepoPath>) -> Result<GitStatus> {
+    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
         let working_directory = self
             .repository
             .lock()
@@ -291,13 +290,16 @@ impl GitRepository for FakeGitRepository {
         state.dot_git_dir.clone()
     }
 
-    fn status(&self, mut path_prefixes: &mut dyn Iterator<Item = &RepoPath>) -> Result<GitStatus> {
+    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
         let state = self.state.lock();
         let mut entries = state
             .worktree_statuses
             .iter()
             .filter_map(|(repo_path, status)| {
-                if (&mut path_prefixes).any(|path_prefix| repo_path.0.starts_with(path_prefix)) {
+                if path_prefixes
+                    .iter()
+                    .any(|path_prefix| repo_path.0.starts_with(path_prefix))
+                {
                     Some((repo_path.to_owned(), *status))
                 } else {
                     None
@@ -434,6 +436,13 @@ impl RepoPath {
 
         RepoPath(path.into())
     }
+
+    pub fn from_str(path: &str) -> Self {
+        let path = Path::new(path);
+        debug_assert!(path.is_relative(), "Repo paths must be relative");
+
+        RepoPath(path.into())
+    }
 }
 
 impl From<&Path> for RepoPath {
@@ -445,6 +454,12 @@ impl From<&Path> for RepoPath {
 impl From<PathBuf> for RepoPath {
     fn from(value: PathBuf) -> Self {
         RepoPath::new(value)
+    }
+}
+
+impl From<&str> for RepoPath {
+    fn from(value: &str) -> Self {
+        Self::from_str(value)
     }
 }
 

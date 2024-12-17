@@ -1783,6 +1783,7 @@ message StatusEntry {
     GitStatus status = 2;
 }
 
+// TODO: model this git status better, replicating the staged and unstaged states
 enum GitStatus {
     Added = 0;
     Modified = 1;
