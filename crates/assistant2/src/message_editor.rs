@@ -43,21 +43,24 @@ impl MessageEditor {
         let context_store = cx.new_model(|_cx| ContextStore::new());
         let context_picker_menu_handle = PopoverMenuHandle::default();
 
+        let editor = cx.new_view(|cx| {
+            let mut editor = Editor::auto_height(80, cx);
+            editor.set_placeholder_text("Ask anything, @ to add context", cx);
+            editor.set_show_indent_guides(false, cx);
+
+            editor
+        });
+
         Self {
             thread,
-            editor: cx.new_view(|cx| {
-                let mut editor = Editor::auto_height(80, cx);
-                editor.set_placeholder_text("Ask anything, @ to add context", cx);
-                editor.set_show_indent_guides(false, cx);
-
-                editor
-            }),
+            editor: editor.clone(),
             context_store: context_store.clone(),
             context_strip: cx.new_view(|cx| {
                 ContextStrip::new(
                     context_store,
                     workspace.clone(),
                     Some(thread_store.clone()),
+                    editor.focus_handle(cx),
                     context_picker_menu_handle.clone(),
                     cx,
                 )

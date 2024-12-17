@@ -1756,12 +1756,13 @@ impl PromptEditor {
 
         let mut this = Self {
             id,
-            editor: prompt_editor,
+            editor: prompt_editor.clone(),
             context_strip: cx.new_view(|cx| {
                 ContextStrip::new(
                     context_store,
                     workspace.clone(),
                     thread_store.clone(),
+                    prompt_editor.focus_handle(cx),
                     context_picker_menu_handle.clone(),
                     cx,
                 )
