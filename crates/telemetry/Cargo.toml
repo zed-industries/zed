@@ -1,5 +1,5 @@
 [package]
-name = "telemetry_events"
+name = "telemetry"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,9 +9,10 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/telemetry_events.rs"
+path = "src/telemetry.rs"
 
 [dependencies]
-semantic_version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+telemetry_events.workspace = true
+futures.workspace = true

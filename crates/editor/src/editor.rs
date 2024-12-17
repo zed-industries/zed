@@ -1370,7 +1370,7 @@ impl Editor {
             }
         }
 
-        this.report_editor_event("open", None, cx);
+        this.report_editor_event("Editor Opened", None, cx);
         this
     }
 
@@ -12568,7 +12568,7 @@ impl Editor {
 
     fn report_editor_event(
         &self,
-        operation: &'static str,
+        event_type: &'static str,
         file_extension: Option<String>,
         cx: &AppContext,
     ) {
@@ -12605,15 +12605,14 @@ impl Editor {
             .show_inline_completions;
 
         let project = project.read(cx);
-        let telemetry = project.client().telemetry().clone();
-        telemetry.report_editor_event(
+        telemetry::event!(
+            event_type,
             file_extension,
             vim_mode,
-            operation,
             copilot_enabled,
             copilot_enabled_for_language,
-            project.is_via_ssh(),
-        )
+            is_via_ssh = project.is_via_ssh(),
+        );
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
