@@ -368,6 +368,9 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self
+            .diff_map
+            .update(cx, |diff_map, cx| diff_map.sync(snapshot, edits, cx));
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -382,6 +385,9 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self
+            .diff_map
+            .update(cx, |diff_map, cx| diff_map.sync(snapshot, edits, cx));
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);

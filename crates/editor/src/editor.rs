@@ -5085,7 +5085,7 @@ impl Editor {
             }))
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn context_menu_visible(&self) -> bool {
         self.context_menu
             .borrow()

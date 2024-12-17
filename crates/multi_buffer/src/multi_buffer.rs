@@ -1576,6 +1576,7 @@ impl MultiBuffer {
         }
         ranges
     }
+
     pub fn excerpt_ranges_for_buffer(
         &self,
         buffer_id: BufferId,

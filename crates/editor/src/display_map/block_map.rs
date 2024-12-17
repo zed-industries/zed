@@ -2542,7 +2542,8 @@ mod tests {
         let buffer_id_2 = buffer_ids[1];
         let buffer_id_3 = buffer_ids[2];
 
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, diff_snapshot) = cx.update(|cx| DiffMap::new(buffer.clone(), cx));
+        let (_, inlay_snapshot) = InlayMap::new(diff_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wrap_snapshot) =
@@ -2555,7 +2556,10 @@ mod tests {
             "\n\n\n111\n\n\n\n\n222\n\n\n333\n\n\n444\n\n\n\n\n555\n\n\n666\n"
         );
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2631,7 +2635,10 @@ mod tests {
             "\n\n\n111\n\n\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n\n\n555\n\n\n666\n\n"
         );
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2706,7 +2713,10 @@ mod tests {
             "\n\n\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n\n\n555\n\n\n666\n\n"
         );
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2771,7 +2781,10 @@ mod tests {
         );
         assert_eq!(blocks_snapshot.text(), "\n\n\n\n\n\n\n\n555\n\n\n666\n\n");
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2825,7 +2838,10 @@ mod tests {
             "Should have extra newline for 111 buffer, due to a new block added when it was folded"
         );
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2879,7 +2895,10 @@ mod tests {
             "Should have a single, first buffer left after folding"
         );
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2913,7 +2932,8 @@ mod tests {
         assert_eq!(buffer_ids.len(), 1);
         let buffer_id = buffer_ids[0];
 
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, diff_snapshot) = cx.update(|cx| DiffMap::new(buffer.clone(), cx));
+        let (_, inlay_snapshot) = InlayMap::new(diff_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wrap_snapshot) =
@@ -2949,7 +2969,10 @@ mod tests {
         );
         assert_eq!(blocks_snapshot.text(), "\n");
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![None, None],
             "When fully folded, should be no buffer rows"
         );
@@ -3117,8 +3140,11 @@ mod tests {
                         log::info!("Noop fold/unfold operation on a singleton buffer");
                         continue;
                     }
+                    let (diff_snapshot, diff_edits) = diff_map.update(cx, |diff_map, cx| {
+                        diff_map.sync(buffer_snapshot.clone(), vec![], cx)
+                    });
                     let (inlay_snapshot, inlay_edits) =
-                        inlay_map.sync(buffer_snapshot.clone(), vec![]);
+                        inlay_map.sync(diff_snapshot.clone(), diff_edits);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tab_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);

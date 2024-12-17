@@ -1,21 +1,14 @@
 use crate::{HighlightStyles, InlayId, RowInfo};
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{Anchor, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, ToOffset};
-use std::{
-    cmp,
-    ops::{Add, AddAssign, Range, Sub, SubAssign},
-};
+use multi_buffer::{Anchor, MultiBufferSnapshot, ToOffset};
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
 };
 use sum_tree::{Bias, Cursor, SumTree};
-use sum_tree::{Bias, Cursor, SumTree};
-use text::{Patch, Rope};
 use text::{Patch, Rope};
 
-use super::{custom_highlights::CustomHighlightsChunks, Highlights};
 use super::{
     diff_map::{DiffEdit, DiffMapChunks, DiffMapRows, DiffMapSnapshot, DiffOffset, DiffPoint},
     Highlights,

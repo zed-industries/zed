@@ -22,7 +22,7 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
     LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowInfo, RowRangeExt, SelectPhase,
-    Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    Selection, SoftWrap, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -6199,8 +6199,6 @@ impl Element for EditorElement {
                             if show_code_actions {
                                 let newest_selection_point =
                                     newest_selection_head.to_point(&snapshot.display_snapshot);
-                                let newest_selection_display_row =
-                                    newest_selection_point.to_display_point(&snapshot).row();
                                 if !snapshot
                                     .is_line_folded(MultiBufferRow(newest_selection_point.row))
                                 {

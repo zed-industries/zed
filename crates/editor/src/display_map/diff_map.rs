@@ -1134,11 +1134,11 @@ impl DiffMapSnapshot {
         let diff_anchor_a = a.diff_base_anchor.unwrap();
         let diff_anchor_b = b.diff_base_anchor.unwrap();
 
-        if diff_anchor_a.buffer_id != diff_anchor_b.buffer_id {
+        if diff_anchor_a.buffer_id != diff_anchor_b.buffer_id || diff_anchor_a.buffer_id.is_none() {
             return std::cmp::Ordering::Equal;
         }
 
-        let Some(diff_base_snapshot) = self.diffs.get(diff_anchor_a.buffer_id) else {
+        let Some(diff_base_snapshot) = self.diffs.get(&diff_anchor_a.buffer_id.unwrap()) else {
             return std::cmp::Ordering::Equal;
         };
 
