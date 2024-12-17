@@ -153,51 +153,19 @@ pub fn initialize_workspace(
         .detach();
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        if let Err(e) = fs::linux_watcher::global(|_| {}) {
-            let message = format!(db::indoc!{r#"
-                inotify_init returned {}
-
-                This may be due to system-wide limits on inotify instances. For troubleshooting see: https://zed.dev/docs/linux
-                "#}, e);
-            let prompt = cx.prompt(PromptLevel::Critical, "Could not start inotify", Some(&message),
-                &["Troubleshoot and Quit"]);
-            cx.spawn(|_, mut cx| async move {
-                if prompt.await == Ok(0) {
-                    cx.update(|cx| {
-                        cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
-                        cx.quit();
-                    }).ok();
-                }
-            }).detach()
-        }
+        initialize_linux_file_watcher(cx);
 
         if let Some(specs) = cx.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
-            if specs.is_software_emulated && std::env::var("ZED_ALLOW_EMULATED_GPU").is_err() {
-            let message = format!(db::indoc!{r#"
-                Zed uses Vulkan for rendering and requires a compatible GPU.
-
-                Currently you are using a software emulated GPU ({}) which
-                will result in awful performance.
-
-                For troubleshooting see: https://zed.dev/docs/linux
-                Set ZED_ALLOW_EMULATED_GPU=1 env var to permanently override.
-                "#}, specs.device_name);
-            let prompt = cx.prompt(PromptLevel::Critical, "Unsupported GPU", Some(&message),
-                &["Skip", "Troubleshoot and Quit"]);
-            cx.spawn(|_, mut cx| async move {
-                if prompt.await == Ok(1) {
-                    cx.update(|cx| {
-                        cx.open_url("https://zed.dev/docs/linux#zed-fails-to-open-windows");
-                        cx.quit();
-                    }).ok();
-                }
-            }).detach()
-            }
+            show_software_emulation_warning_if_needed(specs, cx);
         }
 
         let inline_completion_button = cx.new_view(|cx| {
-            inline_completion_button::InlineCompletionButton::new(workspace.weak_handle(), app_state.fs.clone(), cx)
+            inline_completion_button::InlineCompletionButton::new(
+                workspace.weak_handle(),
+                app_state.fs.clone(),
+                cx,
+            )
         });
 
         let diagnostic_summary =
@@ -225,7 +193,6 @@ pub fn initialize_workspace(
 
         let handle = cx.view().downgrade();
         cx.on_window_should_close(move |cx| {
-
             handle
                 .update(cx, |workspace, cx| {
                     // We'll handle closing asynchronously
@@ -235,390 +202,8 @@ pub fn initialize_workspace(
                 .unwrap_or(true)
         });
 
-        let release_channel = ReleaseChannel::global(cx);
-        let assistant2_feature_flag = cx.wait_for_flag::<feature_flags::Assistant2FeatureFlag>();
-        let git_ui_feature_flag = cx.wait_for_flag::<feature_flags::GitUiFeatureFlag>();
-
-        let prompt_builder = prompt_builder.clone();
-
-        cx.spawn(|workspace_handle, mut cx| async move {
-            let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
-            let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
-            let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-            let channels_panel =
-                collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
-            let chat_panel =
-                collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
-            let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
-                workspace_handle.clone(),
-                cx.clone(),
-            );
-            let assistant_panel =
-                assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
-
-            let (
-                project_panel,
-                outline_panel,
-                terminal_panel,
-                channels_panel,
-                chat_panel,
-                notification_panel,
-                assistant_panel,
-            ) = futures::try_join!(
-                project_panel,
-                outline_panel,
-                terminal_panel,
-                channels_panel,
-                chat_panel,
-                notification_panel,
-                assistant_panel,
-            )?;
-
-            workspace_handle.update(&mut cx, |workspace, cx| {
-                workspace.add_panel(project_panel, cx);
-                workspace.add_panel(outline_panel, cx);
-                workspace.add_panel(terminal_panel, cx);
-                workspace.add_panel(channels_panel, cx);
-                workspace.add_panel(chat_panel, cx);
-                workspace.add_panel(notification_panel, cx);
-                workspace.add_panel(assistant_panel, cx);
-            })?;
-
-            let git_ui_enabled = git_ui_feature_flag.await;
-            let git_panel = if git_ui_enabled {
-                Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
-            } else {
-                None
-            };
-            workspace_handle.update(&mut cx, |workspace, cx| {
-                if let Some(git_panel) = git_panel {
-                    workspace.add_panel(git_panel, cx);
-                }
-            })?;
-
-            let is_assistant2_enabled =
-                if cfg!(test) || release_channel != ReleaseChannel::Dev {
-                    false
-                } else {
-                    assistant2_feature_flag.await
-                };
-            let assistant2_panel = if is_assistant2_enabled {
-                Some(assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
-            } else {
-                None
-            };
-            workspace_handle.update(&mut cx, |workspace, cx| {
-                if let Some(assistant2_panel) = assistant2_panel {
-                    workspace.add_panel(assistant2_panel, cx);
-                }
-
-                if is_assistant2_enabled {
-                    workspace.register_action(assistant2::InlineAssistant::inline_assist);
-                } else {
-                    workspace.register_action(assistant::AssistantPanel::inline_assist);
-                }
-            })
-        })
-        .detach();
-
-        workspace
-            .register_action(about)
-            .register_action(|_, _: &Minimize, cx| {
-                cx.minimize_window();
-            })
-            .register_action(|_, _: &Zoom, cx| {
-                cx.zoom_window();
-            })
-            .register_action(|_, _: &ToggleFullScreen, cx| {
-                cx.toggle_fullscreen();
-            })
-            .register_action(|_, action: &OpenZedUrl, cx| {
-                OpenListener::global(cx).open_urls(vec![action.url.clone()])
-            })
-            .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
-            .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
-                theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
-            })
-            .register_action(|workspace, _: &workspace::Open, cx| {
-                    workspace.client()
-                        .telemetry()
-                        .report_app_event("open project".to_string());
-                    let paths = workspace.prompt_for_open_path(
-                        PathPromptOptions {
-                            files: true,
-                            directories: true,
-                            multiple: true,
-                        },
-                        DirectoryLister::Project(workspace.project().clone()),
-                        cx,
-                    );
-
-                    cx.spawn(|this, mut cx| async move {
-                        let Some(paths) = paths.await.log_err().flatten() else {
-                            return;
-                        };
-
-                        if let Some(task) = this
-                            .update(&mut cx, |this, cx| {
-                                if this.project().read(cx).is_local() {
-                                    this.open_workspace_for_paths(false, paths, cx)
-                                } else {
-                                    open_new_ssh_project_from_project(this, paths, cx)
-                                }
-                            })
-                            .log_err()
-                        {
-                            task.await.log_err();
-                        }
-                    })
-                    .detach()
-            })
-            .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
-                theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
-            })
-            .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
-                theme::reset_buffer_font_size(cx)
-            })
-            .register_action(move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
-                theme::adjust_ui_font_size(cx, |size| *size += px(1.0))
-            })
-            .register_action(move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
-                theme::adjust_ui_font_size(cx, |size| *size -= px(1.0))
-            })
-            .register_action(move |_, _: &zed_actions::ResetUiFontSize, cx| {
-                theme::reset_ui_font_size(cx)
-            })
-            .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
-                theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
-            })
-            .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
-                theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
-            })
-            .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
-                theme::reset_buffer_font_size(cx)
-            })
-            .register_action(|_, _: &install_cli::Install, cx| {
-                cx.spawn(|workspace, mut cx| async move {
-                    if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                        let prompt = cx.prompt(
-                            PromptLevel::Warning,
-                            "CLI should already be installed",
-                            Some("If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else."),
-                            &["Ok"],
-                        );
-                        cx.background_executor().spawn(prompt).detach();
-                        return Ok(());
-                    }
-                    let path = install_cli::install_cli(cx.deref())
-                        .await
-                        .context("error creating CLI symlink")?;
-
-                    workspace.update(&mut cx, |workspace, cx| {
-                        struct InstalledZedCli;
-
-                        workspace.show_toast(
-                            Toast::new(
-                                NotificationId::unique::<InstalledZedCli>(),
-                                format!(
-                                    "Installed `zed` to {}. You can launch {} from your terminal.",
-                                    path.to_string_lossy(),
-                                    ReleaseChannel::global(cx).display_name()
-                                ),
-                            ),
-                            cx,
-                        )
-                    })?;
-                    register_zed_scheme(&cx).await.log_err();
-                    Ok(())
-                })
-                .detach_and_prompt_err("Error installing zed cli", cx, |_, _| None);
-            })
-            .register_action(|_, _: &install_cli::RegisterZedScheme, cx| {
-                cx.spawn(|workspace, mut cx| async move {
-                    register_zed_scheme(&cx).await?;
-                    workspace.update(&mut cx, |workspace, cx| {
-                        struct RegisterZedScheme;
-
-                        workspace.show_toast(
-                            Toast::new(
-                                NotificationId::unique::<RegisterZedScheme>(),
-                                format!(
-                                    "zed:// links will now open in {}.",
-                                    ReleaseChannel::global(cx).display_name()
-                                ),
-                            ),
-                            cx,
-                        )
-                    })?;
-                    Ok(())
-                })
-                .detach_and_prompt_err(
-                    "Error registering zed:// scheme",
-                    cx,
-                    |_, _| None,
-                );
-            })
-            .register_action(|workspace, _: &OpenLog, cx| {
-                open_log_file(workspace, cx);
-            })
-            .register_action(|workspace, _: &zed_actions::OpenLicenses, cx| {
-                open_bundled_file(
-                    workspace,
-                    asset_str::<Assets>("licenses.md"),
-                    "Open Source License Attribution",
-                    "Markdown",
-                    cx,
-                );
-            })
-            .register_action(
-                move |workspace: &mut Workspace,
-                      _: &zed_actions::OpenTelemetryLog,
-                      cx: &mut ViewContext<Workspace>| {
-                    open_telemetry_log_file(workspace, cx);
-                },
-            )
-            .register_action(
-                move |_: &mut Workspace,
-                      _: &zed_actions::OpenKeymap,
-                      cx: &mut ViewContext<Workspace>| {
-                    open_settings_file(paths::keymap_file(), || settings::initial_keymap_content().as_ref().into(), cx);
-                },
-            )
-            .register_action(
-                move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-                    open_settings_file(
-                        paths::settings_file(),
-                        || settings::initial_user_settings_content().as_ref().into(),
-                        cx,
-                    );
-                },
-            )
-            .register_action(
-                |_: &mut Workspace, _: &OpenAccountSettings, cx: &mut ViewContext<Workspace>| {
-                    cx.open_url(&zed_urls::account_url(cx));
-                },
-            )
-            .register_action(
-                move |_: &mut Workspace, _: &OpenTasks, cx: &mut ViewContext<Workspace>| {
-                    open_settings_file(
-                        paths::tasks_file(),
-                        || settings::initial_tasks_content().as_ref().into(),
-                        cx,
-                    );
-                },
-            )
-            .register_action(open_project_settings_file)
-            .register_action(open_project_tasks_file)
-            .register_action(
-                move |workspace: &mut Workspace,
-                      _: &zed_actions::OpenDefaultKeymap,
-                      cx: &mut ViewContext<Workspace>| {
-                    open_bundled_file(
-                        workspace,
-                        settings::default_keymap(),
-                        "Default Key Bindings",
-                        "JSON",
-                        cx,
-                    );
-                },
-            )
-            .register_action(
-                move |workspace: &mut Workspace,
-                      _: &OpenDefaultSettings,
-                      cx: &mut ViewContext<Workspace>| {
-                    open_bundled_file(
-                        workspace,
-                        settings::default_settings(),
-                        "Default Settings",
-                        "JSON",
-                        cx,
-                    );
-                },
-            )
-            .register_action(
-                |workspace: &mut Workspace,
-                 _: &project_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
-                    workspace.toggle_panel_focus::<ProjectPanel>(cx);
-                },
-            )
-            .register_action(
-                |workspace: &mut Workspace,
-                 _: &outline_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
-                    workspace.toggle_panel_focus::<OutlinePanel>(cx);
-                },
-            )
-            .register_action(
-                |workspace: &mut Workspace,
-                 _: &collab_ui::collab_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
-                    workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(cx);
-                },
-            )
-            .register_action(
-                |workspace: &mut Workspace,
-                 _: &collab_ui::chat_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
-                    workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(cx);
-                },
-            )
-            .register_action(
-                |workspace: &mut Workspace,
-                 _: &collab_ui::notification_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
-                    workspace
-                        .toggle_panel_focus::<collab_ui::notification_panel::NotificationPanel>(cx);
-                },
-            )
-            .register_action(
-                |workspace: &mut Workspace,
-                 _: &terminal_panel::ToggleFocus,
-                 cx: &mut ViewContext<Workspace>| {
-                    workspace.toggle_panel_focus::<TerminalPanel>(cx);
-                },
-            )
-            .register_action({
-                let app_state = Arc::downgrade(&app_state);
-                move |_, _: &NewWindow, cx| {
-                    if let Some(app_state) = app_state.upgrade() {
-                        open_new(Default::default(), app_state, cx, |workspace, cx| {
-                            Editor::new_file(workspace, &Default::default(), cx)
-                        })
-                        .detach();
-                    }
-                }
-            })
-            .register_action({
-                let app_state = Arc::downgrade(&app_state);
-                move |_, _: &NewFile, cx| {
-                    if let Some(app_state) = app_state.upgrade() {
-                        open_new(Default::default(), app_state, cx, |workspace, cx| {
-                            Editor::new_file(workspace, &Default::default(), cx)
-                        })
-                        .detach();
-                    }
-                }
-            });
-        if workspace.project().read(cx).is_via_ssh() {
-            workspace.register_action({
-                move |workspace, _: &OpenServerSettings, cx| {
-                    let open_server_settings = workspace.project().update(cx, |project, cx| {
-                        project.open_server_settings(cx)
-                    });
-
-                    cx.spawn(|workspace, mut cx| async move {
-                        let buffer = open_server_settings.await?;
-
-                        workspace.update(&mut cx, |workspace, cx| {
-                            workspace.open_path(buffer.read(cx).project_path(cx).expect("Settings file must have a location"), None, true, cx)
-                        })?.await?;
-
-                        anyhow::Ok(())
-                    }).detach_and_log_err(cx);
-                }
-            });
-        }
+        initialize_panels(prompt_builder.clone(), cx);
+        register_actions(app_state.clone(), workspace, cx);
 
         workspace.focus_handle(cx).focus(cx);
     })
@@ -646,6 +231,441 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
         }
     })
     .detach();
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn initialize_linux_file_watcher(cx: &mut ViewContext<Workspace>) {
+    if let Err(e) = fs::linux_watcher::global(|_| {}) {
+        let message = format!(
+            db::indoc! {r#"
+            inotify_init returned {}
+
+            This may be due to system-wide limits on inotify instances. For troubleshooting see: https://zed.dev/docs/linux
+            "#},
+            e
+        );
+        let prompt = cx.prompt(
+            PromptLevel::Critical,
+            "Could not start inotify",
+            Some(&message),
+            &["Troubleshoot and Quit"],
+        );
+        cx.spawn(|_, mut cx| async move {
+            if prompt.await == Ok(0) {
+                cx.update(|cx| {
+                    cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
+                    cx.quit();
+                })
+                .ok();
+            }
+        })
+        .detach()
+    }
+}
+
+fn show_software_emulation_warning_if_needed(
+    specs: gpui::GPUSpecs,
+    cx: &mut ViewContext<Workspace>,
+) {
+    if specs.is_software_emulated && std::env::var("ZED_ALLOW_EMULATED_GPU").is_err() {
+        let message = format!(
+            db::indoc! {r#"
+            Zed uses Vulkan for rendering and requires a compatible GPU.
+
+            Currently you are using a software emulated GPU ({}) which
+            will result in awful performance.
+
+            For troubleshooting see: https://zed.dev/docs/linux
+            Set ZED_ALLOW_EMULATED_GPU=1 env var to permanently override.
+            "#},
+            specs.device_name
+        );
+        let prompt = cx.prompt(
+            PromptLevel::Critical,
+            "Unsupported GPU",
+            Some(&message),
+            &["Skip", "Troubleshoot and Quit"],
+        );
+        cx.spawn(|_, mut cx| async move {
+            if prompt.await == Ok(1) {
+                cx.update(|cx| {
+                    cx.open_url("https://zed.dev/docs/linux#zed-fails-to-open-windows");
+                    cx.quit();
+                })
+                .ok();
+            }
+        })
+        .detach()
+    }
+}
+
+fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Workspace>) {
+    let release_channel = ReleaseChannel::global(cx);
+    let assistant2_feature_flag = cx.wait_for_flag::<feature_flags::Assistant2FeatureFlag>();
+    let git_ui_feature_flag = cx.wait_for_flag::<feature_flags::GitUiFeatureFlag>();
+
+    let prompt_builder = prompt_builder.clone();
+
+    cx.spawn(|workspace_handle, mut cx| async move {
+        let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+        let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
+        let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+        let channels_panel =
+            collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+        let chat_panel =
+            collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
+        let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
+            workspace_handle.clone(),
+            cx.clone(),
+        );
+        let assistant_panel =
+            assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
+
+        let (
+            project_panel,
+            outline_panel,
+            terminal_panel,
+            channels_panel,
+            chat_panel,
+            notification_panel,
+            assistant_panel,
+        ) = futures::try_join!(
+            project_panel,
+            outline_panel,
+            terminal_panel,
+            channels_panel,
+            chat_panel,
+            notification_panel,
+            assistant_panel,
+        )?;
+
+        workspace_handle.update(&mut cx, |workspace, cx| {
+            workspace.add_panel(project_panel, cx);
+            workspace.add_panel(outline_panel, cx);
+            workspace.add_panel(terminal_panel, cx);
+            workspace.add_panel(channels_panel, cx);
+            workspace.add_panel(chat_panel, cx);
+            workspace.add_panel(notification_panel, cx);
+            workspace.add_panel(assistant_panel, cx);
+        })?;
+
+        let git_ui_enabled = git_ui_feature_flag.await;
+        let git_panel = if git_ui_enabled {
+            Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
+        } else {
+            None
+        };
+        workspace_handle.update(&mut cx, |workspace, cx| {
+            if let Some(git_panel) = git_panel {
+                workspace.add_panel(git_panel, cx);
+            }
+        })?;
+
+        let is_assistant2_enabled = if cfg!(test) || release_channel != ReleaseChannel::Dev {
+            false
+        } else {
+            assistant2_feature_flag.await
+        };
+        let assistant2_panel = if is_assistant2_enabled {
+            Some(assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
+        } else {
+            None
+        };
+        workspace_handle.update(&mut cx, |workspace, cx| {
+            if let Some(assistant2_panel) = assistant2_panel {
+                workspace.add_panel(assistant2_panel, cx);
+            }
+
+            if is_assistant2_enabled {
+                workspace.register_action(assistant2::InlineAssistant::inline_assist);
+            } else {
+                workspace.register_action(assistant::AssistantPanel::inline_assist);
+            }
+        })
+    })
+    .detach();
+}
+
+fn register_actions(
+    app_state: Arc<AppState>,
+    workspace: &mut Workspace,
+    cx: &mut ViewContext<Workspace>,
+) {
+    workspace
+        .register_action(about)
+        .register_action(|_, _: &Minimize, cx| {
+            cx.minimize_window();
+        })
+        .register_action(|_, _: &Zoom, cx| {
+            cx.zoom_window();
+        })
+        .register_action(|_, _: &ToggleFullScreen, cx| {
+            cx.toggle_fullscreen();
+        })
+        .register_action(|_, action: &OpenZedUrl, cx| {
+            OpenListener::global(cx).open_urls(vec![action.url.clone()])
+        })
+        .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
+        .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+            theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
+        })
+        .register_action(|workspace, _: &workspace::Open, cx| {
+            workspace
+                .client()
+                .telemetry()
+                .report_app_event("open project".to_string());
+            let paths = workspace.prompt_for_open_path(
+                PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: true,
+                },
+                DirectoryLister::Project(workspace.project().clone()),
+                cx,
+            );
+
+            cx.spawn(|this, mut cx| async move {
+                let Some(paths) = paths.await.log_err().flatten() else {
+                    return;
+                };
+
+                if let Some(task) = this
+                    .update(&mut cx, |this, cx| {
+                        if this.project().read(cx).is_local() {
+                            this.open_workspace_for_paths(false, paths, cx)
+                        } else {
+                            open_new_ssh_project_from_project(this, paths, cx)
+                        }
+                    })
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
+            })
+            .detach()
+        })
+        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
+        })
+        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+            theme::reset_buffer_font_size(cx)
+        })
+        .register_action(move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
+            theme::adjust_ui_font_size(cx, |size| *size += px(1.0))
+        })
+        .register_action(move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
+            theme::adjust_ui_font_size(cx, |size| *size -= px(1.0))
+        })
+        .register_action(move |_, _: &zed_actions::ResetUiFontSize, cx| {
+            theme::reset_ui_font_size(cx)
+        })
+        .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+            theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
+        })
+        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
+        })
+        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+            theme::reset_buffer_font_size(cx)
+        })
+        .register_action(install_cli)
+        .register_action(|_, _: &install_cli::RegisterZedScheme, cx| {
+            cx.spawn(|workspace, mut cx| async move {
+                register_zed_scheme(&cx).await?;
+                workspace.update(&mut cx, |workspace, cx| {
+                    struct RegisterZedScheme;
+
+                    workspace.show_toast(
+                        Toast::new(
+                            NotificationId::unique::<RegisterZedScheme>(),
+                            format!(
+                                "zed:// links will now open in {}.",
+                                ReleaseChannel::global(cx).display_name()
+                            ),
+                        ),
+                        cx,
+                    )
+                })?;
+                Ok(())
+            })
+            .detach_and_prompt_err("Error registering zed:// scheme", cx, |_, _| None);
+        })
+        .register_action(|workspace, _: &OpenLog, cx| {
+            open_log_file(workspace, cx);
+        })
+        .register_action(|workspace, _: &zed_actions::OpenLicenses, cx| {
+            open_bundled_file(
+                workspace,
+                asset_str::<Assets>("licenses.md"),
+                "Open Source License Attribution",
+                "Markdown",
+                cx,
+            );
+        })
+        .register_action(
+            move |workspace: &mut Workspace,
+                  _: &zed_actions::OpenTelemetryLog,
+                  cx: &mut ViewContext<Workspace>| {
+                open_telemetry_log_file(workspace, cx);
+            },
+        )
+        .register_action(
+            move |_: &mut Workspace,
+                  _: &zed_actions::OpenKeymap,
+                  cx: &mut ViewContext<Workspace>| {
+                open_settings_file(
+                    paths::keymap_file(),
+                    || settings::initial_keymap_content().as_ref().into(),
+                    cx,
+                );
+            },
+        )
+        .register_action(
+            move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+                open_settings_file(
+                    paths::settings_file(),
+                    || settings::initial_user_settings_content().as_ref().into(),
+                    cx,
+                );
+            },
+        )
+        .register_action(
+            |_: &mut Workspace, _: &OpenAccountSettings, cx: &mut ViewContext<Workspace>| {
+                cx.open_url(&zed_urls::account_url(cx));
+            },
+        )
+        .register_action(
+            move |_: &mut Workspace, _: &OpenTasks, cx: &mut ViewContext<Workspace>| {
+                open_settings_file(
+                    paths::tasks_file(),
+                    || settings::initial_tasks_content().as_ref().into(),
+                    cx,
+                );
+            },
+        )
+        .register_action(open_project_settings_file)
+        .register_action(open_project_tasks_file)
+        .register_action(
+            move |workspace: &mut Workspace,
+                  _: &zed_actions::OpenDefaultKeymap,
+                  cx: &mut ViewContext<Workspace>| {
+                open_bundled_file(
+                    workspace,
+                    settings::default_keymap(),
+                    "Default Key Bindings",
+                    "JSON",
+                    cx,
+                );
+            },
+        )
+        .register_action(
+            move |workspace: &mut Workspace,
+                  _: &OpenDefaultSettings,
+                  cx: &mut ViewContext<Workspace>| {
+                open_bundled_file(
+                    workspace,
+                    settings::default_settings(),
+                    "Default Settings",
+                    "JSON",
+                    cx,
+                );
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &project_panel::ToggleFocus,
+             cx: &mut ViewContext<Workspace>| {
+                workspace.toggle_panel_focus::<ProjectPanel>(cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &outline_panel::ToggleFocus,
+             cx: &mut ViewContext<Workspace>| {
+                workspace.toggle_panel_focus::<OutlinePanel>(cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &collab_ui::collab_panel::ToggleFocus,
+             cx: &mut ViewContext<Workspace>| {
+                workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &collab_ui::chat_panel::ToggleFocus,
+             cx: &mut ViewContext<Workspace>| {
+                workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &collab_ui::notification_panel::ToggleFocus,
+             cx: &mut ViewContext<Workspace>| {
+                workspace
+                    .toggle_panel_focus::<collab_ui::notification_panel::NotificationPanel>(cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &terminal_panel::ToggleFocus,
+             cx: &mut ViewContext<Workspace>| {
+                workspace.toggle_panel_focus::<TerminalPanel>(cx);
+            },
+        )
+        .register_action({
+            let app_state = Arc::downgrade(&app_state);
+            move |_, _: &NewWindow, cx| {
+                if let Some(app_state) = app_state.upgrade() {
+                    open_new(Default::default(), app_state, cx, |workspace, cx| {
+                        Editor::new_file(workspace, &Default::default(), cx)
+                    })
+                    .detach();
+                }
+            }
+        })
+        .register_action({
+            let app_state = Arc::downgrade(&app_state);
+            move |_, _: &NewFile, cx| {
+                if let Some(app_state) = app_state.upgrade() {
+                    open_new(Default::default(), app_state, cx, |workspace, cx| {
+                        Editor::new_file(workspace, &Default::default(), cx)
+                    })
+                    .detach();
+                }
+            }
+        });
+    if workspace.project().read(cx).is_via_ssh() {
+        workspace.register_action({
+            move |workspace, _: &OpenServerSettings, cx| {
+                let open_server_settings = workspace
+                    .project()
+                    .update(cx, |project, cx| project.open_server_settings(cx));
+
+                cx.spawn(|workspace, mut cx| async move {
+                    let buffer = open_server_settings.await?;
+
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            workspace.open_path(
+                                buffer
+                                    .read(cx)
+                                    .project_path(cx)
+                                    .expect("Settings file must have a location"),
+                                None,
+                                true,
+                                cx,
+                            )
+                        })?
+                        .await?;
+
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
+        });
+    }
 }
 
 fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
@@ -692,6 +712,45 @@ fn about(_: &mut Workspace, _: &zed_actions::About, cx: &mut gpui::ViewContext<W
 
 fn test_panic(_: &TestPanic, _: &mut AppContext) {
     panic!("Ran the TestPanic action")
+}
+
+fn install_cli(_: &mut Workspace, _: &install_cli::Install, cx: &mut ViewContext<Workspace>) {
+    const LINUX_PROMPT_DETAIL: &str = "If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else.";
+
+    cx.spawn(|workspace, mut cx| async move {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            let prompt = cx.prompt(
+                PromptLevel::Warning,
+                "CLI should already be installed",
+                Some(LINUX_PROMPT_DETAIL),
+                &["Ok"],
+            );
+            cx.background_executor().spawn(prompt).detach();
+            return Ok(());
+        }
+        let path = install_cli::install_cli(cx.deref())
+            .await
+            .context("error creating CLI symlink")?;
+
+        workspace.update(&mut cx, |workspace, cx| {
+            struct InstalledZedCli;
+
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<InstalledZedCli>(),
+                    format!(
+                        "Installed `zed` to {}. You can launch {} from your terminal.",
+                        path.to_string_lossy(),
+                        ReleaseChannel::global(cx).display_name()
+                    ),
+                ),
+                cx,
+            )
+        })?;
+        register_zed_scheme(&cx).await.log_err();
+        Ok(())
+    })
+    .detach_and_prompt_err("Error installing zed cli", cx, |_, _| None);
 }
 
 fn quit(_: &Quit, cx: &mut AppContext) {
