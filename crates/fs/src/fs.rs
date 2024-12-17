@@ -780,7 +780,10 @@ impl Fs for RealFs {
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
-        let repo = git2::Repository::open(dotgit_path).log_err()?;
+        // with libgit2, we can open git repo from an existing work dir
+        // https://libgit2.org/docs/reference/main/repository/git_repository_open.html
+        let workdir_root = dotgit_path.parent()?;
+        let repo = git2::Repository::open(workdir_root).log_err()?;
         Some(Arc::new(RealGitRepository::new(
             repo,
             self.git_binary_path.clone(),

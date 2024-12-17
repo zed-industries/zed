@@ -610,6 +610,10 @@ fn for_snowflake(
                 "Kernel Status Changed".to_string(),
                 serde_json::to_value(e).unwrap(),
             ),
+            Event::Flexible(e) => (
+                e.event_type.clone(),
+                serde_json::to_value(&e.event_properties).unwrap(),
+            ),
         };
 
         if let serde_json::Value::Object(ref mut map) = event_properties {

@@ -107,7 +107,7 @@ impl<T: PopoverTrigger> RenderOnce for LanguageModelSelectorPopoverMenu<T> {
         PopoverMenu::new("model-switcher")
             .menu(move |_cx| Some(language_model_selector.clone()))
             .trigger(self.trigger)
-            .attach(gpui::AnchorCorner::BottomLeft)
+            .attach(gpui::Corner::BottomLeft)
             .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
     }
 }
@@ -267,7 +267,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .start_slot(
                     div().pr_0p5().child(
                         Icon::new(model_info.icon)

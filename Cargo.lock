@@ -472,6 +472,8 @@ dependencies = [
  "fuzzy",
  "gpui",
  "handlebars 4.5.0",
+ "html_to_markdown",
+ "http_client",
  "indoc",
  "language",
  "language_model",
@@ -2545,6 +2547,7 @@ dependencies = [
  "settings",
  "sha2",
  "smol",
+ "telemetry",
  "telemetry_events",
  "text",
  "thiserror 1.0.69",
@@ -2766,7 +2769,6 @@ dependencies = [
  "language",
  "menu",
  "notifications",
- "parking_lot",
  "picker",
  "pretty_assertions",
  "project",
@@ -2840,6 +2842,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "telemetry",
  "theme",
  "ui",
  "util",
@@ -3937,6 +3940,7 @@ dependencies = [
  "snippet",
  "sum_tree",
  "task",
+ "telemetry",
  "tempfile",
  "text",
  "theme",
@@ -4372,6 +4376,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "task",
+ "telemetry",
  "tempfile",
  "theme",
  "theme_extension",
@@ -5030,6 +5035,7 @@ name = "fuzzy"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "log",
  "util",
 ]
 
@@ -5177,7 +5183,9 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "db",
+ "git",
  "gpui",
  "project",
  "schemars",
@@ -10395,6 +10403,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "telemetry",
  "terminal",
  "terminal_view",
  "theme",
@@ -12630,6 +12639,7 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "util",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12659,11 +12669,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "telemetry"
+version = "0.1.0"
+dependencies = [
+ "futures 0.3.31",
+ "serde",
+ "serde_json",
+ "telemetry_events",
+]
+
+[[package]]
 name = "telemetry_events"
 version = "0.1.0"
 dependencies = [
  "semantic_version",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -13971,7 +13992,6 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
- "itertools 0.13.0",
  "log",
  "rand 0.8.5",
  "regex",
@@ -16103,6 +16123,7 @@ name = "zed_actions"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "schemars",
  "serde",
 ]
 
@@ -16139,7 +16160,7 @@ dependencies = [
 name = "zed_elixir"
 version = "0.1.1"
 dependencies = [
- "zed_extension_api 0.1.0",
+ "zed_extension_api 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -16177,6 +16198,17 @@ dependencies = [
 [[package]]
 name = "zed_extension_api"
 version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "zed_extension_api"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fd16b8b30a9dc920fc1678ff852f696b5bdf5b5843bc745a128be0aac29859e"
 dependencies = [
  "serde",
  "serde_json",
@@ -16411,6 +16443,7 @@ name = "zeta"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "call",
  "client",
  "clock",

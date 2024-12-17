@@ -467,6 +467,12 @@ List of `string` values
 "current_line_highlight": "all"
 ```
 
+## LSP Highlight Debounce
+
+- Description: The debounce delay before querying highlights from the language server based on the current cursor location.
+- Setting: `lsp_highlight_debounce`
+- Default: `75`
+
 ## Cursor Blink
 
 - Description: Whether or not the cursor blinks.
@@ -528,7 +534,11 @@ List of `string` values
   "git_diff": true,
   "search_results": true,
   "selected_symbol": true,
-  "diagnostics": true
+  "diagnostics": true,
+  "axes": {
+    "horizontal": true,
+    "vertical": true,
+  },
 },
 ```
 
@@ -616,6 +626,41 @@ List of `string` values
 
 - Description: Whether to show diagnostic indicators in the scrollbar.
 - Setting: `diagnostics`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Axes
+
+- Description: Forcefully enable or disable the scrollbar for each axis
+- Setting: `axes`
+- Default:
+
+```json
+"scrollbar": {
+  "axes": {
+    "horizontal": true,
+    "vertical": true,
+  },
+}
+```
+
+#### Horizontal
+
+- Description: When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+- Setting: `horizontal`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+#### Vertical
+
+- Description: When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+- Setting: `vertical`
 - Default: `true`
 
 **Options**

@@ -413,11 +413,7 @@ fn main() {
             cx,
         );
         assistant_tools::init(cx);
-        repl::init(
-            app_state.fs.clone(),
-            app_state.client.telemetry().clone(),
-            cx,
-        );
+        repl::init(app_state.fs.clone(), cx);
         extension_host::init(
             extension_host_proxy,
             app_state.fs.clone(),

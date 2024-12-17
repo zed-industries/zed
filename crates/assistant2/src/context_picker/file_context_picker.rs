@@ -5,16 +5,16 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakView};
+use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, WorktreeId};
-use ui::{prelude::*, ListItem, ListItemSpacing};
+use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context::ContextKind;
 use crate::context_picker::ContextPicker;
-use crate::message_editor::MessageEditor;
+use crate::context_store::ContextStore;
 
 pub struct FileContextPicker {
     picker: View<Picker<FileContextPickerDelegate>>,
@@ -24,10 +24,10 @@ impl FileContextPicker {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        message_editor: WeakView<MessageEditor>,
+        context_store: WeakModel<ContextStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate = FileContextPickerDelegate::new(context_picker, workspace, message_editor);
+        let delegate = FileContextPickerDelegate::new(context_picker, workspace, context_store);
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
@@ -49,7 +49,7 @@ impl Render for FileContextPicker {
 pub struct FileContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
-    message_editor: WeakView<MessageEditor>,
+    context_store: WeakModel<ContextStore>,
     matches: Vec<PathMatch>,
     selected_index: usize,
 }
@@ -58,12 +58,12 @@ impl FileContextPickerDelegate {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        message_editor: WeakView<MessageEditor>,
+        context_store: WeakModel<ContextStore>,
     ) -> Self {
         Self {
             context_picker,
             workspace,
-            message_editor,
+            context_store,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -214,24 +214,22 @@ impl PickerDelegate for FileContextPickerDelegate {
             let buffer = open_buffer_task.await?;
 
             this.update(&mut cx, |this, cx| {
-                this.delegate
-                    .message_editor
-                    .update(cx, |message_editor, cx| {
-                        let mut text = String::new();
-                        text.push_str(&codeblock_fence_for_path(Some(&path), None));
-                        text.push_str(&buffer.read(cx).text());
-                        if !text.ends_with('\n') {
-                            text.push('\n');
-                        }
+                this.delegate.context_store.update(cx, |context_store, cx| {
+                    let mut text = String::new();
+                    text.push_str(&codeblock_fence_for_path(Some(&path), None));
+                    text.push_str(&buffer.read(cx).text());
+                    if !text.ends_with('\n') {
+                        text.push('\n');
+                    }
 
-                        text.push_str("```\n");
+                    text.push_str("```\n");
 
-                        message_editor.insert_context(
-                            ContextKind::File,
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
-                    })
+                    context_store.insert_context(
+                        ContextKind::File,
+                        path.to_string_lossy().to_string(),
+                        text,
+                    );
+                })
             })??;
 
             anyhow::Ok(())
@@ -245,7 +243,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 this.reset_mode();
                 cx.emit(DismissEvent);
             })
-            .log_err();
+            .ok();
     }
 
     fn render_match(
@@ -254,14 +252,29 @@ impl PickerDelegate for FileContextPickerDelegate {
         selected: bool,
         _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
+        let path_match = &self.matches[ix];
+        let file_name = path_match
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let directory = path_match
+            .path
+            .parent()
+            .map(|directory| format!("{}/", directory.to_string_lossy()));
 
         Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
-                .child(mat.path.to_string_lossy().to_string()),
+            ListItem::new(ix).inset(true).toggle_state(selected).child(
+                h_flex()
+                    .gap_2()
+                    .child(Label::new(file_name))
+                    .children(directory.map(|directory| {
+                        Label::new(directory)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    })),
+            ),
         )
     }
 }
