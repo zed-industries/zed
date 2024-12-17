@@ -409,23 +409,10 @@ impl Worktree {
                     abs_path
                         .file_name()
                         .map_or(String::new(), |f| f.to_string_lossy().to_string()),
-                    abs_path,
+                    abs_path.clone(),
                 ),
                 root_file_handle,
             };
-
-            if let Some(metadata) = metadata {
-                snapshot.insert_entry(
-                    Entry::new(
-                        Arc::from(Path::new("")),
-                        &metadata,
-                        &next_entry_id,
-                        snapshot.root_char_bag,
-                        None,
-                    ),
-                    fs.as_ref(),
-                );
-            }
 
             let worktree_id = snapshot.id();
             let settings_location = Some(SettingsLocation {
@@ -445,10 +432,26 @@ impl Worktree {
             })
             .detach();
 
+            let share_private_files = false;
+            if let Some(metadata) = metadata {
+                let mut entry = Entry::new(
+                    Arc::from(Path::new("")),
+                    &metadata,
+                    &next_entry_id,
+                    snapshot.root_char_bag,
+                    None,
+                );
+                if !metadata.is_dir {
+                    entry.is_private = !share_private_files
+                        && settings.is_path_private(abs_path.file_name().unwrap().as_ref());
+                }
+                snapshot.insert_entry(entry, fs.as_ref());
+            }
+
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
             let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
             let mut worktree = LocalWorktree {
-                share_private_files: false,
+                share_private_files,
                 next_entry_id,
                 snapshot,
                 is_scanning: watch::channel_with(true),
@@ -2530,6 +2533,12 @@ impl Snapshot {
         self.entry_for_path("")
     }
 
+    pub fn root_dir(&self) -> Option<Arc<Path>> {
+        self.root_entry()
+            .filter(|entry| entry.is_dir())
+            .map(|_| self.abs_path().clone())
+    }
+
     pub fn root_name(&self) -> &str {
         &self.root_name
     }
@@ -3109,7 +3118,7 @@ impl BackgroundScannerState {
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
 
-        let actual_repo_path = repository.path();
+        let actual_repo_path = repository.dot_git_dir();
 
         let actual_dot_git_dir_abs_path = smol::block_on(find_git_dir(&actual_repo_path, fs))?;
         watcher.add(&actual_repo_path).log_err()?;

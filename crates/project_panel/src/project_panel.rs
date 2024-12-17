@@ -281,6 +281,7 @@ impl ProjectPanel {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
             cx.on_focus_out(&focus_handle, |this, _, cx| {
+                this.focus_out(cx);
                 this.hide_scrollbar(cx);
             })
             .detach();
@@ -592,6 +593,12 @@ impl ProjectPanel {
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         if !self.focus_handle.contains_focused(cx) {
             cx.emit(Event::Focus);
+        }
+    }
+
+    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.focus_handle.is_focused(cx) {
+            self.confirm(&Confirm, cx);
         }
     }
 
@@ -3140,6 +3147,8 @@ impl ProjectPanel {
         details: EntryDetails,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
+        const GROUP_NAME: &str = "project_entry";
+
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
@@ -3185,8 +3194,39 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
+        let default_color = if is_marked || is_active {
+            item_colors.marked_active
+        } else {
+            item_colors.default
+        };
+
+        let bg_hover_color = if self.mouse_down {
+            item_colors.marked_active
+        } else {
+            item_colors.hover
+        };
+
+        let border_color =
+            if !self.mouse_down && is_active && self.focus_handle.contains_focused(cx) {
+                item_colors.focused
+            } else if self.mouse_down && is_marked || is_active {
+                item_colors.marked_active
+            } else {
+                item_colors.default
+            };
+
         div()
             .id(entry_id.to_proto() as usize)
+            .group(GROUP_NAME)
+            .cursor_pointer()
+            .rounded_none()
+            .bg(default_color)
+            .border_1()
+            .border_r_2()
+            .border_color(border_color)
+            .when(!is_marked && !is_active, |div| {
+                div.hover(|style| style.bg(bg_hover_color))
+            })
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
@@ -3322,12 +3362,11 @@ impl ProjectPanel {
                     this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                 }
             }))
-            .cursor_pointer()
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
-                    .selected(is_marked || is_active)
+                    .selectable(false)
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<AnyElement>(
                             div()
@@ -3367,13 +3406,11 @@ impl ProjectPanel {
                                             } else {
                                                 IconDecorationKind::Dot
                                             },
-                                            if is_marked || is_active {
-                                                item_colors.marked_active
-                                            } else {
-                                                item_colors.default
-                                            },
+                                            default_color,
                                             cx,
                                         )
+                                        .group_name(Some(GROUP_NAME.into()))
+                                        .knockout_hover_color(bg_hover_color)
                                         .color(decoration_color.color(cx))
                                         .position(Point {
                                             x: px(-2.),
@@ -3488,26 +3525,6 @@ impl ProjectPanel {
                         },
                     ))
                     .overflow_x(),
-            )
-            .border_1()
-            .border_r_2()
-            .rounded_none()
-            .hover(|style| {
-                if is_active {
-                    style
-                } else {
-                    style.bg(item_colors.hover).border_color(item_colors.hover)
-                }
-            })
-            .when(is_marked || is_active, |this| {
-                this.when(is_marked, |this| {
-                    this.bg(item_colors.marked_active)
-                        .border_color(item_colors.marked_active)
-                })
-            })
-            .when(
-                !self.mouse_down && is_active && self.focus_handle.contains_focused(cx),
-                |this| this.border_color(item_colors.focused),
             )
     }
 
@@ -3882,6 +3899,11 @@ impl Render for ProjectPanel {
                         this.hide_scrollbar(cx);
                     }
                 }))
+                .on_click(cx.listener(|this, _event, cx| {
+                    cx.stop_propagation();
+                    this.selection = None;
+                    this.marked_entries.clear();
+                }))
                 .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
@@ -4080,7 +4102,7 @@ impl Render for ProjectPanel {
                     deferred(
                         anchored()
                             .position(*position)
-                            .anchor(gpui::AnchorCorner::TopLeft)
+                            .anchor(gpui::Corner::TopLeft)
                             .child(menu.clone()),
                     )
                     .with_priority(1)

@@ -38,6 +38,7 @@ pub struct ListItem {
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
+    outlined: bool,
     overflow_x: bool,
     focused: Option<bool>,
 }
@@ -62,6 +63,7 @@ impl ListItem {
             tooltip: None,
             children: SmallVec::new(),
             selectable: true,
+            outlined: false,
             overflow_x: false,
             focused: None,
         }
@@ -138,6 +140,11 @@ impl ListItem {
         self
     }
 
+    pub fn outlined(mut self) -> Self {
+        self.outlined = true;
+        self
+    }
+
     pub fn overflow_x(mut self) -> Self {
         self.overflow_x = true;
         self
@@ -156,8 +163,8 @@ impl Disableable for ListItem {
     }
 }
 
-impl Selectable for ListItem {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ListItem {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -195,6 +202,7 @@ impl RenderOnce for ListItem {
                     .when(self.selectable, |this| {
                         this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                            .when(self.outlined, |this| this.rounded_md())
                             .when(self.selected, |this| {
                                 this.bg(cx.theme().colors().ghost_element_selected)
                             })
@@ -203,6 +211,7 @@ impl RenderOnce for ListItem {
             .child(
                 h_flex()
                     .id("inner_list_item")
+                    .group("list_item")
                     .w_full()
                     .relative()
                     .items_center()
@@ -212,7 +221,6 @@ impl RenderOnce for ListItem {
                         ListItemSpacing::Dense => this,
                         ListItemSpacing::Sparse => this.py_1(),
                     })
-                    .group("list_item")
                     .when(self.inset && !self.disabled, |this| {
                         this
                             // TODO: Add focus state
@@ -237,6 +245,12 @@ impl RenderOnce for ListItem {
                     })
                     .when_some(self.on_click, |this, on_click| {
                         this.cursor_pointer().on_click(on_click)
+                    })
+                    .when(self.outlined, |this| {
+                        this.border_1()
+                            .border_color(cx.theme().colors().border)
+                            .rounded_md()
+                            .overflow_hidden()
                     })
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                         this.on_mouse_down(MouseButton::Right, move |event, cx| {

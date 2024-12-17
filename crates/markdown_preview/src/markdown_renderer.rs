@@ -18,10 +18,10 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, tooltip_container, v_flex, Checkbox, Clickable, Color, FluentBuilder,
-    IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview,
-    Selection, StatefulInteractiveElement, StyledExt, StyledImage, ViewContext, VisibleOnHover,
-    VisualContext as _,
+    h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
+    FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
+    LabelSize, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage, ToggleState,
+    Tooltip, ViewContext, VisibleOnHover, VisualContext as _,
 };
 use workspace::Workspace;
 
@@ -180,9 +180,9 @@ fn render_markdown_list_item(
                 Checkbox::new(
                     "checkbox",
                     if *checked {
-                        Selection::Selected
+                        ToggleState::Selected
                     } else {
-                        Selection::Unselected
+                        ToggleState::Unselected
                     },
                 )
                 .when_some(
@@ -192,8 +192,8 @@ fn render_markdown_list_item(
                             let range = range.clone();
                             move |selection, cx| {
                                 let checked = match selection {
-                                    Selection::Selected => true,
-                                    Selection::Unselected => false,
+                                    ToggleState::Selected => true,
+                                    ToggleState::Unselected => false,
                                     _ => return,
                                 };
 
@@ -385,6 +385,7 @@ fn render_markdown_code_block(
                 cx.write_to_clipboard(ClipboardItem::new_string(contents.to_string()));
             }
         })
+        .tooltip(|cx| Tooltip::text("Copy code block", cx))
         .visible_on_hover("markdown-block");
 
     cx.with_common_p(div())

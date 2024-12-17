@@ -18,22 +18,12 @@ pub struct StringMatchCandidate {
     pub char_bag: CharBag,
 }
 
-impl Match for StringMatch {
-    fn score(&self) -> f64 {
-        self.score
-    }
-
-    fn set_positions(&mut self, positions: Vec<usize>) {
-        self.positions = positions;
-    }
-}
-
 impl StringMatchCandidate {
-    pub fn new(id: usize, string: String) -> Self {
+    pub fn new(id: usize, string: &str) -> Self {
         Self {
             id,
-            char_bag: CharBag::from(string.as_str()),
-            string,
+            string: string.into(),
+            char_bag: string.into(),
         }
     }
 }
@@ -56,15 +46,39 @@ pub struct StringMatch {
     pub string: String,
 }
 
+impl Match for StringMatch {
+    fn score(&self) -> f64 {
+        self.score
+    }
+
+    fn set_positions(&mut self, positions: Vec<usize>) {
+        self.positions = positions;
+    }
+}
+
 impl StringMatch {
     pub fn ranges(&self) -> impl '_ + Iterator<Item = Range<usize>> {
         let mut positions = self.positions.iter().peekable();
         iter::from_fn(move || {
             if let Some(start) = positions.next().copied() {
-                let mut end = start + self.char_len_at_index(start);
+                let Some(char_len) = self.char_len_at_index(start) else {
+                    log::error!(
+                        "Invariant violation: Index {start} out of range or not on a utf-8 boundary in string {:?}",
+                        self.string
+                    );
+                    return None;
+                };
+                let mut end = start + char_len;
                 while let Some(next_start) = positions.peek() {
                     if end == **next_start {
-                        end += self.char_len_at_index(end);
+                        let Some(char_len) = self.char_len_at_index(end) else {
+                            log::error!(
+                                "Invariant violation: Index {end} out of range or not on a utf-8 boundary in string {:?}",
+                                self.string
+                            );
+                            return None;
+                        };
+                        end += char_len;
                         positions.next();
                     } else {
                         break;
@@ -77,8 +91,12 @@ impl StringMatch {
         })
     }
 
-    fn char_len_at_index(&self, ix: usize) -> usize {
-        self.string[ix..].chars().next().unwrap().len_utf8()
+    /// Gets the byte length of the utf-8 character at a byte offset. If the index is out of range
+    /// or not on a utf-8 boundary then None is returned.
+    fn char_len_at_index(&self, ix: usize) -> Option<usize> {
+        self.string
+            .get(ix..)
+            .and_then(|slice| slice.chars().next().map(|char| char.len_utf8()))
     }
 }
 

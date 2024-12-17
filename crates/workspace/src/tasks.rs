@@ -6,7 +6,7 @@ use ui::ViewContext;
 use crate::Workspace;
 
 pub fn schedule_task(
-    workspace: &Workspace,
+    workspace: &mut Workspace,
     task_source_kind: TaskSourceKind,
     task_to_resolve: &TaskTemplate,
     task_cx: &TaskContext,
@@ -40,7 +40,7 @@ pub fn schedule_task(
 }
 
 pub fn schedule_resolved_task(
-    workspace: &Workspace,
+    workspace: &mut Workspace,
     task_source_kind: TaskSourceKind,
     mut resolved_task: ResolvedTask,
     omit_history: bool,
@@ -59,6 +59,9 @@ pub fn schedule_resolved_task(
                 }
             });
         }
-        cx.emit(crate::Event::SpawnTask(Box::new(spawn_in_terminal)));
+
+        cx.emit(crate::Event::SpawnTask {
+            action: Box::new(spawn_in_terminal),
+        });
     }
 }

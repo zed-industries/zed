@@ -213,26 +213,33 @@ impl ActiveThread {
 
         div()
             .id(("message-container", ix))
-            .p_2()
+            .py_1()
+            .px_2()
             .child(
                 v_flex()
                     .border_1()
-                    .border_color(cx.theme().colors().border_variant)
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
                     .rounded_md()
                     .child(
                         h_flex()
                             .justify_between()
-                            .p_1p5()
+                            .py_1()
+                            .px_2()
                             .border_b_1()
                             .border_color(cx.theme().colors().border_variant)
                             .child(
                                 h_flex()
-                                    .gap_2()
-                                    .child(Icon::new(role_icon).size(IconSize::Small))
-                                    .child(Label::new(role_name).size(LabelSize::Small)),
+                                    .gap_1p5()
+                                    .child(
+                                        Icon::new(role_icon)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(Label::new(role_name).size(LabelSize::XSmall)),
                             ),
                     )
-                    .child(v_flex().p_1p5().text_ui(cx).child(markdown.clone()))
+                    .child(v_flex().px_2().py_1().text_ui(cx).child(markdown.clone()))
                     .when_some(context, |parent, context| {
                         parent.child(
                             h_flex().flex_wrap().gap_2().p_1p5().children(
@@ -249,6 +256,6 @@ impl ActiveThread {
 
 impl Render for ActiveThread {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        list(self.list_state.clone()).flex_1()
+        list(self.list_state.clone()).flex_1().py_1()
     }
 }

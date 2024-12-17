@@ -5,10 +5,10 @@ use gpui::{
     HighlightStyle, Model, StyledText, TextStyle, View, ViewContext,
 };
 use language::{language_settings, OffsetRangeExt};
-
 use settings::Settings;
+use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, TintColor, Tooltip};
+use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -344,6 +344,7 @@ impl RateCompletionModal {
         };
 
         let rated = self.zeta.read(cx).is_completion_rated(completion_id);
+        let was_shown = self.zeta.read(cx).was_completion_shown(completion_id);
         let feedback_empty = active_completion
             .feedback_editor
             .read(cx)
@@ -369,34 +370,46 @@ impl RateCompletionModal {
                         .overflow_scroll()
                         .child(StyledText::new(diff).with_highlights(&text_style, diff_highlights)),
                 )
-                .child(
-                    h_flex()
-                        .p_2()
-                        .gap_2()
-                        .border_y_1()
-                        .border_color(border_color)
-                        .child(
-                            Icon::new(IconName::Info)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted)
-                        )
-                        .child(
-                            Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                        )
-                )
-                .child(
-                    div()
-                        .h_40()
-                        .pt_1()
-                        .bg(bg_color)
-                        .child(active_completion.feedback_editor.clone()),
-                )
+                .when_some((!rated).then(|| ()), |this, _| {
+                    this.child(
+                        h_flex()
+                            .p_2()
+                            .gap_2()
+                            .border_y_1()
+                            .border_color(border_color)
+
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .pr_2()
+                                    .flex_wrap()
+                                    .child(
+                                        Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                    )
+                            )
+                    )
+                })
+                .when_some((!rated).then(|| ()), |this, _| {
+                    this.child(
+                        div()
+                            .h_40()
+                            .pt_1()
+                            .bg(bg_color)
+                            .child(active_completion.feedback_editor.clone())
+                    )
+                })
                 .child(
                     h_flex()
                         .p_1()
                         .h_8()
+                        .max_h_8()
                         .border_t_1()
                         .border_color(border_color)
                         .max_w_full()
@@ -409,7 +422,7 @@ impl RateCompletionModal {
                                             .size(IconSize::Small)
                                             .color(Color::Success),
                                     )
-                                    .child(Label::new("Rated completion").color(Color::Muted)),
+                                    .child(Label::new("Rated completion.").color(Color::Muted)),
                             )
                         } else if active_completion.completion.edits.is_empty() {
                             Some(
@@ -419,7 +432,17 @@ impl RateCompletionModal {
                                             .size(IconSize::Small)
                                             .color(Color::Warning),
                                     )
-                                    .child(Label::new("No edits produced").color(Color::Muted)),
+                                    .child(Label::new("No edits produced.").color(Color::Muted)),
+                            )
+                        } else if !was_shown {
+                            Some(
+                                label_container()
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::Small)
+                                            .color(Color::Warning),
+                                    )
+                                    .child(Label::new("Completion wasn't shown because another valid one was already on screen.")),
                             )
                         } else {
                             Some(label_container())
@@ -434,15 +457,14 @@ impl RateCompletionModal {
                                             &self.focus_handle(cx),
                                             cx,
                                         ))
-                                        .style(ButtonStyle::Tinted(TintColor::Negative))
+                                        .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsDown)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
-                                        .icon_color(Color::Error)
                                         .disabled(rated || feedback_empty)
                                         .when(feedback_empty, |this| {
                                             this.tooltip(|cx| {
-                                                Tooltip::text("Explain why this completion is bad before reporting it", cx)
+                                                Tooltip::text("Explain what's bad about it before reporting it", cx)
                                             })
                                         })
                                         .on_click(cx.listener(move |this, _, cx| {
@@ -459,11 +481,10 @@ impl RateCompletionModal {
                                             &self.focus_handle(cx),
                                             cx,
                                         ))
-                                        .style(ButtonStyle::Tinted(TintColor::Positive))
+                                        .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsUp)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
-                                        .icon_color(Color::Success)
                                         .disabled(rated)
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.thumbs_up_active(&ThumbsUpActiveCompletion, cx);
@@ -503,61 +524,83 @@ impl Render for RateCompletionModal {
             .rounded_lg()
             .shadow_lg()
             .child(
-                div()
-                    .id("completion_list")
+                v_flex()
                     .border_r_1()
                     .border_color(border_color)
                     .w_96()
                     .h_full()
-                    .p_0p5()
-                    .overflow_y_scroll()
+                    .flex_shrink_0()
+                    .overflow_hidden()
                     .child(
-                        List::new()
-                            .empty_message(
-                                div()
-                                    .p_2()
-                                    .child(
-                                            Label::new("No completions yet. Use the editor to generate some and rate them!")
-                                                .color(Color::Muted),
-                                    )
-                                    .into_any_element(),
+                        h_flex()
+                            .px_2()
+                            .py_1()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(border_color)
+                            .child(
+                                Icon::new(IconName::ZedPredict)
+                                    .size(IconSize::Small)
                             )
-                            .children(self.zeta.read(cx).recent_completions().cloned().enumerate().map(
-                                |(index, completion)| {
-                                    let selected =
-                                        self.active_completion.as_ref().map_or(false, |selected| {
-                                            selected.completion.id == completion.id
-                                        });
-                                    let rated =
-                                        self.zeta.read(cx).is_completion_rated(completion.id);
-                                    ListItem::new(completion.id)
-                                        .inset(true)
-                                        .spacing(ListItemSpacing::Sparse)
-                                        .focused(index == self.selected_index)
-                                        .selected(selected)
-                                        .start_slot(if rated {
-                                            Icon::new(IconName::Check).color(Color::Success)
-                                        } else if completion.edits.is_empty() {
-                                            Icon::new(IconName::File).color(Color::Muted).size(IconSize::Small)
-                                        } else {
-                                            Icon::new(IconName::FileDiff).color(Color::Accent).size(IconSize::Small)
-                                        })
-                                        .child(Label::new(
-                                            completion.path.to_string_lossy().to_string(),
-                                        ).size(LabelSize::Small))
-                                        .child(
-                                            div()
-                                                .overflow_hidden()
-                                                .text_ellipsis()
-                                                .child(Label::new(format!("({})", completion.id))
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::XSmall)),
-                                        )
-                                        .on_click(cx.listener(move |this, _, cx| {
-                                            this.select_completion(Some(completion.clone()), true, cx);
-                                        }))
-                                },
-                            )),
+                            .child(
+                                Label::new("From most recent to oldest")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                    )
+                    .child(
+                        div()
+                            .id("completion_list")
+                            .p_0p5()
+                            .h_full()
+                            .overflow_y_scroll()
+                            .child(
+                                List::new()
+                                    .empty_message(
+                                        div()
+                                            .p_2()
+                                            .child(
+                                                Label::new("No completions yet. Use the editor to generate some and rate them!")
+                                                    .color(Color::Muted),
+                                            )
+                                            .into_any_element(),
+                                    )
+                                    .children(self.zeta.read(cx).recent_completions().cloned().enumerate().map(
+                                        |(index, completion)| {
+                                            let selected =
+                                                self.active_completion.as_ref().map_or(false, |selected| {
+                                                    selected.completion.id == completion.id
+                                                });
+                                            let rated =
+                                                self.zeta.read(cx).is_completion_rated(completion.id);
+
+                                            ListItem::new(completion.id)
+                                                .inset(true)
+                                                .spacing(ListItemSpacing::Sparse)
+                                                .focused(index == self.selected_index)
+                                                .toggle_state(selected)
+                                                .start_slot(if rated {
+                                                    Icon::new(IconName::Check).color(Color::Success).size(IconSize::Small)
+                                                } else if completion.edits.is_empty() {
+                                                    Icon::new(IconName::File).color(Color::Muted).size(IconSize::Small)
+                                                } else {
+                                                    Icon::new(IconName::FileDiff).color(Color::Accent).size(IconSize::Small)
+                                                })
+                                                .child(
+                                                    v_flex()
+                                                        .pl_1p5()
+                                                        .child(Label::new(completion.path.to_string_lossy().to_string()).size(LabelSize::Small))
+                                                        .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
+                                                            .color(Color::Muted)
+                                                            .size(LabelSize::XSmall)
+                                                        )
+                                                )
+                                                .on_click(cx.listener(move |this, _, cx| {
+                                                    this.select_completion(Some(completion.clone()), true, cx);
+                                                }))
+                                        },
+                                    )),
+                            )
                     ),
             )
             .children(self.render_active_completion(cx))
@@ -574,3 +617,20 @@ impl FocusableView for RateCompletionModal {
 }
 
 impl ModalView for RateCompletionModal {}
+
+fn format_time_ago(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    if seconds < 120 {
+        "1 minute".to_string()
+    } else if seconds < 3600 {
+        format!("{} minutes", seconds / 60)
+    } else if seconds < 7200 {
+        "1 hour".to_string()
+    } else if seconds < 86400 {
+        format!("{} hours", seconds / 3600)
+    } else if seconds < 172800 {
+        "1 day".to_string()
+    } else {
+        format!("{} days", seconds / 86400)
+    }
+}

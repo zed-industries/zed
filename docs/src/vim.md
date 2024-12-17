@@ -89,7 +89,7 @@ Treesitter is a powerful tool that Zed uses to understand the structure of your 
 | Go to next/previous section end | `] [` / `[ ]`               |
 | Go to next/previous comment     | `] /`, `] *` / `[ /`, `[ *` |
 | Select a larger syntax node     | `[ x`                       |
-| Select a larger syntax node     | `[ x`                       |
+| Select a smaller syntax node    | `] x`                       |
 
 | Text Objects                                               | Default Shortcut |
 | ---------------------------------------------------------- | ---------------- |
