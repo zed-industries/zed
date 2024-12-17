@@ -615,7 +615,7 @@ impl TitleBar {
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                 )
-                .anchor(gpui::AnchorCorner::TopRight)
+                .anchor(gpui::Corner::TopRight)
         } else {
             PopoverMenu::new("user-menu")
                 .menu(|cx| {

@@ -1,4 +1,4 @@
-use gpui::{actions, AnchorCorner, Render, View};
+use gpui::{actions, Corner, Render, View};
 use story::Story;
 
 use crate::prelude::*;
@@ -47,8 +47,8 @@ impl Render for ContextMenuStory {
                     .child(
                         right_click_menu("test1")
                             .trigger(Label::new("BOTTOM LEFT"))
-                            .anchor(AnchorCorner::BottomLeft)
-                            .attach(AnchorCorner::TopLeft)
+                            .anchor(Corner::BottomLeft)
+                            .attach(Corner::TopLeft)
                             .menu(move |cx| build_menu(cx, "bottom left")),
                     ),
             )
@@ -60,14 +60,14 @@ impl Render for ContextMenuStory {
                     .child(
                         right_click_menu("test3")
                             .trigger(Label::new("TOP RIGHT"))
-                            .anchor(AnchorCorner::TopRight)
+                            .anchor(Corner::TopRight)
                             .menu(move |cx| build_menu(cx, "top right")),
                     )
                     .child(
                         right_click_menu("test4")
                             .trigger(Label::new("BOTTOM RIGHT"))
-                            .anchor(AnchorCorner::BottomRight)
-                            .attach(AnchorCorner::TopRight)
+                            .anchor(Corner::BottomRight)
+                            .attach(Corner::TopRight)
                             .menu(move |cx| build_menu(cx, "bottom right")),
                     ),
             )

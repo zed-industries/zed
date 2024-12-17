@@ -133,6 +133,38 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Restore on Startup
+
+- Description: Controls session restoration on startup.
+- Setting: `restore_on_startup`
+- Default: `last_session`
+
+**Options**
+
+1. Restore all workspaces that were open when quitting Zed:
+
+```json
+{
+  "restore_on_startup": "last_session"
+}
+```
+
+2. Restore the workspace that was closed last:
+
+```json
+{
+  "restore_on_startup": "last_workspace"
+}
+```
+
+3. Always start with an empty editor:
+
+```json
+{
+  "restore_on_startup": "none"
+}
+```
+
 ## Autoscroll on Clicks
 
 - Description: Whether to scroll when clicking near the edge of the visible text area.
@@ -435,6 +467,12 @@ List of `string` values
 "current_line_highlight": "all"
 ```
 
+## LSP Highlight Debounce
+
+- Description: The debounce delay before querying highlights from the language server based on the current cursor location.
+- Setting: `lsp_highlight_debounce`
+- Default: `75`
+
 ## Cursor Blink
 
 - Description: Whether or not the cursor blinks.
@@ -723,11 +761,19 @@ List of `string` values
 }
 ```
 
-2. Activate the neighbour tab (prefers the right one, if present):
+2. Activate the right neighbour tab if present:
 
 ```json
 {
   "activate_on_close": "neighbour"
+}
+```
+
+3. Activate the left neighbour tab if present:
+
+```json
+{
+  "activate_on_close": "left_neighbour"
 }
 ```
 

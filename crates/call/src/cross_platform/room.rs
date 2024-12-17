@@ -1288,6 +1288,12 @@ impl Room {
         })
     }
 
+    pub fn muted_by_user(&self) -> bool {
+        self.live_kit
+            .as_ref()
+            .map_or(false, |live_kit| live_kit.muted_by_user)
+    }
+
     pub fn is_speaking(&self) -> bool {
         self.live_kit
             .as_ref()

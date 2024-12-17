@@ -71,11 +71,12 @@ pub enum ShowDiagnostics {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ActivateOnClose {
     #[default]
     History,
     Neighbour,
+    LeftNeighbour,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]

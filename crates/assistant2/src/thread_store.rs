@@ -159,9 +159,9 @@ impl ThreadStore {
         self.threads.push(cx.new_model(|cx| {
             let mut thread = Thread::new(self.tools.clone(), cx);
             thread.set_summary("Introduction to quantum computing", cx);
-            thread.insert_user_message("Hello! Can you help me understand quantum computing?", cx);
+            thread.insert_user_message("Hello! Can you help me understand quantum computing?", Vec::new(), cx);
             thread.insert_message(Role::Assistant, "Of course! I'd be happy to help you understand quantum computing. Quantum computing is a fascinating field that uses the principles of quantum mechanics to process information. Unlike classical computers that use bits (0s and 1s), quantum computers use quantum bits or 'qubits'. These qubits can exist in multiple states simultaneously, a property called superposition. This allows quantum computers to perform certain calculations much faster than classical computers. What specific aspect of quantum computing would you like to know more about?", cx);
-            thread.insert_user_message("That's interesting! Can you explain how quantum entanglement is used in quantum computing?", cx);
+            thread.insert_user_message("That's interesting! Can you explain how quantum entanglement is used in quantum computing?", Vec::new(), cx);
             thread.insert_message(Role::Assistant, "Certainly! Quantum entanglement is a key principle used in quantum computing. When two qubits become entangled, the state of one qubit is directly related to the state of the other, regardless of the distance between them. This property is used in quantum computing to create complex quantum states and to perform operations on multiple qubits simultaneously. Entanglement allows quantum computers to process information in ways that classical computers cannot, potentially solving certain problems much more efficiently. For example, it's crucial in quantum error correction and in algorithms like quantum teleportation, which is important for quantum communication.", cx);
             thread
         }));
@@ -169,7 +169,7 @@ impl ThreadStore {
         self.threads.push(cx.new_model(|cx| {
             let mut thread = Thread::new(self.tools.clone(), cx);
             thread.set_summary("Rust web development and async programming", cx);
-            thread.insert_user_message("Can you show me an example of Rust code for a simple web server?", cx);
+            thread.insert_user_message("Can you show me an example of Rust code for a simple web server?", Vec::new(), cx);
             thread.insert_message(Role::Assistant, "Certainly! Here's an example of a simple web server in Rust using the `actix-web` framework:
 
         ```rust
@@ -206,7 +206,7 @@ impl ThreadStore {
         ```
 
         Then you can run the server with `cargo run` and access it at `http://localhost:8080`.".unindent(), cx);
-            thread.insert_user_message("That's great! Can you explain more about async functions in Rust?", cx);
+            thread.insert_user_message("That's great! Can you explain more about async functions in Rust?", Vec::new(), cx);
             thread.insert_message(Role::Assistant, "Certainly! Async functions are a key feature in Rust for writing efficient, non-blocking code, especially for I/O-bound operations. Here's an overview:
 
         1. **Syntax**: Async functions are declared using the `async` keyword:

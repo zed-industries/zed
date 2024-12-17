@@ -230,11 +230,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             .themes
             .iter()
             .enumerate()
-            .map(|(id, meta)| StringMatchCandidate {
-                id,
-                char_bag: meta.name.as_ref().into(),
-                string: meta.name.to_string(),
-            })
+            .map(|(id, meta)| StringMatchCandidate::new(id, &meta.name))
             .collect::<Vec<_>>();
 
         cx.spawn(|this, mut cx| async move {
@@ -285,7 +281,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(HighlightedLabel::new(
                     theme_match.string.clone(),
                     theme_match.positions.clone(),
