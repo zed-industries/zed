@@ -258,7 +258,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 .to_string()
                 .into();
 
-            let mut directory = format!("{}/", path_match.path_prefix.to_string());
+            let mut directory = format!("{}/", path_match.path_prefix);
             if let Some(parent) = path_match
                 .path
                 .parent()
