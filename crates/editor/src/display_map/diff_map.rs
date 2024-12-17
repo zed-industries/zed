@@ -321,7 +321,7 @@ impl DiffMap {
             let multibuffer_end =
                 multibuffer_snapshot.point_to_offset(Point::new(multibuffer_end.row + 1, 0));
             let expanded_start = multibuffer_start.saturating_sub(1);
-            let expanded_end = multibuffer_snapshot.len().min(multibuffer_end + 1);
+            let expanded_end = multibuffer_snapshot.len().min(multibuffer_end);
             changes.push((
                 text::Edit {
                     old: expanded_start..expanded_end,
