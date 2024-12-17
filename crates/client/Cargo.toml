@@ -51,6 +51,7 @@ tokio-socks = { version = "0.5.2", default-features = false, features = ["future
 url.workspace = true
 util.workspace = true
 worktree.workspace = true
+telemetry.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

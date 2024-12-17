@@ -4,7 +4,8 @@ use crate::{ChannelId, TelemetrySettings};
 use anyhow::Result;
 use clock::SystemClock;
 use collections::{HashMap, HashSet};
-use futures::Future;
+use futures::channel::mpsc;
+use futures::{Future, StreamExt};
 use gpui::{AppContext, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use once_cell::sync::Lazy;
@@ -17,8 +18,8 @@ use std::io::Write;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, EditorEvent, Event,
-    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, InlineCompletionRating,
+    ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, Event, EventRequestBody,
+    EventWrapper, ExtensionEvent, InlineCompletionEvent, InlineCompletionRating,
     InlineCompletionRatingEvent, ReplEvent, SettingEvent,
 };
 use util::{ResultExt, TryFutureExt};
@@ -245,13 +246,27 @@ impl Telemetry {
         })
         .detach();
 
-        // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
             clock,
             http_client: client,
             executor: cx.background_executor().clone(),
             state,
         });
+
+        let (tx, mut rx) = mpsc::unbounded();
+        ::telemetry::init(tx);
+
+        cx.background_executor()
+            .spawn({
+                let this = Arc::downgrade(&this);
+                async move {
+                    while let Some(event) = rx.next().await {
+                        let Some(state) = this.upgrade() else { break };
+                        state.report_event(Event::Flexible(event))
+                    }
+                }
+            })
+            .detach();
 
         // We should only ever have one instance of Telemetry, leak the subscription to keep it alive
         // rather than store in TelemetryState, complicating spawn as subscriptions are not Send
@@ -318,27 +333,6 @@ impl Telemetry {
         state.metrics_id.clone_from(&metrics_id);
         state.is_staff = Some(is_staff);
         drop(state);
-    }
-
-    pub fn report_editor_event(
-        self: &Arc<Self>,
-        file_extension: Option<String>,
-        vim_mode: bool,
-        operation: &'static str,
-        copilot_enabled: bool,
-        copilot_enabled_for_language: bool,
-        is_via_ssh: bool,
-    ) {
-        let event = Event::Editor(EditorEvent {
-            file_extension,
-            vim_mode,
-            operation: operation.into(),
-            copilot_enabled,
-            copilot_enabled_for_language,
-            is_via_ssh,
-        });
-
-        self.report_event(event)
     }
 
     pub fn report_inline_completion_event(

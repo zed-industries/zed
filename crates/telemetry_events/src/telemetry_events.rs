@@ -2,7 +2,7 @@
 
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Display, sync::Arc, time::Duration};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EventRequestBody {
@@ -91,6 +91,7 @@ impl Display for AssistantPhase {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Event {
+    Flexible(FlexibleEvent),
     Editor(EditorEvent),
     InlineCompletion(InlineCompletionEvent),
     InlineCompletionRating(InlineCompletionRatingEvent),
@@ -104,6 +105,12 @@ pub enum Event {
     Edit(EditEvent),
     Action(ActionEvent),
     Repl(ReplEvent),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FlexibleEvent {
+    pub event_type: String,
+    pub event_properties: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
