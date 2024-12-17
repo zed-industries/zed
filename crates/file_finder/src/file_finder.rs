@@ -1228,7 +1228,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .start_slot::<Icon>(file_icon)
                 .end_slot::<AnyElement>(history_icon)
                 .inset(true)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(
                     h_flex()
                         .gap_2()
@@ -1261,8 +1261,8 @@ impl PickerDelegate for FileFinderDelegate {
                 .child(
                     PopoverMenu::new("menu-popover")
                         .with_handle(self.popover_menu_handle.clone())
-                        .attach(gpui::AnchorCorner::TopRight)
-                        .anchor(gpui::AnchorCorner::BottomRight)
+                        .attach(gpui::Corner::TopRight)
+                        .anchor(gpui::Corner::BottomRight)
                         .trigger(
                             Button::new("actions-trigger", "Split Options")
                                 .selected_label_color(Color::Accent)

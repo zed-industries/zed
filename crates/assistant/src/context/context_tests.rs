@@ -17,7 +17,7 @@ use futures::{
     channel::mpsc,
     stream::{self, StreamExt},
 };
-use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
+use gpui::{prelude::*, AppContext, Model, SharedString, Task, TestAppContext, WeakView};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
@@ -35,7 +35,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToOffset};
-use ui::{Context as _, IconName, WindowContext};
+use ui::{IconName, WindowContext};
 use unindent::Unindent;
 use util::{
     test::{generate_marked_text, marked_text_ranges},

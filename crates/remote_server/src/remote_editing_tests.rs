@@ -440,9 +440,9 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     // Wait for the settings to synchronize
     cx.run_until_parked();
 
-    let buffer = project
+    let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer_with_lsp((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -616,9 +616,9 @@ async fn test_remote_cancel_language_server_work(
 
     cx.run_until_parked();
 
-    let buffer = project
+    let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer_with_lsp((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();

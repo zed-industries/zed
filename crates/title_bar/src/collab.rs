@@ -73,17 +73,17 @@ fn render_color_ribbon(color: Hsla) -> impl Element {
             let height = bounds.size.height;
             let horizontal_offset = height;
             let vertical_offset = px(height.0 / 2.0);
-            let mut path = Path::new(bounds.lower_left());
+            let mut path = Path::new(bounds.bottom_left());
             path.curve_to(
                 bounds.origin + point(horizontal_offset, vertical_offset),
                 bounds.origin + point(px(0.0), vertical_offset),
             );
-            path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
+            path.line_to(bounds.top_right() + point(-horizontal_offset, vertical_offset));
             path.curve_to(
-                bounds.lower_right(),
-                bounds.upper_right() + point(px(0.0), vertical_offset),
+                bounds.bottom_right(),
+                bounds.top_right() + point(px(0.0), vertical_offset),
             );
-            path.line_to(bounds.lower_left());
+            path.line_to(bounds.bottom_left());
             cx.paint_path(path, color);
         },
     )
@@ -292,6 +292,7 @@ impl TitleBar {
         let is_local = project.is_local() || project.is_via_ssh();
         let is_shared = is_local && project.is_shared();
         let is_muted = room.is_muted();
+        let muted_by_user = room.muted_by_user();
         let is_deafened = room.is_deafened().unwrap_or(false);
         let is_screen_sharing = room.is_screen_sharing();
         let can_use_microphone = room.can_use_microphone(cx);
@@ -321,7 +322,7 @@ impl TitleBar {
                 })
                 .style(ButtonStyle::Subtle)
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .selected(is_shared)
+                .toggle_state(is_shared)
                 .label_size(LabelSize::Small)
                 .on_click(cx.listener(move |this, _, cx| {
                     if is_shared {
@@ -362,18 +363,24 @@ impl TitleBar {
                     },
                 )
                 .tooltip(move |cx| {
-                    Tooltip::text(
-                        if is_muted {
-                            "Unmute microphone"
+                    if is_muted {
+                        if is_deafened {
+                            Tooltip::with_meta(
+                                "Unmute Microphone",
+                                None,
+                                "Audio will be unmuted",
+                                cx,
+                            )
                         } else {
-                            "Mute microphone"
-                        },
-                        cx,
-                    )
+                            Tooltip::text("Unmute Microphone", cx)
+                        }
+                    } else {
+                        Tooltip::text("Mute Microphone", cx)
+                    }
                 })
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
-                .selected(is_muted)
+                .toggle_state(is_muted)
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                 .on_click(move |_, cx| {
                     toggle_mute(&Default::default(), cx);
@@ -393,9 +400,25 @@ impl TitleBar {
                 .style(ButtonStyle::Subtle)
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                 .icon_size(IconSize::Small)
-                .selected(is_deafened)
+                .toggle_state(is_deafened)
                 .tooltip(move |cx| {
-                    Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
+                    if is_deafened {
+                        let label = "Unmute Audio";
+
+                        if !muted_by_user {
+                            Tooltip::with_meta(label, None, "Microphone will be unmuted", cx)
+                        } else {
+                            Tooltip::text(label, cx)
+                        }
+                    } else {
+                        let label = "Mute Audio";
+
+                        if !muted_by_user {
+                            Tooltip::with_meta(label, None, "Microphone will be muted", cx)
+                        } else {
+                            Tooltip::text(label, cx)
+                        }
+                    }
                 })
                 .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
                 .into_any_element(),
@@ -407,7 +430,7 @@ impl TitleBar {
                 IconButton::new("screen-share", ui::IconName::Screen)
                     .style(ButtonStyle::Subtle)
                     .icon_size(IconSize::Small)
-                    .selected(is_screen_sharing)
+                    .toggle_state(is_screen_sharing)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .tooltip(move |cx| {
                         Tooltip::text(

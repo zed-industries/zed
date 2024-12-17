@@ -1,14 +1,15 @@
-/// A trait for elements that can be selected.
+/// A trait for elements that can be toggled.
 ///
-/// Generally used to enable "toggle" or "active" behavior and styles on an element through the [`Selection`] status.
-pub trait Selectable {
+/// Implement this for elements that are visually distinct
+/// when in two opposing states, like checkboxes or switches.
+pub trait Toggleable {
     /// Sets whether the element is selected.
-    fn selected(self, selected: bool) -> Self;
+    fn toggle_state(self, selected: bool) -> Self;
 }
 
 /// Represents the selection status of an element.
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum Selection {
+pub enum ToggleState {
     /// The element is not selected.
     #[default]
     Unselected,
@@ -18,7 +19,7 @@ pub enum Selection {
     Selected,
 }
 
-impl Selection {
+impl ToggleState {
     /// Returns the inverse of the current selection status.
     ///
     /// Indeterminate states become selected if inverted.
@@ -30,7 +31,7 @@ impl Selection {
     }
 }
 
-impl From<bool> for Selection {
+impl From<bool> for ToggleState {
     fn from(selected: bool) -> Self {
         if selected {
             Self::Selected
@@ -40,7 +41,7 @@ impl From<bool> for Selection {
     }
 }
 
-impl From<Option<bool>> for Selection {
+impl From<Option<bool>> for ToggleState {
     fn from(selected: Option<bool>) -> Self {
         match selected {
             Some(true) => Self::Selected,

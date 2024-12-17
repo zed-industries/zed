@@ -26,8 +26,8 @@ body:
       required: true
   - type: textarea
     attributes:
-      label: If applicable, add mockups / screenshots to help explain present your vision of the feature
-      description: Drag issues into the text input below
+      label: If applicable, add screenshots or screencasts of the incorrect state / behavior
+      description: Drag images / videos into the text input below
     validations:
       required: false
   - type: textarea

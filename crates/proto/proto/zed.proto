@@ -304,7 +304,9 @@ message Envelope {
         InstallExtension install_extension = 287;
 
         GetStagedText get_staged_text = 288;
-        GetStagedTextResponse get_staged_text_response = 289; // current max
+        GetStagedTextResponse get_staged_text_response = 289;
+
+        RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
     }
 
     reserved 87 to 88;
@@ -2537,7 +2539,6 @@ message UpdateGitBranch {
     string branch_name = 2;
     ProjectPath repository = 3;
 }
-
 message GetPanicFiles {
 }
 
@@ -2581,4 +2582,9 @@ message SyncExtensionsResponse {
 message InstallExtension {
     Extension extension = 1;
     string tmp_dir = 2;
+}
+
+message RegisterBufferWithLanguageServers{
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
 }

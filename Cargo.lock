@@ -454,30 +454,57 @@ dependencies = [
 name = "assistant2"
 version = "0.1.0"
 dependencies = [
+ "anthropic",
  "anyhow",
+ "assets",
  "assistant_tool",
+ "async-watch",
  "chrono",
  "client",
  "collections",
  "command_palette_hooks",
  "context_server",
+ "db",
  "editor",
  "feature_flags",
+ "fs",
  "futures 0.3.31",
+ "fuzzy",
  "gpui",
+ "handlebars 4.5.0",
+ "html_to_markdown",
+ "http_client",
+ "indoc",
  "language",
  "language_model",
  "language_model_selector",
  "language_models",
  "log",
+ "lsp",
  "markdown",
+ "menu",
+ "multi_buffer",
+ "ollama",
+ "open_ai",
+ "ordered-float 2.10.1",
+ "parking_lot",
+ "paths",
  "picker",
  "project",
  "proto",
+ "rand 0.8.5",
+ "rope",
+ "schemars",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
+ "similar",
  "smol",
+ "telemetry_events",
+ "terminal",
+ "terminal_view",
+ "text",
  "theme",
  "time",
  "time_format",
@@ -486,6 +513,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -2488,49 +2516,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "clickhouse"
-version = "0.11.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0875e527e299fc5f4faba42870bf199a39ab0bb2dbba1b8aef0a2151451130f"
-dependencies = [
- "bstr",
- "bytes 1.9.0",
- "clickhouse-derive",
- "clickhouse-rs-cityhash-sys",
- "futures 0.3.31",
- "hyper 0.14.31",
- "hyper-tls",
- "lz4",
- "sealed",
- "serde",
- "static_assertions",
- "thiserror 1.0.69",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "clickhouse-derive"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18af5425854858c507eec70f7deb4d5d8cec4216fcb086283a78872387281ea5"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde_derive_internals 0.26.0",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "clickhouse-rs-cityhash-sys"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4baf9d4700a28d6cb600e17ed6ae2b43298a5245f1f76b4eab63027ebfd592b9"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "client"
 version = "0.1.0"
 dependencies = [
@@ -2680,7 +2665,6 @@ dependencies = [
  "call",
  "channel",
  "chrono",
- "clickhouse",
  "client",
  "clock",
  "collab_ui",
@@ -2784,7 +2768,6 @@ dependencies = [
  "language",
  "menu",
  "notifications",
- "parking_lot",
  "picker",
  "pretty_assertions",
  "project",
@@ -4807,6 +4790,7 @@ dependencies = [
  "git2",
  "gpui",
  "libc",
+ "log",
  "notify",
  "objc",
  "parking_lot",
@@ -5047,6 +5031,7 @@ name = "fuzzy"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "log",
  "util",
 ]
 
@@ -5187,6 +5172,27 @@ dependencies = [
  "serde_json",
  "url",
  "util",
+]
+
+[[package]]
+name = "git_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "db",
+ "git",
+ "gpui",
+ "project",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings",
+ "ui",
+ "util",
+ "windows 0.58.0",
+ "workspace",
 ]
 
 [[package]]
@@ -6183,6 +6189,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "db",
+ "editor",
  "file_icons",
  "gpui",
  "project",
@@ -7346,25 +7353,6 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "url",
-]
-
-[[package]]
-name = "lz4"
-version = "1.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d1febb2b4a79ddd1980eede06a8f7902197960aa0383ffcfdd62fe723036725"
-dependencies = [
- "lz4-sys",
-]
-
-[[package]]
-name = "lz4-sys"
-version = "1.11.1+lz4-1.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
-dependencies = [
- "cc",
- "libc",
 ]
 
 [[package]]
@@ -10380,6 +10368,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
+ "async-tungstenite 0.28.1",
  "base64 0.22.1",
  "client",
  "collections",
@@ -11040,7 +11029,7 @@ checksum = "b1eee588578aff73f856ab961cd2f79e36bc45d7ded33a7562adba4667aecc0e"
 dependencies = [
  "proc-macro2",
  "quote",
- "serde_derive_internals 0.29.1",
+ "serde_derive_internals",
  "syn 2.0.90",
 ]
 
@@ -11176,18 +11165,6 @@ name = "seahash"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
-
-[[package]]
-name = "sealed"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b5e421024b5e5edfbaa8e60ecf90bda9dbffc602dbb230e6028763f85f0c68c"
-dependencies = [
- "heck 0.3.3",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
 
 [[package]]
 name = "search"
@@ -11347,17 +11324,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.90",
-]
-
-[[package]]
-name = "serde_derive_internals"
-version = "0.26.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85bf8229e7920a9f636479437026331ce11aa132b4dde37d121944a44d6e5f3c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -12668,6 +12634,7 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "util",
+ "zed_actions",
 ]
 
 [[package]]
@@ -16013,7 +15980,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.166.0"
+version = "0.167.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -16054,6 +16021,7 @@ dependencies = [
  "futures 0.3.31",
  "git",
  "git_hosting_providers",
+ "git_ui",
  "go_to_line",
  "gpui",
  "http_client",
@@ -16139,6 +16107,7 @@ name = "zed_actions"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "schemars",
  "serde",
 ]
 
@@ -16175,7 +16144,7 @@ dependencies = [
 name = "zed_elixir"
 version = "0.1.1"
 dependencies = [
- "zed_extension_api 0.1.0",
+ "zed_extension_api 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -16213,6 +16182,17 @@ dependencies = [
 [[package]]
 name = "zed_extension_api"
 version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "zed_extension_api"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fd16b8b30a9dc920fc1678ff852f696b5bdf5b5843bc745a128be0aac29859e"
 dependencies = [
  "serde",
  "serde_json",
@@ -16447,6 +16427,7 @@ name = "zeta"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "call",
  "client",
  "clock",
@@ -16473,7 +16454,6 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
- "util",
  "uuid",
  "workspace",
  "worktree",
