@@ -12875,7 +12875,6 @@ dependencies = [
 name = "theme_selector"
 version = "0.1.0"
 dependencies = [
- "client",
  "fs",
  "fuzzy",
  "gpui",
@@ -12883,6 +12882,7 @@ dependencies = [
  "picker",
  "serde",
  "settings",
+ "telemetry",
  "theme",
  "ui",
  "util",
@@ -14890,6 +14890,7 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
+ "telemetry",
  "ui",
  "util",
  "vim_mode_setting",
@@ -16093,6 +16094,7 @@ dependencies = [
  "tab_switcher",
  "task",
  "tasks_ui",
+ "telemetry",
  "telemetry_events",
  "terminal_view",
  "theme",
@@ -16465,6 +16467,7 @@ dependencies = [
  "serde_json",
  "settings",
  "similar",
+ "telemetry",
  "telemetry_events",
  "theme",
  "tree-sitter-go",
