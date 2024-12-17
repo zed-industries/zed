@@ -15,7 +15,7 @@ use std::{
 
 use crate::{AppContext, DisplayId};
 
-/// An axis along which a measurement can be made.
+/// Axis in a 2D cartesian space.
 #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum Axis {
     /// The y axis, or up and down
@@ -46,7 +46,7 @@ pub trait Along {
     fn apply_along(&self, axis: Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self;
 }
 
-/// Describes a location in a 2D cartesian coordinate space.
+/// Describes a location in a 2D cartesian space.
 ///
 /// It holds two public fields, `x` and `y`, which represent the coordinates in the space.
 /// The type `T` for the coordinates can be any type that implements `Default`, `Clone`, and `Debug`.
@@ -54,7 +54,7 @@ pub trait Along {
 /// # Examples
 ///
 /// ```
-/// # use zed::Point;
+/// # use gpui::Point;
 /// let point = Point { x: 10, y: 20 };
 /// println!("{:?}", point); // Outputs: Point { x: 10, y: 20 }
 /// ```
@@ -96,7 +96,7 @@ pub struct Point<T: Default + Clone + Debug> {
 /// # Examples
 ///
 /// ```
-/// # use zed::Point;
+/// # use gpui::Point;
 /// let p = point(10, 20);
 /// assert_eq!(p.x, 10);
 /// assert_eq!(p.y, 20);
@@ -137,7 +137,7 @@ impl<T: Clone + Debug + Default> Point<T> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Point;
+    /// # use gpui::Point;
     /// let p = Point { x: 3, y: 4 };
     /// let p_float = p.map(|coord| coord as f32);
     /// assert_eq!(p_float, Point { x: 3.0, y: 4.0 });
@@ -191,7 +191,7 @@ impl Point<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Point, Pixels, ScaledPixels};
+    /// # use gpui::{Point, Pixels, ScaledPixels};
     /// let p = Point { x: Pixels(10.0), y: Pixels(20.0) };
     /// let scaled_p = p.scale(1.5);
     /// assert_eq!(scaled_p, Point { x: ScaledPixels(15.0), y: ScaledPixels(30.0) });
@@ -208,8 +208,7 @@ impl Point<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Point;
-    /// # use zed::Pixels;
+    /// # use gpui::{Pixels, Point};
     /// let p = Point { x: Pixels(3.0), y: Pixels(4.0) };
     /// assert_eq!(p.magnitude(), 5.0);
     /// ```
@@ -272,7 +271,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Point;
+    /// # use gpui::Point;
     /// let p1 = Point { x: 3, y: 7 };
     /// let p2 = Point { x: 5, y: 2 };
     /// let max_point = p1.max(&p2);
@@ -302,7 +301,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Point;
+    /// # use gpui::Point;
     /// let p1 = Point { x: 3, y: 7 };
     /// let p2 = Point { x: 5, y: 2 };
     /// let min_point = p1.min(&p2);
@@ -338,7 +337,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Point;
+    /// # use gpui::Point;
     /// let p = Point { x: 10, y: 20 };
     /// let min = Point { x: 0, y: 5 };
     /// let max = Point { x: 15, y: 25 };
@@ -387,7 +386,7 @@ pub struct Size<T: Clone + Default + Debug> {
 /// # Examples
 ///
 /// ```
-/// # use zed::Size;
+/// # use gpui::Size;
 /// let my_size = size(10, 20);
 /// assert_eq!(my_size.width, 10);
 /// assert_eq!(my_size.height, 20);
@@ -416,7 +415,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Size;
+    /// # use gpui::Size;
     /// let my_size = Size { width: 10, height: 20 };
     /// let my_new_size = my_size.map(|dimension| dimension as f32 * 1.5);
     /// assert_eq!(my_new_size, Size { width: 15.0, height: 30.0 });
@@ -459,7 +458,7 @@ impl Size<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Size, Pixels, ScaledPixels};
+    /// # use gpui::{Size, Pixels, ScaledPixels};
     /// let size = Size { width: Pixels(100.0), height: Pixels(50.0) };
     /// let scaled_size = size.scale(2.0);
     /// assert_eq!(scaled_size, Size { width: ScaledPixels(200.0), height: ScaledPixels(100.0) });
@@ -513,7 +512,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Size;
+    /// # use gpui::Size;
     /// let size1 = Size { width: 30, height: 40 };
     /// let size2 = Size { width: 50, height: 20 };
     /// let max_size = size1.max(&size2);
@@ -533,6 +532,7 @@ where
             },
         }
     }
+
     /// Returns a new `Size` with the minimum width and height from `self` and `other`.
     ///
     /// # Arguments
@@ -542,7 +542,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Size;
+    /// # use gpui::Size;
     /// let size1 = Size { width: 30, height: 40 };
     /// let size2 = Size { width: 50, height: 20 };
     /// let min_size = size1.min(&size2);
@@ -700,7 +700,7 @@ impl Size<Length> {
 /// # Examples
 ///
 /// ```
-/// # use zed::{Bounds, Point, Size};
+/// # use gpui::{Bounds, Point, Size};
 /// let origin = Point { x: 0, y: 0 };
 /// let size = Size { width: 10, height: 20 };
 /// let bounds = Bounds::new(origin, size);
@@ -731,13 +731,7 @@ impl Bounds<Pixels> {
             .or_else(|| cx.primary_display());
 
         display
-            .map(|display| {
-                let center = display.bounds().center();
-                Bounds {
-                    origin: point(center.x - size.width / 2., center.y - size.height / 2.),
-                    size,
-                }
-            })
+            .map(|display| Bounds::centered_at(display.bounds().center(), size))
             .unwrap_or_else(|| Bounds {
                 origin: point(px(0.), px(0.)),
                 size,
@@ -781,7 +775,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point};
+    /// # use gpui::{Bounds, Point};
     /// let upper_left = Point { x: 0, y: 0 };
     /// let lower_right = Point { x: 10, y: 10 };
     /// let bounds = Bounds::from_corners(upper_left, lower_right);
@@ -837,7 +831,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds1 = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 10 },
@@ -879,7 +873,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let mut bounds = Bounds {
     ///     origin: Point { x: 10, y: 10 },
     ///     size: Size { width: 10, height: 10 },
@@ -919,7 +913,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
@@ -944,7 +938,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
@@ -984,7 +978,7 @@ impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output =
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds1 = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 10 },
@@ -1023,7 +1017,7 @@ impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output =
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds1 = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 10 },
@@ -1138,7 +1132,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
@@ -1162,7 +1156,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
@@ -1186,7 +1180,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
@@ -1224,7 +1218,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Point, Bounds};
+    /// # use gpui::{Point, Bounds};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 10 },
@@ -1259,7 +1253,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 10.0, y: 10.0 },
     ///     size: Size { width: 10.0, height: 20.0 },
@@ -1286,7 +1280,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 10.0, y: 10.0 },
     ///     size: Size { width: 10.0, height: 20.0 },
@@ -1310,7 +1304,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 10.0, y: 10.0 },
     ///     size: Size { width: 10.0, height: 20.0 },
@@ -1385,7 +1379,7 @@ impl Bounds<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size, Pixels};
+    /// # use gpui::{Bounds, Point, Size, Pixels};
     /// let bounds = Bounds {
     ///     origin: Point { x: Pixels(10.0), y: Pixels(20.0) },
     ///     size: Size { width: Pixels(30.0), height: Pixels(40.0) },
@@ -1438,7 +1432,7 @@ impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 /// # Examples
 ///
 /// ```
-/// # use zed::Edges;
+/// # use gpui::Edges;
 /// let edges = Edges {
 ///     top: 10.0,
 ///     right: 20.0,
@@ -1514,7 +1508,7 @@ impl<T: Clone + Default + Debug> Edges<T> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let uniform_edges = Edges::all(10.0);
     /// assert_eq!(uniform_edges.top, 10.0);
     /// assert_eq!(uniform_edges.right, 10.0);
@@ -1547,7 +1541,7 @@ impl<T: Clone + Default + Debug> Edges<T> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let edges = Edges { top: 10, right: 20, bottom: 30, left: 40 };
     /// let edges_float = edges.map(|&value| value as f32 * 1.1);
     /// assert_eq!(edges_float, Edges { top: 11.0, right: 22.0, bottom: 33.0, left: 44.0 });
@@ -1579,7 +1573,7 @@ impl<T: Clone + Default + Debug> Edges<T> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let edges = Edges {
     ///     top: 10,
     ///     right: 0,
@@ -1611,7 +1605,7 @@ impl Edges<Length> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let auto_edges = Edges::auto();
     /// assert_eq!(auto_edges.top, Length::Auto);
     /// assert_eq!(auto_edges.right, Length::Auto);
@@ -1639,7 +1633,7 @@ impl Edges<Length> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let no_edges = Edges::zero();
     /// assert_eq!(no_edges.top, Length::Definite(DefiniteLength::from(Pixels(0.))));
     /// assert_eq!(no_edges.right, Length::Definite(DefiniteLength::from(Pixels(0.))));
@@ -1669,12 +1663,12 @@ impl Edges<DefiniteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::{px, Edges};
     /// let no_edges = Edges::zero();
-    /// assert_eq!(no_edges.top, DefiniteLength::from(zed::px(0.)));
-    /// assert_eq!(no_edges.right, DefiniteLength::from(zed::px(0.)));
-    /// assert_eq!(no_edges.bottom, DefiniteLength::from(zed::px(0.)));
-    /// assert_eq!(no_edges.left, DefiniteLength::from(zed::px(0.)));
+    /// assert_eq!(no_edges.top, DefiniteLength::from(px(0.)));
+    /// assert_eq!(no_edges.right, DefiniteLength::from(px(0.)));
+    /// assert_eq!(no_edges.bottom, DefiniteLength::from(px(0.)));
+    /// assert_eq!(no_edges.left, DefiniteLength::from(px(0.)));
     /// ```
     pub fn zero() -> Self {
         Self {
@@ -1702,7 +1696,7 @@ impl Edges<DefiniteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Edges, DefiniteLength, px, AbsoluteLength, Size};
+    /// # use gpui::{Edges, DefiniteLength, px, AbsoluteLength, Size};
     /// let edges = Edges {
     ///     top: DefiniteLength::Absolute(AbsoluteLength::Pixels(px(10.0))),
     ///     right: DefiniteLength::Fraction(0.5),
@@ -1744,7 +1738,7 @@ impl Edges<AbsoluteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let no_edges = Edges::zero();
     /// assert_eq!(no_edges.top, AbsoluteLength::Pixels(Pixels(0.0)));
     /// assert_eq!(no_edges.right, AbsoluteLength::Pixels(Pixels(0.0)));
@@ -1776,7 +1770,7 @@ impl Edges<AbsoluteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Edges, AbsoluteLength, Pixels, px};
+    /// # use gpui::{Edges, AbsoluteLength, Pixels, px};
     /// let edges = Edges {
     ///     top: AbsoluteLength::Pixels(px(10.0)),
     ///     right: AbsoluteLength::Rems(rems(1.0)),
@@ -1817,7 +1811,7 @@ impl Edges<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Edges, Pixels};
+    /// # use gpui::{Edges, Pixels};
     /// let edges = Edges {
     ///     top: Pixels(10.0),
     ///     right: Pixels(20.0),
@@ -1905,7 +1899,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Corners;
+    /// # use gpui::Corners;
     /// let uniform_corners = Corners::all(5.0);
     /// assert_eq!(uniform_corners.top_left, 5.0);
     /// assert_eq!(uniform_corners.top_right, 5.0);
@@ -1942,7 +1936,7 @@ impl Corners<AbsoluteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Corners, AbsoluteLength, Pixels, Size};
+    /// # use gpui::{Corners, AbsoluteLength, Pixels, Size};
     /// let corners = Corners {
     ///     top_left: AbsoluteLength::Pixels(Pixels(15.0)),
     ///     top_right: AbsoluteLength::Rems(Rems(1.0)),
@@ -1986,7 +1980,7 @@ impl Corners<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Corners, Pixels};
+    /// # use gpui::{Corners, Pixels};
     /// let corners = Corners {
     ///     top_left: Pixels(10.0),
     ///     top_right: Pixels(20.0),
@@ -2039,7 +2033,7 @@ impl<T: Clone + Default + Debug> Corners<T> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Corners, Pixels};
+    /// # use gpui::{Corners, Pixels};
     /// let corners = Corners {
     ///     top_left: Pixels(10.0),
     ///     top_right: Pixels(20.0),
@@ -2193,7 +2187,7 @@ impl From<Percentage> for Radians {
 /// # Examples
 ///
 /// ```
-/// use zed::Pixels;
+/// use gpui::Pixels;
 ///
 /// // Define a length of 10 pixels
 /// let length = Pixels(10.0);
@@ -2505,7 +2499,7 @@ impl DevicePixels {
     /// # Examples
     ///
     /// ```
-    /// # use zed::DevicePixels;
+    /// # use gpui::DevicePixels;
     /// let pixels = DevicePixels(10); // 10 device pixels
     /// let bytes_per_pixel = 4; // Assume each pixel is represented by 4 bytes (e.g., RGBA)
     /// let total_bytes = pixels.to_bytes(bytes_per_pixel);
@@ -2717,7 +2711,7 @@ impl AbsoluteLength {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{AbsoluteLength, Pixels};
+    /// # use gpui::{AbsoluteLength, Pixels};
     /// let length_in_pixels = AbsoluteLength::Pixels(Pixels(42.0));
     /// let length_in_rems = AbsoluteLength::Rems(Rems(2.0));
     /// let rem_size = Pixels(16.0);
@@ -2770,7 +2764,7 @@ impl DefiniteLength {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{DefiniteLength, AbsoluteLength, Pixels, px, rems};
+    /// # use gpui::{DefiniteLength, AbsoluteLength, Pixels, px, rems};
     /// let length_in_pixels = DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0)));
     /// let length_in_rems = DefiniteLength::Absolute(AbsoluteLength::Rems(rems(2.0)));
     /// let length_as_fraction = DefiniteLength::Fraction(0.5);
