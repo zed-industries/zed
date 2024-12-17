@@ -346,7 +346,7 @@ impl<T> Flatten<T> for Result<T> {
 
 #[derive(Default, Debug)]
 /// Information about the GPU GPUI is running on
-pub struct GPUSpecs {
+pub struct GpuSpecs {
     /// true if the GPU is really a fake (like llvmpipe) running on the CPU
     pub is_software_emulated: bool,
     /// Name of the device as reported by vulkan
