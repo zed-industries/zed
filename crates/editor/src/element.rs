@@ -31,9 +31,9 @@ use file_icons::FileIcons;
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Axis, Bounds, ClickEvent,
+    transparent_black, Action, AnyElement, AvailableSpace, Axis, Bounds, ClickEvent,
     ClipboardItem, ContentMask, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementInputHandler, Entity, FontId, GlobalElementId, HighlightStyle, Hitbox, Hsla,
+    ElementInputHandler, Entity, FontId, GlobalElementId, Hitbox, Hsla,
     InteractiveElement, IntoElement, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent,
     ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
@@ -1250,24 +1250,24 @@ impl EditorElement {
             axes.horizontal.then(|| {
                 Bounds::from_corners(
                     point(
-                        bounds.bottom_left().x,
-                        bounds.bottom_left().y - self.style.scrollbar_width,
+                        text_bounds.bottom_left().x,
+                        text_bounds.bottom_left().y - self.style.scrollbar_width,
                     ),
                     point(
-                        bounds.bottom_right().x
+                        text_bounds.bottom_right().x
                             - if axes.vertical {
                                 self.style.scrollbar_width
                             } else {
                                 px(0.)
                             },
-                        bounds.bottom_right().y,
+                        text_bounds.bottom_right().y,
                     ),
                 )
             }),
             axes.vertical.then(|| {
                 Bounds::from_corners(
-                    point(self.scrollbar_left(&bounds), bounds.origin.y),
-                    bounds.bottom_right(),
+                    point(self.scrollbar_left(&text_bounds), text_bounds.origin.y),
+                    text_bounds.bottom_right(),
                 )
             }),
         );
@@ -5773,7 +5773,7 @@ impl Element for EditorElement {
                         text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
 
                     let scrollbar_bounds =
-                        Bounds::from_corners(content_origin, bounds.lower_right());
+                        Bounds::from_corners(content_origin, bounds.bottom_right());
 
                     let height_in_lines = scrollbar_bounds.size.height / line_height;
 
