@@ -20,7 +20,7 @@ use std::{
 };
 use task::{DebugAdapterConfig, DebugRequestType};
 
-const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -119,7 +119,11 @@ impl DebugAdapterClient {
                     cx.update(|cx| event_handler(Message::Event(ev), cx))
                 }
                 Message::Request(req) => cx.update(|cx| event_handler(Message::Request(req), cx)),
-                Message::Response(_) => unreachable!(),
+                Message::Response(response) => {
+                    log::debug!("Received response after request timeout: {:#?}", response);
+
+                    Ok(())
+                }
             } {
                 break Err(e);
             }
