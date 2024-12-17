@@ -254,7 +254,14 @@
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
     // Whether to show diagnostic indicators in the scrollbar.
-    "diagnostics": true
+    "diagnostics": true,
+    /// Forcefully enable or disable the scrollbar for each axis
+    "axes": {
+      /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+      "horizontal": true,
+      /// When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+      "vertical": true
+    }
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
@@ -304,6 +311,8 @@
   "vertical_scroll_margin": 3,
   // Whether to scroll when clicking near the edge of the visible text area.
   "autoscroll_on_clicks": false,
+  // The number of characters to keep on either side when scrolling with the mouse
+  "horizontal_scroll_margin": 5,
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
