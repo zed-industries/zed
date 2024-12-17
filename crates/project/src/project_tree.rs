@@ -23,6 +23,7 @@ use crate::{
     ProjectPath,
 };
 
+pub(crate) use server_tree::LanguageServerTree;
 type IsRoot = bool;
 
 struct WorktreeRoots {
@@ -96,7 +97,7 @@ impl Ord for AdapterWrapper {
 impl Eq for AdapterWrapper {}
 
 impl ProjectTree {
-    fn new(
+    pub(crate) fn new(
         languages: Arc<LanguageRegistry>,
         worktree_store: Model<WorktreeStore>,
         cx: &mut AppContext,

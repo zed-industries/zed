@@ -9,7 +9,7 @@
 //! This module defines a Project Tree.
 
 use std::{
-    collections::{hash_map::Entry, BTreeMap},
+    collections::BTreeMap,
     path::Path,
     sync::{Arc, OnceLock},
 };
@@ -23,8 +23,6 @@ use crate::{LanguageServerId, ProjectPath};
 
 use super::{AdapterWrapper, ProjectTree};
 
-pub type AbsWorkspaceRootPath = Arc<Path>;
-
 pub struct LanguageServerTree {
     /// Language servers for which we can just update workspaceFolders when we detect a new project root
     project_tree: Model<ProjectTree>,
@@ -34,24 +32,39 @@ pub struct LanguageServerTree {
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
 }
 
+/// A node in language server tree represents either:
+/// - A language server that has already been initialized/updated for a given project
+/// - A soon-to-be-initialized language server.
 #[derive(Clone)]
 pub(crate) struct LanguageServerTreeNode(Arc<InnerTreeNode>);
 
 impl LanguageServerTreeNode {
-    fn new(attach: Attach) -> Self {
+    fn new(attach: Attach, path: ProjectPath) -> Self {
         Self(Arc::new(InnerTreeNode {
             id: Default::default(),
             attach,
+            path,
         }))
     }
+    pub(crate) fn server_id(
+        &self,
+        init: impl FnOnce(Attach, ProjectPath) -> LanguageServerId,
+    ) -> LanguageServerId {
+        *self
+            .0
+            .id
+            .get_or_init(|| init(self.0.attach, self.0.path.clone()))
+    }
 }
+
 struct InnerTreeNode {
     id: OnceLock<LanguageServerId>,
     attach: Attach,
+    path: ProjectPath,
 }
 
 impl LanguageServerTree {
-    fn new(
+    pub(crate) fn new(
         languages: Arc<LanguageRegistry>,
         project_tree: Model<ProjectTree>,
         cx: &mut AppContext,
@@ -68,7 +81,6 @@ impl LanguageServerTree {
             .attach_kind_cache
             .entry(adapter.0.name.clone())
             .or_insert_with(|| adapter.0.attach_kind())
-        // todo: query lspadapter for it.
     }
 
     pub(crate) fn get<'a>(
@@ -84,14 +96,11 @@ impl LanguageServerTree {
         roots.into_iter().map(|(adapter, root_path)| {
             let attach = self.attach_kind(&adapter);
             self.instances
-                .entry(root_path)
+                .entry(root_path.clone())
                 .or_default()
                 .entry(adapter.0.name.clone())
-                .or_insert_with(|| LanguageServerTreeNode::new(attach))
+                .or_insert_with(|| LanguageServerTreeNode::new(attach, root_path))
                 .clone()
         })
     }
 }
-
-#[cfg(test)]
-mod tests {}
