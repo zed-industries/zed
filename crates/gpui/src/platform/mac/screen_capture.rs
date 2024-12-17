@@ -58,26 +58,17 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         unsafe {
             let stream: id = msg_send![class!(SCStream), alloc];
-
             let filter: id = msg_send![class!(SCContentFilter), alloc];
-
             let configuration: id = msg_send![class!(SCStreamConfiguration), alloc];
-
             let delegate: id = msg_send![DELEGATE_CLASS, alloc];
-
             let output: id = msg_send![OUTPUT_CLASS, alloc];
-
             let excluded_windows = NSArray::array(nil);
-
             let filter: id = msg_send![filter, initWithDisplay:self.sc_display excludingWindows:excluded_windows];
-
             let configuration: id = msg_send![configuration, init];
-
             let delegate: id = msg_send![delegate, init];
-
             let output: id = msg_send![output, init];
 
-            // ASCII for '420f'
+            // ASCII for '420f': https://developer.apple.com/documentation/screencapturekit/scstreamconfiguration/pixelformat?language=objc
             let format = u32::from_be_bytes([52u8, 50u8, 48u8, 102u8]);
 
             let _: () = msg_send![configuration, setShowsCursor:YES];
