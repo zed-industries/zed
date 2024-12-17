@@ -471,20 +471,11 @@
     }
   },
   {
-    "context": "Editor && !inline_completion && showing_completions",
+    "context": "Editor && showing_completions",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::ConfirmCompletion",
       "tab": "editor::ComposeCompletion"
-    }
-  },
-  {
-    "context": "Editor && inline_completion && showing_completions",
-    "use_key_equivalents": true,
-    "bindings": {
-      "enter": "editor::ConfirmCompletion",
-      "tab": "editor::ComposeCompletion",
-      "shift-tab": "editor::AcceptInlineCompletion"
     }
   },
   {
