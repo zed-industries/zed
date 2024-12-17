@@ -90,12 +90,12 @@ impl ProjectTree {
         &mut self,
         ProjectPath { worktree_id, path }: ProjectPath,
         language_name: &LanguageName,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AppContext,
     ) -> BTreeMap<LanguageServerName, ProjectPath> {
         let mut roots = BTreeMap::default();
         let adapters = self.languages.lsp_adapters(&language_name);
         let worktree_roots = match self.root_points.entry(worktree_id) {
-            Entry::Occupied(occupied_entry) => occupied_entry.get_mut(),
+            Entry::Occupied(occupied_entry) => occupied_entry.get().clone(),
             Entry::Vacant(vacant_entry) => {
                 let Some(worktree) = self
                     .worktree_store
@@ -105,7 +105,7 @@ impl ProjectTree {
                     return Default::default();
                 };
                 let roots = WorktreeRoots::new(self.worktree_store.clone(), worktree, cx);
-                vacant_entry.insert(roots)
+                vacant_entry.insert(roots).clone()
             }
         };
 
@@ -117,46 +117,40 @@ impl ProjectTree {
                 // We've found roots for all adapters, no need to continue
                 break;
             }
-            if let Some(adapter_roots) = worktree_roots.read(cx).roots.get(ancestor) {
-                for (ix, adapter) in adapters.iter().enumerate() {
-                    let adapter_already_found_root = filled_adapters[ix];
-                    if adapter_already_found_root {
-                        continue;
-                    }
-
-                    match adapter_roots.entry(adapter.name.clone()) {
-                        TreeEntry::Vacant(vacant_entry) => {
-                            let root = adapter.find_closest_project_root(worktree_id, path.clone());
-                            vacant_entry.insert(root.is_some());
-                            if let Some(root) = root {
-                                roots.insert(adapter.name.clone(), (worktree_id, root).into());
-                            }
-                        }
-                        TreeEntry::Occupied(occupied_entry) => {
-                            let is_root = *occupied_entry.get();
-                            if is_root {
-                                roots.insert(adapter.name.clone(), (worktree_id, ancestor).into());
-                            }
-
+            worktree_roots.update(cx, |this, _| {
+                if let Some(adapter_roots) = this.roots.get_mut(ancestor) {
+                    for (ix, adapter) in adapters.iter().enumerate() {
+                        let adapter_already_found_root = filled_adapters[ix];
+                        if adapter_already_found_root {
                             continue;
                         }
-                    }
-                    filled_adapters[ix] = true;
-                    adapters_with_roots += 1;
-                }
-            }
-        }
-        'adapter: for (ix, adapter) in adapters.iter().enumerate() {
-            if let Some(adapter_roots) = worktree_roots.read(cx).roots.get(&adapter.name()) {
-                for ancestor in path.ancestors().skip(1) {
-                    if let Some(is_root) = adapter_roots.get(ancestor) {
-                        if *is_root {
-                            roots.insert((worktree_id, ancestor).into());
+
+                        match adapter_roots.entry(adapter.name.clone()) {
+                            TreeEntry::Vacant(vacant_entry) => {
+                                let root =
+                                    adapter.find_closest_project_root(worktree_id, path.clone());
+                                vacant_entry.insert(root.is_some());
+                                if let Some(root) = root {
+                                    roots.insert(adapter.name.clone(), (worktree_id, root).into());
+                                }
+                            }
+                            TreeEntry::Occupied(occupied_entry) => {
+                                let is_root = *occupied_entry.get();
+                                if is_root {
+                                    roots.insert(
+                                        adapter.name.clone(),
+                                        (worktree_id, ancestor).into(),
+                                    );
+                                }
+
+                                continue;
+                            }
                         }
-                        continue 'adapter;
+                        filled_adapters[ix] = true;
+                        adapters_with_roots += 1;
                     }
                 }
-            }
+            });
         }
         roots
     }

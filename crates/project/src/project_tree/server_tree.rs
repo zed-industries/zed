@@ -8,71 +8,108 @@
 //! ask about suitable language server for each path it interacts with; it can resolve most of the queries locally.
 //! This module defines a Project Tree.
 
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{Arc, OnceLock},
+};
 
 use collections::HashMap;
-use language::LanguageName;
-use lsp::Url;
+use gpui::{AppContext, Context as _, Model};
+use language::{LanguageName, LanguageRegistry};
+use lsp::LanguageServerName;
 
-use crate::LanguageServerId;
+use crate::{LanguageServerId, ProjectPath};
+
+use super::ProjectTree;
 
 pub type AbsWorkspaceRootPath = Arc<Path>;
 
-#[derive(Default)]
-pub struct LspTree {
+pub struct LanguageServerTree {
     /// Language servers for which we can just update workspaceFolders when we detect a new project root
-    umbrella_language_servers: HashMap<LanguageName, Vec<LanguageServerId>>,
-    pinpoint_language_servers:
-        HashMap<LanguageName, BTreeMap<AbsWorkspaceRootPath, Vec<LanguageServerId>>>,
+    project_tree: Model<ProjectTree>,
+    languages: Arc<LanguageRegistry>,
+    instances: HashMap<ProjectPath, BTreeMap<LanguageServerName, LanguageServerTreeNode>>,
+    // shared_instances: BTreeMap<WorktreeId, BTreeMap<LanguageServerName, LanguageServerId>>,
+    attach_kind_cache: HashMap<LanguageServerName, Attach>,
 }
 
-impl LspTree {
-    fn new() -> Self {
-        Self::default()
-    }
-    pub fn insert_new_server(
-        &mut self,
-        name: LanguageName,
-        id: LanguageServerId,
-        root_path: Option<AbsWorkspaceRootPath>,
-    ) {
-        if let Some(root_path) = root_path {
-            self.pinpoint_language_servers
-                .entry(name)
-                .or_default()
-                .entry(root_path)
-                .or_default()
-                .push(id);
-        } else {
-            self.umbrella_language_servers
-                .entry(name)
-                .or_default()
-                .push(id);
+#[derive(Clone, Copy, PartialEq)]
+enum Attach {
+    /// Create a single language server instance per subproject root.
+    InstancePerRoot,
+    /// Use one shared language server instance for all subprojects within a project.
+    Shared,
+}
+
+impl Attach {
+    fn root_path(&self, root_subproject_path: ProjectPath) -> ProjectPath {
+        match self {
+            Attach::InstancePerRoot => root_subproject_path,
+            Attach::Shared => ProjectPath {
+                worktree_id: root_subproject_path.worktree_id,
+                path: Arc::from(Path::new("")),
+            },
         }
     }
-    pub fn get<'a, 'b>(
+}
+
+#[derive(Clone)]
+pub(crate) struct LanguageServerTreeNode(Arc<InnerTreeNode>);
+
+impl LanguageServerTreeNode {
+    fn new(attach: Attach) -> Self {
+        Self(Arc::new(InnerTreeNode {
+            id: Default::default(),
+            attach,
+        }))
+    }
+}
+struct InnerTreeNode {
+    id: OnceLock<LanguageServerId>,
+    attach: Attach,
+}
+
+impl LanguageServerTree {
+    fn new(
+        languages: Arc<LanguageRegistry>,
+        project_tree: Model<ProjectTree>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
+        cx.new_model(|_| Self {
+            project_tree,
+            languages,
+            instances: Default::default(),
+            attach_kind_cache: Default::default(),
+        })
+    }
+    fn attach_kind(&mut self, name: LanguageServerName) -> Attach {
+        *self
+            .attach_kind_cache
+            .entry(name)
+            .or_insert_with(|| Attach::Shared)
+        // todo: query lspadapter for it.
+    }
+
+    pub(crate) fn get<'a>(
         &'a mut self,
+        path: ProjectPath,
         language: LanguageName,
-        file: &'b Path,
-    ) -> impl Iterator<Item = LanguageServerId> + 'b
-    where
-        'a: 'b,
-    {
-        self.pinpoint_language_servers
-            .get(&language)
-            .into_iter()
-            .flat_map(move |joint| {
-                file.ancestors().flat_map(move |ancestor| {
-                    joint.get(ancestor).map(|servers| servers.iter().cloned())
-                })
-            })
-            .flatten()
-            .chain(
-                self.umbrella_language_servers
-                    .get(&language)
-                    .into_iter()
-                    .flat_map(|servers| servers.iter().cloned()),
-            )
+        cx: &mut AppContext,
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+        let roots = self
+            .project_tree
+            .update(cx, |this, cx| this.root_for_path(path, &language, cx));
+
+        roots.into_iter().map(|(adapter_name, root_path)| {
+            let attach = self.attach_kind(adapter_name.clone());
+            self.instances
+                .entry(root_path)
+                .or_default()
+                .entry(adapter_name)
+                .or_insert_with(|| LanguageServerTreeNode::new(attach))
+                .clone()
+        })
     }
 }
 
