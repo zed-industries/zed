@@ -3,7 +3,7 @@
 
 use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
 use crate::{
-    AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels, GPUSpecs,
+    AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels, GpuSpecs,
     MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
     ScaledPixels, Scene, Shadow, Size, Underline,
 };
@@ -477,10 +477,10 @@ impl BladeRenderer {
     }
 
     #[cfg_attr(target_os = "macos", allow(dead_code))]
-    pub fn gpu_specs(&self) -> GPUSpecs {
+    pub fn gpu_specs(&self) -> GpuSpecs {
         let info = self.gpu.device_information();
 
-        GPUSpecs {
+        GpuSpecs {
             is_software_emulated: info.is_software_emulated,
             device_name: info.device_name.clone(),
             driver_name: info.driver_name.clone(),
