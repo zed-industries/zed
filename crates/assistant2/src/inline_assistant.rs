@@ -8,7 +8,7 @@ use crate::{
     prompts::PromptBuilder,
     streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff},
     terminal_inline_assistant::TerminalInlineAssistant,
-    CycleNextInlineAssist, CyclePreviousInlineAssist, ToggleInlineAssist,
+    CycleNextInlineAssist, CyclePreviousInlineAssist,
 };
 use crate::{AssistantPanel, ToggleContextPicker};
 use anyhow::{Context as _, Result};
@@ -75,9 +75,7 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
-    cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        workspace.register_action(InlineAssistant::toggle_inline_assist);
-
+    cx.observe_new_views(|_workspace: &mut Workspace, cx| {
         let workspace = cx.view().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, cx)
@@ -204,9 +202,9 @@ impl InlineAssistant {
         }
     }
 
-    pub fn toggle_inline_assist(
+    pub fn inline_assist(
         workspace: &mut Workspace,
-        _action: &ToggleInlineAssist,
+        _action: &zed_actions::InlineAssist,
         cx: &mut ViewContext<Workspace>,
     ) {
         let settings = AssistantSettings::get_global(cx);
