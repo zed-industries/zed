@@ -2547,6 +2547,7 @@ dependencies = [
  "settings",
  "sha2",
  "smol",
+ "telemetry",
  "telemetry_events",
  "text",
  "thiserror 1.0.69",
@@ -2841,6 +2842,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "telemetry",
  "theme",
  "ui",
  "util",
@@ -3938,6 +3940,7 @@ dependencies = [
  "snippet",
  "sum_tree",
  "task",
+ "telemetry",
  "tempfile",
  "text",
  "theme",
@@ -4373,6 +4376,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "task",
+ "telemetry",
  "tempfile",
  "theme",
  "theme_extension",
@@ -10399,6 +10403,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "telemetry",
  "terminal",
  "terminal_view",
  "theme",
@@ -12664,11 +12669,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "telemetry"
+version = "0.1.0"
+dependencies = [
+ "futures 0.3.31",
+ "serde",
+ "serde_json",
+ "telemetry_events",
+]
+
+[[package]]
 name = "telemetry_events"
 version = "0.1.0"
 dependencies = [
  "semantic_version",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

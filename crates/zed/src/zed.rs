@@ -3496,11 +3496,7 @@ mod tests {
             );
             let prompt_builder =
                 assistant::init(app_state.fs.clone(), app_state.client.clone(), false, cx);
-            repl::init(
-                app_state.fs.clone(),
-                app_state.client.telemetry().clone(),
-                cx,
-            );
+            repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);

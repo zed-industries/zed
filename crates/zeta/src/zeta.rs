@@ -930,6 +930,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         "zeta"
     }
 
+    fn display_name() -> &'static str {
+        "Zeta"
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,

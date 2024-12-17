@@ -33,11 +33,12 @@ use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::SerializableItem,
-    move_item, pane,
+    move_active_item, move_item, pane,
     ui::IconName,
     ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane, DraggedTab,
-    ItemId, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight,
-    SplitUp, SwapPaneInDirection, ToggleZoom, Workspace,
+    ItemId, MoveItemToPane, MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup,
+    SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneInDirection, ToggleZoom,
+    Workspace,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -355,7 +356,7 @@ impl TerminalPanel {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Pane>> {
-        let workspace = self.workspace.clone().upgrade()?;
+        let workspace = self.workspace.upgrade()?;
         let workspace = workspace.read(cx);
         let database_id = workspace.database_id();
         let weak_workspace = self.workspace.clone();
@@ -723,8 +724,6 @@ impl TerminalPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Model<Terminal>>> {
         let workspace = self.workspace.clone();
-        self.pending_terminals_to_add += 1;
-
         cx.spawn(|terminal_panel, mut cx| async move {
             if workspace.update(&mut cx, |workspace, cx| {
                 !is_enabled_in_workspace(workspace, cx)
@@ -752,10 +751,6 @@ impl TerminalPanel {
                         cx,
                     )
                 }));
-                pane.update(cx, |pane, cx| {
-                    let focus = pane.has_focus(cx);
-                    pane.add_item(terminal_view, true, focus, None, cx);
-                });
 
                 match reveal_strategy {
                     RevealStrategy::Always => {
@@ -766,6 +761,13 @@ impl TerminalPanel {
                     }
                     RevealStrategy::Never => {}
                 }
+
+                pane.update(cx, |pane, cx| {
+                    let focus =
+                        pane.has_focus(cx) || matches!(reveal_strategy, RevealStrategy::Always);
+                    pane.add_item(terminal_view, true, focus, None, cx);
+                });
+
                 Ok(terminal)
             })?;
             terminal_panel.update(&mut cx, |this, cx| {
@@ -1181,8 +1183,7 @@ impl Render for TerminalPanel {
                             .position(|pane| **pane == terminal_panel.active_pane)
                         {
                             let next_ix = (ix + 1) % panes.len();
-                            let next_pane = panes[next_ix].clone();
-                            cx.focus_view(&next_pane);
+                            cx.focus_view(&panes[next_ix]);
                         }
                     }),
                 )
@@ -1194,15 +1195,14 @@ impl Render for TerminalPanel {
                             .position(|pane| **pane == terminal_panel.active_pane)
                         {
                             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
-                            let prev_pane = panes[prev_ix].clone();
-                            cx.focus_view(&prev_pane);
+                            cx.focus_view(&panes[prev_ix]);
                         }
                     }),
                 )
                 .on_action(cx.listener(|terminal_panel, action: &ActivatePane, cx| {
                     let panes = terminal_panel.center.panes();
-                    if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
-                        cx.focus_view(&pane);
+                    if let Some(&pane) = panes.get(action.0) {
+                        cx.focus_view(pane);
                     } else {
                         if let Some(new_pane) =
                             terminal_panel.new_pane_with_cloned_active_terminal(cx)
@@ -1219,18 +1219,40 @@ impl Render for TerminalPanel {
                         }
                     }
                 }))
-                .on_action(cx.listener(
-                    |terminal_panel, action: &SwapPaneInDirection, cx| {
+                .on_action(
+                    cx.listener(|terminal_panel, action: &SwapPaneInDirection, cx| {
                         if let Some(to) = terminal_panel
                             .center
                             .find_pane_in_direction(&terminal_panel.active_pane, action.0, cx)
                             .cloned()
                         {
-                            terminal_panel
-                                .center
-                                .swap(&terminal_panel.active_pane.clone(), &to);
+                            terminal_panel.center.swap(&terminal_panel.active_pane, &to);
                             cx.notify();
                         }
+                    }),
+                )
+                .on_action(cx.listener(|terminal_panel, action: &MoveItemToPane, cx| {
+                    let Some(&target_pane) = terminal_panel.center.panes().get(action.destination)
+                    else {
+                        return;
+                    };
+                    move_active_item(
+                        &terminal_panel.active_pane,
+                        target_pane,
+                        action.focus,
+                        true,
+                        cx,
+                    );
+                }))
+                .on_action(cx.listener(
+                    |terminal_panel, action: &MoveItemToPaneInDirection, cx| {
+                        let source_pane = &terminal_panel.active_pane;
+                        if let Some(destination_pane) = terminal_panel
+                            .center
+                            .find_pane_in_direction(source_pane, action.direction, cx)
+                        {
+                            move_active_item(source_pane, destination_pane, action.focus, true, cx);
+                        };
                     },
                 ))
             })

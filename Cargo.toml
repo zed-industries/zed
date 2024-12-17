@@ -117,6 +117,7 @@ members = [
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
+    "crates/telemetry",
     "crates/telemetry_events",
     "crates/terminal",
     "crates/terminal_view",
@@ -305,6 +306,7 @@ supermaven_api = { path = "crates/supermaven_api" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
+telemetry = { path = "crates/telemetry" }
 telemetry_events = { path = "crates/telemetry_events" }
 terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
