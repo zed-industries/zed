@@ -23,8 +23,6 @@ body:
       placeholder: |
         <!-- In Zed run `copy system specs into clipboard` from the Zed command palette and paste here. -->
         <!-- Alternatively spawn `request feature` and this field will be autopopulated -->
-        <!-- If you can't launch Zed, please manual provide the same info: -->
-        <!-- Zed Version: 0.xxx.x; Channel: Stable, OS: macOS xx.xx, RAM: XXGB, Architecture: x86_64"
     validations:
       required: true
   - type: textarea
