@@ -2115,6 +2115,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
+ "telemetry",
  "util",
 ]
 
@@ -2782,6 +2783,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
+ "telemetry",
  "theme",
  "time",
  "time_format",
@@ -13112,6 +13114,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
+ "telemetry",
  "theme",
  "tree-sitter-md",
  "ui",

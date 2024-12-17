@@ -56,6 +56,7 @@ serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
+telemetry.workspace = true
 theme.workspace = true
 time.workspace = true
 time_format.workspace = true
