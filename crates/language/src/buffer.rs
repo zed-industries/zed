@@ -2923,10 +2923,13 @@ impl BufferSnapshot {
         (start..end, word_kind)
     }
 
-    /// Returns the range for the closes syntax node enclosing the given range.
-    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
+    /// Returns the closest syntax node enclosing the given range.
+    pub fn syntax_ancestor<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'a>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut result: Option<Range<usize>> = None;
+        let mut result: Option<tree_sitter::Node<'a>> = None;
         'outer: for layer in self
             .syntax
             .layers_for_range(range.clone(), &self.text, true)
@@ -2956,7 +2959,7 @@ impl BufferSnapshot {
             }
 
             let left_node = cursor.node();
-            let mut layer_result = left_node.byte_range();
+            let mut layer_result = left_node;
 
             // For an empty range, try to find another node immediately to the right of the range.
             if left_node.end_byte() == range.start {
@@ -2979,13 +2982,13 @@ impl BufferSnapshot {
                 // If both nodes are the same in that regard, favor the right one.
                 if let Some(right_node) = right_node {
                     if right_node.is_named() || !left_node.is_named() {
-                        layer_result = right_node.byte_range();
+                        layer_result = right_node;
                     }
                 }
             }
 
             if let Some(previous_result) = &result {
-                if previous_result.len() < layer_result.len() {
+                if previous_result.byte_range().len() < layer_result.byte_range().len() {
                     continue;
                 }
             }

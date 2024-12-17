@@ -7714,6 +7714,7 @@ dependencies = [
  "sum_tree",
  "text",
  "theme",
+ "tree-sitter",
  "util",
 ]
 

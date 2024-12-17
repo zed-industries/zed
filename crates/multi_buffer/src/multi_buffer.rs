@@ -3918,13 +3918,17 @@ impl MultiBufferSnapshot {
             })
     }
 
-    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
+    pub fn range_for_syntax_ancestor<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<Range<usize>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let excerpt = self.excerpt_containing(range.clone())?;
 
         let ancestor_buffer_range = excerpt
             .buffer()
-            .range_for_syntax_ancestor(excerpt.map_range_to_buffer(range))?;
+            .syntax_ancestor(excerpt.map_range_to_buffer(range))?
+            .byte_range();
 
         Some(excerpt.map_range_from_buffer(ancestor_buffer_range))
     }

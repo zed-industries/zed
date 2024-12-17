@@ -956,10 +956,10 @@ fn expand_row_range_to_ancestor_with_limit(
     // Query with a slightly larger range than the diagnostic input range to get the parent node.
     let query_range = input_range.start.saturating_sub(Point::new(0, 1))
         ..snapshot.clip_point(input_range.end + Point::new(0, 1), Bias::Left);
-    let Some(ancestor_range) = snapshot.range_for_syntax_ancestor(query_range) else {
+    let Some(ancestor) = snapshot.syntax_ancestor(query_range) else {
         return input_row_range;
     };
-    let ancestor_range = ancestor_range.to_point(&snapshot);
+    let ancestor_range = ancestor.byte_range().to_point(&snapshot);
     if !ancestor_range.contains_inclusive(&input_range) {
         log::error!("AST ancestor range ({:?}) expected to include the query range ({:?}), but it does not.", ancestor_range, input_range);
         return input_row_range;
