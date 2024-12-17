@@ -89,12 +89,12 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
     }
 
     fn update_matches(&mut self, _query: String, _cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
-        // TODO: Implement this.
+        // TODO: Implement this once we fix the issues with the file context picker.
         Task::ready(())
     }
 
     fn confirm(&mut self, _secondary: bool, _cx: &mut ViewContext<Picker<Self>>) {
-        // TODO: Implement this.
+        // TODO: Implement this once we fix the issues with the file context picker.
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
