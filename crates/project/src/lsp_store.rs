@@ -3220,6 +3220,19 @@ impl LspStore {
 
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
+            local.lsp_tree.update(cx, |this, cx| {
+                maybe!({
+                    let buffs = this
+                        .get(
+                            buffer.read(cx).project_path(cx)?,
+                            buffer.read(cx).language()?.name(),
+                            cx,
+                        )
+                        .collect::<Vec<_>>();
+                    println!("{}", buffs.len());
+                    Some(())
+                });
+            });
             local.initialize_buffer(buffer, cx);
         }
 

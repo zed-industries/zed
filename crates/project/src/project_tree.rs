@@ -132,6 +132,7 @@ impl ProjectTree {
             }
         };
 
+        dbg!(adapters.len());
         let mut filled_adapters = vec![false; adapters.len()];
         let mut adapters_with_roots = 0;
         for ancestor in path.ancestors().skip(1) {
@@ -141,43 +142,42 @@ impl ProjectTree {
                 break;
             }
             worktree_roots.update(cx, |this, _| {
-                if let Some(adapter_roots) = this.roots.get_mut(ancestor) {
-                    for (ix, adapter) in adapters.iter().enumerate() {
-                        let adapter_already_found_root = filled_adapters[ix];
-                        if adapter_already_found_root {
+                let adapter_roots = this.roots.entry(ancestor.into()).or_default();
+                for (ix, adapter) in adapters.iter().enumerate() {
+                    let adapter_already_found_root = filled_adapters[ix];
+                    if adapter_already_found_root {
+                        continue;
+                    }
+
+                    match adapter_roots.entry(adapter.name.clone()) {
+                        TreeEntry::Vacant(vacant_entry) => {
+                            let root = adapter.find_closest_project_root(worktree_id, path.clone());
+                            vacant_entry.insert(root.is_some());
+                            if let Some(root) = root {
+                                roots.insert(
+                                    AdapterWrapper(adapter.clone()),
+                                    (worktree_id, root).into(),
+                                );
+                            }
+                        }
+                        TreeEntry::Occupied(occupied_entry) => {
+                            let is_root = *occupied_entry.get();
+                            if is_root {
+                                roots.insert(
+                                    AdapterWrapper(adapter.clone()),
+                                    (worktree_id, ancestor).into(),
+                                );
+                            }
+
                             continue;
                         }
-
-                        match adapter_roots.entry(adapter.name.clone()) {
-                            TreeEntry::Vacant(vacant_entry) => {
-                                let root =
-                                    adapter.find_closest_project_root(worktree_id, path.clone());
-                                vacant_entry.insert(root.is_some());
-                                if let Some(root) = root {
-                                    roots.insert(
-                                        AdapterWrapper(adapter.clone()),
-                                        (worktree_id, root).into(),
-                                    );
-                                }
-                            }
-                            TreeEntry::Occupied(occupied_entry) => {
-                                let is_root = *occupied_entry.get();
-                                if is_root {
-                                    roots.insert(
-                                        AdapterWrapper(adapter.clone()),
-                                        (worktree_id, ancestor).into(),
-                                    );
-                                }
-
-                                continue;
-                            }
-                        }
-                        filled_adapters[ix] = true;
-                        adapters_with_roots += 1;
                     }
+                    filled_adapters[ix] = true;
+                    adapters_with_roots += 1;
                 }
             });
         }
+        dbg!(&roots.len());
         roots
     }
     fn on_worktree_store_event(
