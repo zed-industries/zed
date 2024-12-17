@@ -24,6 +24,7 @@ pub struct Context {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextKind {
     File,
+    Directory,
     FetchedUrl,
     Thread,
 }
@@ -33,6 +34,7 @@ pub fn attach_context_to_message(
     context: impl IntoIterator<Item = Context>,
 ) {
     let mut file_context = String::new();
+    let mut directory_context = String::new();
     let mut fetch_context = String::new();
     let mut thread_context = String::new();
 
@@ -41,6 +43,10 @@ pub fn attach_context_to_message(
             ContextKind::File => {
                 file_context.push_str(&context.text);
                 file_context.push('\n');
+            }
+            ContextKind::Directory => {
+                directory_context.push_str(&context.text);
+                directory_context.push('\n');
             }
             ContextKind::FetchedUrl => {
                 fetch_context.push_str(&context.name);
@@ -61,6 +67,11 @@ pub fn attach_context_to_message(
     if !file_context.is_empty() {
         context_text.push_str("The following files are available:\n");
         context_text.push_str(&file_context);
+    }
+
+    if !directory_context.is_empty() {
+        context_text.push_str("The following directories are available:\n");
+        context_text.push_str(&directory_context);
     }
 
     if !fetch_context.is_empty() {
