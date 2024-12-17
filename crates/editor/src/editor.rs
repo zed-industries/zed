@@ -2473,6 +2473,9 @@ impl Editor {
         }
 
         if self.hide_context_menu(cx).is_some() {
+            if self.has_active_inline_completion() {
+                self.update_visible_inline_completion(cx);
+            }
             return true;
         }
 
@@ -3719,6 +3722,7 @@ impl Editor {
                         completions.into(),
                         aside_was_displayed,
                     );
+
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
@@ -3743,6 +3747,7 @@ impl Editor {
                         menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
 
                         if let Some(hint) = editor.inline_completion_menu_hint(cx) {
+                            editor.hide_active_inline_completion(cx);
                             menu.show_inline_completion_hint(hint);
                         }
 
@@ -4695,6 +4700,17 @@ impl Editor {
         Some(active_inline_completion.completion)
     }
 
+    fn hide_active_inline_completion(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(active_inline_completion) = self.active_inline_completion.as_ref() {
+            self.splice_inlays(
+                active_inline_completion.inlay_ids.clone(),
+                Default::default(),
+                cx,
+            );
+            self.clear_highlights::<InlineCompletionHighlight>(cx);
+        }
+    }
+
     fn update_visible_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
@@ -5072,6 +5088,19 @@ impl Editor {
             .borrow()
             .as_ref()
             .map_or(false, |menu| menu.visible())
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn context_menu_contains_inline_completion(&self) -> bool {
+        self.context_menu
+            .borrow()
+            .as_ref()
+            .map_or(false, |menu| match menu {
+                CodeContextMenu::Completions(menu) => menu.entries.first().map_or(false, |entry| {
+                    matches!(entry, CompletionEntry::InlineCompletionHint(_))
+                }),
+                CodeContextMenu::CodeActions(_) => false,
+            })
     }
 
     fn context_menu_origin(&self, cursor_position: DisplayPoint) -> Option<ContextMenuOrigin> {
