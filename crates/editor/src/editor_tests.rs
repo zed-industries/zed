@@ -8470,10 +8470,7 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
-                &["first", "last"]
-            );
+            assert_eq!(completion_menu_entries(&menu.entries), &["first", "last"]);
         } else {
             panic!("expected completion menu to be open");
         }
@@ -8566,7 +8563,7 @@ async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                completion_menu_entries(&menu.entries),
                 &["r", "ret", "Range", "return"]
             );
         } else {
@@ -10962,11 +10959,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
         match menu.as_ref().expect("should have the completions menu") {
             CodeContextMenu::Completions(completions_menu) => {
                 assert_eq!(
-                    completions_menu
-                        .matches
-                        .iter()
-                        .map(|c| c.string.as_str())
-                        .collect::<Vec<_>>(),
+                    completion_menu_entries(&completions_menu.entries),
                     vec!["Some(2)", "vec![2]"]
                 );
             }
@@ -11066,7 +11059,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                completion_menu_entries(&menu.entries),
                 &["bg-red", "bg-blue", "bg-yellow"]
             );
         } else {
@@ -11080,7 +11073,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                completion_menu_entries(&menu.entries),
                 &["bg-blue", "bg-yellow"]
             );
         } else {
@@ -11096,14 +11089,21 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
-                &["bg-yellow"]
-            );
+            assert_eq!(completion_menu_entries(&menu.entries), &["bg-yellow"]);
         } else {
             panic!("expected completion menu to be open");
         }
     });
+}
+
+fn completion_menu_entries(entries: &[CompletionEntry]) -> Vec<&str> {
+    entries
+        .iter()
+        .flat_map(|e| match e {
+            CompletionEntry::Match(mat) => Some(mat.string.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[gpui::test]
@@ -14361,6 +14361,175 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         full_text,
     );
+}
+
+#[gpui::test]
+fn test_inline_completion_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Test case 1: Simple insertion
+    {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 6))
+                    ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
+                let edits = vec![(edit_range, " beautiful".to_string())];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "Hello, beautiful world!");
+                assert_eq!(highlights.len(), 1);
+                assert_eq!(highlights[0].0, 6..16);
+                assert_eq!(
+                    highlights[0].1.background_color,
+                    Some(cx.theme().status().created_background)
+                );
+            })
+            .unwrap();
+    }
+
+    // Test case 2: Replacement
+    {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("This is a test.", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edits = vec![(
+                    snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
+                        ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 4)),
+                    "That".to_string(),
+                )];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "That is a test.");
+                assert_eq!(highlights.len(), 1);
+                assert_eq!(highlights[0].0, 0..4);
+                assert_eq!(
+                    highlights[0].1.background_color,
+                    Some(cx.theme().status().created_background)
+                );
+            })
+            .unwrap();
+    }
+
+    // Test case 3: Multiple edits
+    {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edits = vec![
+                    (
+                        snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 5)),
+                        "Greetings".into(),
+                    ),
+                    (
+                        snapshot.buffer_snapshot.anchor_after(Point::new(0, 12))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 12)),
+                        " and universe".into(),
+                    ),
+                ];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "Greetings, world and universe!");
+                assert_eq!(highlights.len(), 2);
+                assert_eq!(highlights[0].0, 0..9);
+                assert_eq!(highlights[1].0, 16..29);
+                assert_eq!(
+                    highlights[0].1.background_color,
+                    Some(cx.theme().status().created_background)
+                );
+                assert_eq!(
+                    highlights[1].1.background_color,
+                    Some(cx.theme().status().created_background)
+                );
+            })
+            .unwrap();
+    }
+
+    // Test case 4: Multiple lines with edits
+    {
+        let window = cx.add_window(|cx| {
+            let buffer =
+                MultiBuffer::build_simple("First line\nSecond line\nThird line\nFourth line", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edits = vec![
+                    (
+                        snapshot.buffer_snapshot.anchor_before(Point::new(1, 7))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(1, 11)),
+                        "modified".to_string(),
+                    ),
+                    (
+                        snapshot.buffer_snapshot.anchor_before(Point::new(2, 0))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(2, 10)),
+                        "New third line".to_string(),
+                    ),
+                    (
+                        snapshot.buffer_snapshot.anchor_before(Point::new(3, 6))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(3, 6)),
+                        " updated".to_string(),
+                    ),
+                ];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "Second modified\nNew third line\nFourth updated line");
+                assert_eq!(highlights.len(), 3);
+                assert_eq!(highlights[0].0, 7..15); // "modified"
+                assert_eq!(highlights[1].0, 16..30); // "New third line"
+                assert_eq!(highlights[2].0, 37..45); // " updated"
+
+                for highlight in &highlights {
+                    assert_eq!(
+                        highlight.1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                }
+            })
+            .unwrap();
+    }
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
