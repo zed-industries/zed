@@ -1118,6 +1118,33 @@ impl DiffMapSnapshot {
         diff_start + DiffPoint(multibuffer_point - multibuffer_start)
     }
 
+    pub fn compare_anchors(&self, a: &DisplayAnchor, b: &DisplayAnchor) -> std::cmp::Ordering {
+        let buffer_cmp = a.anchor.cmp(&b.anchor, self.buffer());
+        if buffer_cmp != std::cmp::Ordering::Equal {
+            return buffer_cmp;
+        }
+
+        match (a.diff_base_anchor.is_some(), b.diff_base_anchor.is_some()) {
+            (false, true) => return std::cmp::Ordering::Greater,
+            (true, false) => return std::cmp::Ordering::Less,
+            (false, false) => return std::cmp::Ordering::Equal,
+            (true, true) => {}
+        }
+
+        let diff_anchor_a = a.diff_base_anchor.unwrap();
+        let diff_anchor_b = b.diff_base_anchor.unwrap();
+
+        if diff_anchor_a.buffer_id != diff_anchor_b.buffer_id {
+            return std::cmp::Ordering::Equal;
+        }
+
+        let Some(diff_base_snapshot) = self.diffs.get(diff_anchor_a.buffer_id) else {
+            return std::cmp::Ordering::Equal;
+        };
+
+        diff_anchor_a.cmp(&diff_anchor_b, &diff_base_snapshot.base_text)
+    }
+
     pub fn to_multibuffer_offset(&self, offset: DiffOffset) -> usize {
         let mut cursor = self.transforms.cursor::<(DiffOffset, usize)>(&());
         cursor.seek(&offset, Bias::Right, &());

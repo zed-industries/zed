@@ -1453,6 +1453,10 @@ impl DisplayAnchor {
             diff_base_anchor: None,
         }
     }
+
+    pub fn cmp(&self, other: &DisplayAnchor, map: &DisplaySnapshot) -> std::cmp::Ordering {
+        map.diff_snapshot().compare_anchors(self, other)
+    }
 }
 
 pub trait DisplayCoordinate {
