@@ -108,7 +108,6 @@ pub fn init(cx: &mut AppContext) {
 
                     workspace.toggle_panel_focus::<AssistantPanel>(cx);
                 })
-                .register_action(AssistantPanel::inline_assist)
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
                 .register_action(ContextEditor::copy_code)
