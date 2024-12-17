@@ -126,7 +126,7 @@ impl RenderOnce for PastThread {
                     .color(Color::Muted),
             )
             .spacing(ListItemSpacing::Sparse)
-            .child(Label::new(summary).size(LabelSize::Small))
+            .child(Label::new(summary).size(LabelSize::Small).text_ellipsis())
             .end_slot(
                 h_flex()
                     .gap_2()
