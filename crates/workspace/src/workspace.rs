@@ -177,14 +177,14 @@ pub struct SwapPaneInDirection(pub SplitDirection);
 pub struct MoveItemToPane {
     pub destination: usize,
     #[serde(default = "default_true")]
-    pub focus_destination: bool,
+    pub focus: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
-    pub focus_destination: bool,
+    pub focus: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -2851,13 +2851,7 @@ impl Workspace {
         let Some(target_pane) = panes.get(action.destination).map(|p| (*p).clone()) else {
             return;
         };
-        move_active_item(
-            &source_pane,
-            &target_pane,
-            action.focus_destination,
-            true,
-            cx,
-        );
+        move_active_item(&source_pane, &target_pane, action.focus, true, cx);
     }
 
     pub fn activate_next_pane(&mut self, cx: &mut WindowContext) {
@@ -2985,7 +2979,7 @@ impl Workspace {
     ) {
         if let Some(destination) = self.find_pane_in_direction(action.direction, cx) {
             let source = self.active_pane.clone();
-            move_active_item(&source, &destination, action.focus_destination, true, cx);
+            move_active_item(&source, &destination, action.focus, true, cx);
         }
     }
 

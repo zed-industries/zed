@@ -1236,18 +1236,11 @@ impl Render for TerminalPanel {
                 )
                 .on_action(cx.listener(|terminal_panel, action: &MoveItemToPane, cx| {
                     let panes = terminal_panel.center.panes();
-                    let Some(target_pane) = panes.get(action.destination).map(|p| (*p).clone())
-                    else {
+                    let Some(&target_pane) = panes.get(action.destination) else {
                         return;
                     };
                     let source_pane = terminal_panel.active_pane.clone();
-                    move_active_item(
-                        &source_pane,
-                        &target_pane,
-                        action.focus_destination,
-                        true,
-                        cx,
-                    );
+                    move_active_item(&source_pane, target_pane, action.focus, true, cx);
                 }))
                 .on_action(cx.listener(
                     |terminal_panel, action: &MoveItemToPaneInDirection, cx| {
@@ -1260,7 +1253,7 @@ impl Render for TerminalPanel {
                             move_active_item(
                                 &source_pane,
                                 &destination_pane,
-                                action.focus_destination,
+                                action.focus,
                                 true,
                                 cx,
                             );
