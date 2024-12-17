@@ -11334,6 +11334,16 @@ impl Editor {
         }
     }
 
+    pub fn copy_file_name(&mut self, _: &CopyFileName, cx: &mut ViewContext<Self>) {
+        if let Some(file) = self.target_file(cx) {
+            if let Some(file_stem) = file.path().file_stem() {
+                if let Some(name) = file_stem.to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                }
+            }
+        }
+    }
+
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
         self.show_git_blame_gutter = !self.show_git_blame_gutter;
 
