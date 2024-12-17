@@ -723,8 +723,6 @@ impl TerminalPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Model<Terminal>>> {
         let workspace = self.workspace.clone();
-        self.pending_terminals_to_add += 1;
-
         cx.spawn(|terminal_panel, mut cx| async move {
             if workspace.update(&mut cx, |workspace, cx| {
                 !is_enabled_in_workspace(workspace, cx)
@@ -752,10 +750,6 @@ impl TerminalPanel {
                         cx,
                     )
                 }));
-                pane.update(cx, |pane, cx| {
-                    let focus = pane.has_focus(cx);
-                    pane.add_item(terminal_view, true, focus, None, cx);
-                });
 
                 match reveal_strategy {
                     RevealStrategy::Always => {
@@ -766,6 +760,13 @@ impl TerminalPanel {
                     }
                     RevealStrategy::Never => {}
                 }
+
+                pane.update(cx, |pane, cx| {
+                    let focus =
+                        pane.has_focus(cx) || matches!(reveal_strategy, RevealStrategy::Always);
+                    pane.add_item(terminal_view, true, focus, None, cx);
+                });
+
                 Ok(terminal)
             })?;
             terminal_panel.update(&mut cx, |this, cx| {
