@@ -241,7 +241,16 @@ fn update_vim_mode_indicator_position(
                 status_bar.remove_item_at(mode_indicator_position, cx);
                 match new_location {
                     Some(ModeIndicatorLocation::Left) => {
-                        status_bar.add_left_item(vim_mode_indicator, cx)
+                        if let (Some(diagnostics_indicator), Some(diagnostics_indicator_position)) =
+                            (status_bar.item_of_type::<diagnostics::items::DiagnosticIndicator>(),
+                                status_bar.position_of_item::<diagnostics::items::DiagnosticIndicator>())
+                            {
+                                status_bar.remove_item_at(diagnostics_indicator_position, cx);
+                                status_bar.add_left_item(vim_mode_indicator, cx);
+                                status_bar.add_left_item(diagnostics_indicator, cx);
+                            } else {
+                                status_bar.add_left_item(vim_mode_indicator, cx)
+                            }
                     }
                     Some(ModeIndicatorLocation::Right) | None => {
                         status_bar.add_right_item(vim_mode_indicator, cx)
