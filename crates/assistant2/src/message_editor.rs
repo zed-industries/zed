@@ -15,7 +15,7 @@ use ui::{
 use workspace::Workspace;
 
 use crate::assistant_settings::AssistantSettings;
-use crate::context_picker::ContextPicker;
+use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::context_strip::ContextStrip;
 use crate::thread::{RequestKind, Thread};
@@ -60,6 +60,7 @@ impl MessageEditor {
                 workspace.clone(),
                 Some(thread_store.clone()),
                 context_store.downgrade(),
+                ConfirmBehavior::Close,
                 cx,
             )
         });
