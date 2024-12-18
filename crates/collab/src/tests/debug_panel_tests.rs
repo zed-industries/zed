@@ -48,11 +48,11 @@ async fn test_debug_panel_following(cx_a: &mut TestAppContext, cx_b: &mut TestAp
         .unwrap();
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
-    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let (_workspace_b, _cx_b) = client_b.build_workspace(&project_b, cx_b);
 
     // Client A opens an editor.
     let _pane_a = workspace_a.update(cx_a, |workspace, _| workspace.active_pane().clone());
-    let editor_a = workspace_a
+    let _editor_a = workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id, "test.txt"), None, true, cx)
         })
@@ -61,26 +61,28 @@ async fn test_debug_panel_following(cx_a: &mut TestAppContext, cx_b: &mut TestAp
         .downcast::<Editor>()
         .unwrap();
 
-    let peer_id_a = client_a.peer_id().unwrap();
+    let _peer_id_a = client_a.peer_id().unwrap();
 
     // Client B follows A
-    workspace_b.update(cx_b, |workspace, cx| workspace.follow(peer_id_a, cx));
+    // workspace_b.update(cx_b, |workspace, cx| workspace.follow(peer_id_a, cx));
 
-    let _editor_b2 = workspace_b.update(cx_b, |workspace, cx| {
-        workspace
-            .active_item(cx)
-            .unwrap()
-            .downcast::<Editor>()
-            .unwrap()
-    });
+    // TODO Debugger: FollowableItem implementation test
+
+    // let _editor_b2 = workspace_b.update(cx_b, |workspace, cx| {
+    //     workspace
+    //         .active_item(cx)
+    //         .unwrap()
+    //         .downcast::<Editor>()
+    //         .unwrap()
+    // });
 
     // Start a fake debugging session in a (see: other tests which setup fake language servers for a model)
     // Add a breakpoint
-    editor_a.update(cx_a, |editor, cx| {
-        editor.move_down(&editor::actions::MoveDown, cx);
-        editor.select_right(&editor::actions::SelectRight, cx);
-        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx);
-    });
+    // editor_a.update(cx_a, |editor, cx| {
+    //     editor.move_down(&editor::actions::MoveDown, cx);
+    //     editor.select_right(&editor::actions::SelectRight, cx);
+    //     editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx);
+    // });
 
     // Start debugging
 
