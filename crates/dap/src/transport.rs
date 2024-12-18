@@ -809,6 +809,8 @@ impl Transport for FakeTransport {
         _binary: &DebugAdapterBinary,
         cx: &mut AsyncAppContext,
     ) -> Result<TransportPipe> {
+        use serde_json::json;
+
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
 
@@ -837,7 +839,7 @@ impl Transport for FakeTransport {
                         {
                             handle(
                                 request.seq,
-                                request.arguments.unwrap(),
+                                request.arguments.unwrap_or(json!({})),
                                 stdout_writer.clone(),
                             )
                             .await;

@@ -431,6 +431,62 @@ impl DapStore {
         })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn start_test_client(
+        &mut self,
+        config: DebugAdapterConfig,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Arc<DebugAdapterClient>>> {
+        use task::DebugAdapterKind;
+
+        let client_id = self.next_client_id();
+
+        cx.spawn(|this, mut cx| async move {
+            let adapter = build_adapter(&DebugAdapterKind::Fake).await?;
+
+            let mut client = DebugAdapterClient::new(
+                client_id,
+                config,
+                adapter,
+                DebugAdapterBinary {
+                    command: "command".into(),
+                    arguments: None,
+                    envs: None,
+                    cwd: None,
+                },
+                &cx,
+            );
+
+            client
+                .start(
+                    {
+                        let dap_store = this.clone();
+                        move |message, cx| {
+                            dap_store
+                                .update(cx, |_, cx| {
+                                    cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
+                                })
+                                .log_err();
+                        }
+                    },
+                    &mut cx,
+                )
+                .await?;
+
+            let client = Arc::new(client);
+
+            this.update(&mut cx, |store, cx| {
+                store
+                    .clients
+                    .insert(client_id, DebugAdapterClientState::Running(client.clone()));
+
+                cx.emit(DapStoreEvent::DebugClientStarted(client_id));
+
+                client
+            })
+        })
+    }
+
     pub fn start_client_from_debug_config(
         &mut self,
         config: DebugAdapterConfig,

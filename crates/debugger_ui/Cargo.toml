@@ -8,6 +8,15 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+test-support = [
+    "dap/test-support",
+    "editor/test-support",
+    "gpui/test-support",
+    "project/test-support",
+    "workspace/test-support",
+]
+
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
@@ -34,7 +43,10 @@ ui.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
+dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

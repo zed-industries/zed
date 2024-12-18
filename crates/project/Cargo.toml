@@ -21,6 +21,8 @@ test-support = [
     "prettier/test-support",
     "worktree/test-support",
     "gpui/test-support",
+    "dap/test-support",
+    "dap_adapters/test-support",
 ]
 
 [dependencies]
@@ -78,17 +80,19 @@ fancy-regex.workspace = true
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
+dap = { workspace = true, features = ["test-support"] }
+dap_adapters = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 git2.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
-release_channel.workspace = true
 lsp = { workspace = true, features = ["test-support"] }
 prettier = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-worktree = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
+worktree = { workspace = true, features = ["test-support"] }

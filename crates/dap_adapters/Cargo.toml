@@ -34,3 +34,4 @@ util.workspace = true
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
