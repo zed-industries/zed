@@ -108,10 +108,6 @@ pub fn init_panic_hook(
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace: symbols,
-            backtrace_ips: backtrace
-                .iter()
-                .map(|frame| frame.ip() - main_module_base_address)
-                .collect(),
             system_id: system_id.clone(),
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),

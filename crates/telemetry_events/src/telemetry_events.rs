@@ -265,7 +265,6 @@ pub struct Panic {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location_data: Option<LocationData>,
     pub backtrace: Vec<String>,
-    pub backtrace_ips: Vec<usize>,
     /// Zed version number
     pub app_version: String,
     /// Zed release channel (stable, preview, dev)
