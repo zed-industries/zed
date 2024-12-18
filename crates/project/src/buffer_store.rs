@@ -1249,7 +1249,7 @@ impl BufferStore {
 
                 let path = match repo_entry.relativize(worktree, file.path()) {
                     Ok(RepoPath(path)) => path,
-                    Err(e) => return Task::ready(Err(e.into())),
+                    Err(e) => return Task::ready(Err(e)),
                 };
 
                 cx.spawn(|cx| async move {
