@@ -1,3 +1,6 @@
+use std::ffi::CStr;
+
+use backtrace::Backtrace;
 use gpui::*;
 use prelude::FluentBuilder as _;
 
@@ -91,7 +94,7 @@ impl Render for WindowDemo {
             }))
             .child(button("Popup", move |cx| {
                 let s = "a";
-                dbg!(s[3]);
+                dbg!(&s[3..4]);
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
@@ -168,8 +171,9 @@ impl Render for WindowDemo {
 }
 
 fn main() {
-    panic::set_hook(Box::new(move |info| {
-        let thread = thread::current();
+    std::panic::set_hook(Box::new(move |info| {
+        dbg!("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+        let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("<unnamed>");
 
         let payload = info
@@ -190,73 +194,36 @@ fn main() {
             location.column(),
             backtrace,
         );
-        std::process::exit(-1);
 
         let backtrace = Backtrace::new();
-        let mut backtrace = backtrace
-            .frames()
-            .iter()
-            .flat_map(|frame| {
-                frame.symbols().iter().filter_map(|frame| {
-                    Some(format!(
-                        "{:#} {:#x} {:#x}",
-                        frame.name()?,
-                        frame.ip().unwrap_or_default(),
-                        frame.module_base_address().unwrap_or_default()
-                    ))
-                })
-            })
-            .collect::<Vec<_>>();
-
-        // Strip out leading stack frames for rust panic-handling.
-        if let Some(ix) = backtrace
-            .iter()
-            .position(|name| name == "rust_begin_unwind" || name == "_rust_begin_unwind")
-        {
-            backtrace.drain(0..=ix);
-        }
-
-        let panic_data = telemetry_events::Panic {
-            thread: thread_name.into(),
-            payload,
-            location_data: info.location().map(|location| LocationData {
-                file: location.file().into(),
-                line: location.line(),
-            }),
-            app_version: app_version.to_string(),
-            release_channel: RELEASE_CHANNEL.display_name().into(),
-            os_name: telemetry::os_name(),
-            os_version: Some(telemetry::os_version()),
-            architecture: env::consts::ARCH.into(),
-            panicked_on: Utc::now().timestamp_millis(),
-            backtrace,
-            system_id: system_id.clone(),
-            installation_id: installation_id.clone(),
-            session_id: session_id.clone(),
-        };
-
-        if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
-            log::error!("{}", panic_data_json);
-        }
-
-        if !is_pty {
-            if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
-                let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-                let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
-                let panic_file = std::fs::OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(&panic_file_path)
-                    .log_err();
-                if let Some(mut panic_file) = panic_file {
-                    writeln!(&mut panic_file, "{panic_data_json}").log_err();
-                    panic_file.flush().log_err();
-                }
-            }
+        for frame in backtrace.frames() {
+            let mut dl_info = libc::Dl_info {
+                dli_sname: std::ptr::null_mut(),
+                dli_fname: std::ptr::null_mut(),
+                dli_fbase: std::ptr::null_mut(),
+                dli_saddr: std::ptr::null_mut(),
+            };
+            let ret = unsafe { libc::dladdr(frame.ip(), &mut dl_info) };
+            eprintln!(
+                "Base: {:p}, IP: {:p}, Saddr: {:p}, Ret: {}, Symbols: {}",
+                // unsafe { CStr::from_ptr(dl_info.dli_fname).to_string_lossy() },
+                // unsafe { CStr::from_ptr(dl_info.dli_sname).to_string_lossy() },
+                dl_info.dli_fbase,
+                frame.ip(),
+                dl_info.dli_saddr,
+                ret,
+                frame
+                    .symbols()
+                    .iter()
+                    .map(|s| format!("{:?}", s))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
         }
 
         std::process::abort();
     }));
+
     App::new().run(|cx: &mut AppContext| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(
