@@ -69,25 +69,29 @@ pub fn init_panic_hook(
             );
             std::process::exit(-1);
         }
+        let main_module_base_address = unsafe { get_main_module_base_address() };
 
         let backtrace = Backtrace::new();
-        let mut backtrace = backtrace
+        let mut symbols = backtrace
             .frames()
             .iter()
             .flat_map(|frame| {
-                frame
-                    .symbols()
-                    .iter()
-                    .filter_map(|frame| Some(format!("{:#}", frame.name()?)))
+                frame.symbols().iter().filter_map(|symbol| {
+                    Some(format!(
+                        "{:#}+{}",
+                        symbol.name()?,
+                        (frame.ip() as u64).saturating_sub(main_module_base_address)
+                    ))
+                })
             })
             .collect::<Vec<_>>();
 
         // Strip out leading stack frames for rust panic-handling.
-        if let Some(ix) = backtrace
+        if let Some(ix) = symbols
             .iter()
             .position(|name| name == "rust_begin_unwind" || name == "_rust_begin_unwind")
         {
-            backtrace.drain(0..=ix);
+            symbols.drain(0..=ix);
         }
 
         let panic_data = telemetry_events::Panic {
@@ -103,7 +107,11 @@ pub fn init_panic_hook(
             os_version: Some(telemetry::os_version()),
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
-            backtrace,
+            backtrace: symbols,
+            backtrace_ips: backtrace
+                .iter()
+                .map(|frame| frame.ip() - main_module_base_address)
+                .collect(),
             system_id: system_id.clone(),
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),
@@ -131,6 +139,17 @@ pub fn init_panic_hook(
 
         std::process::abort();
     }));
+}
+
+unsafe fn get_main_module_base_address() -> u64 {
+    let mut dl_info = libc::Dl_info {
+        dli_sname: std::ptr::null_mut(),
+        dli_fname: std::ptr::null_mut(),
+        dli_fbase: std::ptr::null_mut(),
+        dli_saddr: std::ptr::null_mut(),
+    };
+    unsafe { libc::dladdr(get_main_module_base_address as _, &mut dl_info) };
+    dl_info.dli_fbase as u64
 }
 
 pub fn init(
