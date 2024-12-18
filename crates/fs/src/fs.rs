@@ -2041,15 +2041,29 @@ async fn write_to_file_as_root(_temp_file_path: &Path, _target_file_path: &Path)
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 async fn write_to_file_as_root(temp_file_path: &Path, target_file_path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
     use which::which;
 
     let pkexec_path = which("pkexec").map_err(|_| anyhow::anyhow!("pkexec not found in PATH"))?;
 
+    let script_file = tempfile::Builder::new()
+        .prefix("write-to-file-as-root-")
+        .tempfile_in(paths::temp_dir())?;
+
+    writeln!(
+        script_file.as_file(),
+        "#!/usr/bin/env bash\ncat \"{}\" > \"{}\"",
+        temp_file_path.display(),
+        target_file_path.display()
+    )?;
+
+    let mut perms = script_file.as_file().metadata()?.permissions();
+    perms.set_mode(0o700); // rwx------
+    script_file.as_file().set_permissions(perms)?;
+
     let output = Command::new(&pkexec_path)
         .arg("--disable-internal-agent")
-        .arg("tee")
-        .arg(target_file_path)
-        .stdin(std::fs::File::open(temp_file_path)?)
+        .arg(script_file.path())
         .output()
         .await?;
 
