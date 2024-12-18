@@ -2048,28 +2048,30 @@ async fn execute_elevated_command(_command: &str) -> Result<()> {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 async fn execute_elevated_command(command: &str) -> Result<()> {
-    let pkexec_path = Path::new("/usr/bin/pkexec");
+    use which::which;
 
-    if !pkexec_path.exists() {
-        return Err(anyhow::anyhow!(
-            "pkexec not found at {}",
-            pkexec_path.display()
-        ));
-    }
+    let pkexec_path = which("pkexec").map_err(|_| anyhow::anyhow!("pkexec not found in PATH"))?;
 
     let mut cmd = Command::new(pkexec_path);
     cmd.arg("--disable-internal-agent");
 
-    let script_path = PathBuf::from("/usr/libexec/zed/elevate.sh");
-    if script_path.exists() {
+    let script_paths = [
+        Some(PathBuf::from("/usr/libexec/zed/elevate.sh")),
+        std::env::var("ZED_ELEVATE_SCRIPT").ok().map(PathBuf::from),
+    ];
+
+    let script_exists = script_paths.iter().flatten().find(|path| path.exists());
+
+    if let Some(script_path) = script_exists {
         // Custom message will be shown to user
-        cmd.arg(&script_path).arg(command);
+        cmd.arg(script_path).arg(command);
     } else {
         // Default message will be shown to user
-        cmd.arg("/bin/bash").arg("-c").arg(command);
+        cmd.arg("/usr/bin/env").arg("bash").arg("-c").arg(command);
     }
 
     let output = cmd.output().await?;
+
     if output.status.success() {
         return Ok(());
     }

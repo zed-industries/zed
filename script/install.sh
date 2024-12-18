@@ -134,7 +134,10 @@ setup_polkit() {
     # Check if polkit is installed
     if ! command -v pkexec >/dev/null 2>&1; then
         echo
-        echo "Note: 'pkexec' not detected. You won't be able to edit root files in Zed."
+        echo "Note: 'pkexec' not detected. You won't be able to edit files owned by root in Zed."
+        echo
+        echo "Warning: Do NOT run Zed directly with sudo. Doing so may cause files to become unusable, which requires manual fixing."
+        echo
         echo "See https://zed.dev/docs/linux#root for more information."
         echo
         return 0
@@ -142,8 +145,7 @@ setup_polkit() {
 
     # Prompt user
     echo
-    echo "Zed needs sudo access to improve root file editing experience."
-    printf "Configure polkit? [Y/n] "
+    printf "Configure polkit to allow Zed to request elevated permissions when editing files owned by root? [Y/n] "
     read -r response
     response=${response:-Y} # Default to Yes if empty
     echo
@@ -162,7 +164,7 @@ eval "$@"'
 "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
 "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <policyconfig>
-  <action id="org.zed.app">
+  <action id="dev.zed.Zed">
     <description>Run Zed with elevated privileges</description>
     <message>Zed needs temporary elevated access to make changes. Please enter your password.</message>
     <defaults>
@@ -179,15 +181,15 @@ eval "$@"'
                 echo "$ELEVATE_SCRIPT_CONTENT" | sudo tee "$ELEVATE_SCRIPT" > /dev/null && \
                 sudo chmod 755 "$ELEVATE_SCRIPT" && \
                 sudo mkdir -p "$POLKIT_DIR" && \
-                echo "$POLICY_CONTENT" | sudo tee "$POLKIT_DIR/org.zed.app.policy" > /dev/null && \
-                sudo chmod 644 "$POLKIT_DIR/org.zed.app.policy"; then
-                echo "Successfully installed Zed polkit configuration"
+                echo "$POLICY_CONTENT" | sudo tee "$POLKIT_DIR/dev.zed.Zed.policy" > /dev/null && \
+                sudo chmod 644 "$POLKIT_DIR/dev.zed.Zed.policy"; then
+                echo "Successfully configured polkit for Zed"
             else
-                echo "Failed to install Zed polkit configuration"
+                echo "Failed to configure polkit for Zed"
             fi
             ;;
         *)
-            echo "Skipping polkit configuration"
+            echo "Skipping"
             ;;
     esac
 
