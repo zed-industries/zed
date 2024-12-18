@@ -24,8 +24,16 @@ use language::{
     Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
 };
 use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
+use serde::Deserialize;
 use smol::channel::Receiver;
-use std::{io, ops::Range, path::Path, str::FromStr as _, sync::Arc, time::Instant};
+use std::{
+    io,
+    ops::Range,
+    path::{Path, PathBuf},
+    str::FromStr as _,
+    sync::Arc,
+    time::Instant,
+};
 use text::{BufferId, LineEnding, Rope};
 use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
 use worktree::{File, PathChange, ProjectEntryId, UpdatedGitRepositoriesSet, Worktree, WorktreeId};
@@ -1215,7 +1223,23 @@ impl BufferStore {
             Worktree::Local(worktree) => {
                 let worktree_path = worktree.abs_path().clone();
                 let Some(repo) = worktree.local_git_repo(file.path()) else {
-                    return Task::ready(Err(anyhow!("no repository for buffer found")));
+                    // If we're not in a Git repo, check whether this is a Rust source
+                    // file in the Cargo registry (presumably opened with go-to-definition
+                    // from a normal Rust file). If so, we can put together a permalink
+                    // using crate metadata.
+                    if !buffer
+                        .language()
+                        .is_some_and(|lang| lang.name() == "Rust".into())
+                    {
+                        return Task::ready(Err(anyhow!("No permalink available")));
+                    }
+                    let file_path = worktree_path.join(file.path());
+                    return cx.spawn(|cx| async move {
+                        let provider_registry =
+                            cx.update(GitHostingProviderRegistry::default_global)?;
+                        get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
+                            .map_err(|_| anyhow!("No permalink available"))
+                    });
                 };
 
                 let path = file.path().clone();
@@ -1238,20 +1262,20 @@ impl BufferStore {
                             .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
                     let dot_git_dir = repo.path();
-                    let Some(git_dir) = dot_git_dir.parent() else {
-                        bail!("unexpected bare Git repository");
-                    };
+                    let git_dir = dot_git_dir
+                        .parent()
+                        .expect("Unexpected bare Git repository");
                     let path = if let Ok(segment) = worktree_path.strip_prefix(git_dir) {
                         &segment.join(path)
                     } else if let Ok(segment) = git_dir.strip_prefix(worktree_path) {
                         path.strip_prefix(segment)
-                            .map_err(|_| anyhow!("file is not a descendant of Git repo dir"))?
+                            .expect("File is not a descendant of Git repo dir")
                     } else {
-                        bail!("worktree dir and Git repo dir are cousins")
+                        panic!("Worktree dir and Git repo dir are cousins")
                     };
                     let path = path
                         .to_str()
-                        .context("failed to convert buffer path to string")?;
+                        .context("Failed to convert buffer path to string")?;
 
                     Ok(provider.build_permalink(
                         remote,
@@ -2444,4 +2468,53 @@ fn deserialize_blame_buffer_response(
         messages,
         remote_url: response.remote_url,
     })
+}
+
+fn get_permalink_in_rust_registry_src(
+    provider_registry: Arc<GitHostingProviderRegistry>,
+    path: PathBuf,
+    selection: Range<u32>,
+) -> Result<url::Url> {
+    #[derive(Deserialize)]
+    struct CargoVcsGit {
+        sha1: String,
+    }
+
+    #[derive(Deserialize)]
+    struct CargoVcsInfo {
+        git: CargoVcsGit,
+        path_in_vcs: String,
+    }
+
+    #[derive(Deserialize)]
+    struct CargoPackage {
+        repository: String,
+    }
+
+    #[derive(Deserialize)]
+    struct CargoToml {
+        package: CargoPackage,
+    }
+
+    let Some((dir, cargo_vcs_info_json)) = path.ancestors().skip(1).find_map(|dir| {
+        let json = std::fs::read_to_string(dir.join(".cargo_vcs_info.json")).ok()?;
+        Some((dir, json))
+    }) else {
+        bail!("No .cargo_vcs_info.json found in parent directories")
+    };
+    let cargo_vcs_info = serde_json::from_str::<CargoVcsInfo>(&cargo_vcs_info_json)?;
+    let cargo_toml = std::fs::read_to_string(dir.join("Cargo.toml"))?;
+    let manifest = toml::from_str::<CargoToml>(&cargo_toml)?;
+    let (provider, remote) = parse_git_remote_url(provider_registry, &manifest.package.repository)
+        .ok_or_else(|| anyhow!("Failed to parse package.repository field of manifest"))?;
+    let path = PathBuf::from(cargo_vcs_info.path_in_vcs).join(path.strip_prefix(dir).unwrap());
+    let permalink = provider.build_permalink(
+        remote,
+        BuildPermalinkParams {
+            sha: &cargo_vcs_info.git.sha1,
+            path: &path.to_string_lossy(),
+            selection: Some(selection),
+        },
+    );
+    Ok(permalink)
 }
