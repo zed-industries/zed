@@ -2283,6 +2283,7 @@ impl EditorElement {
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
                 let mut result = v_flex().id(block_id).w_full();
+                let focus_handle = self.editor.focus_handle(cx).clone();
 
                 if let Some(prev_excerpt) = prev_excerpt {
                     if *show_excerpt_controls {
@@ -2307,6 +2308,17 @@ impl EditorElement {
                                         editor.expand_excerpt(excerpt_id, direction, cx);
                                     }
                                 })),
+                            // .tooltip({
+                            //     let focus_handle = focus_handle.clone();
+                            //     move |cx| {
+                            //         Tooltip::for_action_in(
+                            //             "Expand Excerpt",
+                            //             &ExpandExcerpts { lines: 0 },
+                            //             &focus_handle,
+                            //             cx,
+                            //         )
+                            //     }
+                            // }),
                         );
                     }
                 }
@@ -2335,65 +2347,105 @@ impl EditorElement {
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
                 let header_height = MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * cx.line_height();
                 let color = cx.theme().colors().clone();
-                let mut result = v_flex().id(block_id).w_full();
+                let focus_handle = self.editor.focus_handle(cx).clone();
+
+                let mut result = v_flex().id(block_id).w_full().debug_bg_cyan();
+
+                let expand_area = || {
+                    h_flex()
+                        .id("expand_hit_area")
+                        .relative()
+                        .w_full()
+                        .cursor_pointer()
+                        // .debug_bg_blue()
+                        .hover(|style| style.bg(color.border_variant.opacity(0.5)))
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |cx| {
+                                Tooltip::for_action_in(
+                                    "Expand Excerpt",
+                                    &ExpandExcerpts { lines: 0 },
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }
+                        })
+                };
 
                 if let Some(prev_excerpt) = prev_excerpt {
+                    // let focus_handle = self.editor.focus_handle(cx).clone();
+
                     if *show_excerpt_controls {
                         result = result.child(
-                            h_flex()
-                                .id("expand_down_hit_area")
-                                // .group("expand_down_hit_area")
-                                .w(icon_offset)
-                                .h(header_height)
-                                .flex_none()
-                                .justify_end()
-                                .hover(|style| style.bg(color.border_variant.opacity(0.5)))
-                                .child(self.render_expand_excerpt_button(
-                                    // prev_excerpt.id,
-                                    // ExpandExcerptDirection::Down,
-                                    IconName::ArrowDownFromLine,
-                                    None,
-                                    cx,
-                                ))
+                            expand_area()
+                                .child(
+                                    h_flex()
+                                        // .group("expand_down_hit_area")
+                                        .w(icon_offset)
+                                        .h(header_height)
+                                        .flex_none()
+                                        .justify_end()
+                                        .child(self.render_expand_excerpt_button(
+                                            // prev_excerpt.id,
+                                            // ExpandExcerptDirection::Down,
+                                            IconName::ArrowDownFromLine,
+                                            None,
+                                            cx,
+                                        )),
+                                )
                                 .on_click(cx.listener_for(&self.editor, {
                                     let excerpt_id = prev_excerpt.id;
                                     let direction = ExpandExcerptDirection::Down;
                                     move |editor, _, cx| {
                                         editor.expand_excerpt(excerpt_id, direction, cx);
                                     }
-                                })),
+                                })), // .tooltip({
+                                     //     let focus_handle = focus_handle.clone();
+                                     //     move |cx| {
+                                     //         Tooltip::for_action_in(
+                                     //             "Expand Excerpt",
+                                     //             &ExpandExcerpts { lines: 0 },
+                                     //             &focus_handle,
+                                     //             cx,
+                                     //         )
+                                     //     }
+                                     // }),
                         );
                     }
                 }
 
                 if let Some(next_excerpt) = next_excerpt {
                     let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt, cx);
+                    // let focus_handle = self.editor.focus_handle(cx).clone();
 
                     if *starts_new_buffer {
-                        result = result.child(self.render_buffer_header(
+                        result = result.child(expand_area().child(self.render_buffer_header(
                             next_excerpt,
                             header_padding,
                             false,
                             false,
                             jump_data,
                             cx,
-                        ));
+                        )));
+
                         if *show_excerpt_controls {
                             result = result.child(
-                                h_flex()
-                                    .id("expand_up_hit_area")
-                                    .w(icon_offset)
+                                expand_area()
                                     .h(header_height)
-                                    .flex_none()
-                                    .justify_end()
-                                    .hover(|style| style.bg(color.border_variant.opacity(0.5)))
-                                    .child(self.render_expand_excerpt_button(
-                                        // next_excerpt.id,
-                                        // ExpandExcerptDirection::Up,
-                                        IconName::ArrowUpFromLine,
-                                        None,
-                                        cx,
-                                    ))
+                                    .child(
+                                        h_flex()
+                                            .w(icon_offset)
+                                            .h(header_height)
+                                            .flex_none()
+                                            .justify_end()
+                                            .child(self.render_expand_excerpt_button(
+                                                // next_excerpt.id,
+                                                // ExpandExcerptDirection::Up,
+                                                IconName::ArrowUpFromLine,
+                                                None,
+                                                cx,
+                                            )),
+                                    )
                                     .on_click(cx.listener_for(&self.editor, {
                                         let excerpt_id = next_excerpt.id;
                                         let direction = ExpandExcerptDirection::Up;
@@ -2405,18 +2457,15 @@ impl EditorElement {
                         }
                     } else {
                         let editor = self.editor.clone();
-                        let focus_handle = self.editor.focus_handle(cx).clone();
+                        // let focus_handle = self.editor.focus_handle(cx).clone();
                         let id_group_name = "expand-excerpt-hit-space";
 
                         result = result.child(
-                            h_flex()
-                                .id(id_group_name)
+                            expand_area()
+                                // .id(id_group_name)
                                 // .group("excerpt-jump-action")
-                                .cursor_pointer()
-                                .relative()
-                                .justify_start()
-                                .w_full()
-                                .h(header_height)
+                                // .h(header_height)
+                                // .justify_start()
                                 .child(
                                     div()
                                         .top(px(0.))
@@ -2430,14 +2479,10 @@ impl EditorElement {
                                 )
                                 .child(
                                     h_flex()
-                                        .id(id_group_name)
-                                        .group(id_group_name)
                                         .w(icon_offset)
                                         .h(header_height)
                                         .flex_none()
                                         .justify_end()
-                                        // .debug_bg_red()
-                                        .hover(|style| style.bg(color.border_variant.opacity(0.5)))
                                         .child(if *show_excerpt_controls {
                                             self.render_expand_excerpt_button(
                                                 // next_excerpt.id,
@@ -2458,87 +2503,86 @@ impl EditorElement {
                                                             style.text_color(color.border)
                                                         }),
                                                 )
-                                        })
-                                        .on_click(cx.listener_for(&self.editor, {
-                                            let excerpt_id = next_excerpt.id;
-                                            let direction = ExpandExcerptDirection::Up;
-                                            move |editor, _, cx| {
-                                                editor.expand_excerpt(excerpt_id, direction, cx);
-                                            }
-                                        }))
-                                        .tooltip({
-                                            let focus_handle = focus_handle.clone();
-                                            move |cx| {
-                                                Tooltip::for_action_in(
-                                                    "Expand Excerpt",
-                                                    &ExpandExcerpts { lines: 0 },
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                            }
                                         }),
                                 )
-                                .child(
-                                    div()
-                                        .id("jump-to-location-hit-space")
-                                        .size_full()
-                                        .hover(|style| style.bg(color.border_variant.opacity(0.3)))
-                                        // .debug_bg_blue()
-                                        .on_click({
-                                            let jump_data = jump_data.clone();
-                                            cx.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, cx| {
-                                                    cx.stop_propagation();
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.down.modifiers.secondary(),
-                                                        cx,
-                                                    );
-                                                }
-                                            })
-                                        })
-                                        .tooltip({
-                                            let jump_data = jump_data.clone();
-                                            move |cx| {
-                                                let jump_location = format!(
-                                                    "{}:L{}",
-                                                    match &jump_data.path {
-                                                        Some(project_path) =>
-                                                            project_path.path.display().to_string(),
-                                                        None => {
-                                                            let editor = editor.read(cx);
-                                                            editor
-                                                                .file_at(jump_data.position, cx)
-                                                                .map(|file| {
-                                                                    file.full_path(cx)
-                                                                        .display()
-                                                                        .to_string()
-                                                                })
-                                                                .or_else(|| {
-                                                                    Some(
-                                                                        editor
-                                                                            .tab_description(0, cx)?
-                                                                            .to_string(),
-                                                                    )
-                                                                })
-                                                                .unwrap_or_else(|| {
-                                                                    "Unknown buffer".to_string()
-                                                                })
-                                                        }
-                                                    },
-                                                    jump_data.position.row + 1
-                                                );
-                                                Tooltip::with_meta_in(
-                                                    "Jump to Location",
-                                                    Some(&OpenExcerpts),
-                                                    jump_location,
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                            }
-                                        }),
-                                ),
+                                .on_click(cx.listener_for(&self.editor, {
+                                    let excerpt_id = next_excerpt.id;
+                                    let direction = ExpandExcerptDirection::Up;
+                                    move |editor, _, cx| {
+                                        editor.expand_excerpt(excerpt_id, direction, cx);
+                                    }
+                                })), // .tooltip({
+                                     //     let focus_handle = focus_handle.clone();
+                                     //     move |cx| {
+                                     //         Tooltip::for_action_in(
+                                     //             "Expand Excerpt",
+                                     //             &ExpandExcerpts { lines: 0 },
+                                     //             &focus_handle,
+                                     //             cx,
+                                     //         )
+                                     //     }
+                                     // }),
+                                     // .child(
+                                     //     div()
+                                     //         .id("jump-to-location-hit-space")
+                                     //         .size_full()
+                                     //         .hover(|style| style.bg(color.border_variant.opacity(0.3)))
+                                     //         // .debug_bg_blue()
+                                     //         .on_click({
+                                     //             let jump_data = jump_data.clone();
+                                     //             cx.listener_for(&self.editor, {
+                                     //                 let jump_data = jump_data.clone();
+                                     //                 move |editor, e: &ClickEvent, cx| {
+                                     //                     cx.stop_propagation();
+                                     //                     editor.open_excerpts_common(
+                                     //                         Some(jump_data.clone()),
+                                     //                         e.down.modifiers.secondary(),
+                                     //                         cx,
+                                     //                     );
+                                     //                 }
+                                     //             })
+                                     //         })
+                                     //         .tooltip({
+                                     //             let jump_data = jump_data.clone();
+                                     //             move |cx| {
+                                     //                 let jump_location = format!(
+                                     //                     "{}:L{}",
+                                     //                     match &jump_data.path {
+                                     //                         Some(project_path) =>
+                                     //                             project_path.path.display().to_string(),
+                                     //                         None => {
+                                     //                             let editor = editor.read(cx);
+                                     //                             editor
+                                     //                                 .file_at(jump_data.position, cx)
+                                     //                                 .map(|file| {
+                                     //                                     file.full_path(cx)
+                                     //                                         .display()
+                                     //                                         .to_string()
+                                     //                                 })
+                                     //                                 .or_else(|| {
+                                     //                                     Some(
+                                     //                                         editor
+                                     //                                             .tab_description(0, cx)?
+                                     //                                             .to_string(),
+                                     //                                     )
+                                     //                                 })
+                                     //                                 .unwrap_or_else(|| {
+                                     //                                     "Unknown buffer".to_string()
+                                     //                                 })
+                                     //                         }
+                                     //                     },
+                                     //                     jump_data.position.row + 1
+                                     //                 );
+                                     //                 Tooltip::with_meta_in(
+                                     //                     "Jump to Location",
+                                     //                     Some(&OpenExcerpts),
+                                     //                     jump_location,
+                                     //                     &focus_handle,
+                                     //                     cx,
+                                     //                 )
+                                     //             }
+                                     //         }),
+                                     // ),
                         );
                     }
                 }
