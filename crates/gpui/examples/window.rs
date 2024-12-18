@@ -1,5 +1,3 @@
-use std::ffi::CStr;
-
 use backtrace::Backtrace;
 use gpui::*;
 use prelude::FluentBuilder as _;
@@ -93,8 +91,6 @@ impl Render for WindowDemo {
                 .unwrap();
             }))
             .child(button("Popup", move |cx| {
-                let s = "a";
-                dbg!(&s[3..4]);
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
@@ -172,7 +168,6 @@ impl Render for WindowDemo {
 
 fn main() {
     std::panic::set_hook(Box::new(move |info| {
-        dbg!("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("<unnamed>");
 
