@@ -3221,7 +3221,7 @@ impl EditorElement {
                 }
 
                 let crate::InlineCompletionText::Edit { text, highlights } =
-                    crate::inline_completion_edit_text(editor_snapshot, edits, cx)
+                    crate::inline_completion_edit_text(editor_snapshot, edits, false, cx)
                 else {
                     return None;
                 };

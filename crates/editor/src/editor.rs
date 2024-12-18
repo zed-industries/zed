@@ -4864,7 +4864,7 @@ impl Editor {
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
                 InlineCompletion::Edit(edits) => {
-                    inline_completion_edit_text(&editor_snapshot, edits, cx)
+                    inline_completion_edit_text(&editor_snapshot, edits, true, cx)
                 }
                 InlineCompletion::Move(target) => {
                     let target_point =
@@ -14630,6 +14630,7 @@ pub fn diagnostic_block_renderer(
 fn inline_completion_edit_text(
     editor_snapshot: &EditorSnapshot,
     edits: &Vec<(Range<Anchor>, String)>,
+    include_deletions: bool,
     cx: &WindowContext,
 ) -> InlineCompletionText {
     let edit_start = edits
@@ -14653,12 +14654,24 @@ fn inline_completion_edit_text(
         offset = old_offset_range.end;
 
         let start = text.len();
-        text.push_str(new_text);
+        let color = if include_deletions && new_text.is_empty() {
+            text.extend(
+                editor_snapshot
+                    .buffer_snapshot
+                    .chunks(old_offset_range.start..offset, false)
+                    .map(|chunk| chunk.text),
+            );
+            cx.theme().status().deleted_background
+        } else {
+            text.push_str(new_text);
+            cx.theme().status().created_background
+        };
         let end = text.len();
+
         highlights.push((
             start..end,
             HighlightStyle {
-                background_color: Some(cx.theme().status().created_background),
+                background_color: Some(color),
                 ..Default::default()
             },
         ));
