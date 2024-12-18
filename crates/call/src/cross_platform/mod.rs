@@ -333,7 +333,7 @@ impl ActiveCall {
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("no incoming call"))?;
-        telemetry::event!("Incoming Call Declined", room_id);
+        telemetry::event!("Incoming Call Declined", room_id = call.room_id);
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,
         })?;
