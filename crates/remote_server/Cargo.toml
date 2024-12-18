@@ -47,6 +47,7 @@ paths = { workspace = true }
 project.workspace = true
 proto.workspace = true
 release_channel.workspace = true
+reliability.workspace = true
 remote.workspace = true
 reqwest_client.workspace = true
 rpc.workspace = true

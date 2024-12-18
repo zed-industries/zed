@@ -148,6 +148,8 @@ fn init_panic_hook() {
             (&backtrace).join("\n")
         );
 
+        let context = reliability::with_hook(|hook| hook.contextualize_panic(info));
+
         let panic_data = telemetry_events::Panic {
             thread: thread_name.into(),
             payload: payload.clone(),
@@ -165,6 +167,7 @@ fn init_panic_hook() {
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace,
+            context,
             system_id: None,            // Set on SSH client
             installation_id: None,      // Set on SSH client
             session_id: "".to_string(), // Set on SSH client

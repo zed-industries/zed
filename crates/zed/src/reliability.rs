@@ -90,6 +90,8 @@ pub fn init_panic_hook(
             backtrace.drain(0..=ix);
         }
 
+        let context = reliability::with_hook(|hook| hook.contextualize_panic(info));
+
         let panic_data = telemetry_events::Panic {
             thread: thread_name.into(),
             payload,
@@ -104,6 +106,7 @@ pub fn init_panic_hook(
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace,
+            context,
             system_id: system_id.clone(),
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),

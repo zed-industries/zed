@@ -1,0 +1,17 @@
+[package]
+name = "reliability"
+description = "Provide scoped context for panics"
+edition = "2021"
+version = "0.1.0"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/reliability.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+futures.workspace = true
