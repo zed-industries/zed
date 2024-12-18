@@ -1215,7 +1215,7 @@ impl PlatformWindow for X11Window {
                 title.as_bytes(),
             ),
         )
-        .unwrap();
+        .log_err();
 
         check_reply(
             || "X11 ChangeProperty8 on _NET_WM_NAME failed.",
@@ -1227,8 +1227,8 @@ impl PlatformWindow for X11Window {
                 title.as_bytes(),
             ),
         )
-        .unwrap();
-        self.flush().unwrap();
+        .log_err();
+        self.flush().log_err();
     }
 
     fn set_app_id(&mut self, app_id: &str) {
