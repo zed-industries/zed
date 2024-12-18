@@ -1008,9 +1008,9 @@ dependencies = [
 
 [[package]]
 name = "async-tungstenite"
-version = "0.28.1"
+version = "0.28.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6cd055774e8b7f2ff9e5f9646efb298f180c3b886cdf20ef27f5a0bfbe2677b"
+checksum = "1c348fb0b6d132c596eca3dcd941df48fb597aafcb07a738ec41c004b087dc99"
 dependencies = [
  "async-std",
  "async-tls",
@@ -2508,7 +2508,7 @@ dependencies = [
  "anyhow",
  "async-native-tls",
  "async-recursion 0.3.2",
- "async-tungstenite 0.28.1",
+ "async-tungstenite 0.28.2",
  "chrono",
  "clock",
  "cocoa 0.26.0",
@@ -2641,7 +2641,7 @@ dependencies = [
  "assistant_tool",
  "async-stripe",
  "async-trait",
- "async-tungstenite 0.28.1",
+ "async-tungstenite 0.28.2",
  "audio",
  "aws-config",
  "aws-sdk-kinesis",
@@ -6612,7 +6612,7 @@ checksum = "58d9afa5bc6eeafb78f710a2efc585f69099f8b6a99dc7eb826581e3773a6e31"
 dependencies = [
  "anyhow",
  "async-trait",
- "async-tungstenite 0.28.1",
+ "async-tungstenite 0.28.2",
  "futures 0.3.31",
  "jupyter-protocol",
  "serde",
@@ -6989,7 +6989,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -10359,7 +10359,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
- "async-tungstenite 0.28.1",
+ "async-tungstenite 0.28.2",
  "base64 0.22.1",
  "client",
  "collections",
@@ -10662,7 +10662,7 @@ name = "rpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-tungstenite 0.28.1",
+ "async-tungstenite 0.28.2",
  "base64 0.22.1",
  "chrono",
  "collections",
@@ -14985,7 +14985,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
