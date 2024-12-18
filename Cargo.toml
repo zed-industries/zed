@@ -483,7 +483,7 @@ time = { version = "0.3", features = [
 tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1" }
-tower-http = "0.4.4"
+tower-http = "0.6.0"
 tree-sitter = { version = "0.23", features = ["wasm"] }
 tree-sitter-bash = "0.23"
 tree-sitter-c = "0.23"
