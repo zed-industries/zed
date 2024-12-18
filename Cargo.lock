@@ -4429,12 +4429,13 @@ checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
 
 [[package]]
 name = "fancy-regex"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7493d4c459da9f84325ad297371a6b2b8a162800873a22e3b6b6512e61d18c05"
+checksum = "531e46835a22af56d1e3b66f04844bed63158bc094a628bec1d321d9b4c44bf2"
 dependencies = [
  "bit-set 0.5.3",
- "regex",
+ "regex-automata 0.4.9",
+ "regex-syntax 0.8.5",
 ]
 
 [[package]]
@@ -12956,16 +12957,17 @@ dependencies = [
 
 [[package]]
 name = "tiktoken-rs"
-version = "0.5.9"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c314e7ce51440f9e8f5a497394682a57b7c323d0f4d0a6b1b13c429056e0e234"
+checksum = "44075987ee2486402f0808505dd65692163d243a337fc54363d49afac41087f6"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
  "bstr",
- "fancy-regex 0.12.0",
+ "fancy-regex 0.13.0",
  "lazy_static",
  "parking_lot",
+ "regex",
  "rustc-hash 1.1.0",
 ]
 

@@ -472,7 +472,7 @@ sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
-tiktoken-rs = "0.5.9"
+tiktoken-rs = "0.6.0"
 time = { version = "0.3", features = [
     "macros",
     "parsing",
