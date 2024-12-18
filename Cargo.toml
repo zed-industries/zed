@@ -361,7 +361,7 @@ blade-util = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
-cargo_toml = "0.20"
+cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
