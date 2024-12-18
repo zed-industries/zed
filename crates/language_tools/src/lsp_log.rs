@@ -3,7 +3,7 @@ use copilot::Copilot;
 use editor::{actions::MoveToEnd, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions, div, AnchorCorner, AppContext, Context, EventEmitter, FocusHandle, FocusableView,
+    actions, div, AppContext, Context, Corner, EventEmitter, FocusHandle, FocusableView,
     IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
     ViewContext, VisualContext, WeakModel, WindowContext,
 };
@@ -14,7 +14,7 @@ use lsp::{
 };
 use project::{search::SearchQuery, Project, WorktreeId};
 use std::{borrow::Cow, sync::Arc};
-use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, Selection};
+use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState};
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
@@ -1158,7 +1158,7 @@ impl Render for LspLogToolbarItemView {
             .collect();
         let log_toolbar_view = cx.view().clone();
         let lsp_menu = PopoverMenu::new("LspLogView")
-            .anchor(AnchorCorner::TopLeft)
+            .anchor(Corner::TopLeft)
             .trigger(Button::new(
                 "language_server_menu_header",
                 current_server
@@ -1214,7 +1214,7 @@ impl Render for LspLogToolbarItemView {
             let rpc_trace_enabled = server.rpc_trace_enabled;
             let log_view = log_view.clone();
             PopoverMenu::new("LspViewSelector")
-                .anchor(AnchorCorner::TopLeft)
+                .anchor(Corner::TopLeft)
                 .trigger(Button::new(
                     "language_server_menu_header",
                     server.selected_entry.label(),
@@ -1251,9 +1251,9 @@ impl Render for LspLogToolbarItemView {
                                                     Checkbox::new(
                                                         "LspLogEnableRpcTrace",
                                                         if rpc_trace_enabled {
-                                                            Selection::Selected
+                                                            ToggleState::Selected
                                                         } else {
-                                                            Selection::Unselected
+                                                            ToggleState::Unselected
                                                         },
                                                     )
                                                     .on_click(cx.listener_for(
@@ -1261,7 +1261,7 @@ impl Render for LspLogToolbarItemView {
                                                         move |view, selection, cx| {
                                                             let enabled = matches!(
                                                                 selection,
-                                                                Selection::Selected
+                                                                ToggleState::Selected
                                                             );
                                                             view.toggle_rpc_logging_for_server(
                                                                 server_id, enabled, cx,
@@ -1301,7 +1301,7 @@ impl Render for LspLogToolbarItemView {
                             let log_view = log_view.clone();
                             div().child(
                                 PopoverMenu::new("lsp-trace-level-menu")
-                                    .anchor(AnchorCorner::TopLeft)
+                                    .anchor(Corner::TopLeft)
                                     .trigger(Button::new(
                                         "language_server_trace_level_selector",
                                         "Trace level",
@@ -1359,7 +1359,7 @@ impl Render for LspLogToolbarItemView {
                             let log_view = log_view.clone();
                             div().child(
                                 PopoverMenu::new("lsp-log-level-menu")
-                                    .anchor(AnchorCorner::TopLeft)
+                                    .anchor(Corner::TopLeft)
                                     .trigger(Button::new(
                                         "language_server_log_level_selector",
                                         "Log level",

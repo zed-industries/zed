@@ -251,7 +251,13 @@ async fn deserialize_pane_group(
                 let terminal = terminal.await.ok()?;
                 pane.update(cx, |pane, cx| {
                     let terminal_view = Box::new(cx.new_view(|cx| {
-                        TerminalView::new(terminal, workspace.clone(), Some(workspace_id), cx)
+                        TerminalView::new(
+                            terminal,
+                            workspace.clone(),
+                            Some(workspace_id),
+                            project.downgrade(),
+                            cx,
+                        )
                     }));
                     pane.add_item(terminal_view, true, false, None, cx);
                 })

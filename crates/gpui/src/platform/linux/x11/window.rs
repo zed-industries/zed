@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context};
 
 use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
+    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs,
     Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformWindow, Point, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
@@ -1206,7 +1206,7 @@ impl PlatformWindow for X11Window {
                 title.as_bytes(),
             ),
         )
-        .unwrap();
+        .log_err();
 
         check_reply(
             || "X11 ChangeProperty8 on _NET_WM_NAME failed.",
@@ -1218,8 +1218,8 @@ impl PlatformWindow for X11Window {
                 title.as_bytes(),
             ),
         )
-        .unwrap();
-        self.flush().unwrap();
+        .log_err();
+        self.flush().log_err();
     }
 
     fn set_app_id(&mut self, app_id: &str) {
@@ -1527,7 +1527,7 @@ impl PlatformWindow for X11Window {
         client.update_ime_position(bounds);
     }
 
-    fn gpu_specs(&self) -> Option<GPUSpecs> {
+    fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.0.state.borrow().renderer.gpu_specs().into()
     }
 }

@@ -113,7 +113,7 @@ impl SearchOptions {
             .on_click(action)
             .style(ButtonStyle::Subtle)
             .shape(IconButtonShape::Square)
-            .selected(active)
+            .toggle_state(active)
             .tooltip({
                 let action = self.to_toggle_action();
                 let label = self.label();

@@ -4,7 +4,7 @@ use editor::{scroll::Autoscroll, Editor};
 use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
 use fs::Fs;
 use gpui::{
-    actions, div, Action, AnchorCorner, AppContext, AsyncWindowContext, Entity, IntoElement,
+    actions, div, Action, AppContext, AsyncWindowContext, Corner, Entity, IntoElement,
     ParentElement, Render, Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use language::{
@@ -123,7 +123,7 @@ impl Render for InlineCompletionButton {
                                 _ => this.update(cx, |this, cx| this.build_copilot_start_menu(cx)),
                             })
                         })
-                        .anchor(AnchorCorner::BottomRight)
+                        .anchor(Corner::BottomRight)
                         .trigger(
                             IconButton::new("copilot-icon", icon)
                                 .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
@@ -191,7 +191,7 @@ impl Render for InlineCompletionButton {
                             ),
                             _ => None,
                         })
-                        .anchor(AnchorCorner::BottomRight)
+                        .anchor(Corner::BottomRight)
                         .trigger(
                             IconButton::new("supermaven-icon", icon)
                                 .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx)),

@@ -10,7 +10,7 @@ use editor::actions::{
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
+    Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
@@ -162,13 +162,13 @@ impl Render for QuickActionBar {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
-                        .selected(self.toggle_selections_handle.is_deployed())
+                        .toggle_state(self.toggle_selections_handle.is_deployed())
                         .when(!self.toggle_selections_handle.is_deployed(), |this| {
                             this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
                         }),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
-                .anchor(AnchorCorner::TopRight)
+                .anchor(Corner::TopRight)
                 .menu(move |cx| {
                     let focus = focus.clone();
                     let menu = ContextMenu::build(cx, move |menu, _| {
@@ -212,12 +212,12 @@ impl Render for QuickActionBar {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
-                        .selected(self.toggle_settings_handle.is_deployed())
+                        .toggle_state(self.toggle_settings_handle.is_deployed())
                         .when(!self.toggle_settings_handle.is_deployed(), |this| {
                             this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
                         }),
                 )
-                .anchor(AnchorCorner::TopRight)
+                .anchor(Corner::TopRight)
                 .with_handle(self.toggle_settings_handle.clone())
                 .menu(move |cx| {
                     let menu = ContextMenu::build(cx, |mut menu, _| {
@@ -407,7 +407,7 @@ impl RenderOnce for QuickActionBarButton {
             .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
-            .selected(self.toggled)
+            .toggle_state(self.toggled)
             .tooltip(move |cx| {
                 Tooltip::for_action_in(tooltip.clone(), &*action, &self.focus_handle, cx)
             })

@@ -280,7 +280,7 @@ impl PickerDelegate for OutlineViewDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(
                     div()
                         .text_ui(cx)

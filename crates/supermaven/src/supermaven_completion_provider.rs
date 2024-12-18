@@ -98,6 +98,14 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         "supermaven"
     }
 
+    fn display_name() -> &'static str {
+        "Supermaven"
+    }
+
+    fn show_completions_in_menu() -> bool {
+        false
+    }
+
     fn is_enabled(&self, buffer: &Model<Buffer>, cursor_position: Anchor, cx: &AppContext) -> bool {
         if !self.supermaven.read(cx).is_enabled() {
             return false;

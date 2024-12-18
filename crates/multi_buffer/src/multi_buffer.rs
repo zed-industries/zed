@@ -195,6 +195,7 @@ pub struct ExcerptInfo {
     pub buffer: BufferSnapshot,
     pub buffer_id: BufferId,
     pub range: ExcerptRange<text::Anchor>,
+    pub text_summary: TextSummary,
 }
 
 impl std::fmt::Debug for ExcerptInfo {
@@ -1544,6 +1545,33 @@ impl MultiBuffer {
         }
 
         excerpts
+    }
+
+    pub fn excerpt_ranges_for_buffer(
+        &self,
+        buffer_id: BufferId,
+        cx: &AppContext,
+    ) -> Vec<Range<Point>> {
+        let snapshot = self.read(cx);
+        let buffers = self.buffers.borrow();
+        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, Point)>(&());
+        buffers
+            .get(&buffer_id)
+            .into_iter()
+            .flat_map(|state| &state.excerpts)
+            .filter_map(move |locator| {
+                cursor.seek_forward(&Some(locator), Bias::Left, &());
+                cursor.item().and_then(|excerpt| {
+                    if excerpt.locator == *locator {
+                        let excerpt_start = cursor.start().1;
+                        let excerpt_end = excerpt_start + excerpt.text_summary.lines;
+                        Some(excerpt_start..excerpt_end)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect()
     }
 
     pub fn excerpt_buffer_ids(&self) -> Vec<BufferId> {
@@ -3559,6 +3587,7 @@ impl MultiBufferSnapshot {
                     buffer: excerpt.buffer.clone(),
                     buffer_id: excerpt.buffer_id,
                     range: excerpt.range.clone(),
+                    text_summary: excerpt.text_summary.clone(),
                 });
 
                 if next.is_none() {
@@ -3574,6 +3603,7 @@ impl MultiBufferSnapshot {
                     buffer: prev_excerpt.buffer.clone(),
                     buffer_id: prev_excerpt.buffer_id,
                     range: prev_excerpt.range.clone(),
+                    text_summary: prev_excerpt.text_summary.clone(),
                 });
                 let row = MultiBufferRow(cursor.start().1.row);
 

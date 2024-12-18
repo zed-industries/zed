@@ -472,6 +472,8 @@ dependencies = [
  "fuzzy",
  "gpui",
  "handlebars 4.5.0",
+ "html_to_markdown",
+ "http_client",
  "indoc",
  "language",
  "language_model",
@@ -2098,6 +2100,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
+ "telemetry",
  "util",
 ]
 
@@ -2530,6 +2533,7 @@ dependencies = [
  "settings",
  "sha2",
  "smol",
+ "telemetry",
  "telemetry_events",
  "text",
  "thiserror 1.0.69",
@@ -2751,7 +2755,6 @@ dependencies = [
  "language",
  "menu",
  "notifications",
- "parking_lot",
  "picker",
  "pretty_assertions",
  "project",
@@ -2765,6 +2768,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
+ "telemetry",
  "theme",
  "time",
  "time_format",
@@ -2825,6 +2829,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "telemetry",
  "theme",
  "ui",
  "util",
@@ -3922,6 +3927,7 @@ dependencies = [
  "snippet",
  "sum_tree",
  "task",
+ "telemetry",
  "tempfile",
  "text",
  "theme",
@@ -4357,6 +4363,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "task",
+ "telemetry",
  "tempfile",
  "theme",
  "theme_extension",
@@ -5015,6 +5022,7 @@ name = "fuzzy"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "log",
  "util",
 ]
 
@@ -5162,7 +5170,9 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "db",
+ "git",
  "gpui",
  "project",
  "schemars",
@@ -10378,6 +10388,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "telemetry",
  "terminal",
  "terminal_view",
  "theme",
@@ -12613,6 +12624,7 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "util",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12642,11 +12654,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "telemetry"
+version = "0.1.0"
+dependencies = [
+ "futures 0.3.31",
+ "serde",
+ "serde_json",
+ "telemetry_events",
+]
+
+[[package]]
 name = "telemetry_events"
 version = "0.1.0"
 dependencies = [
  "semantic_version",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -12837,7 +12860,6 @@ dependencies = [
 name = "theme_selector"
 version = "0.1.0"
 dependencies = [
- "client",
  "fs",
  "fuzzy",
  "gpui",
@@ -12845,6 +12867,7 @@ dependencies = [
  "picker",
  "serde",
  "settings",
+ "telemetry",
  "theme",
  "ui",
  "util",
@@ -13074,6 +13097,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
+ "telemetry",
  "theme",
  "tree-sitter-md",
  "ui",
@@ -13954,7 +13978,6 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
- "itertools 0.13.0",
  "log",
  "rand 0.8.5",
  "regex",
@@ -14853,6 +14876,7 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
+ "telemetry",
  "ui",
  "util",
  "vim_mode_setting",
@@ -16056,6 +16080,7 @@ dependencies = [
  "tab_switcher",
  "task",
  "tasks_ui",
+ "telemetry",
  "telemetry_events",
  "terminal_view",
  "theme",
@@ -16086,6 +16111,7 @@ name = "zed_actions"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "schemars",
  "serde",
 ]
 
@@ -16405,6 +16431,7 @@ name = "zeta"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "call",
  "client",
  "clock",
@@ -16426,6 +16453,7 @@ dependencies = [
  "serde_json",
  "settings",
  "similar",
+ "telemetry",
  "telemetry_events",
  "theme",
  "tree-sitter-go",

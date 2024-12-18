@@ -328,11 +328,7 @@ impl ExtensionsPage {
                 let match_candidates = dev_extensions
                     .iter()
                     .enumerate()
-                    .map(|(ix, manifest)| StringMatchCandidate {
-                        id: ix,
-                        string: manifest.name.clone(),
-                        char_bag: manifest.name.as_str().into(),
-                    })
+                    .map(|(ix, manifest)| StringMatchCandidate::new(ix, &manifest.name))
                     .collect::<Vec<_>>();
 
                 let matches = match_strings(
@@ -453,18 +449,17 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .child(
-                        div().overflow_x_hidden().text_ellipsis().child(
-                            Label::new(format!(
-                                "{}: {}",
-                                if extension.authors.len() > 1 {
-                                    "Authors"
-                                } else {
-                                    "Author"
-                                },
-                                extension.authors.join(", ")
-                            ))
-                            .size(LabelSize::Small),
-                        ),
+                        Label::new(format!(
+                            "{}: {}",
+                            if extension.authors.len() > 1 {
+                                "Authors"
+                            } else {
+                                "Author"
+                            },
+                            extension.authors.join(", ")
+                        ))
+                        .size(LabelSize::Small)
+                        .text_ellipsis(),
                     )
                     .child(Label::new("<>").size(LabelSize::Small)),
             )
@@ -473,11 +468,10 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .children(extension.description.as_ref().map(|description| {
-                        div().overflow_x_hidden().text_ellipsis().child(
-                            Label::new(description.clone())
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        )
+                        Label::new(description.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                            .text_ellipsis()
                     }))
                     .children(repository_url.map(|repository_url| {
                         IconButton::new(
@@ -554,18 +548,17 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .child(
-                        div().overflow_x_hidden().text_ellipsis().child(
-                            Label::new(format!(
-                                "{}: {}",
-                                if extension.manifest.authors.len() > 1 {
-                                    "Authors"
-                                } else {
-                                    "Author"
-                                },
-                                extension.manifest.authors.join(", ")
-                            ))
-                            .size(LabelSize::Small),
-                        ),
+                        Label::new(format!(
+                            "{}: {}",
+                            if extension.manifest.authors.len() > 1 {
+                                "Authors"
+                            } else {
+                                "Author"
+                            },
+                            extension.manifest.authors.join(", ")
+                        ))
+                        .size(LabelSize::Small)
+                        .text_ellipsis(),
                     )
                     .child(
                         Label::new(format!(
@@ -580,11 +573,10 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .children(extension.manifest.description.as_ref().map(|description| {
-                        div().overflow_x_hidden().text_ellipsis().child(
-                            Label::new(description.clone())
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        )
+                        Label::new(description.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                            .text_ellipsis()
                     }))
                     .child(
                         h_flex()
@@ -933,7 +925,7 @@ impl ExtensionsPage {
 
     fn update_settings<T: Settings>(
         &mut self,
-        selection: &Selection,
+        selection: &ToggleState,
         cx: &mut ViewContext<Self>,
         callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
     ) {
@@ -942,8 +934,8 @@ impl ExtensionsPage {
             let selection = *selection;
             settings::update_settings_file::<T>(fs, cx, move |settings, _| {
                 let value = match selection {
-                    Selection::Unselected => false,
-                    Selection::Selected => true,
+                    ToggleState::Unselected => false,
+                    ToggleState::Selected => true,
                     _ => return,
                 };
 
@@ -998,9 +990,9 @@ impl ExtensionsPage {
                         "enable-vim",
                         Label::new("Enable vim mode"),
                         if VimModeSetting::get_global(cx).0 {
-                            ui::Selection::Selected
+                            ui::ToggleState::Selected
                         } else {
-                            ui::Selection::Unselected
+                            ui::ToggleState::Unselected
                         },
                         cx.listener(move |this, selection, cx| {
                             this.telemetry
@@ -1090,7 +1082,7 @@ impl Render for ExtensionsPage {
                                         ToggleButton::new("filter-all", "All")
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Large)
-                                            .selected(self.filter == ExtensionFilter::All)
+                                            .toggle_state(self.filter == ExtensionFilter::All)
                                             .on_click(cx.listener(|this, _event, cx| {
                                                 this.filter = ExtensionFilter::All;
                                                 this.filter_extension_entries(cx);
@@ -1104,7 +1096,7 @@ impl Render for ExtensionsPage {
                                         ToggleButton::new("filter-installed", "Installed")
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Large)
-                                            .selected(self.filter == ExtensionFilter::Installed)
+                                            .toggle_state(self.filter == ExtensionFilter::Installed)
                                             .on_click(cx.listener(|this, _event, cx| {
                                                 this.filter = ExtensionFilter::Installed;
                                                 this.filter_extension_entries(cx);
@@ -1118,7 +1110,9 @@ impl Render for ExtensionsPage {
                                         ToggleButton::new("filter-not-installed", "Not Installed")
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Large)
-                                            .selected(self.filter == ExtensionFilter::NotInstalled)
+                                            .toggle_state(
+                                                self.filter == ExtensionFilter::NotInstalled,
+                                            )
                                             .on_click(cx.listener(|this, _event, cx| {
                                                 this.filter = ExtensionFilter::NotInstalled;
                                                 this.filter_extension_entries(cx);
