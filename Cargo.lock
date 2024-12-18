@@ -3725,7 +3725,6 @@ dependencies = [
  "gpui",
  "language",
  "menu",
- "parking_lot",
  "picker",
  "project",
  "serde",
