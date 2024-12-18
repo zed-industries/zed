@@ -1,49 +1,9 @@
 use crate::*;
 use dap::requests::{Disconnect, Initialize, Launch, StackTrace};
-use gpui::{BackgroundExecutor, Model, TestAppContext, VisualTestContext, WindowHandle};
+use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
-use serde_json::json;
-use settings::SettingsStore;
-use unindent::Unindent as _;
-use workspace::{dock::Panel, Workspace};
-
-pub fn init_test(cx: &mut gpui::TestAppContext) {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
-
-    cx.update(|cx| {
-        let settings = SettingsStore::test(cx);
-        cx.set_global(settings);
-        theme::init(theme::LoadThemes::JustBase, cx);
-        command_palette_hooks::init(cx);
-        language::init(cx);
-        workspace::init_settings(cx);
-        Project::init_settings(cx);
-        crate::init(cx);
-        editor::init(cx);
-    });
-}
-
-async fn add_debugger_panel(
-    project: &Model<Project>,
-    cx: &mut TestAppContext,
-) -> WindowHandle<Workspace> {
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-
-    let debugger_panel = window
-        .update(cx, |_, cx| cx.spawn(DebugPanel::load))
-        .unwrap()
-        .await
-        .expect("Failed to load debug panel");
-
-    window
-        .update(cx, |workspace, cx| {
-            workspace.add_panel(debugger_panel, cx);
-        })
-        .unwrap();
-    window
-}
+use tests::{add_debugger_panel, init_test};
+use workspace::dock::Panel;
 
 #[gpui::test]
 async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -51,25 +11,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
 
     let fs = FakeFs::new(executor.clone());
 
-    let file_contents = r#"
-        // print goodbye
-        fn main() {
-            println!("goodbye world");
-        }
-    "#
-    .unindent();
-
-    fs.insert_tree(
-        "/dir",
-        json!({
-           "src": {
-               "main.rs": file_contents,
-           }
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [], cx).await;
     let workspace = add_debugger_panel(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -188,25 +130,7 @@ async fn test_we_can_only_have_one_panel_per_debug_thread(
 
     let fs = FakeFs::new(executor.clone());
 
-    let file_contents = r#"
-        // print goodbye
-        fn main() {
-            println!("goodbye world");
-        }
-    "#
-    .unindent();
-
-    fs.insert_tree(
-        "/dir",
-        json!({
-           "src": {
-               "main.rs": file_contents,
-           }
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [], cx).await;
     let workspace = add_debugger_panel(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -356,25 +280,7 @@ async fn test_client_can_open_multiple_thread_panels(
 
     let fs = FakeFs::new(executor.clone());
 
-    let file_contents = r#"
-        // print goodbye
-        fn main() {
-            println!("goodbye world");
-        }
-    "#
-    .unindent();
-
-    fs.insert_tree(
-        "/dir",
-        json!({
-           "src": {
-               "main.rs": file_contents,
-           }
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [], cx).await;
     let workspace = add_debugger_panel(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 

@@ -20,6 +20,10 @@ use std::{
 };
 use task::{DebugAdapterConfig, DebugRequestType};
 
+#[cfg(debug_assertions)]
+const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[cfg(not(debug_assertions))]
 const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
