@@ -4737,16 +4737,10 @@ impl Editor {
         let edits = completion
             .edits
             .into_iter()
-            .map(|(range, new_text)| {
-                (
-                    multibuffer
-                        .anchor_in_excerpt(excerpt_id, range.start)
-                        .unwrap()
-                        ..multibuffer
-                            .anchor_in_excerpt(excerpt_id, range.end)
-                            .unwrap(),
-                    new_text,
-                )
+            .flat_map(|(range, new_text)| {
+                let start = multibuffer.anchor_in_excerpt(excerpt_id, range.start)?;
+                let end = multibuffer.anchor_in_excerpt(excerpt_id, range.end)?;
+                Some((start..end, new_text))
             })
             .collect::<Vec<_>>();
         if edits.is_empty() {
