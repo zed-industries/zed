@@ -7,7 +7,7 @@ use crate::{
     notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, CopyPath, CopyRelativePath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
+    CloseWindow, CopyPath, CopyRelativePath, CopyFileName, CopyFileNameWithExtension, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
     OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
@@ -2346,7 +2346,7 @@ impl Pane {
                                     }),
                                 )
                             })
-                            .when_some(relative_path, |menu, relative_path| {
+                            .when_some(relative_path.clone(), |menu, relative_path| {
                                 menu.entry(
                                     "Copy Relative Path",
                                     Some(Box::new(CopyRelativePath)),
@@ -2354,6 +2354,32 @@ impl Pane {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
                                             relative_path.to_string_lossy().to_string(),
                                         ));
+                                    }),
+                                )
+                            })
+                            .when_some(relative_path.clone(), |menu, relative_path| {
+                                menu.entry(
+                                    "Copy File Name",
+                                    Some(Box::new(CopyFileName)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        if let Some(name) = relative_path.file_stem() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                name.to_string_lossy().to_string(),
+                                            ));
+                                        }
+                                    }),
+                                )
+                            })
+                            .when_some(relative_path.clone(), |menu, relative_path| {
+                                menu.entry(
+                                    "Copy File Name with Extension",
+                                    Some(Box::new(CopyFileNameWithExtension)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        if let Some(name) = relative_path.file_name() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                name.to_string_lossy().to_string(),
+                                            ));
+                                        }
                                     }),
                                 )
                             })
