@@ -1,6 +1,6 @@
 use crate::context::attach_context_to_message;
 use crate::context_store::ContextStore;
-use crate::inline_prompt_editor::{CodegenEvent, CodegenStatus};
+use crate::inline_prompt_editor::CodegenStatus;
 use crate::{
     prompts::PromptBuilder,
     streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff},
@@ -890,6 +890,12 @@ impl CodegenAlternative {
                 .ok();
         })
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum CodegenEvent {
+    Finished,
+    Undone,
 }
 
 struct StripInvalidSpans<T> {

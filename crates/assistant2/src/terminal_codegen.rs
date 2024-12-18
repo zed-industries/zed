@@ -1,4 +1,4 @@
-use crate::inline_prompt_editor::{CodegenEvent, CodegenStatus};
+use crate::inline_prompt_editor::CodegenStatus;
 use client::telemetry::Telemetry;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{AppContext, EventEmitter, Model, ModelContext, Task};
@@ -8,51 +8,16 @@ use std::{sync::Arc, time::Instant};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 
-const CLEAR_INPUT: &str = "\x15";
-const CARRIAGE_RETURN: &str = "\x0d";
-
-struct TerminalTransaction {
+pub struct TerminalCodegen {
+    pub status: CodegenStatus,
+    pub telemetry: Option<Arc<Telemetry>>,
     terminal: Model<Terminal>,
-}
-
-impl TerminalTransaction {
-    pub fn start(terminal: Model<Terminal>) -> Self {
-        Self { terminal }
-    }
-
-    pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
-        // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
-        let input = Self::sanitize_input(hunk);
-        self.terminal
-            .update(cx, |terminal, _| terminal.input(input));
-    }
-
-    pub fn undo(&self, cx: &mut AppContext) {
-        self.terminal
-            .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
-    }
-
-    pub fn complete(&self, cx: &mut AppContext) {
-        self.terminal.update(cx, |terminal, _| {
-            terminal.input(CARRIAGE_RETURN.to_string())
-        });
-    }
-
-    fn sanitize_input(input: String) -> String {
-        input.replace(['\r', '\n'], "")
-    }
+    generation: Task<()>,
+    pub message_id: Option<String>,
+    transaction: Option<TerminalTransaction>,
 }
 
 impl EventEmitter<CodegenEvent> for TerminalCodegen {}
-
-pub struct TerminalCodegen {
-    pub status: CodegenStatus,
-    telemetry: Option<Arc<Telemetry>>,
-    terminal: Model<Terminal>,
-    generation: Task<()>,
-    message_id: Option<String>,
-    transaction: Option<TerminalTransaction>,
-}
 
 impl TerminalCodegen {
     pub fn new(terminal: Model<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
@@ -183,5 +148,45 @@ impl TerminalCodegen {
         if let Some(transaction) = self.transaction.take() {
             transaction.undo(cx);
         }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum CodegenEvent {
+    Finished,
+}
+
+pub const CLEAR_INPUT: &str = "\x15";
+const CARRIAGE_RETURN: &str = "\x0d";
+
+struct TerminalTransaction {
+    terminal: Model<Terminal>,
+}
+
+impl TerminalTransaction {
+    pub fn start(terminal: Model<Terminal>) -> Self {
+        Self { terminal }
+    }
+
+    pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
+        // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
+        let input = Self::sanitize_input(hunk);
+        self.terminal
+            .update(cx, |terminal, _| terminal.input(input));
+    }
+
+    pub fn undo(&self, cx: &mut AppContext) {
+        self.terminal
+            .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
+    }
+
+    pub fn complete(&self, cx: &mut AppContext) {
+        self.terminal.update(cx, |terminal, _| {
+            terminal.input(CARRIAGE_RETURN.to_string())
+        });
+    }
+
+    fn sanitize_input(input: String) -> String {
+        input.replace(['\r', '\n'], "")
     }
 }

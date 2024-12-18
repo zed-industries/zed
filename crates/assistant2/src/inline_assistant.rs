@@ -1,8 +1,6 @@
-use crate::buffer_codegen::{BufferCodegen, CodegenAlternative};
+use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
 use crate::context_store::ContextStore;
-use crate::inline_prompt_editor::{
-    CodegenEvent, CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent, PromptEditorMode,
-};
+use crate::inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent};
 use crate::thread_store::ThreadStore;
 use crate::AssistantPanel;
 use crate::{
@@ -78,6 +76,7 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
+    new_field: String,
 }
 
 impl Global for InlineAssistant {}
@@ -622,7 +621,7 @@ impl InlineAssistant {
         event: &PromptEditorEvent,
         cx: &mut WindowContext,
     ) {
-        let assist_id = prompt_editor.read(cx).id;
+        let assist_id = prompt_editor.read(cx).id();
         match event {
             PromptEditorEvent::StartRequested => {
                 self.start_assist(assist_id, cx);

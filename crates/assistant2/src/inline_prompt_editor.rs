@@ -25,6 +25,7 @@ use language_model::{LanguageModel, LanguageModelRegistry};
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use parking_lot::Mutex;
 use settings::{update_settings_file, Settings};
+use std::cmp;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{
@@ -33,19 +34,7 @@ use ui::{
 use util::ResultExt;
 use workspace::Workspace;
 
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
-pub struct InlineAssistId(pub usize);
-
-impl InlineAssistId {
-    pub fn post_inc(&mut self) -> InlineAssistId {
-        let id = *self;
-        self.0 += 1;
-        id
-    }
-}
-
 pub struct PromptEditor<T> {
-    pub id: InlineAssistId,
     pub editor: View<Editor>,
     mode: PromptEditorMode,
     context_strip: View<ContextStrip>,
@@ -70,6 +59,7 @@ impl<T: 'static> Render for PromptEditor<T> {
         // TODO (agus): remove prompt mode and move buttons view here
         let (prompt_mode, spacing) = match &self.mode {
             PromptEditorMode::Buffer {
+                id: _,
                 codegen,
                 gutter_dimensions,
             } => {
@@ -93,7 +83,11 @@ impl<T: 'static> Render for PromptEditor<T> {
 
                 (prompt_mode, spacing)
             }
-            PromptEditorMode::Terminal { codegen: _ } => {
+            PromptEditorMode::Terminal {
+                id: _,
+                codegen: _,
+                height_in_lines: _,
+            } => {
                 // todo(terminal-prompt-cycle)
                 (
                     PromptMode::Generate {
@@ -229,7 +223,7 @@ impl<T: 'static> PromptEditor<T> {
     fn codegen_status<'a>(&'a self, cx: &'a AppContext) -> &'a CodegenStatus {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => codegen.read(cx).status(cx),
-            PromptEditorMode::Terminal { codegen } => &codegen.read(cx).status,
+            PromptEditorMode::Terminal { codegen, .. } => &codegen.read(cx).status,
         }
     }
 
@@ -422,7 +416,7 @@ impl<T: 'static> PromptEditor<T> {
             PromptEditorMode::Buffer { codegen, .. } => {
                 codegen.update(cx, |codegen, cx| codegen.cycle_prev(cx));
             }
-            PromptEditorMode::Terminal { codegen } => todo!("terminal-prompt-cycle"),
+            PromptEditorMode::Terminal { codegen, .. } => todo!("terminal-prompt-cycle"),
         }
     }
 
@@ -431,7 +425,7 @@ impl<T: 'static> PromptEditor<T> {
             PromptEditorMode::Buffer { codegen, .. } => {
                 codegen.update(cx, |codegen, cx| codegen.cycle_prev(cx));
             }
-            PromptEditorMode::Terminal { codegen } => todo!("terminal-prompt-cycle"),
+            PromptEditorMode::Terminal { codegen, .. } => todo!("terminal-prompt-cycle"),
         }
     }
 
@@ -640,6 +634,30 @@ impl<T: 'static> PromptEditor<T> {
     }
 }
 
+pub enum PromptEditorMode {
+    Buffer {
+        id: InlineAssistId,
+        codegen: Model<BufferCodegen>,
+        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+    },
+    Terminal {
+        id: TerminalInlineAssistId,
+        codegen: Model<TerminalCodegen>,
+        height_in_lines: u8,
+    },
+}
+
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
+pub struct InlineAssistId(pub usize);
+
+impl InlineAssistId {
+    pub fn post_inc(&mut self) -> InlineAssistId {
+        let id = *self;
+        self.0 += 1;
+        id
+    }
+}
+
 impl PromptEditor<BufferCodegen> {
     #[allow(clippy::too_many_arguments)]
     pub fn new_buffer(
@@ -656,6 +674,7 @@ impl PromptEditor<BufferCodegen> {
     ) -> PromptEditor<BufferCodegen> {
         let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
         let mode = PromptEditorMode::Buffer {
+            id,
             codegen,
             gutter_dimensions,
         };
@@ -681,7 +700,6 @@ impl PromptEditor<BufferCodegen> {
         let context_picker_menu_handle = PopoverMenuHandle::default();
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
-            id,
             editor: prompt_editor.clone(),
             context_strip: cx.new_view(|cx| {
                 ContextStrip::new(
@@ -757,9 +775,16 @@ impl PromptEditor<BufferCodegen> {
         }
     }
 
-    pub fn codegen(&self) -> Model<BufferCodegen> {
+    pub fn id(&self) -> InlineAssistId {
         match &self.mode {
-            PromptEditorMode::Buffer { codegen, .. } => codegen.clone(),
+            PromptEditorMode::Buffer { id, .. } => *id,
+            PromptEditorMode::Terminal { .. } => unreachable!(),
+        }
+    }
+
+    pub fn codegen(&self) -> &Model<BufferCodegen> {
+        match &self.mode {
+            PromptEditorMode::Buffer { codegen, .. } => codegen,
             PromptEditorMode::Terminal { .. } => unreachable!(),
         }
     }
@@ -770,6 +795,151 @@ impl PromptEditor<BufferCodegen> {
                 gutter_dimensions, ..
             } => gutter_dimensions,
             PromptEditorMode::Terminal { .. } => unreachable!(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
+pub struct TerminalInlineAssistId(pub usize);
+
+impl TerminalInlineAssistId {
+    pub fn post_inc(&mut self) -> TerminalInlineAssistId {
+        let id = *self;
+        self.0 += 1;
+        id
+    }
+}
+
+impl PromptEditor<TerminalCodegen> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_terminal(
+        id: TerminalInlineAssistId,
+        prompt_history: VecDeque<String>,
+        prompt_buffer: Model<MultiBuffer>,
+        codegen: Model<TerminalCodegen>,
+        fs: Arc<dyn Fs>,
+        context_store: Model<ContextStore>,
+        workspace: WeakView<Workspace>,
+        thread_store: Option<WeakModel<ThreadStore>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
+        let mode = PromptEditorMode::Terminal {
+            id,
+            codegen,
+            height_in_lines: 1,
+        };
+
+        let prompt_editor = cx.new_view(|cx| {
+            let mut editor = Editor::new(
+                EditorMode::AutoHeight {
+                    max_lines: Self::MAX_LINES as usize,
+                },
+                prompt_buffer,
+                None,
+                false,
+                cx,
+            );
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.set_placeholder_text(Self::placeholder_text(&mode, cx), cx);
+            editor
+        });
+        let context_picker_menu_handle = PopoverMenuHandle::default();
+
+        let mut this = Self {
+            editor: prompt_editor.clone(),
+            context_strip: cx.new_view(|cx| {
+                ContextStrip::new(
+                    context_store,
+                    workspace.clone(),
+                    thread_store.clone(),
+                    prompt_editor.focus_handle(cx),
+                    context_picker_menu_handle.clone(),
+                    cx,
+                )
+            }),
+            context_picker_menu_handle,
+            language_model_selector: cx.new_view(|cx| {
+                let fs = fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    cx,
+                )
+            }),
+            edited_since_done: false,
+            prompt_history,
+            prompt_history_ix: None,
+            pending_prompt: String::new(),
+            _codegen_subscription: codegen_subscription,
+            editor_subscriptions: Vec::new(),
+            mode,
+            show_rate_limit_notice: false,
+            _phantom: Default::default(),
+        };
+        this.count_lines(cx);
+        this.subscribe_to_editor(cx);
+        this
+    }
+
+    fn count_lines(&mut self, cx: &mut ViewContext<Self>) {
+        let height_in_lines = cmp::max(
+            2, // Make the editor at least two lines tall, to account for padding and buttons.
+            cmp::min(
+                self.editor
+                    .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1),
+                Self::MAX_LINES as u32,
+            ),
+        ) as u8;
+
+        match &mut self.mode {
+            PromptEditorMode::Terminal {
+                height_in_lines: current_height,
+                ..
+            } => {
+                if height_in_lines != *current_height {
+                    *current_height = height_in_lines;
+                    cx.emit(PromptEditorEvent::Resized { height_in_lines });
+                }
+            }
+            PromptEditorMode::Buffer { .. } => unreachable!(),
+        }
+    }
+
+    fn handle_codegen_changed(&mut self, _: Model<TerminalCodegen>, cx: &mut ViewContext<Self>) {
+        match &self.codegen().read(cx).status {
+            CodegenStatus::Idle => {
+                self.editor
+                    .update(cx, |editor, _| editor.set_read_only(false));
+            }
+            CodegenStatus::Pending => {
+                self.editor
+                    .update(cx, |editor, _| editor.set_read_only(true));
+            }
+            CodegenStatus::Done | CodegenStatus::Error(_) => {
+                self.edited_since_done = false;
+                self.editor
+                    .update(cx, |editor, _| editor.set_read_only(false));
+            }
+        }
+    }
+
+    pub fn codegen(&self) -> &Model<TerminalCodegen> {
+        match &self.mode {
+            PromptEditorMode::Buffer { .. } => unreachable!(),
+            PromptEditorMode::Terminal { codegen, .. } => codegen,
+        }
+    }
+
+    pub fn id(&self) -> TerminalInlineAssistId {
+        match &self.mode {
+            PromptEditorMode::Buffer { .. } => unreachable!(),
+            PromptEditorMode::Terminal { id, .. } => *id,
         }
     }
 }
@@ -795,16 +965,6 @@ fn set_rate_limit_notice_dismissed(is_dismissed: bool, cx: &mut AppContext) {
                 .await
         }
     })
-}
-
-pub enum PromptEditorMode {
-    Buffer {
-        codegen: Model<BufferCodegen>,
-        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
-    },
-    Terminal {
-        codegen: Model<TerminalCodegen>,
-    },
 }
 
 pub enum CodegenStatus {
@@ -994,10 +1154,4 @@ pub enum PromptEditorEvent {
     CancelRequested,
     DismissRequested,
     Resized { height_in_lines: u8 },
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum CodegenEvent {
-    Finished,
-    Undone,
 }
