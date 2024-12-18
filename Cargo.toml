@@ -385,7 +385,7 @@ futures-lite = "1.13"
 git2 = { version = "0.19", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
-heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
+heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 hyper = "0.14"
