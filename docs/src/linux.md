@@ -171,9 +171,9 @@ rm ~/.local/zed.app/lib/libcrypto.so.1.1
 
 This will force zed to fallback to the system `libssl` and `libcrypto` libraries.
 
-### Editing files requiring root access {#root}
+### Editing files requiring root access
 
-When you try to edit files that require root access, Zed requires `pkexec` (part of polkit) to handle authentication prompts. Without polkit, editing files requiring root access won't work.
+When you try to edit files that require root access, Zed requires `pkexec` (part of polkit) to handle authentication prompts.
 
 Polkit comes pre-installed with most desktop environments like GNOME and KDE. If you're using a minimal system and polkit is not installed, you can install it with:
 
@@ -181,4 +181,3 @@ Polkit comes pre-installed with most desktop environments like GNOME and KDE. If
 - Fedora: `sudo dnf install polkit`
 - Arch Linux: `sudo pacman -S polkit`
 
-It's recommended to run the install script again after installing polkit.
