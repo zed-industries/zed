@@ -5432,7 +5432,8 @@ impl Editor {
                         if end_point == start_point {
                             let offset = text::ToOffset::to_offset(&range.start, &snapshot)
                                 .saturating_sub(1);
-                            start_point = TP::to_point(&offset, &snapshot);
+                            start_point =
+                                snapshot.clip_point(TP::to_point(&offset, &snapshot), Bias::Left);
                         };
 
                         (start_point..end_point, empty_str.clone())
