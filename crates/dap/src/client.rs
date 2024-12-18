@@ -270,24 +270,34 @@ impl DebugAdapterClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{adapters::FakeAdapter, client::DebugAdapterClient};
+    use crate::{
+        adapters::FakeAdapter, client::DebugAdapterClient, debugger_settings::DebuggerSettings,
+    };
     use dap_types::{
         messages::Events, requests::Initialize, Capabilities, InitializeRequestArguments,
         InitializeRequestArgumentsPathFormat,
     };
     use gpui::TestAppContext;
+    use settings::{Settings, SettingsStore};
     use std::sync::atomic::{AtomicBool, Ordering};
     use task::DebugAdapterConfig;
 
-    #[ctor::ctor]
-    fn init_logger() {
+    pub fn init_test(cx: &mut gpui::TestAppContext) {
         if std::env::var("RUST_LOG").is_ok() {
-            env_logger::init();
+            env_logger::try_init().ok();
         }
+
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            DebuggerSettings::register(cx);
+        });
     }
 
     #[gpui::test]
     pub async fn test_initialize_client(cx: &mut TestAppContext) {
+        init_test(cx);
+
         let adapter = Arc::new(FakeAdapter::new());
 
         let mut client = DebugAdapterClient::new(
@@ -365,6 +375,8 @@ mod tests {
 
     #[gpui::test]
     pub async fn test_calls_event_handler(cx: &mut TestAppContext) {
+        init_test(cx);
+
         let adapter = Arc::new(FakeAdapter::new());
         let was_called = Arc::new(AtomicBool::new(false));
         let was_called_clone = was_called.clone();

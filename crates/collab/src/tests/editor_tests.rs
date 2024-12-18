@@ -2597,7 +2597,6 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     assert_eq!(0, breakpoints_a.len());
     assert_eq!(breakpoints_a, breakpoints_b);
-    assert!(breakpoints_a.contains_key(&project_path));
 }
 
 #[track_caller]

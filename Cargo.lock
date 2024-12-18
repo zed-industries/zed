@@ -3572,7 +3572,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
- "ctor",
  "dap-types",
  "env_logger 0.11.5",
  "fs",
