@@ -1,3 +1,4 @@
+mod directory_context_picker;
 mod fetch_context_picker;
 mod file_context_picker;
 mod thread_context_picker;
@@ -13,6 +14,8 @@ use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::Workspace;
 
+use crate::context::ContextKind;
+use crate::context_picker::directory_context_picker::DirectoryContextPicker;
 use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
@@ -23,6 +26,7 @@ use crate::thread_store::ThreadStore;
 enum ContextPickerMode {
     Default,
     File(View<FileContextPicker>),
+    Directory(View<DirectoryContextPicker>),
     Fetch(View<FetchContextPicker>),
     Thread(View<ThreadContextPicker>),
 }
@@ -41,15 +45,18 @@ impl ContextPicker {
     ) -> Self {
         let mut entries = vec![
             ContextPickerEntry {
-                name: "Directory".into(),
-                icon: IconName::Folder,
-            },
-            ContextPickerEntry {
                 name: "File".into(),
+                kind: ContextKind::File,
                 icon: IconName::File,
             },
             ContextPickerEntry {
+                name: "Folder".into(),
+                kind: ContextKind::Directory,
+                icon: IconName::Folder,
+            },
+            ContextPickerEntry {
                 name: "Fetch".into(),
+                kind: ContextKind::FetchedUrl,
                 icon: IconName::Globe,
             },
         ];
@@ -57,6 +64,7 @@ impl ContextPicker {
         if thread_store.is_some() {
             entries.push(ContextPickerEntry {
                 name: "Thread".into(),
+                kind: ContextKind::Thread,
                 icon: IconName::MessageCircle,
             });
         }
@@ -92,6 +100,7 @@ impl FocusableView for ContextPicker {
         match &self.mode {
             ContextPickerMode::Default => self.picker.focus_handle(cx),
             ContextPickerMode::File(file_picker) => file_picker.focus_handle(cx),
+            ContextPickerMode::Directory(directory_picker) => directory_picker.focus_handle(cx),
             ContextPickerMode::Fetch(fetch_picker) => fetch_picker.focus_handle(cx),
             ContextPickerMode::Thread(thread_picker) => thread_picker.focus_handle(cx),
         }
@@ -106,6 +115,9 @@ impl Render for ContextPicker {
             .map(|parent| match &self.mode {
                 ContextPickerMode::Default => parent.child(self.picker.clone()),
                 ContextPickerMode::File(file_picker) => parent.child(file_picker.clone()),
+                ContextPickerMode::Directory(directory_picker) => {
+                    parent.child(directory_picker.clone())
+                }
                 ContextPickerMode::Fetch(fetch_picker) => parent.child(fetch_picker.clone()),
                 ContextPickerMode::Thread(thread_picker) => parent.child(thread_picker.clone()),
             })
@@ -115,6 +127,7 @@ impl Render for ContextPicker {
 #[derive(Clone)]
 struct ContextPickerEntry {
     name: SharedString,
+    kind: ContextKind,
     icon: IconName,
 }
 
@@ -155,8 +168,8 @@ impl PickerDelegate for ContextPickerDelegate {
         if let Some(entry) = self.entries.get(self.selected_ix) {
             self.context_picker
                 .update(cx, |this, cx| {
-                    match entry.name.to_string().as_str() {
-                        "File" => {
+                    match entry.kind {
+                        ContextKind::File => {
                             this.mode = ContextPickerMode::File(cx.new_view(|cx| {
                                 FileContextPicker::new(
                                     self.context_picker.clone(),
@@ -166,7 +179,17 @@ impl PickerDelegate for ContextPickerDelegate {
                                 )
                             }));
                         }
-                        "Fetch" => {
+                        ContextKind::Directory => {
+                            this.mode = ContextPickerMode::Directory(cx.new_view(|cx| {
+                                DirectoryContextPicker::new(
+                                    self.context_picker.clone(),
+                                    self.workspace.clone(),
+                                    self.context_store.clone(),
+                                    cx,
+                                )
+                            }));
+                        }
+                        ContextKind::FetchedUrl => {
                             this.mode = ContextPickerMode::Fetch(cx.new_view(|cx| {
                                 FetchContextPicker::new(
                                     self.context_picker.clone(),
@@ -176,7 +199,7 @@ impl PickerDelegate for ContextPickerDelegate {
                                 )
                             }));
                         }
-                        "Thread" => {
+                        ContextKind::Thread => {
                             if let Some(thread_store) = self.thread_store.as_ref() {
                                 this.mode = ContextPickerMode::Thread(cx.new_view(|cx| {
                                     ThreadContextPicker::new(
@@ -188,7 +211,6 @@ impl PickerDelegate for ContextPickerDelegate {
                                 }));
                             }
                         }
-                        _ => {}
                     }
 
                     cx.focus_self();
@@ -202,6 +224,7 @@ impl PickerDelegate for ContextPickerDelegate {
             .update(cx, |this, cx| match this.mode {
                 ContextPickerMode::Default => cx.emit(DismissEvent),
                 ContextPickerMode::File(_)
+                | ContextPickerMode::Directory(_)
                 | ContextPickerMode::Fetch(_)
                 | ContextPickerMode::Thread(_) => {}
             })

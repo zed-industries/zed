@@ -1,11 +1,12 @@
-use crate::assistant_settings::AssistantSettings;
 use crate::context::attach_context_to_message;
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::context_strip::ContextStrip;
+use crate::inline_prompt_editor::{CodegenStatus, PromptEditorEvent, PromptMode};
 use crate::prompts::PromptBuilder;
 use crate::thread_store::ThreadStore;
 use crate::ToggleContextPicker;
+use crate::{assistant_settings::AssistantSettings, inline_prompt_editor::render_cancel_button};
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
@@ -448,15 +449,6 @@ impl TerminalInlineAssist {
     }
 }
 
-enum PromptEditorEvent {
-    StartRequested,
-    StopRequested,
-    ConfirmRequested { execute: bool },
-    CancelRequested,
-    DismissRequested,
-    Resized { height_in_lines: u8 },
-}
-
 struct PromptEditor {
     id: TerminalInlineAssistId,
     height_in_lines: u8,
@@ -477,104 +469,16 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let status = &self.codegen.read(cx).status;
         let mut buttons = Vec::new();
 
-        buttons.extend(match status {
-            CodegenStatus::Idle => vec![
-                IconButton::new("cancel", IconName::Close)
-                    .icon_color(Color::Muted)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
-                    .into_any_element(),
-                IconButton::new("start", IconName::SparkleAlt)
-                    .icon_color(Color::Muted)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::for_action("Generate", &menu::Confirm, cx))
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)))
-                    .into_any_element(),
-            ],
-            CodegenStatus::Pending => vec![
-                IconButton::new("cancel", IconName::Close)
-                    .icon_color(Color::Muted)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
-                    .into_any_element(),
-                IconButton::new("stop", IconName::Stop)
-                    .icon_color(Color::Error)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| {
-                        Tooltip::with_meta(
-                            "Interrupt Generation",
-                            Some(&menu::Cancel),
-                            "Changes won't be discarded",
-                            cx,
-                        )
-                    })
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
-                    .into_any_element(),
-            ],
-            CodegenStatus::Error(_) | CodegenStatus::Done => {
-                let cancel = IconButton::new("cancel", IconName::Close)
-                    .icon_color(Color::Muted)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
-                    .into_any_element();
-
-                let has_error = matches!(status, CodegenStatus::Error(_));
-                if has_error || self.edited_since_done {
-                    vec![
-                        cancel,
-                        IconButton::new("restart", IconName::RotateCw)
-                            .icon_color(Color::Info)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(|cx| {
-                                Tooltip::with_meta(
-                                    "Restart Generation",
-                                    Some(&menu::Confirm),
-                                    "Changes will be discarded",
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(PromptEditorEvent::StartRequested);
-                            }))
-                            .into_any_element(),
-                    ]
-                } else {
-                    vec![
-                        cancel,
-                        IconButton::new("accept", IconName::Check)
-                            .icon_color(Color::Info)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(|cx| {
-                                Tooltip::for_action("Accept Generated Command", &menu::Confirm, cx)
-                            })
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
-                            }))
-                            .into_any_element(),
-                        IconButton::new("confirm", IconName::Play)
-                            .icon_color(Color::Info)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(|cx| {
-                                Tooltip::for_action(
-                                    "Execute Generated Command",
-                                    &menu::SecondaryConfirm,
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(PromptEditorEvent::ConfirmRequested { execute: true });
-                            }))
-                            .into_any_element(),
-                    ]
-                }
-            }
-        });
+        buttons.extend(render_cancel_button(
+            (&self.codegen.read(cx).status).into(),
+            self.edited_since_done,
+            PromptMode::Generate {
+                supports_execute: true,
+            },
+            cx,
+        ));
 
         v_flex()
             .border_y_1()
@@ -1096,11 +1000,4 @@ impl Codegen {
             transaction.undo(cx);
         }
     }
-}
-
-enum CodegenStatus {
-    Idle,
-    Pending,
-    Done,
-    Error(anyhow::Error),
 }

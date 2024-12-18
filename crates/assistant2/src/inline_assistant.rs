@@ -2,6 +2,9 @@ use crate::context::attach_context_to_message;
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::context_strip::ContextStrip;
+use crate::inline_prompt_editor::{
+    render_cancel_button, CodegenStatus, PromptEditorEvent, PromptMode,
+};
 use crate::thread_store::ThreadStore;
 use crate::{
     assistant_settings::AssistantSettings,
@@ -652,7 +655,7 @@ impl InlineAssistant {
             PromptEditorEvent::StopRequested => {
                 self.stop_assist(assist_id, cx);
             }
-            PromptEditorEvent::ConfirmRequested => {
+            PromptEditorEvent::ConfirmRequested { execute: _ } => {
                 self.finish_assist(assist_id, false, cx);
             }
             PromptEditorEvent::CancelRequested => {
@@ -660,6 +663,9 @@ impl InlineAssistant {
             }
             PromptEditorEvent::DismissRequested => {
                 self.dismiss_assist(assist_id, cx);
+            }
+            PromptEditorEvent::Resized { .. } => {
+                // This only matters for the terminal inline
             }
         }
     }
@@ -1475,14 +1481,6 @@ impl InlineAssistGroupId {
     }
 }
 
-enum PromptEditorEvent {
-    StartRequested,
-    StopRequested,
-    ConfirmRequested,
-    CancelRequested,
-    DismissRequested,
-}
-
 struct PromptEditor {
     id: InlineAssistId,
     editor: View<Editor>,
@@ -1510,93 +1508,20 @@ impl Render for PromptEditor {
         if codegen.alternative_count(cx) > 1 {
             buttons.push(self.render_cycle_controls(cx));
         }
+        let prompt_mode = if codegen.is_insertion {
+            PromptMode::Generate {
+                supports_execute: false,
+            }
+        } else {
+            PromptMode::Transform
+        };
 
-        let status = codegen.status(cx);
-        buttons.extend(match status {
-            CodegenStatus::Idle => {
-                vec![
-                    IconButton::new("cancel", IconName::Close)
-                        .icon_color(Color::Muted)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
-                        )
-                        .into_any_element(),
-                    IconButton::new("start", IconName::SparkleAlt)
-                        .icon_color(Color::Muted)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::for_action("Transform", &menu::Confirm, cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
-                        )
-                        .into_any_element(),
-                ]
-            }
-            CodegenStatus::Pending => {
-                vec![
-                    IconButton::new("cancel", IconName::Close)
-                        .icon_color(Color::Muted)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
-                        )
-                        .into_any_element(),
-                    IconButton::new("stop", IconName::Stop)
-                        .icon_color(Color::Error)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(|cx| {
-                            Tooltip::with_meta(
-                                "Interrupt Transformation",
-                                Some(&menu::Cancel),
-                                "Changes won't be discarded",
-                                cx,
-                            )
-                        })
-                        .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
-                        .into_any_element(),
-                ]
-            }
-            CodegenStatus::Error(_) | CodegenStatus::Done => {
-                vec![
-                    IconButton::new("cancel", IconName::Close)
-                        .icon_color(Color::Muted)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
-                        )
-                        .into_any_element(),
-                    if self.edited_since_done || matches!(status, CodegenStatus::Error(_)) {
-                        IconButton::new("restart", IconName::RotateCw)
-                            .icon_color(Color::Info)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(|cx| {
-                                Tooltip::with_meta(
-                                    "Restart Transformation",
-                                    Some(&menu::Confirm),
-                                    "Changes will be discarded",
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(PromptEditorEvent::StartRequested);
-                            }))
-                            .into_any_element()
-                    } else {
-                        IconButton::new("confirm", IconName::Check)
-                            .icon_color(Color::Info)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(|cx| Tooltip::for_action("Confirm Assist", &menu::Confirm, cx))
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(PromptEditorEvent::ConfirmRequested);
-                            }))
-                            .into_any_element()
-                    },
-                ]
-            }
-        });
+        buttons.extend(render_cancel_button(
+            codegen.status(cx).into(),
+            self.edited_since_done,
+            prompt_mode,
+            cx,
+        ));
 
         v_flex()
             .border_y_1()
@@ -1747,7 +1672,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx)), cx);
+            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), cx), cx);
             editor
         });
         let context_picker_menu_handle = PopoverMenuHandle::default();
@@ -1815,7 +1740,7 @@ impl PromptEditor {
         self.editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx)), cx);
+            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx), cx), cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, cx);
             if focus {
@@ -1826,14 +1751,17 @@ impl PromptEditor {
         self.subscribe_to_editor(cx);
     }
 
-    fn placeholder_text(codegen: &Codegen) -> String {
+    fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
         let action = if codegen.is_insertion {
             "Generate"
         } else {
             "Transform"
         };
+        let assistant_panel_keybinding = ui::text_for_action(&crate::ToggleFocus, cx)
+            .map(|keybinding| format!("{keybinding} to chat ― "))
+            .unwrap_or_default();
 
-        format!("{action}… ↓↑ for history")
+        format!("{action}… ({assistant_panel_keybinding}↓↑ for history)")
     }
 
     fn prompt(&self, cx: &AppContext) -> String {
@@ -1950,7 +1878,7 @@ impl PromptEditor {
                 if self.edited_since_done {
                     cx.emit(PromptEditorEvent::StartRequested);
                 } else {
-                    cx.emit(PromptEditorEvent::ConfirmRequested);
+                    cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
                 }
             }
             CodegenStatus::Error(_) => {
@@ -2564,13 +2492,6 @@ pub struct CodegenAlternative {
     elapsed_time: Option<f64>,
     completion: Option<String>,
     message_id: Option<String>,
-}
-
-enum CodegenStatus {
-    Idle,
-    Pending,
-    Done,
-    Error(anyhow::Error),
 }
 
 #[derive(Default)]

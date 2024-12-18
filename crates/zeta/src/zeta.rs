@@ -688,16 +688,14 @@ and then another
         feedback: String,
         cx: &mut ModelContext<Self>,
     ) {
-        self.rated_completions.insert(completion.id);
-        self.client
-            .telemetry()
-            .report_inline_completion_rating_event(
-                rating,
-                completion.input_events.clone(),
-                completion.input_excerpt.clone(),
-                completion.output_excerpt.clone(),
-                feedback,
-            );
+        telemetry::event!(
+            "Inline Completion Rated",
+            rating,
+            input_events = completion.input_events,
+            input_excerpt = completion.input_excerpt,
+            output_excerpt = completion.output_excerpt,
+            feedback
+        );
         self.client.telemetry().flush_events();
         cx.notify();
     }
@@ -932,6 +930,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn display_name() -> &'static str {
         "Zeta"
+    }
+
+    fn show_completions_in_menu() -> bool {
+        true
     }
 
     fn is_enabled(

@@ -1370,7 +1370,7 @@ impl Editor {
             }
         }
 
-        this.report_editor_event("open", None, cx);
+        this.report_editor_event("Editor Opened", None, cx);
         this
     }
 
@@ -2473,7 +2473,7 @@ impl Editor {
         }
 
         if self.hide_context_menu(cx).is_some() {
-            if self.has_active_inline_completion() {
+            if self.show_inline_completions_in_menu(cx) && self.has_active_inline_completion() {
                 self.update_visible_inline_completion(cx);
             }
             return true;
@@ -2856,6 +2856,7 @@ impl Editor {
                 );
             }
 
+            let had_active_inline_completion = this.has_active_inline_completion();
             this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
                 s.select(new_selections)
             });
@@ -2876,7 +2877,9 @@ impl Editor {
                 this.show_signature_help(&ShowSignatureHelp, cx);
             }
 
-            this.trigger_completion_on_input(&text, true, cx);
+            let trigger_in_words =
+                this.show_inline_completions_in_menu(cx) || !had_active_inline_completion;
+            this.trigger_completion_on_input(&text, trigger_in_words, cx);
             linked_editing_ranges::refresh_linked_ranges(this, cx);
             this.refresh_inline_completion(true, false, cx);
         });
@@ -3682,10 +3685,6 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
 
-        let aside_was_displayed = match self.context_menu.borrow().deref() {
-            Some(CodeContextMenu::Completions(menu)) => menu.aside_was_displayed.get(),
-            _ => false,
-        };
         let trigger_kind = match &options.trigger {
             Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
                 CompletionTriggerKind::TRIGGER_CHARACTER
@@ -3720,7 +3719,6 @@ impl Editor {
                         position,
                         buffer.clone(),
                         completions.into(),
-                        aside_was_displayed,
                     );
 
                     menu.filter(query.as_deref(), cx.background_executor().clone())
@@ -3746,9 +3744,13 @@ impl Editor {
                         let mut menu = menu.unwrap();
                         menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
 
-                        if let Some(hint) = editor.inline_completion_menu_hint(cx) {
-                            editor.hide_active_inline_completion(cx);
-                            menu.show_inline_completion_hint(hint);
+                        if editor.show_inline_completions_in_menu(cx) {
+                            if let Some(hint) = editor.inline_completion_menu_hint(cx) {
+                                editor.hide_active_inline_completion(cx);
+                                menu.show_inline_completion_hint(hint);
+                            }
+                        } else {
+                            editor.discard_inline_completion(false, cx);
                         }
 
                         *editor.context_menu.borrow_mut() =
@@ -3757,9 +3759,14 @@ impl Editor {
                         cx.notify();
                     } else if editor.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
-                        // empty, we should hide it. If it was already hidden, we should
-                        // also show the copilot completion when available.
-                        editor.hide_context_menu(cx);
+                        // empty, we should hide it.
+                        let was_hidden = editor.hide_context_menu(cx).is_none();
+                        // If it was already hidden and we don't show inline
+                        // completions in the menu, we should also show the
+                        // inline-completion when available.
+                        if was_hidden && editor.show_inline_completions_in_menu(cx) {
+                            editor.update_visible_inline_completion(cx);
+                        }
                     }
                 })?;
 
@@ -3813,7 +3820,9 @@ impl Editor {
                 return Some(Task::ready(Ok(())));
             }
             CompletionEntry::Match(mat) => {
-                self.discard_inline_completion(true, cx);
+                if self.show_inline_completions_in_menu(cx) {
+                    self.discard_inline_completion(true, cx);
+                }
                 mat
             }
         };
@@ -4551,7 +4560,9 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        self.hide_context_menu(cx);
+        if self.show_inline_completions_in_menu(cx) {
+            self.hide_context_menu(cx);
+        }
 
         let Some(active_inline_completion) = self.active_inline_completion.as_ref() else {
             return;
@@ -4718,7 +4729,11 @@ impl Editor {
         let offset_selection = selection.map(|endpoint| endpoint.to_offset(&multibuffer));
         let excerpt_id = cursor.excerpt_id;
 
-        if !offset_selection.is_empty()
+        let completions_menu_has_precedence = !self.show_inline_completions_in_menu(cx)
+            && (self.context_menu.borrow().is_some()
+                || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion()));
+        if completions_menu_has_precedence
+            || !offset_selection.is_empty()
             || self
                 .active_inline_completion
                 .as_ref()
@@ -4742,16 +4757,10 @@ impl Editor {
         let edits = completion
             .edits
             .into_iter()
-            .map(|(range, new_text)| {
-                (
-                    multibuffer
-                        .anchor_in_excerpt(excerpt_id, range.start)
-                        .unwrap()
-                        ..multibuffer
-                            .anchor_in_excerpt(excerpt_id, range.end)
-                            .unwrap(),
-                    new_text,
-                )
+            .flat_map(|(range, new_text)| {
+                let start = multibuffer.anchor_in_excerpt(excerpt_id, range.start)?;
+                let end = multibuffer.anchor_in_excerpt(excerpt_id, range.end)?;
+                Some((start..end, new_text))
             })
             .collect::<Vec<_>>();
         if edits.is_empty() {
@@ -4782,7 +4791,7 @@ impl Editor {
             invalidation_row_range = edit_start_row..cursor_row;
             completion = InlineCompletion::Move(first_edit_start);
         } else {
-            if !self.has_active_completions_menu() {
+            if !self.show_inline_completions_in_menu(cx) || !self.has_active_completions_menu() {
                 if edits
                     .iter()
                     .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
@@ -4829,7 +4838,7 @@ impl Editor {
             invalidation_range,
         });
 
-        if self.has_active_completions_menu() {
+        if self.show_inline_completions_in_menu(cx) && self.has_active_completions_menu() {
             if let Some(hint) = self.inline_completion_menu_hint(cx) {
                 match self.context_menu.borrow_mut().as_mut() {
                     Some(CodeContextMenu::Completions(menu)) => {
@@ -4855,7 +4864,7 @@ impl Editor {
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
                 InlineCompletion::Edit(edits) => {
-                    inline_completion_edit_text(&editor_snapshot, edits, cx)
+                    inline_completion_edit_text(&editor_snapshot, edits, true, cx)
                 }
                 InlineCompletion::Move(target) => {
                     let target_point =
@@ -4878,6 +4887,13 @@ impl Editor {
 
     fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
         Some(self.inline_completion_provider.as_ref()?.provider.clone())
+    }
+
+    fn show_inline_completions_in_menu(&self, cx: &AppContext) -> bool {
+        EditorSettings::get_global(cx).show_inline_completions_in_menu
+            && self
+                .inline_completion_provider()
+                .map_or(false, |provider| provider.show_completions_in_menu())
     }
 
     fn render_code_actions_indicator(
@@ -5118,12 +5134,27 @@ impl Editor {
     ) -> Option<AnyElement> {
         self.context_menu.borrow().as_ref().and_then(|menu| {
             if menu.visible() {
-                Some(menu.render(
+                Some(menu.render(style, max_height_in_lines, cx))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn render_context_menu_aside(
+        &self,
+        style: &EditorStyle,
+        max_height: Pixels,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<AnyElement> {
+        self.context_menu.borrow().as_ref().and_then(|menu| {
+            if menu.visible() {
+                menu.render_aside(
                     style,
-                    max_height_in_lines,
+                    max_height,
                     self.workspace.as_ref().map(|(w, _)| w.clone()),
                     cx,
-                ))
+                )
             } else {
                 None
             }
@@ -5133,7 +5164,11 @@ impl Editor {
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<CodeContextMenu> {
         cx.notify();
         self.completion_tasks.clear();
-        self.context_menu.borrow_mut().take()
+        let context_menu = self.context_menu.borrow_mut().take();
+        if context_menu.is_some() && !self.show_inline_completions_in_menu(cx) {
+            self.update_visible_inline_completion(cx);
+        }
+        context_menu
     }
 
     fn show_snippet_choices(
@@ -5422,7 +5457,8 @@ impl Editor {
                         if end_point == start_point {
                             let offset = text::ToOffset::to_offset(&range.start, &snapshot)
                                 .saturating_sub(1);
-                            start_point = TP::to_point(&offset, &snapshot);
+                            start_point =
+                                snapshot.clip_point(TP::to_point(&offset, &snapshot), Bias::Left);
                         };
 
                         (start_point..end_point, empty_str.clone())
@@ -12568,7 +12604,7 @@ impl Editor {
 
     fn report_editor_event(
         &self,
-        operation: &'static str,
+        event_type: &'static str,
         file_extension: Option<String>,
         cx: &AppContext,
     ) {
@@ -12605,15 +12641,14 @@ impl Editor {
             .show_inline_completions;
 
         let project = project.read(cx);
-        let telemetry = project.client().telemetry().clone();
-        telemetry.report_editor_event(
+        telemetry::event!(
+            event_type,
             file_extension,
             vim_mode,
-            operation,
             copilot_enabled,
             copilot_enabled_for_language,
-            project.is_via_ssh(),
-        )
+            is_via_ssh = project.is_via_ssh(),
+        );
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
@@ -14595,6 +14630,7 @@ pub fn diagnostic_block_renderer(
 fn inline_completion_edit_text(
     editor_snapshot: &EditorSnapshot,
     edits: &Vec<(Range<Anchor>, String)>,
+    include_deletions: bool,
     cx: &WindowContext,
 ) -> InlineCompletionText {
     let edit_start = edits
@@ -14618,12 +14654,24 @@ fn inline_completion_edit_text(
         offset = old_offset_range.end;
 
         let start = text.len();
-        text.push_str(new_text);
+        let color = if include_deletions && new_text.is_empty() {
+            text.extend(
+                editor_snapshot
+                    .buffer_snapshot
+                    .chunks(old_offset_range.start..offset, false)
+                    .map(|chunk| chunk.text),
+            );
+            cx.theme().status().deleted_background
+        } else {
+            text.push_str(new_text);
+            cx.theme().status().created_background
+        };
         let end = text.len();
+
         highlights.push((
             start..end,
             HighlightStyle {
-                background_color: Some(cx.theme().status().created_background),
+                background_color: Some(color),
                 ..Default::default()
             },
         ));

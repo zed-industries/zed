@@ -2960,11 +2960,13 @@ impl Workspace {
         match target {
             Some(ActivateInDirectionTarget::Pane(pane)) => cx.focus_view(&pane),
             Some(ActivateInDirectionTarget::Dock(dock)) => {
-                if let Some(panel) = dock.read(cx).active_panel() {
-                    panel.focus_handle(cx).focus(cx);
-                } else {
-                    log::error!("Could not find a focus target when in switching focus in {direction} direction for a {:?} dock", dock.read(cx).position());
-                }
+                dock.update(cx, |dock, cx| {
+                    if let Some(panel) = dock.active_panel() {
+                        panel.focus_handle(cx).focus(cx);
+                    } else {
+                        log::error!("Could not find a focus target when in switching focus in {direction} direction for a {:?} dock", dock.position());
+                    }
+                });
             }
             None => {}
         }
