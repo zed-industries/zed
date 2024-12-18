@@ -47,7 +47,6 @@ use language::{
     },
     ChunkRendererContext,
 };
-use log::kv::ToValue;
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint,
@@ -2212,6 +2211,7 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let header_padding = px(6.0);
+
         let mut element = match block {
             Block::Custom(block) => {
                 let block_start = block.start().to_point(&snapshot.buffer_snapshot);
@@ -2283,7 +2283,6 @@ impl EditorElement {
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
                 let mut result = v_flex().id(block_id).w_full();
-                let focus_handle = self.editor.focus_handle(cx).clone();
 
                 if let Some(prev_excerpt) = prev_excerpt {
                     if *show_excerpt_controls {
@@ -2306,19 +2305,9 @@ impl EditorElement {
                                     let direction = ExpandExcerptDirection::Down;
                                     move |editor, _, cx| {
                                         editor.expand_excerpt(excerpt_id, direction, cx);
+                                        cx.stop_propagation();
                                     }
                                 })),
-                            // .tooltip({
-                            //     let focus_handle = focus_handle.clone();
-                            //     move |cx| {
-                            //         Tooltip::for_action_in(
-                            //             "Expand Excerpt",
-                            //             &ExpandExcerpts { lines: 0 },
-                            //             &focus_handle,
-                            //             cx,
-                            //         )
-                            //     }
-                            // }),
                         );
                     }
                 }
@@ -2349,7 +2338,7 @@ impl EditorElement {
                 let color = cx.theme().colors().clone();
                 let focus_handle = self.editor.focus_handle(cx).clone();
 
-                let mut result = v_flex().id(block_id).w_full().debug_bg_cyan();
+                let mut result = v_flex().id(block_id).w_full();
 
                 let expand_area = || {
                     h_flex()
@@ -2357,7 +2346,8 @@ impl EditorElement {
                         .relative()
                         .w_full()
                         .cursor_pointer()
-                        // .debug_bg_blue()
+                        .debug_bg_blue()
+                        .block_mouse_down()
                         .hover(|style| style.bg(color.border_variant.opacity(0.5)))
                         .tooltip({
                             let focus_handle = focus_handle.clone();
@@ -2398,6 +2388,7 @@ impl EditorElement {
                                     let direction = ExpandExcerptDirection::Down;
                                     move |editor, _, cx| {
                                         editor.expand_excerpt(excerpt_id, direction, cx);
+                                        cx.stop_propagation();
                                     }
                                 })), // .tooltip({
                                      //     let focus_handle = focus_handle.clone();
@@ -2419,14 +2410,14 @@ impl EditorElement {
                     // let focus_handle = self.editor.focus_handle(cx).clone();
 
                     if *starts_new_buffer {
-                        result = result.child(expand_area().child(self.render_buffer_header(
+                        result = result.child(self.render_buffer_header(
                             next_excerpt,
                             header_padding,
                             false,
                             false,
                             jump_data,
                             cx,
-                        )));
+                        ));
 
                         if *show_excerpt_controls {
                             result = result.child(
@@ -2451,6 +2442,7 @@ impl EditorElement {
                                         let direction = ExpandExcerptDirection::Up;
                                         move |editor, _, cx| {
                                             editor.expand_excerpt(excerpt_id, direction, cx);
+                                            cx.stop_propagation();
                                         }
                                     })),
                             );
@@ -2508,8 +2500,9 @@ impl EditorElement {
                                 .on_click(cx.listener_for(&self.editor, {
                                     let excerpt_id = next_excerpt.id;
                                     let direction = ExpandExcerptDirection::Up;
-                                    move |editor, _, cx| {
+                                    move |editor, e: &ClickEvent, cx| {
                                         editor.expand_excerpt(excerpt_id, direction, cx);
+                                        cx.stop_propagation();
                                     }
                                 })), // .tooltip({
                                      //     let focus_handle = focus_handle.clone();
