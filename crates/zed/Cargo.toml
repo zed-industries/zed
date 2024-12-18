@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.166.0"
+version = "0.167.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -54,6 +54,7 @@ file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
+git_ui.workspace = true
 git_hosting_providers.workspace = true
 go_to_line.workspace = true
 gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
@@ -110,6 +111,7 @@ sysinfo.workspace = true
 tab_switcher.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
+telemetry.workspace = true
 telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true

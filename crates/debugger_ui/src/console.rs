@@ -8,10 +8,9 @@ use fuzzy::StringMatchCandidate;
 use gpui::{Model, Render, Subscription, Task, TextStyle, View, ViewContext, WeakView};
 use language::{Buffer, CodeLabel, LanguageServerId, ToOffsetUtf16};
 use menu::Confirm;
-use parking_lot::RwLock;
 use project::{dap_store::DapStore, Completion};
 use settings::Settings;
-use std::{collections::HashMap, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use theme::ThemeSettings;
 use ui::prelude::*;
 
@@ -231,7 +230,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         &self,
         _buffer: Model<Buffer>,
         _completion_indices: Vec<usize>,
-        _completions: Arc<RwLock<Box<[Completion]>>>,
+        _completions: Rc<RefCell<Box<[Completion]>>>,
         _cx: &mut ViewContext<Editor>,
     ) -> gpui::Task<gpui::Result<bool>> {
         Task::ready(Ok(false))

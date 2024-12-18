@@ -159,7 +159,8 @@ impl PickerDelegate for AttachModalDelegate {
                     .map(|(id, candidate)| {
                         StringMatchCandidate::new(
                             id,
-                            format!("{} {} {}", candidate.command, candidate.pid, candidate.name),
+                            format!("{} {} {}", candidate.command, candidate.pid, candidate.name)
+                                .as_str(),
                         )
                     })
                     .collect::<Vec<_>>(),
@@ -234,7 +235,7 @@ impl PickerDelegate for AttachModalDelegate {
             ListItem::new(SharedString::from(format!("attach-modal-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(
                     v_flex()
                         .items_start()

@@ -324,6 +324,7 @@ impl TerminalBuilder {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         working_directory: Option<PathBuf>,
+        python_venv_directory: Option<PathBuf>,
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
@@ -473,6 +474,7 @@ impl TerminalBuilder {
             vi_mode_enabled: false,
             debug_terminal,
             is_ssh_terminal,
+            python_venv_directory,
         };
 
         Ok(TerminalBuilder {
@@ -621,6 +623,7 @@ pub struct Terminal {
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
     title_override: Option<SharedString>,
+    pub python_venv_directory: Option<PathBuf>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -1461,7 +1464,7 @@ impl Terminal {
     fn drag_line_delta(&self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
         let top = region.origin.y + (self.last_content.size.line_height * 2.);
-        let bottom = region.lower_left().y - (self.last_content.size.line_height * 2.);
+        let bottom = region.bottom_left().y - (self.last_content.size.line_height * 2.);
         let scroll_delta = if e.position.y < top {
             (top - e.position.y).pow(1.1)
         } else if e.position.y > bottom {

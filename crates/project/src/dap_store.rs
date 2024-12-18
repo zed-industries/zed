@@ -1,5 +1,5 @@
 use crate::project_settings::ProjectSettings;
-use crate::{ProjectEnvironment, ProjectPath};
+use crate::{ProjectEnvironment, ProjectItem as _, ProjectPath};
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -362,20 +362,24 @@ impl DapStore {
 
     pub fn sync_open_breakpoints_to_closed_breakpoints(
         &mut self,
-        project_path: &ProjectPath,
-        buffer: &mut Buffer,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
     ) {
-        if let Some(breakpoint_set) = self.breakpoints.remove(project_path) {
+        let Some(project_path) = buffer.read(cx).project_path(cx) else {
+            return;
+        };
+
+        if let Some(breakpoint_set) = self.breakpoints.remove(&project_path) {
             let breakpoint_iter = breakpoint_set.into_iter().map(|mut bp| {
-                bp.cached_position = bp.point_for_buffer(&buffer).row;
+                bp.cached_position = bp.point_for_buffer(buffer.read(cx)).row;
                 bp.active_position = None;
                 bp
             });
 
-            self.breakpoints.insert(
-                project_path.clone(),
-                breakpoint_iter.collect::<HashSet<_>>(),
-            );
+            self.breakpoints
+                .insert(project_path, breakpoint_iter.collect::<HashSet<_>>());
+
+            cx.notify();
         }
     }
 

@@ -450,14 +450,15 @@ impl VariableList {
                 );
             }
 
-            let tasks_results = futures::future::join_all(tasks).await;
-            let result = tasks_results.into_iter().filter_map(|result| result.ok());
+            let results = futures::future::join_all(tasks).await;
 
             this.update(&mut cx, |this, cx| {
                 let mut new_variables = BTreeMap::new();
                 let mut new_scopes = HashMap::new();
 
-                for (stack_frame_id, (scopes, variables)) in result {
+                for (stack_frame_id, (scopes, variables)) in
+                    results.into_iter().filter_map(|result| result.ok())
+                {
                     new_scopes.insert(stack_frame_id, scopes);
 
                     for (scope_id, variables) in variables.into_iter() {
@@ -839,7 +840,7 @@ impl Render for VariableList {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::AnchorCorner::TopLeft)
+                        .anchor(gpui::Corner::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)

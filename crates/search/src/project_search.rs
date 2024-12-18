@@ -5,18 +5,16 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    actions::SelectAll,
-    items::active_match_index,
-    scroll::{Autoscroll, Axis},
-    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
-    MAX_TAB_TITLE_LEN,
+    actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor,
+    EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
 use gpui::{
-    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
-    FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
-    ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
+    actions, div, Action, AnyElement, AnyView, AppContext, Axis, Context as _, EntityId,
+    EventEmitter, FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement,
+    KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
+    WeakView, WindowContext,
 };
 use language::Buffer;
 use menu::Confirm;
@@ -35,7 +33,7 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     h_flex, prelude::*, utils::SearchInputWidth, v_flex, Icon, IconButton, IconButtonShape,
-    IconName, KeyBinding, Label, LabelCommon, LabelSize, Selectable, Tooltip,
+    IconName, KeyBinding, Label, LabelCommon, LabelSize, Toggleable, Tooltip,
 };
 use util::paths::PathMatcher;
 use workspace::{
@@ -1595,6 +1593,7 @@ impl Render for ProjectSearchBar {
 
         let input_base_styles = || {
             h_flex()
+                .min_w_32()
                 .w(input_width)
                 .h_8()
                 .px_2()
@@ -1644,7 +1643,7 @@ impl Render for ProjectSearchBar {
                     .on_click(cx.listener(|this, _, cx| {
                         this.toggle_filters(cx);
                     }))
-                    .selected(
+                    .toggle_state(
                         self.active_project_search
                             .as_ref()
                             .map(|search| search.read(cx).filters_enabled)
@@ -1668,7 +1667,7 @@ impl Render for ProjectSearchBar {
                     .on_click(cx.listener(|this, _, cx| {
                         this.toggle_replace(&ToggleReplace, cx);
                     }))
-                    .selected(
+                    .toggle_state(
                         self.active_project_search
                             .as_ref()
                             .map(|search| search.read(cx).replace_enabled)
@@ -1877,7 +1876,7 @@ impl Render for ProjectSearchBar {
                         .child(
                             IconButton::new("project-search-opened-only", IconName::FileSearch)
                                 .shape(IconButtonShape::Square)
-                                .selected(self.is_opened_only_enabled(cx))
+                                .toggle_state(self.is_opened_only_enabled(cx))
                                 .tooltip(|cx| Tooltip::text("Only Search Open Files", cx))
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.toggle_opened_only(cx);

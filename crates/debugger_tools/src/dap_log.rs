@@ -9,9 +9,9 @@ use futures::{
     StreamExt,
 };
 use gpui::{
-    actions, div, AnchorCorner, AppContext, Context, EventEmitter, FocusHandle, FocusableView,
-    IntoElement, Model, ModelContext, ParentElement, Render, SharedString, Styled, Subscription,
-    View, ViewContext, VisualContext, WeakModel, WindowContext,
+    actions, div, AppContext, Context, EventEmitter, FocusHandle, FocusableView, IntoElement,
+    Model, ModelContext, ParentElement, Render, SharedString, Styled, Subscription, View,
+    ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use project::{search::SearchQuery, Project};
 use settings::Settings as _;
@@ -376,7 +376,7 @@ impl Render for DapLogToolbarItemView {
         });
 
         let dap_menu: PopoverMenu<_> = PopoverMenu::new("DapLogView")
-            .anchor(AnchorCorner::TopLeft)
+            .anchor(gpui::Corner::TopLeft)
             .trigger(Button::new(
                 "debug_server_menu_header",
                 current_client

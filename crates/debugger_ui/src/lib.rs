@@ -30,7 +30,8 @@ pub fn init(cx: &mut AppContext) {
                     workspace.toggle_panel_focus::<DebugPanel>(cx);
                 })
                 .register_action(|workspace: &mut Workspace, _: &Start, cx| {
-                    tasks_ui::toggle_modal(workspace, task::TaskModal::DebugModal, cx).detach();
+                    tasks_ui::toggle_modal(workspace, None, task::TaskModal::DebugModal, cx)
+                        .detach();
                 })
                 .register_action(|workspace: &mut Workspace, _: &ShutdownDebugAdapters, cx| {
                     workspace.project().update(cx, |project, cx| {

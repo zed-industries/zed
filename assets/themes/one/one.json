@@ -9,7 +9,7 @@
       "style": {
         "border": "#464b57ff",
         "border.variant": "#363c46ff",
-        "border.focused": "#293b5bff",
+        "border.focused": "#47679eff",
         "border.selected": "#293b5bff",
         "border.transparent": "#00000000",
         "border.disabled": "#414754ff",
@@ -384,7 +384,7 @@
       "style": {
         "border": "#c9c9caff",
         "border.variant": "#dfdfe0ff",
-        "border.focused": "#cbcdf6ff",
+        "border.focused": "#7d82e8ff",
         "border.selected": "#cbcdf6ff",
         "border.transparent": "#00000000",
         "border.disabled": "#d3d3d4ff",

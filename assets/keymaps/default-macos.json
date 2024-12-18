@@ -24,6 +24,7 @@
       "cmd-escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
+      "alt-shift-enter": "menu::Restart",
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
@@ -66,6 +67,7 @@
       "cmd-v": "editor::Paste",
       "cmd-z": "editor::Undo",
       "cmd-shift-z": "editor::Redo",
+      "ctrl-shift-z": "zeta::RateCompletions",
       "up": "editor::MoveUp",
       "ctrl-up": "editor::MoveToStartOfParagraph",
       "pageup": "editor::MovePageUp",
@@ -222,14 +224,16 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "assistant2::NewThread",
-      "cmd-shift-h": "assistant2::OpenHistory"
+      "cmd-shift-h": "assistant2::OpenHistory",
+      "cmd-shift-m": "assistant2::ToggleModelSelector",
+      "cmd-shift-a": "assistant2::ToggleContextPicker"
     }
   },
   {
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-enter": "assistant2::Chat"
+      "enter": "assistant2::Chat"
     }
   },
   {
@@ -493,8 +497,9 @@
     "bindings": {
       "cmd-shift-r": "task::Spawn",
       "cmd-alt-r": "task::Rerun",
-      "alt-t": "task::Spawn",
-      "alt-shift-t": "task::Spawn"
+      "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
+      // also possible to spawn tasks by name:
+      // "foo-bar": ["task_name::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
     }
   },
   // Bindings from Sublime Text
@@ -605,6 +610,7 @@
     "context": "PromptEditor",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-shift-a": "assistant2::ToggleContextPicker",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist"
     }
@@ -787,6 +793,25 @@
       "ctrl-k down": "pane::SplitDown",
       "ctrl-k left": "pane::SplitLeft",
       "ctrl-k right": "pane::SplitRight"
+    }
+  },
+  {
+    "context": "RateCompletionModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "zeta::ThumbsUp",
+      "shift-down": "zeta::NextEdit",
+      "shift-up": "zeta::PreviousEdit",
+      "right": "zeta::PreviewCompletion"
+    }
+  },
+  {
+    "context": "RateCompletionModal > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "zeta::FocusCompletions",
+      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
+      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion"
     }
   }
 ]

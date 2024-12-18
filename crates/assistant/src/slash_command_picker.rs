@@ -176,7 +176,7 @@ impl PickerDelegate for SlashCommandDelegate {
                 ListItem::new(ix)
                     .inset(true)
                     .spacing(ListItemSpacing::Dense)
-                    .selected(selected)
+                    .toggle_state(selected)
                     .tooltip({
                         let description = info.description.clone();
                         move |cx| cx.new_view(|_| Tooltip::new(description.clone())).into()
@@ -217,11 +217,10 @@ impl PickerDelegate for SlashCommandDelegate {
                                     )),
                             )
                             .child(
-                                div().overflow_hidden().text_ellipsis().child(
-                                    Label::new(info.description.clone())
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                ),
+                                Label::new(info.description.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .text_ellipsis(),
                             ),
                     ),
             ),
@@ -229,7 +228,7 @@ impl PickerDelegate for SlashCommandDelegate {
                 ListItem::new(ix)
                     .inset(true)
                     .spacing(ListItemSpacing::Dense)
-                    .selected(selected)
+                    .toggle_state(selected)
                     .child(renderer(cx)),
             ),
         }
@@ -317,8 +316,8 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
         PopoverMenu::new("model-switcher")
             .menu(move |_cx| Some(picker_view.clone()))
             .trigger(self.trigger)
-            .attach(gpui::AnchorCorner::TopLeft)
-            .anchor(gpui::AnchorCorner::BottomLeft)
+            .attach(gpui::Corner::TopLeft)
+            .anchor(gpui::Corner::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-16.0),

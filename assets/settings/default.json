@@ -101,6 +101,8 @@
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
+  // Time to wait before showing the informational hover box
+  "hover_popover_delay": 350,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
@@ -144,6 +146,9 @@
   // 4. Highlight the full line (default):
   //    "all"
   "current_line_highlight": "all",
+  // The debounce delay before querying highlights from the language
+  // server based on the current cursor location.
+  "lsp_highlight_debounce": 75,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
@@ -249,7 +254,14 @@
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
     // Whether to show diagnostic indicators in the scrollbar.
-    "diagnostics": true
+    "diagnostics": true,
+    /// Forcefully enable or disable the scrollbar for each axis
+    "axes": {
+      /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+      "horizontal": true,
+      /// When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+      "vertical": true
+    }
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
@@ -299,6 +311,8 @@
   "vertical_scroll_margin": 3,
   // Whether to scroll when clicking near the edge of the visible text area.
   "autoscroll_on_clicks": false,
+  // The number of characters to keep on either side when scrolling with the mouse
+  "horizontal_scroll_margin": 5,
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
@@ -471,6 +485,14 @@
     // Default width of the chat panel.
     "default_width": 240
   },
+  "git_panel": {
+    // Whether to show the git panel button in the status bar.
+    "button": true,
+    // Where to the git panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Default width of the git panel.
+    "default_width": 360
+  },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
     // For example: typing `:wave:` gets replaced with `👋`.
@@ -541,6 +563,8 @@
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
   "autosave": "off",
+  // Maximum number of tabs per pane. Unset for unlimited.
+  "max_tabs": null,
   // Settings related to the editor's tab bar.
   "tab_bar": {
     // Whether or not to show the tab bar in the editor
@@ -561,9 +585,11 @@
     // What to do after closing the current tab.
     //
     // 1. Activate the tab that was open previously (default)
-    //     "History"
-    // 2. Activate the neighbour tab (prefers the right one, if present)
-    //     "Neighbour"
+    //     "history"
+    // 2. Activate the right neighbour tab if present
+    //     "neighbour"
+    // 3. Activate the left neighbour tab if present
+    //     "left_neighbour"
     "activate_on_close": "history",
     /// Which files containing diagnostic errors/warnings to mark in the tabs.
     /// Diagnostics are only shown when file icons are also active.

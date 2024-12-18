@@ -17,10 +17,8 @@ pub struct LlmTokenClaims {
     pub exp: u64,
     pub jti: String,
     pub user_id: u64,
-    #[serde(default)]
     pub system_id: Option<String>,
-    #[serde(default)]
-    pub metrics_id: Option<Uuid>,
+    pub metrics_id: Uuid,
     pub github_user_login: String,
     pub is_staff: bool,
     pub has_llm_closed_beta_feature_flag: bool,
@@ -56,7 +54,7 @@ impl LlmTokenClaims {
             jti: uuid::Uuid::new_v4().to_string(),
             user_id: user.id.to_proto(),
             system_id,
-            metrics_id: Some(user.metrics_id),
+            metrics_id: user.metrics_id,
             github_user_login: user.github_login.clone(),
             is_staff,
             has_llm_closed_beta_feature_flag,

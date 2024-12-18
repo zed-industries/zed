@@ -19,6 +19,7 @@ pub struct InlineCompletion {
 
 pub trait InlineCompletionProvider: 'static + Sized {
     fn name() -> &'static str;
+    fn display_name() -> &'static str;
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -51,6 +52,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
 
 pub trait InlineCompletionProviderHandle {
     fn name(&self) -> &'static str;
+    fn display_name(&self) -> &'static str;
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -87,6 +89,10 @@ where
 {
     fn name(&self) -> &'static str {
         T::name()
+    }
+
+    fn display_name(&self) -> &'static str {
+        T::display_name()
     }
 
     fn is_enabled(

@@ -22,10 +22,7 @@ use multi_buffer::{ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer}
 use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use text::{OffsetRangeExt, ToPoint};
 use theme::ActiveTheme;
-use ui::{
-    div, h_flex, Color, Context, FluentBuilder, Icon, IconName, IntoElement, Label, LabelCommon,
-    ParentElement, SharedString, Styled, ViewContext, VisualContext, WindowContext,
-};
+use ui::prelude::*;
 use util::{paths::compare_paths, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
@@ -243,7 +240,7 @@ impl ProjectDiffEditor {
                                         .map_err(|_| anyhow!("Unexpected non-buffer"))
                                 })
                                 .with_context(|| {
-                                    format!("loading {} for git diff", entry_path.path.display())
+                                    format!("loading {:?} for git diff", entry_path.path)
                                 })
                                 .log_err()
                             else {
@@ -313,11 +310,11 @@ impl ProjectDiffEditor {
                 project_diff_editor
                     .update(&mut cx, |project_diff_editor, cx| {
                         project_diff_editor.update_excerpts(id, new_changes, new_entry_order, cx);
-                        for change_set in change_sets {
-                            project_diff_editor.editor.update(cx, |editor, cx| {
+                        project_diff_editor.editor.update(cx, |editor, cx| {
+                            for change_set in change_sets {
                                 editor.diff_map.add_change_set(change_set, cx)
-                            });
-                        }
+                            }
+                        });
                     })
                     .ok();
             }),

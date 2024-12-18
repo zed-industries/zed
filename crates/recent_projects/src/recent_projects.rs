@@ -228,7 +228,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .join(""),
                 };
 
-                StringMatchCandidate::new(id, combined_string)
+                StringMatchCandidate::new(id, &combined_string)
             })
             .collect::<Vec<_>>();
         self.matches = smol::block_on(fuzzy::match_strings(
@@ -395,7 +395,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         Some(
             ListItem::new(ix)
-                .selected(selected)
+                .toggle_state(selected)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .child(

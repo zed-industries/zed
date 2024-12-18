@@ -167,6 +167,7 @@ if [[ -n $pacman ]]; then
   deps=(
     gcc
     clang
+    musl
     cmake
     alsa-lib
     fontconfig

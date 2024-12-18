@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
+use editor::items::entry_git_aware_label_color;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ObjectFit, ParentElement,
@@ -94,15 +95,29 @@ impl Item for ImageView {
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
-        let path = self.image_item.read(cx).file.path();
-        let title = path
-            .file_name()
-            .unwrap_or_else(|| path.as_os_str())
+        let project_path = self.image_item.read(cx).project_path(cx);
+        let label_color = if ItemSettings::get_global(cx).git_status {
+            self.project
+                .read(cx)
+                .entry_for_path(&project_path, cx)
+                .map(|entry| {
+                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, params.selected)
+                })
+                .unwrap_or_else(|| params.text_color())
+        } else {
+            params.text_color()
+        };
+
+        let title = self
+            .image_item
+            .read(cx)
+            .file
+            .file_name(cx)
             .to_string_lossy()
             .to_string();
         Label::new(title)
             .single_line()
-            .color(params.text_color())
+            .color(label_color)
             .italic(params.preview)
             .into_any_element()
     }
@@ -146,7 +161,7 @@ impl Item for ImageView {
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &AppContext) -> String {
-    let path = image.path();
+    let path = image.file.file_name(cx);
     if project.visible_worktrees(cx).count() <= 1 {
         return path.to_string_lossy().to_string();
     }

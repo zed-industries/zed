@@ -1,5 +1,6 @@
 use crate::{
     dap_store::DapStore,
+    lsp_store::OpenLspBufferHandle,
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     ProjectItem as _, ProjectPath,
@@ -48,6 +49,7 @@ pub struct BufferStore {
 struct SharedBuffer {
     buffer: Model<Buffer>,
     unstaged_changes: Option<Model<BufferChangeSet>>,
+    lsp_handle: Option<OpenLspBufferHandle>,
 }
 
 #[derive(Debug)]
@@ -1240,7 +1242,7 @@ impl BufferStore {
             return Task::ready(Err(anyhow!("buffer has no file")));
         };
 
-        match file.worktree.clone().read(cx) {
+        match file.worktree.read(cx) {
             Worktree::Local(worktree) => {
                 let Some(repo) = worktree.local_git_repo(file.path()) else {
                     return Task::ready(Err(anyhow!("no repository for buffer found")));
@@ -1607,6 +1609,21 @@ impl BufferStore {
         })?
     }
 
+    pub fn register_shared_lsp_handle(
+        &mut self,
+        peer_id: proto::PeerId,
+        buffer_id: BufferId,
+        handle: OpenLspBufferHandle,
+    ) {
+        if let Some(shared_buffers) = self.shared_buffers.get_mut(&peer_id) {
+            if let Some(buffer) = shared_buffers.get_mut(&buffer_id) {
+                buffer.lsp_handle = Some(handle);
+                return;
+            }
+        }
+        debug_panic!("tried to register shared lsp handle, but buffer was not shared")
+    }
+
     pub fn handle_synchronize_buffers(
         &mut self,
         envelope: TypedEnvelope<proto::SynchronizeBuffers>,
@@ -1633,6 +1650,7 @@ impl BufferStore {
                     .or_insert_with(|| SharedBuffer {
                         buffer: buffer.clone(),
                         unstaged_changes: None,
+                        lsp_handle: None,
                     });
 
                 let buffer = buffer.read(cx);
@@ -2053,6 +2071,7 @@ impl BufferStore {
             SharedBuffer {
                 buffer: buffer.clone(),
                 unstaged_changes: None,
+                lsp_handle: None,
             },
         );
 
