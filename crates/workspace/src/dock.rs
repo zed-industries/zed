@@ -28,9 +28,6 @@ pub use proto::PanelId;
 
 pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn persistent_name() -> &'static str;
-    fn should_show_button(&self, _cx: &WindowContext) -> bool {
-        true
-    }
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
@@ -61,7 +58,6 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
 pub trait PanelHandle: Send + Sync {
     fn panel_id(&self) -> EntityId;
     fn persistent_name(&self) -> &'static str;
-    fn should_show_button(&self, cx: &WindowContext) -> bool;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
     fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
@@ -90,10 +86,6 @@ where
 
     fn persistent_name(&self) -> &'static str {
         T::persistent_name()
-    }
-
-    fn should_show_button(&self, cx: &WindowContext) -> bool {
-        self.read(cx).should_show_button(cx)
     }
 
     fn position(&self, cx: &WindowContext) -> DockPosition {
@@ -736,8 +728,6 @@ impl Render for PanelButtons {
             .iter()
             .enumerate()
             .filter_map(|(i, entry)| {
-                entry.panel.should_show_button(cx).then_some(())?;
-
                 let icon = entry.panel.icon(cx)?;
                 let icon_tooltip = entry.panel.icon_tooltip(cx)?;
                 let name = entry.panel.persistent_name();

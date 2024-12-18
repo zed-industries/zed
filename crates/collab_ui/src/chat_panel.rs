@@ -1096,10 +1096,6 @@ impl FocusableView for ChatPanel {
 }
 
 impl Panel for ChatPanel {
-    fn should_show_button(&self, cx: &gpui::WindowContext) -> bool {
-        ActiveCall::global(cx).read(cx).room().is_some()
-    }
-
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
         ChatPanelSettings::get_global(cx).dock
     }
@@ -1139,6 +1135,7 @@ impl Panel for ChatPanel {
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
+        ActiveCall::global(cx).read(cx).room()?;
         Some(ui::IconName::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 
