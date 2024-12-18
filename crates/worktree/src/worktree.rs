@@ -2480,13 +2480,17 @@ impl Snapshot {
         })
     }
 
-    pub fn propagate_git_statuses2(&self, entries: &[Entry]) -> Vec<Option<GitFileStatus>> {
+    pub fn propagate_git_statuses(&self, entries: &[Entry]) -> Vec<Option<GitFileStatus>> {
         let mut cursor = all_statuses_cursor(self);
         let mut entry_stack = Vec::<(usize, GitStatuses)>::new();
 
         let mut result = entries
             .iter()
             .map(|entry| {
+                if entry.is_dir() {
+                    return None;
+                }
+
                 let (work_directory, repo_entry) =
                     self.repository_and_work_directory_for_path(&entry.path)?;
                 let RepoPath(path) = repo_entry.relativize(self, &entry.path).ok()?;
@@ -2495,10 +2499,21 @@ impl Snapshot {
             })
             .collect::<Vec<_>>();
 
+        // dbg!(entries
+        //     .iter()
+        //     .zip(result.iter())
+        //     .map(|(entry, status)| { (entry.path.clone(), status) })
+        //     .collect::<Vec<_>>());
+
         let mut entry_ix = 0;
         loop {
             let next_entry = entries.get(entry_ix);
             let containing_entry = entry_stack.last().map(|(ix, _)| &entries[*ix]);
+
+            dbg!(entry_stack
+                .iter()
+                .map(|(ix, statuses)| (entries[*ix].path.clone(), statuses))
+                .collect::<Vec<_>>());
 
             let entry_to_finish = match (containing_entry, next_entry) {
                 (Some(_), None) => entry_stack.pop(),
@@ -2514,12 +2529,15 @@ impl Snapshot {
             };
 
             if let Some((entry_ix, prev_statuses)) = entry_to_finish {
-                cursor.seek_forward(&GitEntryTraversalTarget::PathSuccessor(dbg!(
+                dbg!("seeking for entry to finish");
+                cursor.seek_forward(dbg!(&GitEntryTraversalTarget::PathSuccessor(
                     &entries[entry_ix].path
                 )));
 
                 let statuses = dbg!(cursor.start()) - dbg!(prev_statuses);
 
+                dbg!((&entries[entry_ix].path, &statuses));
+
                 result[entry_ix] = if statuses.conflict > 0 {
                     Some(GitFileStatus::Conflict)
                 } else if statuses.modified > 0 {
@@ -2531,74 +2549,9 @@ impl Snapshot {
                 };
             } else {
                 if entries[entry_ix].is_dir() {
+                    dbg!("seeking for entry is_dir");
                     cursor.seek_forward(&GitEntryTraversalTarget::Path(&entries[entry_ix].path));
                     entry_stack.push((entry_ix, cursor.start()));
-                }
-                entry_ix += 1;
-            }
-        }
-
-        result
-    }
-
-    /// TODO: Redo this entirely, API is wrong, conceptually it's a bit weird
-    /// Updates the `git_status` of the given entries such that files'
-    /// statuses bubble up to their ancestor directories.
-    pub fn propagate_git_statuses(&self, entries: &[Entry]) -> Vec<Option<GitFileStatus>> {
-        let mut cursor = all_statuses_cursor(self);
-
-        let mut entry_stack = Vec::<(usize, GitStatuses)>::new();
-        let mut result = vec![None; entries.len()];
-        let mut entry_ix = 0;
-        loop {
-            let next_entry = entries.get(entry_ix);
-            dbg!(&next_entry);
-            let containing_entry = entry_stack.last().map(|(ix, _)| &entries[*ix]);
-            dbg!(&containing_entry);
-            let entry_to_finish = match (containing_entry, next_entry) {
-                (Some(_), None) => entry_stack.pop(),
-                (Some(containing_entry), Some(next_path)) => {
-                    if next_path.path.starts_with(&containing_entry.path) {
-                        None
-                    } else {
-                        entry_stack.pop()
-                    }
-                }
-                (None, Some(_)) => None,
-                (None, None) => break,
-            };
-
-            if let Some((entry_ix, prev_statuses)) = entry_to_finish {
-                dbg!(cursor.item());
-                cursor.seek_forward(&GitEntryTraversalTarget::PathSuccessor(
-                    &entries[entry_ix].path,
-                ));
-
-                let statuses = cursor.start() - prev_statuses;
-
-                result[entry_ix] = if statuses.conflict > 0 {
-                    Some(GitFileStatus::Conflict)
-                } else if statuses.modified > 0 {
-                    Some(GitFileStatus::Modified)
-                } else if statuses.added > 0 {
-                    Some(GitFileStatus::Added)
-                } else if statuses.untracked > 0 {
-                    Some(GitFileStatus::Untracked)
-                } else {
-                    None
-                };
-            } else {
-                if entries[entry_ix].is_dir() {
-                    cursor.seek_forward(&GitEntryTraversalTarget::PathSuccessor(
-                        &entries[entry_ix].path,
-                    ));
-                    dbg!(cursor.start());
-                    dbg!(cursor.item());
-                    entry_stack.push((entry_ix, cursor.start()));
-                } else {
-                    cursor.seek_forward(&GitEntryTraversalTarget::Path(&entries[entry_ix].path));
-                    dbg!(cursor.item());
-                    result[entry_ix] = cursor.item().map(|entry| entry.git_status)
                 }
                 entry_ix += 1;
             }
@@ -3778,14 +3731,15 @@ where
     I: Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)>,
 {
     fn seek_forward(&mut self, target: &GitEntryTraversalTarget<'_>) {
-        dbg!(target);
         loop {
+            dbg!("starting loop");
             let cursor = match &mut self.current_cursor {
                 Some(cursor) => cursor,
                 None => {
-                    let Some((_, entry)) = self.repositories.next() else {
+                    let Some((work_dir, entry)) = self.repositories.next() else {
                         break;
                     };
+                    dbg!(work_dir);
                     self.current_cursor = Some(
                         entry
                             .git_entries_by_path
@@ -3795,9 +3749,10 @@ where
                 }
             };
             let found = cursor.seek_forward(target, Bias::Left, &());
-            if found {
+            if dbg!(found) {
                 break;
             }
+            self.statuses_so_far = cursor.start().1;
             self.current_cursor = None;
         }
     }
@@ -3809,10 +3764,12 @@ where
     }
 
     fn start(&self) -> GitStatuses {
+        dbg!(self.current_cursor.is_none());
+
         if let Some(cursor) = self.current_cursor.as_ref() {
-            dbg!(cursor.start().1)
+            cursor.start().1
         } else {
-            dbg!(GitStatuses::default())
+            self.statuses_so_far
         }
     }
 }
@@ -3821,18 +3778,23 @@ fn all_statuses_cursor<'a>(
     snapshot: &'a Snapshot,
 ) -> AllStatusesCursor<'a, impl Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)>>
 {
+    dbg!(snapshot
+        .repositories()
+        .map(|(workdir, _)| workdir)
+        .collect::<Vec<_>>());
     let mut repositories = snapshot.repositories();
-    let cursor = util::maybe!({
-        let (workdir, entry) = repositories.next()?;
-        Some(
-            entry
-                .git_entries_by_path
-                .cursor::<(TraversalProgress<'_>, GitStatuses)>(&()),
-        )
-    });
+    // let cursor = util::maybe!({
+    //     let (workdir, entry) = repositories.next()?;
+    //     dbg!(workdir);
+    //     Some(
+    //         entry
+    //             .git_entries_by_path
+    //             .cursor::<(TraversalProgress<'_>, GitStatuses)>(&()),
+    //     )
+    // });
     AllStatusesCursor {
         repositories,
-        current_cursor: cursor,
+        current_cursor: None,
         statuses_so_far: Default::default(),
     }
 }
