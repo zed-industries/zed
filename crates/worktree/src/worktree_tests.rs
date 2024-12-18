@@ -2759,7 +2759,6 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
                 "h1.txt": "",
                 "h2.txt": ""
             },
-
         }),
     )
     .await;
@@ -2789,19 +2788,39 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
+    dbg!("********************************");
     check_propagated_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Conflict)),
+            (Path::new(""), Some(GitFileStatus::Conflict)), // This one is missing
+            // (Path::new("a"), Some(GitFileStatus::Added)),
+            // (Path::new("a/b"), Some(GitFileStatus::Modified)), // This one ISN'T
+            // (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+            // (Path::new("a/b/c2.txt"), None),
+            // (Path::new("a/d"), Some(GitFileStatus::Modified)), //This one is missing
+            // (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+            // (Path::new("f"), None),
+            // (Path::new("f/no-status.txt"), None),
+            (Path::new("g"), Some(GitFileStatus::Conflict)), // This one is missing
+            (Path::new("g/h2.txt"), Some(GitFileStatus::Conflict)),
+        ],
+    );
+
+    panic!("first test passed");
+
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new(""), Some(GitFileStatus::Conflict)), // This one is missing
             (Path::new("a"), Some(GitFileStatus::Modified)),
-            (Path::new("a/b"), Some(GitFileStatus::Added)),
+            (Path::new("a/b"), Some(GitFileStatus::Added)), // This one ISN'T
             (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
             (Path::new("a/b/c2.txt"), None),
-            (Path::new("a/d"), Some(GitFileStatus::Modified)),
+            (Path::new("a/d"), Some(GitFileStatus::Modified)), //This one is missing
             (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
             (Path::new("f"), None),
             (Path::new("f/no-status.txt"), None),
-            (Path::new("g"), Some(GitFileStatus::Conflict)),
+            (Path::new("g"), Some(GitFileStatus::Conflict)), // This one is missing
             (Path::new("g/h2.txt"), Some(GitFileStatus::Conflict)),
         ],
     );
@@ -2920,7 +2939,7 @@ fn check_propagated_statuses(
         .iter()
         .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
         .collect::<Vec<_>>();
-    let statuses = snapshot.propagate_git_statuses2(&entries);
+    let statuses = snapshot.propagate_git_statuses(&entries);
     assert_eq!(
         entries
             .iter()
