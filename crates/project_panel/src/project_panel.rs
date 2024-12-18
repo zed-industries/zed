@@ -7024,7 +7024,7 @@ mod tests {
             .update(cx, |panel, cx| {
                 panel
                     .filename_editor
-                    .update(cx, |editor, cx| editor.set_text(excluded_file_path, cx));
+                    .update(cx, |editor, cx| editor.set_text(excluded_dir_path, cx));
                 panel.confirm_edit(cx).unwrap()
             })
             .await
