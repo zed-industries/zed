@@ -61,6 +61,7 @@ serde_json_lenient.workspace = true
 settings.workspace = true
 similar.workspace = true
 smol.workspace = true
+telemetry.workspace = true
 telemetry_events.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
