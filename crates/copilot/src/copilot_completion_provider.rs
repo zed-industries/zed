@@ -59,6 +59,10 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         "Copilot"
     }
 
+    fn show_completions_in_menu() -> bool {
+        false
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -326,17 +330,15 @@ mod tests {
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, cx| {
-            // We want to show both: the inline completion and the completion menu
             assert!(editor.context_menu_visible());
-            assert!(editor.context_menu_contains_inline_completion());
-            assert!(editor.has_active_inline_completion());
+            assert!(!editor.context_menu_contains_inline_completion());
+            assert!(!editor.has_active_inline_completion());
             // Since we have both, the copilot suggestion is not shown inline
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.\ntwo\nthree\n");
 
             // Confirming a non-copilot completion inserts it and hides the context menu, without showing
             // the copilot suggestion afterwards.
-            editor.context_menu_next(&Default::default(), cx);
             editor
                 .confirm_completion(&Default::default(), cx)
                 .unwrap()
@@ -384,23 +386,12 @@ mod tests {
 
         // Ensure existing inline completion is interpolated when inserting again.
         cx.simulate_keystroke("c");
-        drop(handle_completion_request(
-            &mut cx,
-            indoc! {"
-                one.c|<>
-                two
-                three
-            "},
-            vec!["completion_a", "completion_b"],
-        ));
         executor.run_until_parked();
         cx.update_editor(|editor, cx| {
-            // Since we have an LSP completion too, the inline completion is
-            // shown in the menu now
-            assert!(editor.context_menu_visible());
-            assert!(editor.context_menu_contains_inline_completion());
+            assert!(!editor.context_menu_visible());
+            assert!(!editor.context_menu_contains_inline_completion());
             assert!(editor.has_active_inline_completion());
-            assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
+            assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
         });
 
@@ -416,16 +407,9 @@ mod tests {
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, cx| {
-            assert!(editor.context_menu_visible());
-            assert!(editor.has_active_inline_completion());
-            assert!(editor.context_menu_contains_inline_completion());
-            assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
-            assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
-
-            // Canceling should first hide the menu and make Copilot suggestion visible.
-            editor.cancel(&Default::default(), cx);
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
+            assert!(!editor.context_menu_contains_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
@@ -928,8 +912,8 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, cx| {
             assert!(editor.context_menu_visible());
-            assert!(editor.context_menu_contains_inline_completion());
-            assert!(editor.has_active_inline_completion(),);
+            assert!(!editor.context_menu_contains_inline_completion());
+            assert!(!editor.has_active_inline_completion(),);
             assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
         });
     }
