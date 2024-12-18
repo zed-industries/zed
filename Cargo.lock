@@ -4412,6 +4412,7 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
+ "telemetry",
  "theme",
  "ui",
  "util",
