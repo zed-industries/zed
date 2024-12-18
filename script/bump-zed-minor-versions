@@ -99,19 +99,16 @@ git checkout -q main
 cat <<MESSAGE
 Prepared new Zed versions locally. You will need to push the branches and open a PR for the change to main.
 
-# To open the PR:
-
-    git checkout ${bump_main_branch_name}
-    git push origin ${bump_main_branch_name}
-    gh pr create --fill --web
-
-# To push this:
+# To push and open a PR to update main:
 
     git push origin \\
       ${preview_tag_name} \\
       ${stable_tag_name} \\
       ${minor_branch_name} \\
-      ${prev_minor_branch_name}
+      ${prev_minor_branch_name} \\
+      ${bump_main_branch_name}
+
+    gh pr create --base main --head ${bump_main_branch_name}
 
 # To undo this push:
 
