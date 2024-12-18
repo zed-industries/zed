@@ -244,11 +244,11 @@ impl<T: 'static> PromptEditor<T> {
             PromptEditorMode::Terminal { .. } => "Generate",
         };
 
-        let assisant_panel_shortcut = ui::text_for_action(&crate::ToggleFocus, cx)
+        let assistant_panel_keybinding = ui::text_for_action(&crate::ToggleFocus, cx)
             .map(|keybinding| format!("{keybinding} to chat ― "))
             .unwrap_or_default();
 
-        format!("{action}… ({assisant_panel_shortcut}↓↑ for history)")
+        format!("{action}… ({assistant_panel_keybinding}↓↑ for history)")
     }
 
     pub fn prompt(&self, cx: &AppContext) -> String {
