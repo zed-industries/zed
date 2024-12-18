@@ -56,8 +56,7 @@ impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut buttons = Vec::new();
 
-        // TODO (agus): remove prompt mode and move buttons view here
-        let (prompt_mode, spacing) = match &self.mode {
+        let spacing = match &self.mode {
             PromptEditorMode::Buffer {
                 id: _,
                 codegen,
@@ -69,19 +68,9 @@ impl<T: 'static> Render for PromptEditor<T> {
                     buttons.push(self.render_cycle_controls(cx));
                 }
 
-                let prompt_mode = if codegen.is_insertion {
-                    PromptMode::Generate {
-                        supports_execute: false,
-                    }
-                } else {
-                    PromptMode::Transform
-                };
-
                 let gutter_dimensions = gutter_dimensions.lock();
 
-                let spacing = gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0);
-
-                (prompt_mode, spacing)
+                gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0)
             }
             PromptEditorMode::Terminal {
                 id: _,
@@ -89,21 +78,11 @@ impl<T: 'static> Render for PromptEditor<T> {
                 height_in_lines: _,
             } => {
                 // todo(terminal-prompt-cycle)
-                (
-                    PromptMode::Generate {
-                        supports_execute: true,
-                    },
-                    Pixels::ZERO,
-                )
+                Pixels::ZERO
             }
         };
 
-        buttons.extend(render_cancel_button(
-            self.codegen_status(cx).into(),
-            self.edited_since_done,
-            prompt_mode,
-            cx,
-        ));
+        buttons.extend(self.render_buttons(cx));
 
         v_flex()
             .border_y_1()
@@ -411,6 +390,132 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
+    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
+        let mode = match &self.mode {
+            PromptEditorMode::Buffer { codegen, .. } => {
+                let codegen = codegen.read(cx);
+                if codegen.is_insertion {
+                    GenerationMode::Generate {
+                        supports_execute: false,
+                    }
+                } else {
+                    GenerationMode::Transform
+                }
+            }
+            PromptEditorMode::Terminal { .. } => GenerationMode::Generate {
+                supports_execute: true,
+            },
+        };
+
+        let codegen_status = self.codegen_status(cx);
+
+        match codegen_status {
+            CodegenStatus::Idle => {
+                vec![
+                    IconButton::new("cancel", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
+                        .on_click(
+                            cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
+                        )
+                        .into_any_element(),
+                    Button::new("start", mode.start_label())
+                        .icon(IconName::Return)
+                        .icon_color(Color::Muted)
+                        .on_click(
+                            cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
+                        )
+                        .into_any_element(),
+                ]
+            }
+            CodegenStatus::Pending => vec![
+                IconButton::new("cancel", IconName::Close)
+                    .icon_color(Color::Muted)
+                    .shape(IconButtonShape::Square)
+                    .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
+                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
+                    .into_any_element(),
+                IconButton::new("stop", IconName::Stop)
+                    .icon_color(Color::Error)
+                    .shape(IconButtonShape::Square)
+                    .tooltip(move |cx| {
+                        Tooltip::with_meta(
+                            mode.tooltip_interrupt(),
+                            Some(&menu::Cancel),
+                            "Changes won't be discarded",
+                            cx,
+                        )
+                    })
+                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
+                    .into_any_element(),
+            ],
+            CodegenStatus::Done | CodegenStatus::Error(_) => {
+                let cancel = IconButton::new("cancel", IconName::Close)
+                    .icon_color(Color::Muted)
+                    .shape(IconButtonShape::Square)
+                    .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
+                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
+                    .into_any_element();
+
+                let has_error = matches!(codegen_status, CodegenStatus::Error(_));
+                if has_error || self.edited_since_done {
+                    vec![
+                        cancel,
+                        IconButton::new("restart", IconName::RotateCw)
+                            .icon_color(Color::Info)
+                            .shape(IconButtonShape::Square)
+                            .tooltip(move |cx| {
+                                Tooltip::with_meta(
+                                    mode.tooltip_restart(),
+                                    Some(&menu::Confirm),
+                                    "Changes will be discarded",
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.emit(PromptEditorEvent::StartRequested);
+                            }))
+                            .into_any_element(),
+                    ]
+                } else {
+                    let accept = IconButton::new("accept", IconName::Check)
+                        .icon_color(Color::Info)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(move |cx| {
+                            Tooltip::for_action(mode.tooltip_accept(), &menu::Confirm, cx)
+                        })
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
+                        }))
+                        .into_any_element();
+
+                    match &self.mode {
+                        PromptEditorMode::Terminal { .. } => vec![
+                            accept,
+                            cancel,
+                            IconButton::new("confirm", IconName::Play)
+                                .icon_color(Color::Info)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(|cx| {
+                                    Tooltip::for_action(
+                                        "Execute Generated Command",
+                                        &menu::SecondaryConfirm,
+                                        cx,
+                                    )
+                                })
+                                .on_click(cx.listener(|_, _, cx| {
+                                    cx.emit(PromptEditorEvent::ConfirmRequested { execute: true });
+                                }))
+                                .into_any_element(),
+                        ],
+                        PromptEditorMode::Buffer { .. } => vec![accept, cancel],
+                    }
+                }
+            }
+        }
+    }
+
     fn cycle_prev(&mut self, _: &CyclePreviousInlineAssist, cx: &mut ViewContext<Self>) {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
@@ -645,6 +750,15 @@ pub enum PromptEditorMode {
         codegen: Model<TerminalCodegen>,
         height_in_lines: u8,
     },
+}
+
+pub enum PromptEditorEvent {
+    StartRequested,
+    StopRequested,
+    ConfirmRequested { execute: bool },
+    CancelRequested,
+    DismissRequested,
+    Resized { height_in_lines: u8 },
 }
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -995,163 +1109,36 @@ impl Into<CancelButtonState> for &CodegenStatus {
 }
 
 #[derive(Copy, Clone)]
-pub enum PromptMode {
+pub enum GenerationMode {
     Generate { supports_execute: bool },
     Transform,
 }
 
-impl PromptMode {
+impl GenerationMode {
     fn start_label(self) -> &'static str {
         match self {
-            PromptMode::Generate { .. } => "Generate",
-            PromptMode::Transform => "Transform",
+            GenerationMode::Generate { .. } => "Generate",
+            GenerationMode::Transform => "Transform",
         }
     }
     fn tooltip_interrupt(self) -> &'static str {
         match self {
-            PromptMode::Generate { .. } => "Interrupt Generation",
-            PromptMode::Transform => "Interrupt Transform",
+            GenerationMode::Generate { .. } => "Interrupt Generation",
+            GenerationMode::Transform => "Interrupt Transform",
         }
     }
 
     fn tooltip_restart(self) -> &'static str {
         match self {
-            PromptMode::Generate { .. } => "Restart Generation",
-            PromptMode::Transform => "Restart Transform",
+            GenerationMode::Generate { .. } => "Restart Generation",
+            GenerationMode::Transform => "Restart Transform",
         }
     }
 
     fn tooltip_accept(self) -> &'static str {
         match self {
-            PromptMode::Generate { .. } => "Accept Generation",
-            PromptMode::Transform => "Accept Transform",
+            GenerationMode::Generate { .. } => "Accept Generation",
+            GenerationMode::Transform => "Accept Transform",
         }
     }
-}
-
-pub fn render_cancel_button<T: EventEmitter<PromptEditorEvent>>(
-    cancel_button_state: CancelButtonState,
-    edited_since_done: bool,
-    mode: PromptMode,
-    cx: &mut ViewContext<T>,
-) -> Vec<AnyElement> {
-    match cancel_button_state {
-        CancelButtonState::Idle => {
-            vec![
-                IconButton::new("cancel", IconName::Close)
-                    .icon_color(Color::Muted)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
-                    .into_any_element(),
-                Button::new("start", mode.start_label())
-                    .icon(IconName::Return)
-                    .icon_color(Color::Muted)
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)))
-                    .into_any_element(),
-            ]
-        }
-        CancelButtonState::Pending => vec![
-            IconButton::new("cancel", IconName::Close)
-                .icon_color(Color::Muted)
-                .shape(IconButtonShape::Square)
-                .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
-                .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
-                .into_any_element(),
-            IconButton::new("stop", IconName::Stop)
-                .icon_color(Color::Error)
-                .shape(IconButtonShape::Square)
-                .tooltip(move |cx| {
-                    Tooltip::with_meta(
-                        mode.tooltip_interrupt(),
-                        Some(&menu::Cancel),
-                        "Changes won't be discarded",
-                        cx,
-                    )
-                })
-                .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
-                .into_any_element(),
-        ],
-        CancelButtonState::Done | CancelButtonState::Error => {
-            let cancel = IconButton::new("cancel", IconName::Close)
-                .icon_color(Color::Muted)
-                .shape(IconButtonShape::Square)
-                .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
-                .into_any_element();
-
-            let has_error = matches!(cancel_button_state, CancelButtonState::Error);
-            if has_error || edited_since_done {
-                vec![
-                    cancel,
-                    IconButton::new("restart", IconName::RotateCw)
-                        .icon_color(Color::Info)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(move |cx| {
-                            Tooltip::with_meta(
-                                mode.tooltip_restart(),
-                                Some(&menu::Confirm),
-                                "Changes will be discarded",
-                                cx,
-                            )
-                        })
-                        .on_click(cx.listener(|_, _, cx| {
-                            cx.emit(PromptEditorEvent::StartRequested);
-                        }))
-                        .into_any_element(),
-                ]
-            } else {
-                let mut buttons = vec![
-                    cancel,
-                    IconButton::new("accept", IconName::Check)
-                        .icon_color(Color::Info)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(move |cx| {
-                            Tooltip::for_action(mode.tooltip_accept(), &menu::Confirm, cx)
-                        })
-                        .on_click(cx.listener(|_, _, cx| {
-                            cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
-                        }))
-                        .into_any_element(),
-                ];
-
-                match mode {
-                    PromptMode::Generate { supports_execute } => {
-                        if supports_execute {
-                            buttons.push(
-                                IconButton::new("confirm", IconName::Play)
-                                    .icon_color(Color::Info)
-                                    .shape(IconButtonShape::Square)
-                                    .tooltip(|cx| {
-                                        Tooltip::for_action(
-                                            "Execute Generated Command",
-                                            &menu::SecondaryConfirm,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(cx.listener(|_, _, cx| {
-                                        cx.emit(PromptEditorEvent::ConfirmRequested {
-                                            execute: true,
-                                        });
-                                    }))
-                                    .into_any_element(),
-                            )
-                        }
-                    }
-                    PromptMode::Transform => {}
-                }
-
-                buttons
-            }
-        }
-    }
-}
-
-pub enum PromptEditorEvent {
-    StartRequested,
-    StopRequested,
-    ConfirmRequested { execute: bool },
-    CancelRequested,
-    DismissRequested,
-    Resized { height_in_lines: u8 },
 }

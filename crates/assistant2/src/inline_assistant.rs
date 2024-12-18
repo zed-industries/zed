@@ -76,7 +76,6 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
-    new_field: String,
 }
 
 impl Global for InlineAssistant {}
