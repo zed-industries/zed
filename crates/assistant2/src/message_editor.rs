@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
-use gpui::{AppContext, FocusableView, Model, Subscription, TextStyle, View, WeakModel, WeakView};
+use gpui::{
+    AppContext, DismissEvent, FocusableView, Model, Subscription, TextStyle, View, WeakModel,
+    WeakView,
+};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use rope::Point;
@@ -64,7 +67,13 @@ impl MessageEditor {
                 cx,
             )
         });
-        let subscriptions = vec![cx.subscribe(&editor, Self::handle_editor_event)];
+        let subscriptions = vec![
+            cx.subscribe(&editor, Self::handle_editor_event),
+            cx.subscribe(
+                &inline_context_picker,
+                Self::handle_inline_context_picker_event,
+            ),
+        ];
 
         Self {
             thread,
@@ -183,6 +192,16 @@ impl MessageEditor {
             }
             _ => {}
         }
+    }
+
+    fn handle_inline_context_picker_event(
+        &mut self,
+        _inline_context_picker: View<ContextPicker>,
+        _event: &DismissEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let editor_focus_handle = self.editor.focus_handle(cx);
+        cx.focus(&editor_focus_handle);
     }
 
     fn render_language_model_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
