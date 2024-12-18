@@ -10,7 +10,7 @@ use client::Client;
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
-use git::{blame::Blame, diff::BufferDiff};
+use git::{blame::Blame, diff::BufferDiff, repository::RepoPath};
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Subscription,
     Task, WeakModel,
@@ -1222,7 +1222,12 @@ impl BufferStore {
         match file.worktree.read(cx) {
             Worktree::Local(worktree) => {
                 let worktree_path = worktree.abs_path().clone();
-                let Some(repo) = worktree.local_git_repo(file.path()) else {
+                let Some((repo_entry, repo)) =
+                    worktree.repository_for_path(file.path()).and_then(|entry| {
+                        let repo = worktree.get_local_repo(&entry)?.repo().clone();
+                        Some((entry, repo))
+                    })
+                else {
                     // If we're not in a Git repo, check whether this is a Rust source
                     // file in the Cargo registry (presumably opened with go-to-definition
                     // from a normal Rust file). If so, we can put together a permalink
@@ -1242,7 +1247,10 @@ impl BufferStore {
                     });
                 };
 
-                let path = file.path().clone();
+                let path = match repo_entry.relativize(worktree, file.path()) {
+                    Ok(RepoPath(path)) => path,
+                    Err(e) => return Task::ready(Err(e.into())),
+                };
 
                 cx.spawn(|cx| async move {
                     const REMOTE_NAME: &str = "origin";
@@ -1261,19 +1269,9 @@ impl BufferStore {
                         parse_git_remote_url(provider_registry, &origin_url)
                             .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
-                    let dot_git_dir = repo.dot_git_dir();
-                    let git_dir = dot_git_dir.parent().unwrap();
-                    let path = if let Ok(segment) = worktree_path.strip_prefix(git_dir) {
-                        &segment.join(path)
-                    } else if let Ok(segment) = git_dir.strip_prefix(worktree_path) {
-                        path.strip_prefix(segment)
-                            .expect("file is not a descendant of Git repo dir")
-                    } else {
-                        panic!("worktree dir and Git repo dir are cousins")
-                    };
                     let path = path
                         .to_str()
-                        .context("failed to convert buffer path to string")?;
+                        .ok_or_else(|| anyhow!("failed to convert path to string"))?;
 
                     Ok(provider.build_permalink(
                         remote,
