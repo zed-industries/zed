@@ -49,6 +49,7 @@ use project::{CodeAction, ProjectTransaction};
 use rope::Rope;
 use settings::{update_settings_file, Settings, SettingsStore};
 use smol::future::FutureExt;
+use std::time::Duration;
 use std::{
     cmp,
     future::Future,
@@ -341,17 +342,18 @@ impl InlineAssistant {
             codegen_ranges.push(start..end);
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                self.telemetry.report_assistant_event(AssistantEvent {
-                    conversation_id: None,
-                    kind: AssistantKind::Inline,
-                    phase: AssistantPhase::Invoked,
-                    message_id: None,
-                    model: model.telemetry_id(),
-                    model_provider: model.provider_id().to_string(),
-                    response_latency: None,
-                    error_message: None,
-                    language_name: buffer.language().map(|language| language.name().to_proto()),
-                });
+                telemetry::event!(
+                    "Assistant Invoked",
+                    conversation_id = Option::<String>::None,
+                    kind = AssistantKind::Inline,
+                    phase = AssistantPhase::Invoked,
+                    message_id = Option::<String>::None,
+                    model = model.telemetry_id(),
+                    model_provider = model.provider_id().to_string(),
+                    response_latency = Option::<Duration>::None,
+                    error_message = Option::<String>::None,
+                    language_name = buffer.language().map(|language| language.name().to_proto()),
+                );
             }
         }
 

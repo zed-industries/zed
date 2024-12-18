@@ -18,7 +18,24 @@ pub fn report_assistant_event(
     executor: &BackgroundExecutor,
 ) {
     if let Some(telemetry) = telemetry.as_ref() {
-        telemetry.report_assistant_event(event.clone());
+        let event_type = match event.phase {
+            AssistantPhase::Response => "Assistant Responded".to_string(),
+            AssistantPhase::Invoked => "Assistant Invoked".to_string(),
+            AssistantPhase::Accepted => "Assistant Response Accepted".to_string(),
+            AssistantPhase::Rejected => "Assistant Response Rejected".to_string(),
+        };
+        telemetry::event!(
+            event_type,
+            conversation_id = event.conversation_id,
+            kind = event.kind,
+            phase = event.phase,
+            message_id = event.message_id,
+            model = event.model,
+            model_provider = event.model_provider,
+            response_latency = event.response_latency,
+            error_message = event.error_message,
+            language_name = event.language_name,
+        );
         if telemetry.metrics_enabled() && event.model_provider == ANTHROPIC_PROVIDER_ID {
             executor
                 .spawn(async move {
