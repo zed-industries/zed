@@ -215,6 +215,23 @@ impl DebugPanel {
             .and_then(|panel| panel.downcast::<DebugPanelItem>())
     }
 
+    pub fn debug_panel_item_by_client(
+        &self,
+        client_id: &DebugAdapterClientId,
+        thread_id: u64,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<DebugPanelItem>> {
+        self.pane
+            .read(cx)
+            .items()
+            .filter_map(|item| item.downcast::<DebugPanelItem>())
+            .find(|item| {
+                let item = item.read(cx);
+
+                &item.client_id() == client_id && item.thread_id() == thread_id
+            })
+    }
+
     fn handle_pane_event(
         &mut self,
         _: View<Pane>,
@@ -547,18 +564,8 @@ impl DebugPanel {
                         thread_state.status = ThreadStatus::Stopped;
                     });
 
-                    let existing_item = this
-                        .pane
-                        .read(cx)
-                        .items()
-                        .filter_map(|item| item.downcast::<DebugPanelItem>())
-                        .any(|item| {
-                            let item = item.read(cx);
-
-                            item.client_id() == client_id && item.thread_id() == thread_id
-                        });
-
-                    if !existing_item {
+                    let existing_item = this.debug_panel_item_by_client(&client_id, thread_id, cx);
+                    if existing_item.is_none() {
                         let debug_panel = cx.view().clone();
                         this.pane.update(cx, |pane, cx| {
                             let tab = cx.new_view(|cx| {
