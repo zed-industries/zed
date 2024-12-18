@@ -22,7 +22,6 @@ file_finder.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
-itertools.workspace = true
 log.workspace = true
 language.workspace = true
 markdown.workspace = true

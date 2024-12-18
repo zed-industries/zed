@@ -1127,22 +1127,14 @@ impl Workspace {
                 .as_ref()
                 .map(|ws| &ws.location)
                 .and_then(|loc| match loc {
-                    SerializedWorkspaceLocation::Local(paths, order) => {
-                        Some((paths.paths(), order.order()))
+                    SerializedWorkspaceLocation::Local(_, order) => {
+                        Some((loc.sorted_paths(), order.order()))
                     }
                     _ => None,
                 });
 
             if let Some((paths, order)) = workspace_location {
-                // todo: should probably move this logic to a method on the SerializedWorkspaceLocation
-                // it's only valid for Local and would be more clear there and be able to be tested
-                // and reused elsewhere
-                paths_to_open = order
-                    .iter()
-                    .zip(paths.iter())
-                    .sorted_by_key(|(i, _)| *i)
-                    .map(|(_, path)| path.clone())
-                    .collect();
+                paths_to_open = paths.iter().cloned().collect();
 
                 if order.iter().enumerate().any(|(i, &j)| i != j) {
                     project_handle
