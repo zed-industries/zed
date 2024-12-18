@@ -178,8 +178,6 @@ impl VariableList {
                 self.build_entries(true, true, cx);
             }
             StackFrameListEvent::StackFramesUpdated => {
-                self.entries.clear();
-
                 self.fetch_variables(cx);
             }
         }
@@ -472,6 +470,7 @@ impl VariableList {
                 std::mem::swap(&mut this.variables, &mut new_variables);
                 std::mem::swap(&mut this.scopes, &mut new_scopes);
 
+                this.entries.clear();
                 this.build_entries(true, true, cx);
 
                 this.fetch_variables_task.take();
