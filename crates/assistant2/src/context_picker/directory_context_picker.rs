@@ -11,7 +11,7 @@ use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context_picker::ContextPicker;
+use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 
 pub struct DirectoryContextPicker {
@@ -23,10 +23,15 @@ impl DirectoryContextPicker {
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
         context_store: WeakModel<ContextStore>,
+        confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate =
-            DirectoryContextPickerDelegate::new(context_picker, workspace, context_store);
+        let delegate = DirectoryContextPickerDelegate::new(
+            context_picker,
+            workspace,
+            context_store,
+            confirm_behavior,
+        );
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
@@ -49,6 +54,7 @@ pub struct DirectoryContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
     context_store: WeakModel<ContextStore>,
+    confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
     selected_index: usize,
 }
@@ -58,11 +64,13 @@ impl DirectoryContextPickerDelegate {
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
         context_store: WeakModel<ContextStore>,
+        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             context_picker,
             workspace,
             context_store,
+            confirm_behavior,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -93,8 +101,12 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, _cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         // TODO: Implement this once we fix the issues with the file context picker.
+        match self.confirm_behavior {
+            ConfirmBehavior::KeepOpen => {}
+            ConfirmBehavior::Close => self.dismissed(cx),
+        }
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {

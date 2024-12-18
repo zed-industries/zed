@@ -13,7 +13,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context::ContextKind;
-use crate::context_picker::ContextPicker;
+use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 
 pub struct FileContextPicker {
@@ -25,9 +25,15 @@ impl FileContextPicker {
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
         context_store: WeakModel<ContextStore>,
+        confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate = FileContextPickerDelegate::new(context_picker, workspace, context_store);
+        let delegate = FileContextPickerDelegate::new(
+            context_picker,
+            workspace,
+            context_store,
+            confirm_behavior,
+        );
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
@@ -50,6 +56,7 @@ pub struct FileContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
     context_store: WeakModel<ContextStore>,
+    confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
     selected_index: usize,
 }
@@ -59,11 +66,13 @@ impl FileContextPickerDelegate {
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
         context_store: WeakModel<ContextStore>,
+        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             context_picker,
             workspace,
             context_store,
+            confirm_behavior,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -194,6 +203,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         };
         let path = mat.path.clone();
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
+        let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
             let Some(open_buffer_task) = project
                 .update(&mut cx, |project, cx| {
@@ -207,22 +217,31 @@ impl PickerDelegate for FileContextPickerDelegate {
             let buffer = open_buffer_task.await?;
 
             this.update(&mut cx, |this, cx| {
-                this.delegate.context_store.update(cx, |context_store, cx| {
-                    let mut text = String::new();
-                    text.push_str(&codeblock_fence_for_path(Some(&path), None));
-                    text.push_str(&buffer.read(cx).text());
-                    if !text.ends_with('\n') {
-                        text.push('\n');
-                    }
+                this.delegate
+                    .context_store
+                    .update(cx, |context_store, cx| {
+                        let mut text = String::new();
+                        text.push_str(&codeblock_fence_for_path(Some(&path), None));
+                        text.push_str(&buffer.read(cx).text());
+                        if !text.ends_with('\n') {
+                            text.push('\n');
+                        }
 
-                    text.push_str("```\n");
+                        text.push_str("```\n");
 
-                    context_store.insert_context(
-                        ContextKind::File,
-                        path.to_string_lossy().to_string(),
-                        text,
-                    );
-                })
+                        context_store.insert_context(
+                            ContextKind::File,
+                            path.to_string_lossy().to_string(),
+                            text,
+                        );
+                    })?;
+
+                match confirm_behavior {
+                    ConfirmBehavior::KeepOpen => {}
+                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                }
+
+                anyhow::Ok(())
             })??;
 
             anyhow::Ok(())
