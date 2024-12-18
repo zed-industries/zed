@@ -5,6 +5,7 @@ use fs::Fs;
 use gpui::{AppContext, FocusableView, Model, Subscription, TextStyle, View, WeakModel, WeakView};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use rope::Point;
 use settings::{update_settings_file, Settings};
 use theme::ThemeSettings;
 use ui::{
@@ -166,12 +167,18 @@ impl MessageEditor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            EditorEvent::Edited { .. } => {
-                let text = editor.read(cx).text(cx);
-                if text.ends_with('@') {
-                    dbg!(&"@");
-                    self.inline_context_picker_menu_handle.show(cx);
-                }
+            EditorEvent::SelectionsChanged { .. } => {
+                editor.update(cx, |editor, cx| {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let newest_cursor = editor.selections.newest::<Point>(cx).head();
+                    if newest_cursor.column > 0 {
+                        let behind_cursor = Point::new(newest_cursor.row, newest_cursor.column - 1);
+                        let char_behind_cursor = snapshot.chars_at(behind_cursor).next();
+                        if char_behind_cursor == Some('@') {
+                            self.inline_context_picker_menu_handle.show(cx);
+                        }
+                    }
+                });
             }
             _ => {}
         }
