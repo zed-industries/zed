@@ -2,6 +2,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use dap::client::DebugAdapterClientId;
+use dap::proto_conversions::ProtoConversion;
 use dap::StackFrame;
 use gpui::{
     list, AnyElement, EventEmitter, FocusHandle, ListState, Subscription, Task, View, WeakView,
@@ -9,8 +10,10 @@ use gpui::{
 use gpui::{FocusableView, Model};
 use project::dap_store::DapStore;
 use project::ProjectPath;
+use rpc::proto::{DebuggerStackFrameList, UpdateDebugAdapter};
 use ui::ViewContext;
 use ui::{prelude::*, Tooltip};
+use util::ResultExt;
 use workspace::Workspace;
 
 use crate::debugger_panel_item::DebugPanelItemEvent::Stopped;
@@ -69,6 +72,33 @@ impl StackFrameList {
             stack_frames: Default::default(),
             current_stack_frame_id: Default::default(),
         }
+    }
+
+    pub(crate) fn thread_id(&self) -> u64 {
+        self.thread_id
+    }
+
+    pub(crate) fn to_proto(&self) -> DebuggerStackFrameList {
+        DebuggerStackFrameList {
+            thread_id: self.thread_id,
+            client_id: self.client_id.to_proto(),
+            current_stack_frame: self.current_stack_frame_id,
+            stack_frames: self.stack_frames.to_proto(),
+        }
+    }
+
+    pub(crate) fn set_from_proto(
+        &mut self,
+        stack_frame_list: DebuggerStackFrameList,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.thread_id = stack_frame_list.thread_id;
+        self.client_id = DebugAdapterClientId::from_proto(stack_frame_list.client_id);
+        self.current_stack_frame_id = stack_frame_list.current_stack_frame;
+        self.stack_frames = Vec::from_proto(stack_frame_list.stack_frames);
+        self.list.reset(self.stack_frames.len());
+
+        cx.notify();
     }
 
     pub fn stack_frames(&self) -> &Vec<StackFrame> {
@@ -139,6 +169,19 @@ impl StackFrameList {
 
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged);
         cx.notify();
+
+        if let Some((client, id)) = self.dap_store.read(cx).downstream_client() {
+            let request = UpdateDebugAdapter {
+                client_id: self.client_id.to_proto(),
+                project_id: *id,
+                thread_id: Some(self.thread_id),
+                variant: Some(rpc::proto::update_debug_adapter::Variant::StackFrameList(
+                    self.to_proto(),
+                )),
+            };
+
+            client.send(request).log_err();
+        }
 
         if !go_to_stack_frame {
             return Task::ready(Ok(()));

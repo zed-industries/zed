@@ -2,7 +2,7 @@
 use crate::transport::FakeTransport;
 use crate::transport::Transport;
 use ::fs::Fs;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Context as _, Ok, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -365,8 +365,6 @@ impl DebugAdapter for FakeAdapter {
     }
 
     fn request_args(&self, _config: &DebugAdapterConfig) -> Value {
-        use serde_json::json;
-
-        json!({})
+        Value::Null
     }
 }

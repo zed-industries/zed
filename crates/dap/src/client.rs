@@ -30,6 +30,16 @@ const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 #[repr(transparent)]
 pub struct DebugAdapterClientId(pub usize);
 
+impl DebugAdapterClientId {
+    pub fn from_proto(client_id: u64) -> Self {
+        Self(client_id as usize)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as u64
+    }
+}
+
 pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
     sequence_count: AtomicU64,

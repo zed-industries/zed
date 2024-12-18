@@ -1,5 +1,6 @@
 use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::{DebugPanel, ToggleFocus};
+use debugger_panel_item::DebugPanelItem;
 use gpui::AppContext;
 use settings::Settings;
 use ui::ViewContext;
@@ -22,6 +23,10 @@ mod tests;
 
 pub fn init(cx: &mut AppContext) {
     DebuggerSettings::register(cx);
+    workspace::FollowableViewRegistry::register::<DebugPanelItem>(cx);
+
+    // let client: AnyProtoClient = client.clone().into();
+    // client.add_model_message_handler(DebugPanel::handle_set_debug_panel_item);
 
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {

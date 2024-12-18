@@ -71,7 +71,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
 use rpc::{
-    proto::{LanguageServerPromptResponse, SSH_PROJECT_ID},
+    proto::{LanguageServerPromptResponse, SetDebuggerPanelItem, SSH_PROJECT_ID},
     AnyProtoClient, ErrorCode,
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
@@ -253,6 +253,7 @@ pub enum Event {
     LanguageNotFound(Model<Buffer>),
     DebugClientStarted(DebugAdapterClientId),
     DebugClientStopped(DebugAdapterClientId),
+    SetDebugClient(SetDebuggerPanelItem),
     ActiveDebugLineChanged,
     DebugClientEvent {
         client_id: DebugAdapterClientId,
@@ -2519,6 +2520,7 @@ impl Project {
             DapStoreEvent::ActiveDebugLineChanged => {
                 cx.emit(Event::ActiveDebugLineChanged);
             }
+            _ => {}
         }
     }
 

@@ -1,6 +1,9 @@
 use crate::stack_frame_list::{StackFrameList, StackFrameListEvent};
-use anyhow::Result;
-use dap::{client::DebugAdapterClientId, Scope, Variable};
+use anyhow::{anyhow, Result};
+use dap::{
+    client::DebugAdapterClientId, proto_conversions::ProtoConversion, Scope, ScopePresentationHint,
+    Variable,
+};
 use editor::{
     actions::{self, SelectAll},
     Editor, EditorEvent,
@@ -11,17 +14,46 @@ use gpui::{
 };
 use menu::Confirm;
 use project::dap_store::DapStore;
+use proto::debugger_variable_list_entry::Entry;
+use rpc::proto::{
+    self, DebuggerScopeVariableIndex, DebuggerVariableContainer, UpdateDebugAdapter,
+    VariableListEntries, VariableListScopes, VariableListVariables,
+};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 use ui::{prelude::*, ContextMenu, ListItem};
+use util::ResultExt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VariableContainer {
     pub container_reference: u64,
     pub variable: Variable,
     pub depth: usize,
+}
+
+impl ProtoConversion for VariableContainer {
+    type ProtoType = DebuggerVariableContainer;
+    type Output = Result<Self>;
+
+    fn to_proto(&self) -> Self::ProtoType {
+        DebuggerVariableContainer {
+            container_reference: self.container_reference,
+            depth: self.depth as u64,
+            variable: Some(self.variable.to_proto()),
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self::Output {
+        Ok(Self {
+            container_reference: payload.container_reference,
+            variable: payload.variable.map(Variable::from_proto).ok_or(anyhow!(
+                "DebuggerVariableContainer proto message didn't contain DapVariable variable field"
+            ))?,
+            depth: payload.depth as usize,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -34,10 +66,102 @@ pub struct SetVariableState {
     parent_variables_reference: u64,
 }
 
+impl SetVariableState {
+    fn from_proto(payload: proto::DebuggerSetVariableState) -> Option<Self> {
+        let scope = payload.scope.map(|scope| {
+            let proto_hint = scope
+                .presentation_hint
+                .unwrap_or(proto::DapScopePresentationHint::ScopeUnknown.into());
+
+            let presentation_hint = match proto::DapScopePresentationHint::from_i32(proto_hint) {
+                Some(proto::DapScopePresentationHint::Arguments) => {
+                    Some(ScopePresentationHint::Arguments)
+                }
+                Some(proto::DapScopePresentationHint::Locals) => {
+                    Some(ScopePresentationHint::Locals)
+                }
+                Some(proto::DapScopePresentationHint::Registers) => {
+                    Some(ScopePresentationHint::Registers)
+                }
+                Some(proto::DapScopePresentationHint::ReturnValue) => {
+                    Some(ScopePresentationHint::ReturnValue)
+                }
+                _ => Some(ScopePresentationHint::Unknown),
+            };
+
+            Scope {
+                name: scope.name,
+                presentation_hint,
+                variables_reference: scope.variables_reference,
+                named_variables: scope.named_variables,
+                indexed_variables: scope.indexed_variables,
+                expensive: scope.expensive,
+                source: None,
+                line: scope.line,
+                column: scope.column,
+                end_line: scope.end_line,
+                end_column: scope.end_column,
+            }
+        })?;
+
+        Some(SetVariableState {
+            name: payload.name,
+            scope,
+            value: payload.value,
+            stack_frame_id: payload.stack_frame_id,
+            evaluate_name: payload.evaluate_name.clone(),
+            parent_variables_reference: payload.parent_variables_reference,
+        })
+    }
+
+    fn to_proto(&self) -> proto::DebuggerSetVariableState {
+        proto::DebuggerSetVariableState {
+            name: self.name.clone(),
+            scope: Some(self.scope.to_proto()),
+            value: self.value.clone(),
+            stack_frame_id: self.stack_frame_id,
+            evaluate_name: self.evaluate_name.clone(),
+            parent_variables_reference: self.parent_variables_reference,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum OpenEntry {
     Scope { name: String },
     Variable { name: String, depth: usize },
+}
+
+impl OpenEntry {
+    pub(crate) fn from_proto(open_entry: &proto::VariableListOpenEntry) -> Option<Self> {
+        match open_entry.entry.as_ref()? {
+            proto::variable_list_open_entry::Entry::Scope(state) => Some(Self::Scope {
+                name: state.name.clone(),
+            }),
+            proto::variable_list_open_entry::Entry::Variable(state) => Some(Self::Variable {
+                name: state.name.clone(),
+                depth: state.depth as usize,
+            }),
+        }
+    }
+
+    pub(crate) fn to_proto(&self) -> proto::VariableListOpenEntry {
+        let entry = match self {
+            OpenEntry::Scope { name } => {
+                proto::variable_list_open_entry::Entry::Scope(proto::DebuggerOpenEntryScope {
+                    name: name.clone(),
+                })
+            }
+            OpenEntry::Variable { name, depth } => {
+                proto::variable_list_open_entry::Entry::Variable(proto::DebuggerOpenEntryVariable {
+                    name: name.clone(),
+                    depth: *depth as u64,
+                })
+            }
+        };
+
+        proto::VariableListOpenEntry { entry: Some(entry) }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,10 +180,79 @@ pub enum VariableListEntry {
     },
 }
 
+impl VariableListEntry {
+    pub(crate) fn to_proto(&self) -> proto::DebuggerVariableListEntry {
+        let entry = match &self {
+            VariableListEntry::Scope(scope) => Entry::Scope(scope.to_proto()),
+            VariableListEntry::Variable {
+                depth,
+                scope,
+                variable,
+                has_children,
+                container_reference,
+            } => Entry::Variable(proto::VariableListEntryVariable {
+                depth: *depth as u64,
+                scope: Some(scope.to_proto()),
+                variable: Some(variable.to_proto()),
+                has_children: *has_children,
+                container_reference: *container_reference,
+            }),
+            VariableListEntry::SetVariableEditor { depth, state } => {
+                Entry::SetVariableEditor(proto::VariableListEntrySetState {
+                    depth: *depth as u64,
+                    state: Some(state.to_proto()),
+                })
+            }
+        };
+
+        proto::DebuggerVariableListEntry { entry: Some(entry) }
+    }
+
+    pub(crate) fn from_proto(entry: proto::DebuggerVariableListEntry) -> Option<Self> {
+        match entry.entry? {
+            Entry::Scope(scope) => Some(Self::Scope(Scope::from_proto(scope))),
+            Entry::Variable(var) => Some(Self::Variable {
+                depth: var.depth as usize,
+                scope: Arc::new(Scope::from_proto(var.scope?)),
+                variable: Arc::new(Variable::from_proto(var.variable?)),
+                has_children: var.has_children,
+                container_reference: var.container_reference,
+            }),
+            Entry::SetVariableEditor(set_state) => Some(Self::SetVariableEditor {
+                depth: set_state.depth as usize,
+                state: SetVariableState::from_proto(set_state.state?)?,
+            }),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ScopeVariableIndex {
     fetched_ids: HashSet<u64>,
     variables: Vec<VariableContainer>,
+}
+
+impl ProtoConversion for ScopeVariableIndex {
+    type ProtoType = DebuggerScopeVariableIndex;
+    type Output = Self;
+
+    fn to_proto(&self) -> Self::ProtoType {
+        DebuggerScopeVariableIndex {
+            fetched_ids: self.fetched_ids.iter().copied().collect(),
+            variables: self.variables.iter().map(|var| var.to_proto()).collect(),
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self {
+        Self {
+            fetched_ids: payload.fetched_ids.iter().copied().collect(),
+            variables: payload
+                .variables
+                .iter()
+                .filter_map(|var| VariableContainer::from_proto(var.clone()).log_err())
+                .collect(),
+        }
+    }
 }
 
 impl ScopeVariableIndex {
@@ -99,21 +292,23 @@ impl ScopeVariableIndex {
     }
 }
 
+type StackFrameId = u64;
+type ScopeId = u64;
+
 pub struct VariableList {
     list: ListState,
     focus_handle: FocusHandle,
     dap_store: Model<DapStore>,
     open_entries: Vec<OpenEntry>,
     client_id: DebugAdapterClientId,
-    scopes: HashMap<u64, Vec<Scope>>,
+    scopes: HashMap<StackFrameId, Vec<Scope>>,
     set_variable_editor: View<Editor>,
     _subscriptions: Vec<Subscription>,
     stack_frame_list: View<StackFrameList>,
     set_variable_state: Option<SetVariableState>,
-    entries: HashMap<u64, Vec<VariableListEntry>>,
+    entries: HashMap<StackFrameId, Vec<VariableListEntry>>,
     fetch_variables_task: Option<Task<Result<()>>>,
-    // (stack_frame_id, scope_id) -> VariableIndex
-    variables: BTreeMap<(u64, u64), ScopeVariableIndex>,
+    variables: BTreeMap<(StackFrameId, ScopeId), ScopeVariableIndex>,
     open_context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
@@ -165,6 +360,119 @@ impl VariableList {
             open_entries: Default::default(),
             stack_frame_list: stack_frame_list.clone(),
         }
+    }
+
+    pub(crate) fn to_proto(&self) -> proto::DebuggerVariableList {
+        let open_entries = self.open_entries.iter().map(OpenEntry::to_proto).collect();
+        let set_variable_state = self
+            .set_variable_state
+            .as_ref()
+            .map(SetVariableState::to_proto);
+
+        let variables = self
+            .variables
+            .iter()
+            .map(
+                |((stack_frame_id, scope_id), scope_variable_index)| VariableListVariables {
+                    scope_id: *scope_id,
+                    stack_frame_id: *stack_frame_id,
+                    variables: Some(scope_variable_index.to_proto()),
+                },
+            )
+            .collect();
+
+        let entries = self
+            .entries
+            .iter()
+            .map(|(key, entries)| VariableListEntries {
+                stack_frame_id: *key,
+                entries: entries
+                    .clone()
+                    .iter()
+                    .map(|entry| entry.to_proto())
+                    .collect(),
+            })
+            .collect();
+
+        let scopes = self
+            .scopes
+            .iter()
+            .map(|(key, scopes)| VariableListScopes {
+                stack_frame_id: *key,
+                scopes: scopes.to_proto(),
+            })
+            .collect();
+
+        proto::DebuggerVariableList {
+            open_entries,
+            scopes,
+            set_variable_state,
+            entries,
+            variables,
+        }
+    }
+
+    pub(crate) fn set_from_proto(
+        &mut self,
+        state: &proto::DebuggerVariableList,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.variables = state
+            .variables
+            .iter()
+            .filter_map(|variable| {
+                Some((
+                    (variable.stack_frame_id, variable.stack_frame_id),
+                    ScopeVariableIndex::from_proto(variable.variables.clone()?),
+                ))
+            })
+            .collect();
+
+        self.open_entries = state
+            .open_entries
+            .iter()
+            .filter_map(OpenEntry::from_proto)
+            .collect();
+
+        self.set_variable_state = state
+            .set_variable_state
+            .clone()
+            .and_then(SetVariableState::from_proto);
+
+        self.entries = state
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.stack_frame_id,
+                    entry
+                        .entries
+                        .clone()
+                        .into_iter()
+                        .filter_map(VariableListEntry::from_proto)
+                        .collect(),
+                )
+            })
+            .collect();
+
+        self.scopes = state
+            .scopes
+            .iter()
+            .map(|scope| {
+                (
+                    scope.stack_frame_id,
+                    scope
+                        .scopes
+                        .clone()
+                        .into_iter()
+                        .map(Scope::from_proto)
+                        .collect(),
+                )
+            })
+            .collect();
+
+        self.list.reset(self.entries.len());
+        cx.notify();
     }
 
     fn handle_stack_frame_list_events(
@@ -341,6 +649,19 @@ impl VariableList {
         self.list.reset(len);
 
         cx.notify();
+
+        if let Some((client, project_id)) = self.dap_store.read(cx).downstream_client() {
+            let request = UpdateDebugAdapter {
+                client_id: self.client_id.to_proto(),
+                thread_id: Some(self.stack_frame_list.read(cx).thread_id()),
+                project_id: *project_id,
+                variant: Some(rpc::proto::update_debug_adapter::Variant::VariableList(
+                    self.to_proto(),
+                )),
+            };
+
+            client.send(request).log_err();
+        }
     }
 
     fn fetch_nested_variables(
@@ -424,6 +745,10 @@ impl VariableList {
     }
 
     fn fetch_variables(&mut self, cx: &mut ViewContext<Self>) {
+        if self.dap_store.read(cx).upstream_client().is_some() {
+            return;
+        }
+
         let stack_frames = self.stack_frame_list.read(cx).stack_frames().clone();
 
         self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
@@ -856,6 +1181,7 @@ mod tests {
         let mut index = ScopeVariableIndex::new();
 
         assert_eq!(index.variables(), &[]);
+        assert_eq!(index.fetched_ids, HashSet::default());
 
         let variable1 = VariableContainer {
             variable: Variable {
@@ -914,6 +1240,7 @@ mod tests {
             index.variables(),
             &[variable1.clone(), variable2.clone(), variable3.clone()]
         );
+        assert_eq!(index.fetched_ids, HashSet::from([1]));
     }
 
     /// This covers when you click on a variable that has a nested variable
@@ -981,6 +1308,7 @@ mod tests {
             index.variables(),
             &[variable1.clone(), variable2.clone(), variable3.clone()]
         );
+        assert_eq!(index.fetched_ids, HashSet::from([1]));
 
         let variable4 = VariableContainer {
             variable: Variable {
@@ -1026,5 +1354,95 @@ mod tests {
                 variable3.clone(),
             ]
         );
+        assert_eq!(index.fetched_ids, HashSet::from([1, 2]));
+    }
+
+    #[test]
+    fn test_can_serialize_to_and_from_proto() {
+        let mut index = ScopeVariableIndex::new();
+
+        let variable1 = VariableContainer {
+            variable: Variable {
+                name: "First variable".into(),
+                value: "First variable".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 2,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        let variable2 = VariableContainer {
+            variable: Variable {
+                name: "Second variable with child".into(),
+                value: "Second variable with child".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        index.add_variables(1, vec![variable1.clone(), variable2.clone()]);
+
+        let variable3 = VariableContainer {
+            variable: Variable {
+                name: "Third variable".into(),
+                value: "Third variable".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        let variable4 = VariableContainer {
+            variable: Variable {
+                name: "Four variable".into(),
+                value: "Four variable".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        index.add_variables(2, vec![variable3.clone(), variable4.clone()]);
+
+        assert_eq!(
+            index.variables(),
+            &[
+                variable1.clone(),
+                variable3.clone(),
+                variable4.clone(),
+                variable2.clone(),
+            ]
+        );
+        assert_eq!(index.fetched_ids, HashSet::from([1, 2]));
+
+        let from_proto = ScopeVariableIndex::from_proto(index.to_proto());
+
+        assert_eq!(index.variables(), from_proto.variables());
+        assert_eq!(index.fetched_ids, from_proto.fetched_ids);
     }
 }

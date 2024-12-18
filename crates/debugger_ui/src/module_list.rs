@@ -1,8 +1,10 @@
 use anyhow::Result;
-use dap::{client::DebugAdapterClientId, Module, ModuleEvent};
+use dap::{client::DebugAdapterClientId, proto_conversions::ProtoConversion, Module, ModuleEvent};
 use gpui::{list, AnyElement, FocusHandle, FocusableView, ListState, Model, Task};
 use project::dap_store::DapStore;
+use rpc::proto::{DebuggerModuleList, UpdateDebugAdapter};
 use ui::prelude::*;
+use util::ResultExt;
 
 pub struct ModuleList {
     list: ListState,
@@ -41,6 +43,34 @@ impl ModuleList {
         this
     }
 
+    pub(crate) fn set_from_proto(
+        &mut self,
+        module_list: &DebuggerModuleList,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.modules = module_list
+            .modules
+            .iter()
+            .filter_map(|payload| Module::from_proto(payload.clone()).log_err())
+            .collect();
+
+        self.client_id = DebugAdapterClientId::from_proto(module_list.client_id);
+
+        self.list.reset(self.modules.len());
+        cx.notify();
+    }
+
+    pub(crate) fn to_proto(&self) -> DebuggerModuleList {
+        DebuggerModuleList {
+            client_id: self.client_id.to_proto(),
+            modules: self
+                .modules
+                .iter()
+                .map(|module| module.to_proto())
+                .collect(),
+        }
+    }
+
     pub fn on_module_event(&mut self, event: &ModuleEvent, cx: &mut ViewContext<Self>) {
         match event.reason {
             dap::ModuleEventReason::New => self.modules.push(event.module.clone()),
@@ -68,6 +98,18 @@ impl ModuleList {
                 std::mem::swap(&mut this.modules, &mut modules);
                 this.list.reset(this.modules.len());
 
+                if let Some((client, id)) = this.dap_store.read(cx).downstream_client() {
+                    let request = UpdateDebugAdapter {
+                        client_id: this.client_id.to_proto(),
+                        project_id: *id,
+                        thread_id: None,
+                        variant: Some(rpc::proto::update_debug_adapter::Variant::Modules(
+                            this.to_proto(),
+                        )),
+                    };
+
+                    client.send(request).log_err();
+                }
                 cx.notify();
             })
         })

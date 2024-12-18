@@ -35,6 +35,7 @@ use language::{
 };
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+use rpc::proto::{SetDebuggerPanelItem, UpdateDebugAdapter};
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use serde_json::Value;
 use settings::{Settings as _, WorktreeId};
@@ -63,6 +64,8 @@ pub enum DapStoreEvent {
     Notification(String),
     BreakpointsChanged,
     ActiveDebugLineChanged,
+    SetDebugPanelItem(SetDebuggerPanelItem),
+    UpdateDebugAdapter(UpdateDebugAdapter),
 }
 
 pub enum DebugAdapterClientState {
@@ -106,6 +109,8 @@ impl DapStore {
         client.add_model_message_handler(DapStore::handle_synchronize_breakpoints);
         client.add_model_message_handler(DapStore::handle_set_active_debug_line);
         client.add_model_message_handler(DapStore::handle_remove_active_debug_line);
+        client.add_model_message_handler(DapStore::handle_set_debug_panel_item);
+        client.add_model_message_handler(DapStore::handle_update_debug_adapter);
     }
 
     pub fn new_local(
@@ -194,6 +199,10 @@ impl DapStore {
             }) => None,
             DapStoreMode::Local(_) => None,
         }
+    }
+
+    pub fn downstream_client(&self) -> Option<&(AnyProtoClient, u64)> {
+        self.downstream_client.as_ref()
     }
 
     pub fn next_client_id(&self) -> DebugAdapterClientId {
@@ -958,6 +967,16 @@ impl DapStore {
         })
     }
 
+    // TODO Debugger Collab
+    fn _send_proto_client_request(
+        &self,
+        _client_id: &DebugAdapterClientId,
+        _message: Message,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        //
+    }
+
     pub fn step_over(
         &self,
         client_id: &DebugAdapterClientId,
@@ -965,6 +984,12 @@ impl DapStore {
         granularity: SteppingGranularity,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        if let Some(remote) = self.as_remote() {
+            if let Some(_client) = &remote.upstream_client {
+                //
+            }
+        }
+
         let Some(client) = self.client_by_id(client_id) else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
@@ -1380,6 +1405,26 @@ impl DapStore {
             cx.emit(DapStoreEvent::BreakpointsChanged);
 
             cx.notify();
+        })
+    }
+
+    async fn handle_set_debug_panel_item(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::SetDebuggerPanelItem>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(DapStoreEvent::SetDebugPanelItem(envelope.payload));
+        })
+    }
+
+    async fn handle_update_debug_adapter(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::UpdateDebugAdapter>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(DapStoreEvent::UpdateDebugAdapter(envelope.payload));
         })
     }
 

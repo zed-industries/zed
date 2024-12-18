@@ -3628,7 +3628,6 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> proto::FollowResponse {
         let active_view = self.active_view_for_follower(follower_project_id, cx);
-
         cx.notify();
         proto::FollowResponse {
             // TODO: Remove after version 0.145.x stabilizes.
