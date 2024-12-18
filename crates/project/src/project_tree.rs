@@ -132,7 +132,6 @@ impl ProjectTree {
             }
         };
 
-        dbg!(adapters.len());
         let mut filled_adapters = vec![false; adapters.len()];
         let mut adapters_with_roots = 0;
         for ancestor in path.ancestors().skip(1) {
@@ -177,7 +176,7 @@ impl ProjectTree {
                 }
             });
         }
-        dbg!(&roots.len());
+
         roots
     }
     fn on_worktree_store_event(
