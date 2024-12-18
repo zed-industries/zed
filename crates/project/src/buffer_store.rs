@@ -1261,7 +1261,7 @@ impl BufferStore {
                         parse_git_remote_url(provider_registry, &origin_url)
                             .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
-                    let dot_git_dir = repo.path();
+                    let dot_git_dir = repo.dot_git_dir();
                     let git_dir = dot_git_dir
                         .parent()
                         .expect("Unexpected bare Git repository");
