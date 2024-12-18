@@ -1,6 +1,7 @@
 mod active_thread;
 mod assistant_panel;
 mod assistant_settings;
+mod buffer_codegen;
 mod context;
 mod context_picker;
 mod context_store;
@@ -10,6 +11,7 @@ mod inline_prompt_editor;
 mod message_editor;
 mod prompts;
 mod streaming_diff;
+mod terminal_codegen;
 mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
