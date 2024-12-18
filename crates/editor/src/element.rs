@@ -2340,14 +2340,21 @@ impl EditorElement {
 
                 let mut result = v_flex().id(block_id).w_full();
 
-                let expand_area = || {
+                let expand_area = |id: SharedString| {
                     h_flex()
-                        .id("expand_hit_area")
+                        .debug()
+                        .id(id)
                         .relative()
                         .w_full()
                         .cursor_pointer()
-                        .debug_bg_blue()
+                        // .debug_bg_blue()
                         .block_mouse_down()
+                        .on_mouse_move(|_, cx| cx.stop_propagation())
+                        // .on_mouse_move(cx.listener_for(&self.editor, {
+                        //     move |_, _, cx| {
+                        //         cx.stop_propagation();
+                        //     }
+                        // }))
                         .hover(|style| style.bg(color.border_variant.opacity(0.5)))
                         .tooltip({
                             let focus_handle = focus_handle.clone();
@@ -2367,7 +2374,8 @@ impl EditorElement {
 
                     if *show_excerpt_controls {
                         result = result.child(
-                            expand_area()
+                            expand_area(format!("block-{}-down", block_id).into())
+                                .debug_bg_green() // down button
                                 .child(
                                     h_flex()
                                         // .group("expand_down_hit_area")
@@ -2390,17 +2398,18 @@ impl EditorElement {
                                         editor.expand_excerpt(excerpt_id, direction, cx);
                                         cx.stop_propagation();
                                     }
-                                })), // .tooltip({
-                                     //     let focus_handle = focus_handle.clone();
-                                     //     move |cx| {
-                                     //         Tooltip::for_action_in(
-                                     //             "Expand Excerpt",
-                                     //             &ExpandExcerpts { lines: 0 },
-                                     //             &focus_handle,
-                                     //             cx,
-                                     //         )
-                                     //     }
-                                     // }),
+                                })),
+                            // .tooltip({
+                            //     let focus_handle = focus_handle.clone();
+                            //     move |cx| {
+                            //         Tooltip::for_action_in(
+                            //             "Expand Excerpt",
+                            //             &ExpandExcerpts { lines: 0 },
+                            //             &focus_handle,
+                            //             cx,
+                            //         )
+                            //     }
+                            // }),
                         );
                     }
                 }
@@ -2420,8 +2429,10 @@ impl EditorElement {
                         ));
 
                         if *show_excerpt_controls {
+                            // ONLY ONE CORRECT
                             result = result.child(
-                                expand_area()
+                                expand_area(format!("block-{}-up-first", block_id).into())
+                                    .debug_bg_red() // FIRST instance of up button
                                     .h(header_height)
                                     .child(
                                         h_flex()
@@ -2452,131 +2463,136 @@ impl EditorElement {
                         // let focus_handle = self.editor.focus_handle(cx).clone();
                         let id_group_name = "expand-excerpt-hit-space";
 
-                        result = result.child(
-                            expand_area()
-                                // .id(id_group_name)
-                                // .group("excerpt-jump-action")
-                                // .h(header_height)
-                                // .justify_start()
-                                .child(
-                                    div()
-                                        .top(px(0.))
-                                        .absolute()
-                                        .w_full()
-                                        .h_px()
-                                        .bg(color.border_variant),
-                                    // .group_hover("excerpt-jump-action", |style| {
-                                    //     style.bg(color.border)
-                                    // }),
-                                )
-                                .child(
-                                    h_flex()
-                                        .w(icon_offset)
-                                        .h(header_height)
-                                        .flex_none()
-                                        .justify_end()
-                                        .child(if *show_excerpt_controls {
-                                            self.render_expand_excerpt_button(
-                                                // next_excerpt.id,
-                                                // ExpandExcerptDirection::Up,
-                                                IconName::ArrowUpFromLine,
-                                                Some("expand-excerpt-hit-space".to_string()),
-                                                cx,
-                                            )
-                                        } else {
-                                            ButtonLike::new("jump-icon")
-                                                .style(ButtonStyle::Transparent)
-                                                .child(
-                                                    svg()
-                                                        .path(IconName::ArrowUpRight.path())
-                                                        .size(IconSize::XSmall.rems())
-                                                        .text_color(color.border_variant)
-                                                        .group_hover(id_group_name, |style| {
-                                                            style.text_color(color.border)
-                                                        }),
+                        if *show_excerpt_controls {
+                            result = result.child(
+                                expand_area(format!("block-{}-up", block_id).into())
+                                    // .id(id_group_name)
+                                    // .group("excerpt-jump-action")
+                                    .h(header_height)
+                                    // .justify_start()
+                                    .debug_bg_yellow() // SUBSEQUENT instance of up button
+                                    .child(
+                                        div()
+                                            .top(px(0.))
+                                            .absolute()
+                                            .w_full()
+                                            .h_px()
+                                            .bg(color.border_variant),
+                                        // .group_hover("excerpt-jump-action", |style| {
+                                        //     style.bg(color.border)
+                                        // }),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .w(icon_offset)
+                                            .h(header_height)
+                                            .flex_none()
+                                            .justify_end()
+                                            .child(if *show_excerpt_controls {
+                                                self.render_expand_excerpt_button(
+                                                    // next_excerpt.id,
+                                                    // ExpandExcerptDirection::Up,
+                                                    IconName::ArrowUpFromLine,
+                                                    Some("expand-excerpt-hit-space".to_string()),
+                                                    cx,
                                                 )
-                                        }),
-                                )
-                                .on_click(cx.listener_for(&self.editor, {
-                                    let excerpt_id = next_excerpt.id;
-                                    let direction = ExpandExcerptDirection::Up;
-                                    move |editor, e: &ClickEvent, cx| {
-                                        editor.expand_excerpt(excerpt_id, direction, cx);
-                                        cx.stop_propagation();
-                                    }
-                                })), // .tooltip({
-                                     //     let focus_handle = focus_handle.clone();
-                                     //     move |cx| {
-                                     //         Tooltip::for_action_in(
-                                     //             "Expand Excerpt",
-                                     //             &ExpandExcerpts { lines: 0 },
-                                     //             &focus_handle,
-                                     //             cx,
-                                     //         )
-                                     //     }
-                                     // }),
-                                     // .child(
-                                     //     div()
-                                     //         .id("jump-to-location-hit-space")
-                                     //         .size_full()
-                                     //         .hover(|style| style.bg(color.border_variant.opacity(0.3)))
-                                     //         // .debug_bg_blue()
-                                     //         .on_click({
-                                     //             let jump_data = jump_data.clone();
-                                     //             cx.listener_for(&self.editor, {
-                                     //                 let jump_data = jump_data.clone();
-                                     //                 move |editor, e: &ClickEvent, cx| {
-                                     //                     cx.stop_propagation();
-                                     //                     editor.open_excerpts_common(
-                                     //                         Some(jump_data.clone()),
-                                     //                         e.down.modifiers.secondary(),
-                                     //                         cx,
-                                     //                     );
-                                     //                 }
-                                     //             })
-                                     //         })
-                                     //         .tooltip({
-                                     //             let jump_data = jump_data.clone();
-                                     //             move |cx| {
-                                     //                 let jump_location = format!(
-                                     //                     "{}:L{}",
-                                     //                     match &jump_data.path {
-                                     //                         Some(project_path) =>
-                                     //                             project_path.path.display().to_string(),
-                                     //                         None => {
-                                     //                             let editor = editor.read(cx);
-                                     //                             editor
-                                     //                                 .file_at(jump_data.position, cx)
-                                     //                                 .map(|file| {
-                                     //                                     file.full_path(cx)
-                                     //                                         .display()
-                                     //                                         .to_string()
-                                     //                                 })
-                                     //                                 .or_else(|| {
-                                     //                                     Some(
-                                     //                                         editor
-                                     //                                             .tab_description(0, cx)?
-                                     //                                             .to_string(),
-                                     //                                     )
-                                     //                                 })
-                                     //                                 .unwrap_or_else(|| {
-                                     //                                     "Unknown buffer".to_string()
-                                     //                                 })
-                                     //                         }
-                                     //                     },
-                                     //                     jump_data.position.row + 1
-                                     //                 );
-                                     //                 Tooltip::with_meta_in(
-                                     //                     "Jump to Location",
-                                     //                     Some(&OpenExcerpts),
-                                     //                     jump_location,
-                                     //                     &focus_handle,
-                                     //                     cx,
-                                     //                 )
-                                     //             }
-                                     //         }),
-                                     // ),
-                        );
+                                            } else {
+                                                ButtonLike::new("jump-icon")
+                                                    .style(ButtonStyle::Transparent)
+                                                    .child(
+                                                        svg()
+                                                            .path(IconName::ArrowUpRight.path())
+                                                            .size(IconSize::XSmall.rems())
+                                                            .text_color(color.border_variant)
+                                                            .group_hover(id_group_name, |style| {
+                                                                style.text_color(color.border)
+                                                            }),
+                                                    )
+                                            }),
+                                    )
+                                    .on_click(cx.listener_for(&self.editor, {
+                                        let excerpt_id = next_excerpt.id;
+                                        let direction = ExpandExcerptDirection::Up;
+                                        move |editor, _, cx| {
+                                            editor.expand_excerpt(excerpt_id, direction, cx);
+                                            cx.stop_propagation();
+                                        }
+                                    })),
+                            );
+                        }
+                        // .tooltip({
+                        //              //     let focus_handle = focus_handle.clone();
+                        //              //     move |cx| {
+                        //              //         Tooltip::for_action_in(
+                        //              //             "Expand Excerpt",
+                        //              //             &ExpandExcerpts { lines: 0 },
+                        //              //             &focus_handle,
+                        //              //             cx,
+                        //              //         )
+                        //              //     }
+                        //              // }),
+                        //              // .child(
+                        //              //     div()
+                        //              //         .id("jump-to-location-hit-space")
+                        //              //         .size_full()
+                        //              //         .hover(|style| style.bg(color.border_variant.opacity(0.3)))
+                        //              //         // .debug_bg_blue()
+                        //              //         .on_click({
+                        //              //             let jump_data = jump_data.clone();
+                        //              //             cx.listener_for(&self.editor, {
+                        //              //                 let jump_data = jump_data.clone();
+                        //              //                 move |editor, e: &ClickEvent, cx| {
+                        //              //                     cx.stop_propagation();
+                        //              //                     editor.open_excerpts_common(
+                        //              //                         Some(jump_data.clone()),
+                        //              //                         e.down.modifiers.secondary(),
+                        //              //                         cx,
+                        //              //                     );
+                        //              //                 }
+                        //              //             })
+                        //              //         })
+                        //              //         .tooltip({
+                        //              //             let jump_data = jump_data.clone();
+                        //              //             move |cx| {
+                        //              //                 let jump_location = format!(
+                        //              //                     "{}:L{}",
+                        //              //                     match &jump_data.path {
+                        //              //                         Some(project_path) =>
+                        //              //                             project_path.path.display().to_string(),
+                        //              //                         None => {
+                        //              //                             let editor = editor.read(cx);
+                        //              //                             editor
+                        //              //                                 .file_at(jump_data.position, cx)
+                        //              //                                 .map(|file| {
+                        //              //                                     file.full_path(cx)
+                        //              //                                         .display()
+                        //              //                                         .to_string()
+                        //              //                                 })
+                        //              //                                 .or_else(|| {
+                        //              //                                     Some(
+                        //              //                                         editor
+                        //              //                                             .tab_description(0, cx)?
+                        //              //                                             .to_string(),
+                        //              //                                     )
+                        //              //                                 })
+                        //              //                                 .unwrap_or_else(|| {
+                        //              //                                     "Unknown buffer".to_string()
+                        //              //                                 })
+                        //              //                         }
+                        //              //                     },
+                        //              //                     jump_data.position.row + 1
+                        //              //                 );
+                        //              //                 Tooltip::with_meta_in(
+                        //              //                     "Jump to Location",
+                        //              //                     Some(&OpenExcerpts),
+                        //              //                     jump_location,
+                        //              //                     &focus_handle,
+                        //              //                     cx,
+                        //              //                 )
+                        //              //             }
+                        //              //         }),
+                        //              // ),
+                        // );
                     }
                 }
 
