@@ -2480,6 +2480,67 @@ impl Snapshot {
         })
     }
 
+    pub fn propagate_git_statuses2(&self, entries: &[Entry]) -> Vec<Option<GitFileStatus>> {
+        let mut cursor = all_statuses_cursor(self);
+        let mut entry_stack = Vec::<(usize, GitStatuses)>::new();
+
+        let mut result = entries
+            .iter()
+            .map(|entry| {
+                let (work_directory, repo_entry) =
+                    self.repository_and_work_directory_for_path(&entry.path)?;
+                let RepoPath(path) = repo_entry.relativize(self, &entry.path).ok()?;
+                let git_entry = repo_entry.git_entries_by_path.get(&PathKey(path), &())?;
+                Some(git_entry.git_status)
+            })
+            .collect::<Vec<_>>();
+
+        let mut entry_ix = 0;
+        loop {
+            let next_entry = entries.get(entry_ix);
+            let containing_entry = entry_stack.last().map(|(ix, _)| &entries[*ix]);
+
+            let entry_to_finish = match (containing_entry, next_entry) {
+                (Some(_), None) => entry_stack.pop(),
+                (Some(containing_entry), Some(next_path)) => {
+                    if next_path.path.starts_with(&containing_entry.path) {
+                        None
+                    } else {
+                        entry_stack.pop()
+                    }
+                }
+                (None, Some(_)) => None,
+                (None, None) => break,
+            };
+
+            if let Some((entry_ix, prev_statuses)) = entry_to_finish {
+                cursor.seek_forward(&GitEntryTraversalTarget::PathSuccessor(dbg!(
+                    &entries[entry_ix].path
+                )));
+
+                let statuses = dbg!(cursor.start()) - dbg!(prev_statuses);
+
+                result[entry_ix] = if statuses.conflict > 0 {
+                    Some(GitFileStatus::Conflict)
+                } else if statuses.modified > 0 {
+                    Some(GitFileStatus::Modified)
+                } else if statuses.added > 0 {
+                    Some(GitFileStatus::Added)
+                } else {
+                    None
+                };
+            } else {
+                if entries[entry_ix].is_dir() {
+                    cursor.seek_forward(&GitEntryTraversalTarget::Path(&entries[entry_ix].path));
+                    entry_stack.push((entry_ix, cursor.start()));
+                }
+                entry_ix += 1;
+            }
+        }
+
+        result
+    }
+
     /// TODO: Redo this entirely, API is wrong, conceptually it's a bit weird
     /// Updates the `git_status` of the given entries such that files'
     /// statuses bubble up to their ancestor directories.
@@ -3718,49 +3779,26 @@ where
 {
     fn seek_forward(&mut self, target: &GitEntryTraversalTarget<'_>) {
         dbg!(target);
-        dbg!(self.statuses_so_far);
-        let mut should_step_repositories = false;
-        let mut statuses_so_far_added = None;
         loop {
-            dbg!("seek forward loop");
-            if let Some(cursor) = self.current_cursor.as_mut() {
-                dbg!("have a cursor");
-                cursor.seek_forward(target, Bias::Left, &());
-
-                if cursor.item().is_none() {
-                    self.statuses_so_far += dbg!(cursor.start().1);
-                    statuses_so_far_added = Some(cursor.start().1);
-                    should_step_repositories = true
-                }
-
-                /*
-                |*******|
-                 ^
-
-                 */
-            }
-            if should_step_repositories {
-                should_step_repositories = false;
-                let maybe_next_cursor = maybe!({
-                    let (workdir, repository) = self.repositories.next()?;
-                    dbg!(workdir);
-                    Some(
-                        repository
+            let cursor = match &mut self.current_cursor {
+                Some(cursor) => cursor,
+                None => {
+                    let Some((_, entry)) = self.repositories.next() else {
+                        break;
+                    };
+                    self.current_cursor = Some(
+                        entry
                             .git_entries_by_path
                             .cursor::<(TraversalProgress<'_>, GitStatuses)>(&()),
-                    )
-                });
-                if let Some(next_cursor) = maybe_next_cursor {
-                    self.current_cursor = Some(next_cursor);
-                    if let Some(statuses_so_far_added) = statuses_so_far_added {
-                        self.statuses_so_far = self.statuses_so_far - statuses_so_far_added;
-                    }
-                    continue;
-                } else {
-                    break;
+                    );
+                    self.current_cursor.as_mut().unwrap()
                 }
+            };
+            let found = cursor.seek_forward(target, Bias::Left, &());
+            if found {
+                break;
             }
-            break;
+            self.current_cursor = None;
         }
     }
 
@@ -3772,9 +3810,9 @@ where
 
     fn start(&self) -> GitStatuses {
         if let Some(cursor) = self.current_cursor.as_ref() {
-            cursor.start().1 + self.statuses_so_far
+            dbg!(cursor.start().1)
         } else {
-            self.statuses_so_far
+            dbg!(GitStatuses::default())
         }
     }
 }
@@ -3786,7 +3824,6 @@ fn all_statuses_cursor<'a>(
     let mut repositories = snapshot.repositories();
     let cursor = util::maybe!({
         let (workdir, entry) = repositories.next()?;
-        dbg!(workdir);
         Some(
             entry
                 .git_entries_by_path
@@ -4762,7 +4799,7 @@ impl BackgroundScanner {
                             repo: local_entry.repo_ptr.clone(),
                             repo_paths: Default::default(),
                         })
-                        .add_path(dbg!(repo_path));
+                        .add_path(repo_path);
                 }
             }
         }
@@ -5416,7 +5453,6 @@ impl RepoPaths {
                 self.repo_paths.remove(ix);
             }
             Err(_) => {
-                dbg!(repo_path);
                 log::error!("Attempted to remove a repo path that was never added");
                 debug_assert!(false);
             }

@@ -1500,7 +1500,6 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
 
     dbg!(snapshot.git_status(&Path::new("")));
 
-    dbg!("******************************************");
     check_propagated_statuses(
         &snapshot,
         &[
@@ -2835,6 +2834,61 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_propagate_statuses_two_repos(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "x": {
+                ".git": {},
+                "x1": "foo"
+            },
+            "y": {
+                ".git": {},
+                "y1": "bar"
+            }
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/x/.git"),
+        &[(Path::new("x1"), GitFileStatus::Added)],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/y/.git"),
+        &[(Path::new("y1"), GitFileStatus::Conflict)],
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    cx.executor().run_until_parked();
+    let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new("x"), Some(GitFileStatus::Added)),
+            (Path::new("x/x1"), Some(GitFileStatus::Added)),
+            (Path::new("y"), Some(GitFileStatus::Conflict)),
+            (Path::new("y/y1"), Some(GitFileStatus::Conflict)),
+        ],
+    );
+}
+
+#[gpui::test]
 async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -2866,7 +2920,7 @@ fn check_propagated_statuses(
         .iter()
         .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
         .collect::<Vec<_>>();
-    let statuses = snapshot.propagate_git_statuses(&entries);
+    let statuses = snapshot.propagate_git_statuses2(&entries);
     assert_eq!(
         entries
             .iter()
