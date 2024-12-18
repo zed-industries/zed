@@ -2339,15 +2339,12 @@ impl EditorElement {
                 let focus_handle = self.editor.focus_handle(cx).clone();
 
                 let mut result = v_flex().id(block_id).w_full();
-
                 let expand_area = |id: SharedString| {
                     h_flex()
-                        .debug()
                         .id(id)
                         .relative()
                         .w_full()
                         .cursor_pointer()
-                        // .debug_bg_blue()
                         .block_mouse_down()
                         .on_mouse_move(|_, cx| cx.stop_propagation())
                         // .on_mouse_move(cx.listener_for(&self.editor, {
@@ -2370,12 +2367,13 @@ impl EditorElement {
                 };
 
                 if let Some(prev_excerpt) = prev_excerpt {
-                    // let focus_handle = self.editor.focus_handle(cx).clone();
-
                     if *show_excerpt_controls {
+                        let group_name = "expand-down";
+
                         result = result.child(
                             expand_area(format!("block-{}-down", block_id).into())
-                                .debug_bg_green() // down button
+                                // .debug_bg_green()
+                                .group(group_name)
                                 .child(
                                     h_flex()
                                         // .group("expand_down_hit_area")
@@ -2387,7 +2385,7 @@ impl EditorElement {
                                             // prev_excerpt.id,
                                             // ExpandExcerptDirection::Down,
                                             IconName::ArrowDownFromLine,
-                                            None,
+                                            Some(group_name.to_string()),
                                             cx,
                                         )),
                                 )
@@ -2416,7 +2414,6 @@ impl EditorElement {
 
                 if let Some(next_excerpt) = next_excerpt {
                     let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt, cx);
-                    // let focus_handle = self.editor.focus_handle(cx).clone();
 
                     if *starts_new_buffer {
                         result = result.child(self.render_buffer_header(
@@ -2429,10 +2426,12 @@ impl EditorElement {
                         ));
 
                         if *show_excerpt_controls {
-                            // ONLY ONE CORRECT
+                            let group_name = "expand-up-first";
+
                             result = result.child(
                                 expand_area(format!("block-{}-up-first", block_id).into())
-                                    .debug_bg_red() // FIRST instance of up button
+                                    // .debug_bg_red() // FIRST instance of up button
+                                    .group(group_name)
                                     .h(header_height)
                                     .child(
                                         h_flex()
@@ -2444,7 +2443,7 @@ impl EditorElement {
                                                 // next_excerpt.id,
                                                 // ExpandExcerptDirection::Up,
                                                 IconName::ArrowUpFromLine,
-                                                None,
+                                                Some(group_name.to_string()),
                                                 cx,
                                             )),
                                     )
@@ -2460,17 +2459,14 @@ impl EditorElement {
                         }
                     } else {
                         let editor = self.editor.clone();
-                        // let focus_handle = self.editor.focus_handle(cx).clone();
-                        let id_group_name = "expand-excerpt-hit-space";
+                        let group_name = "expand-up-subsequent";
 
                         if *show_excerpt_controls {
                             result = result.child(
                                 expand_area(format!("block-{}-up", block_id).into())
-                                    // .id(id_group_name)
-                                    // .group("excerpt-jump-action")
+                                    .group(group_name)
                                     .h(header_height)
-                                    // .justify_start()
-                                    .debug_bg_yellow() // SUBSEQUENT instance of up button
+                                    // .debug_bg_yellow()
                                     .child(
                                         div()
                                             .top(px(0.))
@@ -2493,7 +2489,7 @@ impl EditorElement {
                                                     // next_excerpt.id,
                                                     // ExpandExcerptDirection::Up,
                                                     IconName::ArrowUpFromLine,
-                                                    Some("expand-excerpt-hit-space".to_string()),
+                                                    Some(group_name.to_string()),
                                                     cx,
                                                 )
                                             } else {
@@ -2504,7 +2500,7 @@ impl EditorElement {
                                                             .path(IconName::ArrowUpRight.path())
                                                             .size(IconSize::XSmall.rems())
                                                             .text_color(color.border_variant)
-                                                            .group_hover(id_group_name, |style| {
+                                                            .group_hover(group_name, |style| {
                                                                 style.text_color(color.border)
                                                             }),
                                                     )
