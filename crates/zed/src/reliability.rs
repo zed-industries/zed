@@ -67,7 +67,7 @@ pub fn init_panic_hook(
                 location.column(),
                 backtrace,
             );
-            std::process::exit(-1);
+            // TODO: std::process::exit(-1); :ODOT
         }
         let main_module_base_address = unsafe { get_main_module_base_address() };
 
@@ -80,7 +80,12 @@ pub fn init_panic_hook(
                     Some(format!(
                         "{:#}+{}",
                         symbol.name()?,
-                        (frame.ip() as u64).saturating_sub(main_module_base_address)
+                        (frame.ip() as u64).saturating_sub(
+                            frame
+                                .module_base_address()
+                                .map(|m| m as u64)
+                                .unwrap_or(main_module_base_address)
+                        )
                     ))
                 })
             })
@@ -102,7 +107,8 @@ pub fn init_panic_hook(
                 line: location.line(),
             }),
             app_version: app_version.to_string(),
-            release_channel: RELEASE_CHANNEL.display_name().into(),
+            release_channel: RELEASE_CHANNEL.dev_name().into(),
+            target: env!("CARGO_BUILD_TARGET"),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
             architecture: env::consts::ARCH.into(),
@@ -114,7 +120,10 @@ pub fn init_panic_hook(
         };
 
         if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
+            println!("{}", panic_data_json);
             log::error!("{}", panic_data_json);
+        } else {
+            println!("RUH ROH");
         }
 
         if !is_pty {
@@ -137,6 +146,7 @@ pub fn init_panic_hook(
     }));
 }
 
+#[cfg(not(target_os = "windows"))]
 unsafe fn get_main_module_base_address() -> u64 {
     let mut dl_info = libc::Dl_info {
         dli_sname: std::ptr::null_mut(),
@@ -146,6 +156,11 @@ unsafe fn get_main_module_base_address() -> u64 {
     };
     unsafe { libc::dladdr(get_main_module_base_address as _, &mut dl_info) };
     dl_info.dli_fbase as u64
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn get_main_module_base_address() -> u64 {
+    0
 }
 
 pub fn init(
