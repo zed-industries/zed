@@ -61,6 +61,7 @@ use std::{
     time::Instant,
 };
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use terminal::Terminal;
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
@@ -366,7 +367,7 @@ impl InlineAssistant {
             let assist_id = self.next_assist_id.post_inc();
             let context_store = cx.new_model(|_cx| ContextStore::new());
             let codegen = cx.new_model(|cx| {
-                Codegen::new(
+                BufferCodegen::new(
                     editor.read(cx).buffer().clone(),
                     range.clone(),
                     None,
@@ -379,7 +380,7 @@ impl InlineAssistant {
 
             let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
             let prompt_editor = cx.new_view(|cx| {
-                PromptEditor::new(
+                PromptEditor::new_buffer(
                     assist_id,
                     gutter_dimensions.clone(),
                     self.prompt_history.clone(),
@@ -422,6 +423,11 @@ impl InlineAssistant {
             .or_insert_with(|| EditorInlineAssists::new(&editor, cx));
         let mut assist_group = InlineAssistGroup::new();
         for (assist_id, range, prompt_editor, prompt_block_id, end_block_id) in assists {
+            let codegen = match &prompt_editor.read(cx).mode {
+                PromptEditorMode::Buffer { codegen } => codegen.clone(),
+                PromptEditorMode::Terminal { .. } => unreachable!("Unexpected terminal mode"),
+            };
+
             self.assists.insert(
                 assist_id,
                 InlineAssist::new(
@@ -432,7 +438,7 @@ impl InlineAssistant {
                     prompt_block_id,
                     end_block_id,
                     range,
-                    prompt_editor.read(cx).codegen.clone(),
+                    codegen,
                     workspace.clone(),
                     cx,
                 ),
@@ -475,7 +481,7 @@ impl InlineAssistant {
         let context_store = cx.new_model(|_cx| ContextStore::new());
 
         let codegen = cx.new_model(|cx| {
-            Codegen::new(
+            BufferCodegen::new(
                 editor.read(cx).buffer().clone(),
                 range.clone(),
                 initial_transaction_id,
@@ -488,7 +494,7 @@ impl InlineAssistant {
 
         let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
         let prompt_editor = cx.new_view(|cx| {
-            PromptEditor::new(
+            PromptEditor::new_buffer(
                 assist_id,
                 gutter_dimensions.clone(),
                 self.prompt_history.clone(),
@@ -521,7 +527,7 @@ impl InlineAssistant {
                 prompt_block_id,
                 end_block_id,
                 range,
-                prompt_editor.read(cx).codegen.clone(),
+                codegen.clone(),
                 workspace.clone(),
                 cx,
             ),
@@ -1492,10 +1498,10 @@ struct PromptEditor {
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
     pending_prompt: String,
-    codegen: Model<Codegen>,
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
     show_rate_limit_notice: bool,
+    mode: PromptEditorMode,
 }
 
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
@@ -1504,20 +1510,34 @@ impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let gutter_dimensions = *self.gutter_dimensions.lock();
         let mut buttons = Vec::new();
-        let codegen = self.codegen.read(cx);
-        if codegen.alternative_count(cx) > 1 {
-            buttons.push(self.render_cycle_controls(cx));
-        }
-        let prompt_mode = if codegen.is_insertion {
-            PromptMode::Generate {
-                supports_execute: false,
+
+        // TODO (agus): remove prompt mode and move buttons view here
+        let prompt_mode = match &self.mode {
+            PromptEditorMode::Buffer { codegen } => {
+                let codegen = codegen.read(cx);
+
+                if codegen.alternative_count(cx) > 1 {
+                    buttons.push(self.render_cycle_controls(cx));
+                }
+
+                if codegen.is_insertion {
+                    PromptMode::Generate {
+                        supports_execute: false,
+                    }
+                } else {
+                    PromptMode::Transform
+                }
             }
-        } else {
-            PromptMode::Transform
+            PromptEditorMode::Terminal { codegen: _ } => {
+                // todo(terminal-prompt-cycle)
+                PromptMode::Generate {
+                    supports_execute: true,
+                }
+            }
         };
 
         buttons.extend(render_cancel_button(
-            codegen.status(cx).into(),
+            self.codegen_status(cx).into(),
             self.edited_since_done,
             prompt_mode,
             cx,
@@ -1568,8 +1588,7 @@ impl Render for PromptEditor {
                                     }),
                             ))
                             .map(|el| {
-                                let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx)
-                                else {
+                                let CodegenStatus::Error(error) = self.codegen_status(cx) else {
                                     return el;
                                 };
 
@@ -1645,18 +1664,21 @@ impl PromptEditor {
     const MAX_LINES: u8 = 8;
 
     #[allow(clippy::too_many_arguments)]
-    fn new(
+    fn new_buffer(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
         prompt_history: VecDeque<String>,
         prompt_buffer: Model<MultiBuffer>,
-        codegen: Model<Codegen>,
+        codegen: Model<BufferCodegen>,
         fs: Arc<dyn Fs>,
         context_store: Model<ContextStore>,
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
+        let mode = PromptEditorMode::Buffer { codegen };
+
         let prompt_editor = cx.new_view(|cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
@@ -1672,7 +1694,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), cx), cx);
+            editor.set_placeholder_text(Self::placeholder_text(&mode, cx), cx);
             editor
         });
         let context_picker_menu_handle = PopoverMenuHandle::default();
@@ -1709,13 +1731,20 @@ impl PromptEditor {
             prompt_history,
             prompt_history_ix: None,
             pending_prompt: String::new(),
-            _codegen_subscription: cx.observe(&codegen, Self::handle_codegen_changed),
+            _codegen_subscription: codegen_subscription,
             editor_subscriptions: Vec::new(),
-            codegen,
             show_rate_limit_notice: false,
+            mode,
         };
         this.subscribe_to_editor(cx);
         this
+    }
+
+    fn codegen_status<'a>(&'a self, cx: &'a AppContext) -> &'a CodegenStatus {
+        match &self.mode {
+            PromptEditorMode::Buffer { codegen } => codegen.read(cx).status(cx),
+            PromptEditorMode::Terminal { codegen } => &codegen.read(cx).status,
+        }
     }
 
     fn subscribe_to_editor(&mut self, cx: &mut ViewContext<Self>) {
@@ -1740,7 +1769,7 @@ impl PromptEditor {
         self.editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx), cx), cx);
+            editor.set_placeholder_text(Self::placeholder_text(&self.mode, cx), cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, cx);
             if focus {
@@ -1751,11 +1780,16 @@ impl PromptEditor {
         self.subscribe_to_editor(cx);
     }
 
-    fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
-        let action = if codegen.is_insertion {
-            "Generate"
-        } else {
-            "Transform"
+    pub fn placeholder_text(mode: &PromptEditorMode, cx: &WindowContext) -> String {
+        let action = match mode {
+            PromptEditorMode::Buffer { codegen } => {
+                if codegen.read(cx).is_insertion {
+                    "Generate"
+                } else {
+                    "Transform"
+                }
+            }
+            PromptEditorMode::Terminal { .. } => "Generate",
         };
 
         let assistant_panel_keybinding = ui::text_for_action(&crate::ToggleFocus, cx)
@@ -1821,8 +1855,8 @@ impl PromptEditor {
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
-        match self.codegen.read(cx).status(cx) {
+    fn handle_codegen_changed(&mut self, _: Model<BufferCodegen>, cx: &mut ViewContext<Self>) {
+        match self.codegen_status(cx) {
             CodegenStatus::Idle => {
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
@@ -1857,7 +1891,7 @@ impl PromptEditor {
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
-        match self.codegen.read(cx).status(cx) {
+        match self.codegen_status(cx) {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
                 cx.emit(PromptEditorEvent::CancelRequested);
             }
@@ -1868,7 +1902,7 @@ impl PromptEditor {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        match self.codegen.read(cx).status(cx) {
+        match self.codegen_status(cx) {
             CodegenStatus::Idle => {
                 cx.emit(PromptEditorEvent::StartRequested);
             }
@@ -1929,17 +1963,30 @@ impl PromptEditor {
     }
 
     fn cycle_prev(&mut self, _: &CyclePreviousInlineAssist, cx: &mut ViewContext<Self>) {
-        self.codegen
-            .update(cx, |codegen, cx| codegen.cycle_prev(cx));
+        match &self.mode {
+            PromptEditorMode::Buffer { codegen } => {
+                codegen.update(cx, |codegen, cx| codegen.cycle_prev(cx));
+            }
+            PromptEditorMode::Terminal { codegen } => todo!("terminal-prompt-cycle"),
+        }
     }
 
     fn cycle_next(&mut self, _: &CycleNextInlineAssist, cx: &mut ViewContext<Self>) {
-        self.codegen
-            .update(cx, |codegen, cx| codegen.cycle_next(cx));
+        match &self.mode {
+            PromptEditorMode::Buffer { codegen } => {
+                codegen.update(cx, |codegen, cx| codegen.cycle_prev(cx));
+            }
+            PromptEditorMode::Terminal { codegen } => todo!("terminal-prompt-cycle"),
+        }
     }
 
     fn render_cycle_controls(&self, cx: &ViewContext<Self>) -> AnyElement {
-        let codegen = self.codegen.read(cx);
+        let PromptEditorMode::Buffer { codegen } = &self.mode else {
+            // todo(terminal-prompt-cycle)
+            return div().into_any_element();
+        };
+
+        let codegen = codegen.read(cx);
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
         let model_registry = LanguageModelRegistry::read_global(cx);
@@ -1997,8 +2044,9 @@ impl PromptEditor {
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {
-                        this.codegen
-                            .update(cx, |codegen, cx| codegen.cycle_prev(cx))
+                        // this.codegen
+                        //     .update(cx, |codegen, cx| codegen.cycle_prev(cx))
+                        todo!("terminal-prompt-cycle")
                     })),
             )
             .child(
@@ -2039,8 +2087,9 @@ impl PromptEditor {
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {
-                        this.codegen
-                            .update(cx, |codegen, cx| codegen.cycle_next(cx))
+                        // this.codegen
+                        //     .update(cx, |codegen, cx| codegen.cycle_next(cx))
+                        todo!("terminal-prompt-cycle")
                     })),
             )
             .into_any_element()
@@ -2159,12 +2208,17 @@ fn set_rate_limit_notice_dismissed(is_dismissed: bool, cx: &mut AppContext) {
     })
 }
 
+enum PromptEditorMode {
+    Buffer { codegen: Model<BufferCodegen> },
+    Terminal { codegen: Model<TerminalCodegen> },
+}
+
 pub struct InlineAssist {
     group_id: InlineAssistGroupId,
     range: Range<Anchor>,
     editor: WeakView<Editor>,
     decorations: Option<InlineAssistDecorations>,
-    codegen: Model<Codegen>,
+    codegen: Model<BufferCodegen>,
     _subscriptions: Vec<Subscription>,
     workspace: WeakView<Workspace>,
 }
@@ -2179,7 +2233,7 @@ impl InlineAssist {
         prompt_block_id: CustomBlockId,
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
-        codegen: Model<Codegen>,
+        codegen: Model<BufferCodegen>,
         workspace: WeakView<Workspace>,
         cx: &mut WindowContext,
     ) -> Self {
@@ -2285,7 +2339,7 @@ pub enum CodegenEvent {
     Undone,
 }
 
-pub struct Codegen {
+pub struct BufferCodegen {
     alternatives: Vec<Model<CodegenAlternative>>,
     active_alternative: usize,
     seen_alternatives: HashSet<usize>,
@@ -2299,7 +2353,7 @@ pub struct Codegen {
     is_insertion: bool,
 }
 
-impl Codegen {
+impl BufferCodegen {
     pub fn new(
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
@@ -2469,7 +2523,7 @@ impl Codegen {
     }
 }
 
-impl EventEmitter<CodegenEvent> for Codegen {}
+impl EventEmitter<CodegenEvent> for BufferCodegen {}
 
 pub struct CodegenAlternative {
     buffer: Model<MultiBuffer>,
@@ -2493,6 +2547,184 @@ pub struct CodegenAlternative {
     elapsed_time: Option<f64>,
     completion: Option<String>,
     message_id: Option<String>,
+}
+
+const CLEAR_INPUT: &str = "\x15";
+const CARRIAGE_RETURN: &str = "\x0d";
+
+struct TerminalTransaction {
+    terminal: Model<Terminal>,
+}
+
+impl TerminalTransaction {
+    pub fn start(terminal: Model<Terminal>) -> Self {
+        Self { terminal }
+    }
+
+    pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
+        // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
+        let input = Self::sanitize_input(hunk);
+        self.terminal
+            .update(cx, |terminal, _| terminal.input(input));
+    }
+
+    pub fn undo(&self, cx: &mut AppContext) {
+        self.terminal
+            .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
+    }
+
+    pub fn complete(&self, cx: &mut AppContext) {
+        self.terminal.update(cx, |terminal, _| {
+            terminal.input(CARRIAGE_RETURN.to_string())
+        });
+    }
+
+    fn sanitize_input(input: String) -> String {
+        input.replace(['\r', '\n'], "")
+    }
+}
+
+impl EventEmitter<CodegenEvent> for TerminalCodegen {}
+
+pub struct TerminalCodegen {
+    status: CodegenStatus,
+    telemetry: Option<Arc<Telemetry>>,
+    terminal: Model<Terminal>,
+    generation: Task<()>,
+    message_id: Option<String>,
+    transaction: Option<TerminalTransaction>,
+}
+
+impl TerminalCodegen {
+    pub fn new(terminal: Model<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
+        Self {
+            terminal,
+            telemetry,
+            status: CodegenStatus::Idle,
+            generation: Task::ready(()),
+            message_id: None,
+            transaction: None,
+        }
+    }
+
+    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
+
+        let model_api_key = model.api_key(cx);
+        let http_client = cx.http_client();
+        let telemetry = self.telemetry.clone();
+        self.status = CodegenStatus::Pending;
+        self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
+        self.generation = cx.spawn(|this, mut cx| async move {
+            let model_telemetry_id = model.telemetry_id();
+            let model_provider_id = model.provider_id();
+            let response = model.stream_completion_text(prompt, &cx).await;
+            let generate = async {
+                let message_id = response
+                    .as_ref()
+                    .ok()
+                    .and_then(|response| response.message_id.clone());
+
+                let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
+
+                let task = cx.background_executor().spawn({
+                    let message_id = message_id.clone();
+                    let executor = cx.background_executor().clone();
+                    async move {
+                        let mut response_latency = None;
+                        let request_start = Instant::now();
+                        let task = async {
+                            let mut chunks = response?.stream;
+                            while let Some(chunk) = chunks.next().await {
+                                if response_latency.is_none() {
+                                    response_latency = Some(request_start.elapsed());
+                                }
+                                let chunk = chunk?;
+                                hunks_tx.send(chunk).await?;
+                            }
+
+                            anyhow::Ok(())
+                        };
+
+                        let result = task.await;
+
+                        let error_message = result.as_ref().err().map(|error| error.to_string());
+                        report_assistant_event(
+                            AssistantEvent {
+                                conversation_id: None,
+                                kind: AssistantKind::InlineTerminal,
+                                message_id,
+                                phase: AssistantPhase::Response,
+                                model: model_telemetry_id,
+                                model_provider: model_provider_id.to_string(),
+                                response_latency,
+                                error_message,
+                                language_name: None,
+                            },
+                            telemetry,
+                            http_client,
+                            model_api_key,
+                            &executor,
+                        );
+
+                        result?;
+                        anyhow::Ok(())
+                    }
+                });
+
+                this.update(&mut cx, |this, _| {
+                    this.message_id = message_id;
+                })?;
+
+                while let Some(hunk) = hunks_rx.next().await {
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(transaction) = &mut this.transaction {
+                            transaction.push(hunk, cx);
+                            cx.notify();
+                        }
+                    })?;
+                }
+
+                task.await?;
+                anyhow::Ok(())
+            };
+
+            let result = generate.await;
+
+            this.update(&mut cx, |this, cx| {
+                if let Err(error) = result {
+                    this.status = CodegenStatus::Error(error);
+                } else {
+                    this.status = CodegenStatus::Done;
+                }
+                cx.emit(CodegenEvent::Finished);
+                cx.notify();
+            })
+            .ok();
+        });
+        cx.notify();
+    }
+
+    pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
+        self.status = CodegenStatus::Done;
+        self.generation = Task::ready(());
+        cx.emit(CodegenEvent::Finished);
+        cx.notify();
+    }
+
+    pub fn complete(&mut self, cx: &mut ModelContext<Self>) {
+        if let Some(transaction) = self.transaction.take() {
+            transaction.complete(cx);
+        }
+    }
+
+    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
+        if let Some(transaction) = self.transaction.take() {
+            transaction.undo(cx);
+        }
+    }
 }
 
 #[derive(Default)]
