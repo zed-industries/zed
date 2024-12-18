@@ -1231,14 +1231,14 @@ impl BufferStore {
                         .language()
                         .is_some_and(|lang| lang.name() == "Rust".into())
                     {
-                        return Task::ready(Err(anyhow!("No permalink available")));
+                        return Task::ready(Err(anyhow!("no permalink available")));
                     }
                     let file_path = worktree_path.join(file.path());
                     return cx.spawn(|cx| async move {
                         let provider_registry =
                             cx.update(GitHostingProviderRegistry::default_global)?;
                         get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
-                            .map_err(|_| anyhow!("No permalink available"))
+                            .map_err(|_| anyhow!("no permalink available"))
                     });
                 };
 
@@ -1262,20 +1262,18 @@ impl BufferStore {
                             .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
                     let dot_git_dir = repo.dot_git_dir();
-                    let git_dir = dot_git_dir
-                        .parent()
-                        .expect("Unexpected bare Git repository");
+                    let git_dir = dot_git_dir.parent().unwrap();
                     let path = if let Ok(segment) = worktree_path.strip_prefix(git_dir) {
                         &segment.join(path)
                     } else if let Ok(segment) = git_dir.strip_prefix(worktree_path) {
                         path.strip_prefix(segment)
-                            .expect("File is not a descendant of Git repo dir")
+                            .expect("file is not a descendant of Git repo dir")
                     } else {
-                        panic!("Worktree dir and Git repo dir are cousins")
+                        panic!("worktree dir and Git repo dir are cousins")
                     };
                     let path = path
                         .to_str()
-                        .context("Failed to convert buffer path to string")?;
+                        .context("failed to convert buffer path to string")?;
 
                     Ok(provider.build_permalink(
                         remote,
