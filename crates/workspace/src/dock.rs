@@ -28,7 +28,7 @@ pub use proto::PanelId;
 
 pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn persistent_name() -> &'static str;
-    fn should_show_button(&self, cx: &WindowContext) -> bool {
+    fn should_show_button(&self, _cx: &WindowContext) -> bool {
         true
     }
     fn position(&self, cx: &WindowContext) -> DockPosition;
