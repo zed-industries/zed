@@ -355,9 +355,9 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -525,6 +525,12 @@ wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
 zstd = "0.11"
+# Custom metal-rs is only needed for "macos-blade" feature of GPUI
+#TODO: switch to crates once these are published:
+# - https://github.com/gfx-rs/metal-rs/pull/335
+# - https://github.com/gfx-rs/metal-rs/pull/336
+# - https://github.com/gfx-rs/metal-rs/pull/337
+metal = { git = "https://github.com/gfx-rs/metal-rs", rev = "ef768ff9d742ae6a0f4e83ddc8031264e7d460c4" }
 
 [workspace.dependencies.async-stripe]
 git = "https://github.com/zed-industries/async-stripe"

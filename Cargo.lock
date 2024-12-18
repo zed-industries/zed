@@ -1752,15 +1752,6 @@ dependencies = [
 
 [[package]]
 name = "bit-set"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0481a0e032742109b1133a095184ee93d88f3dc9e0d28a5d033dc77a073f44f"
-dependencies = [
- "bit-vec 0.7.0",
-]
-
-[[package]]
-name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
@@ -1773,12 +1764,6 @@ name = "bit-vec"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349f9b6a179ed607305526ca489b34ad0a41aed5f7980fa90eb03160b69598fb"
-
-[[package]]
-name = "bit-vec"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c54ff287cfc0a34f38a6b832ea1bd8e448a330b3e40a50859e6488bee07f22"
 
 [[package]]
 name = "bit-vec"
@@ -1828,7 +1813,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.5.0"
-source = "git+https://github.com/kvark/blade?rev=e142a3a5e678eb6a13e642ad8401b1f3aa38e969#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
+source = "git+https://github.com/kvark/blade?rev=099555282605c7c4cca9e66a8f40148298347f80#099555282605c7c4cca9e66a8f40148298347f80"
 dependencies = [
  "ash",
  "ash-window",
@@ -1858,7 +1843,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=e142a3a5e678eb6a13e642ad8401b1f3aa38e969#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
+source = "git+https://github.com/kvark/blade?rev=099555282605c7c4cca9e66a8f40148298347f80#099555282605c7c4cca9e66a8f40148298347f80"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1868,7 +1853,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/kvark/blade?rev=e142a3a5e678eb6a13e642ad8401b1f3aa38e969#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
+source = "git+https://github.com/kvark/blade?rev=099555282605c7c4cca9e66a8f40148298347f80#099555282605c7c4cca9e66a8f40148298347f80"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -7594,9 +7579,8 @@ dependencies = [
 
 [[package]]
 name = "metal"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ecfd3296f8c56b7c1f6fbac3c71cefa9d78ce009850c45000015f206dc7fa21"
+version = "0.30.0"
+source = "git+https://github.com/gfx-rs/metal-rs?rev=ef768ff9d742ae6a0f4e83ddc8031264e7d460c4#ef768ff9d742ae6a0f4e83ddc8031264e7d460c4"
 dependencies = [
  "bitflags 2.6.0",
  "block",
@@ -7735,12 +7719,11 @@ checksum = "defc4c55412d89136f966bbb339008b474350e5e6e78d2714439c386b3137a03"
 
 [[package]]
 name = "naga"
-version = "22.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bd5a652b6faf21496f2cfd88fc49989c8db0825d1f6746b1a71a6ede24a63ad"
+version = "23.0.0"
+source = "git+https://github.com/gfx-rs/wgpu?rev=1a643291c2e8854ba7e4f5445a4388202731bfa1#1a643291c2e8854ba7e4f5445a4388202731bfa1"
 dependencies = [
  "arrayvec",
- "bit-set 0.6.0",
+ "bit-set 0.8.0",
  "bitflags 2.6.0",
  "cfg_aliases 0.1.1",
  "codespan-reporting",
