@@ -36,6 +36,8 @@ actions!(
         SelectPrevious,
         SelectNextMatch,
         SelectPreviousMatch,
+        SelectSmallerSyntaxNode,
+        SelectLargerSyntaxNode,
         RestoreVisualSelection,
         VisualInsertEndOfLine,
         VisualInsertFirstNonWhiteSpace,
@@ -72,6 +74,24 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &SelectPreviousMatch, cx| {
         vim.select_match(Direction::Prev, cx);
+    });
+
+    Vim::action(editor, cx, |vim, _: &SelectLargerSyntaxNode, cx| {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        for _ in 0..count {
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.select_larger_syntax_node(&Default::default(), cx);
+            });
+        }
+    });
+
+    Vim::action(editor, cx, |vim, _: &SelectSmallerSyntaxNode, cx| {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        for _ in 0..count {
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.select_smaller_syntax_node(&Default::default(), cx);
+            });
+        }
     });
 
     Vim::action(editor, cx, |vim, _: &RestoreVisualSelection, cx| {
