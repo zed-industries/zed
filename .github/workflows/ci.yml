@@ -15,6 +15,7 @@ on:
     paths-ignore:
       - "docs/**/*"
       - ".github/workflows/community_*"
+  merge_group:
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
