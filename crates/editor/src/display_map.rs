@@ -40,7 +40,6 @@ pub use crease_map::*;
 use diff_map::{DiffMap, DiffMapSnapshot, DiffOffset, DiffPoint};
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
-use git::diff::DiffHunkStatus;
 use gpui::{
     AnyElement, AppContext, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels,
     UnderlineStyle,

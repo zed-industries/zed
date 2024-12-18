@@ -9,9 +9,8 @@ use editor::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
         ToggleCodeActions, Undo,
     },
-    display_map::RowInfo,
     test::editor_test_context::{AssertionContextManager, EditorTestContext},
-    Editor,
+    Editor, RowInfo,
 };
 use fs::Fs;
 use futures::StreamExt;
