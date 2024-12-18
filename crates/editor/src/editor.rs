@@ -2878,7 +2878,7 @@ impl Editor {
             }
 
             let trigger_in_words =
-                !this.show_inline_completions_in_menu(cx) || !had_active_inline_completion;
+                this.show_inline_completions_in_menu(cx) || !had_active_inline_completion;
             this.trigger_completion_on_input(&text, trigger_in_words, cx);
             linked_editing_ranges::refresh_linked_ranges(this, cx);
             this.refresh_inline_completion(true, false, cx);
