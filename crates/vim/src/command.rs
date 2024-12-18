@@ -17,6 +17,7 @@ use gpui::{actions, impl_actions, Action, AppContext, Global, ViewContext};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
+use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
 use ui::WindowContext;
 use util::ResultExt;
@@ -953,6 +954,7 @@ impl OnMatchingLines {
         };
 
         let mut action = self.action.boxed_clone();
+        let mut last_pattern = self.search.clone();
 
         let mut regexes = match Regex::new(&self.search) {
             Ok(regex) => vec![(regex, !self.invert)],
@@ -974,9 +976,27 @@ impl OnMatchingLines {
             let Some(regex) = Regex::new(&inner.search).ok() else {
                 break;
             };
+            last_pattern = inner.search.clone();
             action = inner.action.boxed_clone();
             regexes.push((regex, !inner.invert))
         }
+
+        if let Some(pane) = vim.pane(cx) {
+            pane.update(cx, |pane, cx| {
+                if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
+                {
+                    search_bar.update(cx, |search_bar, cx| {
+                        if search_bar.show(cx) {
+                            let _ = search_bar.search(
+                                &last_pattern,
+                                Some(SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE),
+                                cx,
+                            );
+                        }
+                    });
+                }
+            });
+        };
 
         vim.update_editor(cx, |_, editor, cx| {
             let snapshot = editor.snapshot(cx);
@@ -1314,7 +1334,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_command_filter(cx: &mut TestAppContext) {
+    async fn test_command_matching_lines(cx: &mut TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
