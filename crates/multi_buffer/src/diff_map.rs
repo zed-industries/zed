@@ -1,1519 +1,1518 @@
-// use crate::{
-//     excerpt_map::{ExcerptMapChunks, ExcerptMapOffset, ExcerptMapPoint, ExcerptMapSnapshot},
-//     position::{TypedOffset, TypedPoint, TypedPointUtf16, TypedRow},
-// };
-
-// use super::{
-//     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow, MultiBufferRows,
-//     MultiBufferSnapshot, ToOffset, ToPoint as _,
-// };
-// use collections::HashMap;
-// use git::diff::DiffHunkStatus;
-// use gpui::{AppContext, Context as _, HighlightStyle, Model, ModelContext, Subscription};
-// use language::{BufferChunks, BufferId, Chunk};
-// use project::buffer_store::BufferChangeSet;
-// use std::{
-//     any::TypeId,
-//     mem::{self},
-//     ops::Range,
-//     sync::Arc,
-// };
-// use sum_tree::{Cursor, SumTree, TreeMap};
-// use text::{Bias, Edit, Patch, Point, TextSummary, ToOffset as _, ToPoint as _};
-
-// pub(crate) struct DiffMap {
-//     snapshot: DiffMapSnapshot,
-//     diff_bases: HashMap<BufferId, ChangeSetState>,
-//     all_hunks_expanded: bool,
-//     edits_since_sync: Patch<DiffOffset>,
-// }
-
-// struct ChangeSetState {
-//     change_set: Model<BufferChangeSet>,
-//     _subscription: Subscription,
-// }
-
-// #[derive(Clone)]
-// struct DiffSnapshot {
-//     diff: git::diff::BufferDiff,
-//     base_text: language::BufferSnapshot,
-//     base_text_version: usize,
-// }
-
-// #[derive(Clone)]
-// pub struct DiffMapSnapshot {
-//     diffs: TreeMap<BufferId, DiffSnapshot>,
-//     pub(crate) transforms: SumTree<DiffTransform>,
-//     pub(crate) version: usize,
-// }
-
-// #[derive(Debug, Clone)]
-// pub(crate) enum DiffTransform {
-//     BufferContent {
-//         summary: TextSummary,
-//         is_inserted_hunk: bool,
-//     },
-//     DeletedHunk {
-//         summary_including_newline: TextSummary,
-//         buffer_id: BufferId,
-//         base_text_byte_range: Range<usize>,
-//         base_text_start: Point,
-//         needs_newline: bool,
-//     },
-// }
-
-// #[derive(Debug, Clone)]
-// pub(crate) struct DiffTransformSummary {
-//     excerpt_map: TextSummary,
-//     diff_map: TextSummary,
-// }
-
-// impl DiffTransformSummary {
-//     pub fn excerpt_point(&self) -> ExcerptMapPoint {
-//         ExcerptMapPoint::wrap(self.excerpt_map.lines)
-//     }
-//     pub fn multibuffer_offset(&self) -> ExcerptMapOffset {
-//         ExcerptMapOffset::new(self.excerpt_map.len)
-//     }
-//     pub fn diff_point(&self) -> DiffPoint {
-//         DiffPoint::wrap(self.diff_map.lines)
-//     }
-//     pub fn diff_offset(&self) -> DiffOffset {
-//         DiffOffset::new(self.diff_map.len)
-//     }
-// }
-
-// pub struct DiffMapChunks<'a> {
-//     snapshot: &'a DiffMapSnapshot,
-//     language_aware: bool,
-//     cursor: Cursor<'a, DiffTransform, (DiffOffset, ExcerptMapOffset)>,
-//     excerpt_map_chunks: ExcerptMapChunks<'a>,
-//     current_chunk: Option<Chunk<'a>>,
-//     excerpt_map_offset: ExcerptMapOffset,
-//     offset: DiffOffset,
-//     end_offset: DiffOffset,
-//     diff_base_chunks: Option<(BufferId, BufferChunks<'a>)>,
-// }
-
-// #[derive(Clone)]
-// pub struct DiffMapRows<'a> {
-//     cursor: Cursor<'a, DiffTransform, (DiffPoint, ExcerptMapPoint)>,
-//     diff_point: DiffPoint,
-//     input_buffer_rows: MultiBufferRows<'a>,
-// }
-
-// pub type DiffEdit = text::Edit<DiffOffset>;
-
-// #[derive(Debug)]
-// enum ChangeKind {
-//     DiffUpdated { base_changed: bool },
-//     InputEdited,
-//     ExpandOrCollapseHunks { range: Range<usize>, expand: bool },
-// }
-
-// pub type DiffOffset = TypedOffset<DiffMap>;
-// pub type DiffPoint = TypedPoint<DiffMap>;
-// pub type DiffPointUtf16 = TypedPointUtf16<DiffMap>;
-// pub type DiffRow = TypedRow<DiffMap>;
-
-// impl DiffMap {
-//     pub fn new(
-//         multibuffer_snapshot: &MultiBufferSnapshot,
-//         cx: &mut AppContext,
-//     ) -> (Model<Self>, DiffMapSnapshot) {
-//         let snapshot = DiffMapSnapshot {
-//             diffs: TreeMap::default(),
-//             version: 0,
-//             transforms: SumTree::from_item(
-//                 DiffTransform::BufferContent {
-//                     summary: multibuffer_snapshot.text_summary(),
-//                     is_inserted_hunk: false,
-//                 },
-//                 &(),
-//             ),
-//         };
-
-//         let this = cx.new_model(|_| Self {
-//             snapshot: snapshot.clone(),
-//             all_hunks_expanded: false,
-//             diff_bases: HashMap::default(),
-//             edits_since_sync: Patch::default(),
-//         });
-
-//         (this, snapshot)
-//     }
-
-//     pub fn add_change_set(
-//         &mut self,
-//         change_set: Model<BufferChangeSet>,
-//         cx: &mut ModelContext<Self>,
-//     ) {
-//         let buffer_id = change_set.read(cx).buffer_id;
-//         self.buffer_diff_changed(change_set.clone(), cx);
-//         self.diff_bases.insert(
-//             buffer_id,
-//             ChangeSetState {
-//                 _subscription: cx.observe(&change_set, Self::buffer_diff_changed),
-//                 change_set,
-//             },
-//         );
-//     }
-
-//     pub fn diff_base_for(&self, buffer_id: BufferId) -> Option<&Model<BufferChangeSet>> {
-//         self.diff_bases
-//             .get(&buffer_id)
-//             .map(|state| &state.change_set)
-//     }
-
-//     pub fn sync(
-//         &mut self,
-//         excerpt_map_snapshot: &ExcerptMapSnapshot,
-//         input_edits: Vec<text::Edit<usize>>,
-//         cx: &mut ModelContext<Self>,
-//     ) -> (DiffMapSnapshot, Vec<DiffEdit>) {
-//         let changes = input_edits
-//             .iter()
-//             .map(|edit| (edit.clone(), ChangeKind::InputEdited))
-//             .collect::<Vec<_>>();
-
-//         self.recompute_transforms(changes, excerpt_map_snapshot, cx);
-
-//         (
-//             self.snapshot.clone(),
-//             mem::take(&mut self.edits_since_sync).into_inner(),
-//         )
-//     }
-
-//     fn buffer_diff_changed(
-//         &mut self,
-//         change_set: Model<BufferChangeSet>,
-//         cx: &mut ModelContext<Self>,
-//     ) {
-//         let change_set = change_set.read(cx);
-//         let buffer_id = change_set.buffer_id;
-//         let diff = change_set.diff_to_buffer.clone();
-//         let base_text = change_set
-//             .base_text
-//             .as_ref()
-//             .map(|buffer| buffer.read(cx).snapshot());
-//         let base_text_version_changed = self
-//             .snapshot
-//             .diffs
-//             .get(&buffer_id)
-//             .map_or(true, |snapshot| {
-//                 snapshot.base_text_version != change_set.base_text_version
-//             });
-
-//         if let Some(base_text) = base_text.clone() {
-//             self.snapshot.diffs.insert(
-//                 buffer_id,
-//                 DiffSnapshot {
-//                     diff: diff.clone(),
-//                     base_text,
-//                     base_text_version: change_set.base_text_version,
-//                 },
-//             );
-//         } else {
-//             self.snapshot.diffs.remove(&buffer_id);
-//         }
-
-//         let multibuffer = self.multibuffer.read(cx);
-//         let multibuffer_snapshot = self.snapshot.buffer();
-//         let changes = multibuffer
-//             .ranges_for_buffer(buffer_id, cx)
-//             .into_iter()
-//             .map(|(_, range, _)| {
-//                 let multibuffer_start = multibuffer_snapshot.point_to_offset(range.start);
-//                 let multibuffer_end = multibuffer_snapshot.point_to_offset(range.end);
-//                 (
-//                     text::Edit {
-//                         old: multibuffer_start..multibuffer_end,
-//                         new: multibuffer_start..multibuffer_end,
-//                     },
-//                     ChangeKind::DiffUpdated {
-//                         base_changed: base_text_version_changed,
-//                     },
-//                 )
-//             })
-//             .collect();
-//         self.recompute_transforms(changes, cx);
-//     }
-
-//     pub(super) fn has_multiple_hunks(&self) -> bool {
-//         self.snapshot
-//             .diff_hunks_in_range(Anchor::min()..Anchor::max())
-//             .nth(1)
-//             .is_some()
-//     }
-
-//     pub(super) fn has_expanded_diff_hunks_in_ranges(&self, ranges: &[Range<Anchor>]) -> bool {
-//         let mut cursor = self.snapshot.transforms.cursor::<usize>(&());
-//         let multibuffer_snapshot = self.snapshot.buffer();
-//         for range in ranges {
-//             let range = range.to_point(multibuffer_snapshot);
-//             let start = multibuffer_snapshot.point_to_offset(Point::new(range.start.row, 0));
-//             let end = multibuffer_snapshot.point_to_offset(Point::new(range.end.row + 1, 0));
-//             let start = start.saturating_sub(1);
-//             let end = multibuffer_snapshot.len().min(end + 1);
-//             cursor.seek(&start, Bias::Right, &());
-//             while *cursor.start() < end {
-//                 match cursor.item() {
-//                     Some(DiffTransform::DeletedHunk { .. })
-//                     | Some(DiffTransform::BufferContent {
-//                         is_inserted_hunk: true,
-//                         ..
-//                     }) => return true,
-//                     _ => {}
-//                 }
-//                 cursor.next(&());
-//             }
-//         }
-//         false
-//     }
-
-//     pub(super) fn expand_diff_hunks(
-//         &mut self,
-//         ranges: Vec<Range<Anchor>>,
-//         cx: &mut ModelContext<Self>,
-//     ) {
-//         self.expand_or_collapse_diff_hunks(ranges, true, cx);
-//     }
-
-//     pub(super) fn collapse_diff_hunks(
-//         &mut self,
-//         ranges: Vec<Range<Anchor>>,
-//         cx: &mut ModelContext<Self>,
-//     ) {
-//         self.expand_or_collapse_diff_hunks(ranges, false, cx);
-//     }
-
-//     pub(super) fn set_all_hunks_expanded(&mut self, cx: &mut ModelContext<Self>) {
-//         self.all_hunks_expanded = true;
-//         self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
-//     }
-
-//     fn expand_or_collapse_diff_hunks(
-//         &mut self,
-//         ranges: Vec<Range<Anchor>>,
-//         expand: bool,
-//         cx: &mut ModelContext<Self>,
-//     ) {
-//         let multibuffer_snapshot = self.snapshot.buffer();
-//         let mut changes = Vec::new();
-//         for range in ranges.iter() {
-//             let multibuffer_start = range.start.to_point(multibuffer_snapshot);
-//             let multibuffer_end = range.end.to_point(multibuffer_snapshot);
-//             let multibuffer_start =
-//                 multibuffer_snapshot.point_to_offset(Point::new(multibuffer_start.row, 0));
-//             let multibuffer_end =
-//                 multibuffer_snapshot.point_to_offset(Point::new(multibuffer_end.row + 1, 0));
-//             let expanded_start = multibuffer_start.saturating_sub(1);
-//             let expanded_end = multibuffer_snapshot.len().min(multibuffer_end);
-//             changes.push((
-//                 text::Edit {
-//                     old: expanded_start..expanded_end,
-//                     new: expanded_start..expanded_end,
-//                 },
-//                 ChangeKind::ExpandOrCollapseHunks {
-//                     range: multibuffer_start..multibuffer_end,
-//                     expand,
-//                 },
-//             ));
-//         }
-
-//         self.recompute_transforms(changes, cx);
-//     }
-
-//     fn recompute_transforms(
-//         &mut self,
-//         changes: Vec<(text::Edit<ExcerptMapOffset>, ChangeKind)>,
-//         excerpt_map_snapshot: &ExcerptMapSnapshot,
-//         cx: &mut ModelContext<DiffMap>,
-//     ) {
-//         let multibuffer = self.multibuffer.read(cx);
-//         let multibuffer_snapshot = self.snapshot.buffer();
-
-//         let mut cursor = self
-//             .snapshot
-//             .transforms
-//             .cursor::<(ExcerptMapOffset, DiffOffset)>(&());
-//         let mut new_transforms = SumTree::default();
-//         let mut edits = Patch::default();
-
-//         let mut changes = changes.into_iter().peekable();
-//         let mut delta = 0_isize;
-//         while let Some((mut edit, mut operation)) = changes.next() {
-//             let mut to_skip = cursor.slice(&edit.old.start, Bias::Left, &());
-//             while cursor.end(&()).0 < edit.old.start
-//                 || (cursor.end(&()).0 == edit.old.start && cursor.start().0 < edit.old.start)
-//             {
-//                 to_skip.extend(cursor.item().cloned(), &());
-//                 cursor.next(&());
-//             }
-
-//             self.append_transforms(&mut new_transforms, to_skip);
-
-//             let mut end_of_current_insert = 0;
-//             loop {
-//                 let multibuffer_range = edit.new.clone();
-//                 let edit_old_start =
-//                     cursor.start().1 + DiffOffset::new(edit.old.start - cursor.start().0);
-//                 let mut edit_old_end =
-//                     cursor.start().1 + DiffOffset::new(edit.old.end - cursor.start().0);
-
-//                 for (buffer, buffer_range, excerpt_id) in
-//                     multibuffer.range_to_buffer_ranges(multibuffer_range.clone())
-//                 {
-//                     let excerpt_range = multibuffer_snapshot
-//                         .range_for_excerpt::<usize>(excerpt_id)
-//                         .unwrap();
-//                     let excerpt_buffer_range = multibuffer_snapshot
-//                         .buffer_range_for_excerpt(excerpt_id)
-//                         .unwrap();
-//                     let buffer_id = buffer.remote_id();
-//                     let diff_state = self.snapshot.diffs.get(&buffer_id);
-
-//                     let buffer_anchor_range = buffer.anchor_before(buffer_range.start)
-//                         ..buffer.anchor_after(buffer_range.end);
-//                     let change_start_buffer_offset = buffer_range.start;
-//                     if let Some(diff_state) = diff_state {
-//                         let diff = &diff_state.diff;
-//                         let base_text = &diff_state.base_text;
-
-//                         for hunk in diff.hunks_intersecting_range(buffer_anchor_range, buffer) {
-//                             let hunk_start_buffer_offset =
-//                                 hunk.buffer_range.start.to_offset(buffer);
-//                             let hunk_end_buffer_offset = hunk.buffer_range.end.to_offset(buffer);
-
-//                             let excerpt_buffer_range_start_offset =
-//                                 excerpt_buffer_range.start.to_offset(buffer);
-//                             let hunk_start_multibuffer_offset = excerpt_range.start
-//                                 + hunk_start_buffer_offset
-//                                     .saturating_sub(excerpt_buffer_range_start_offset);
-
-//                             self.push_buffer_content_transform(
-//                                 &mut new_transforms,
-//                                 hunk_start_multibuffer_offset,
-//                                 end_of_current_insert,
-//                             );
-
-//                             while cursor.end(&()).0 < hunk_start_multibuffer_offset
-//                                 || (cursor.end(&()).0 == hunk_start_multibuffer_offset
-//                                     && cursor.start().0 < hunk_start_multibuffer_offset)
-//                             {
-//                                 let Some(item) = cursor.item() else {
-//                                     break;
-//                                 };
-//                                 if let DiffTransform::DeletedHunk { .. } = item {
-//                                     let old_range = cursor.start().1..cursor.end(&()).1;
-//                                     let new_offset =
-//                                         DiffOffset((old_range.start.0 as isize + delta) as usize);
-//                                     delta -= (old_range.end - old_range.start).0 as isize;
-//                                     let edit = Edit {
-//                                         old: old_range,
-//                                         new: new_offset..new_offset,
-//                                     };
-//                                     edits.push(edit);
-//                                 }
-//                                 cursor.next(&());
-//                             }
-
-//                             let mut was_previously_expanded = false;
-//                             let mut previous_expanded_summary = TextSummary::default();
-//                             if cursor.start().0 == hunk_start_multibuffer_offset {
-//                                 match cursor.item() {
-//                                     Some(DiffTransform::DeletedHunk {
-//                                         summary_including_newline,
-//                                         ..
-//                                     }) => {
-//                                         was_previously_expanded = true;
-//                                         previous_expanded_summary =
-//                                             summary_including_newline.clone();
-//                                     }
-//                                     Some(DiffTransform::BufferContent {
-//                                         is_inserted_hunk, ..
-//                                     }) => {
-//                                         was_previously_expanded = *is_inserted_hunk;
-//                                     }
-//                                     None => {}
-//                                 };
-//                             }
-
-//                             let hunk_is_deletion =
-//                                 hunk_start_buffer_offset == hunk_end_buffer_offset;
-
-//                             let should_expand_hunk = match &operation {
-//                                 ChangeKind::DiffUpdated { base_changed: true } => {
-//                                     self.all_hunks_expanded
-//                                 }
-//                                 ChangeKind::ExpandOrCollapseHunks { range, expand } => {
-//                                     let intersects = hunk_is_deletion
-//                                         || (hunk_start_buffer_offset < range.end
-//                                             && hunk_end_buffer_offset > range.start);
-//                                     if *expand {
-//                                         was_previously_expanded
-//                                             || self.all_hunks_expanded
-//                                             || intersects
-//                                     } else {
-//                                         !intersects
-//                                             && (was_previously_expanded || self.all_hunks_expanded)
-//                                     }
-//                                 }
-//                                 _ => was_previously_expanded || self.all_hunks_expanded,
-//                             };
-
-//                             if should_expand_hunk {
-//                                 if hunk.diff_base_byte_range.len() > 0
-//                                     && hunk_start_buffer_offset >= change_start_buffer_offset
-//                                 {
-//                                     let mut text_cursor = base_text.as_rope().cursor(0);
-//                                     let base_text_start = text_cursor
-//                                         .summary::<Point>(hunk.diff_base_byte_range.start);
-//                                     let mut base_text_summary = text_cursor
-//                                         .summary::<TextSummary>(hunk.diff_base_byte_range.end);
-//                                     let mut needs_newline = false;
-//                                     let mut diff_byte_range =
-//                                         DiffOffset(hunk.diff_base_byte_range.len());
-//                                     if base_text_summary.last_line_chars > 0 {
-//                                         diff_byte_range.0 += 1;
-//                                         base_text_summary.add_newline();
-//                                         needs_newline = true;
-//                                     }
-
-//                                     if !was_previously_expanded
-//                                         || base_text_summary != previous_expanded_summary
-//                                     {
-//                                         let hunk_overshoot =
-//                                             hunk_start_multibuffer_offset - cursor.start().0;
-//                                         let old_start =
-//                                             cursor.start().1 + DiffOffset(hunk_overshoot);
-//                                         let old_end =
-//                                             old_start + DiffOffset(previous_expanded_summary.len);
-//                                         let new_start =
-//                                             DiffOffset(new_transforms.summary().diff_map.len);
-//                                         let new_end = new_start + diff_byte_range;
-//                                         delta += diff_byte_range.0 as isize;
-//                                         let edit = Edit {
-//                                             old: old_start..old_end,
-//                                             new: new_start..new_end,
-//                                         };
-//                                         edits.push(edit);
-//                                     }
-
-//                                     new_transforms.push(
-//                                         DiffTransform::DeletedHunk {
-//                                             base_text_byte_range: hunk.diff_base_byte_range.clone(),
-//                                             summary_including_newline: base_text_summary,
-//                                             buffer_id,
-//                                             base_text_start,
-//                                             needs_newline,
-//                                         },
-//                                         &(),
-//                                     );
-//                                 }
-
-//                                 if hunk_end_buffer_offset > hunk_start_buffer_offset {
-//                                     let hunk_end_multibuffer_offset = excerpt_range.start
-//                                         + hunk_end_buffer_offset
-//                                         - excerpt_buffer_range_start_offset;
-//                                     end_of_current_insert = hunk_end_multibuffer_offset;
-//                                 }
-
-//                                 if was_previously_expanded {
-//                                     cursor.next(&());
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 }
-
-//                 while cursor.end(&()).0 <= edit.old.end {
-//                     let Some(item) = cursor.item() else {
-//                         break;
-//                     };
-//                     if let DiffTransform::DeletedHunk { .. } = item {
-//                         let old_range = cursor.start().1..cursor.end(&()).1;
-//                         let new_offset = DiffOffset((old_range.start.0 as isize + delta) as usize);
-//                         delta -= (old_range.end - old_range.start).0 as isize;
-//                         let edit = Edit {
-//                             old: old_range,
-//                             new: new_offset..new_offset,
-//                         };
-//                         edits.push(edit);
-//                     }
-
-//                     edit_old_end = cursor.start().1 + DiffOffset(edit.old.end - cursor.start().0);
-
-//                     cursor.next(&());
-//                 }
-
-//                 self.push_buffer_content_transform(
-//                     &mut new_transforms,
-//                     edit.new.end,
-//                     end_of_current_insert,
-//                 );
-
-//                 if let ChangeKind::InputEdited = operation {
-//                     let edit_new_start = DiffOffset((edit_old_start.0 as isize + delta) as usize);
-//                     delta += (edit.new.end - edit.new.start) as isize
-//                         - (edit.old.end - edit.old.start) as isize;
-//                     let edit_new_end = DiffOffset((edit_old_end.0 as isize + delta) as usize);
-//                     let edit = DiffEdit {
-//                         old: edit_old_start..edit_old_end,
-//                         new: edit_new_start..edit_new_end,
-//                     };
-//                     edits.push(edit);
-//                 }
-
-//                 if let Some((next_edit, _)) = changes.peek() {
-//                     if next_edit.old.start < cursor.end(&()).0 {
-//                         (edit, operation) = changes.next().unwrap();
-//                         continue;
-//                     }
-//                 }
-
-//                 let suffix = cursor.end(&()).0 - edit.old.end;
-//                 let transform_end = new_transforms.summary().excerpt_map.len + suffix;
-//                 self.push_buffer_content_transform(
-//                     &mut new_transforms,
-//                     transform_end,
-//                     end_of_current_insert,
-//                 );
-//                 cursor.next(&());
-//                 break;
-//             }
-//         }
-
-//         self.append_transforms(&mut new_transforms, cursor.suffix(&()));
-//         self.edits_since_sync = self.edits_since_sync.compose(edits);
-
-//         drop(cursor);
-//         self.snapshot.transforms = new_transforms;
-//         self.snapshot.version += 1;
-//         cx.notify();
-
-//         #[cfg(test)]
-//         self.check_invariants();
-//     }
-
-//     fn append_transforms(
-//         &self,
-//         new_transforms: &mut SumTree<DiffTransform>,
-//         subtree: SumTree<DiffTransform>,
-//     ) {
-//         if let Some(DiffTransform::BufferContent {
-//             is_inserted_hunk,
-//             summary,
-//         }) = subtree.first()
-//         {
-//             if self.extend_last_buffer_content_transform(
-//                 new_transforms,
-//                 *is_inserted_hunk,
-//                 summary.clone(),
-//             ) {
-//                 let mut cursor = subtree.cursor::<()>(&());
-//                 cursor.next(&());
-//                 cursor.next(&());
-//                 new_transforms.append(cursor.suffix(&()), &());
-//                 return;
-//             }
-//         }
-//         new_transforms.append(subtree, &());
-//     }
-
-//     fn push_buffer_content_transform(
-//         &self,
-//         new_transforms: &mut SumTree<DiffTransform>,
-//         end_offset: usize,
-//         end_of_current_inserted_hunk: usize,
-//     ) {
-//         for (end_offset, region_is_inserted_hunk) in [
-//             (end_offset.min(end_of_current_inserted_hunk), true),
-//             (end_offset, false),
-//         ] {
-//             let start_offset = new_transforms.summary().excerpt_map.len;
-//             if end_offset <= start_offset {
-//                 continue;
-//             }
-//             let summary_to_add = self
-//                 .snapshot
-//                 .buffer
-//                 .text_summary_for_range::<TextSummary, _>(start_offset..end_offset);
-
-//             if !self.extend_last_buffer_content_transform(
-//                 new_transforms,
-//                 region_is_inserted_hunk,
-//                 summary_to_add.clone(),
-//             ) {
-//                 new_transforms.push(
-//                     DiffTransform::BufferContent {
-//                         summary: summary_to_add,
-//                         is_inserted_hunk: region_is_inserted_hunk,
-//                     },
-//                     &(),
-//                 )
-//             }
-//         }
-//     }
-
-//     fn extend_last_buffer_content_transform(
-//         &self,
-//         new_transforms: &mut SumTree<DiffTransform>,
-//         region_is_inserted_hunk: bool,
-//         summary_to_add: TextSummary,
-//     ) -> bool {
-//         let mut did_extend = false;
-//         new_transforms.update_last(
-//             |last_transform| {
-//                 if let DiffTransform::BufferContent {
-//                     summary,
-//                     is_inserted_hunk,
-//                 } = last_transform
-//                 {
-//                     if *is_inserted_hunk == region_is_inserted_hunk {
-//                         *summary += summary_to_add.clone();
-//                         did_extend = true;
-//                     }
-//                 }
-//             },
-//             &(),
-//         );
-//         did_extend
-//     }
-
-//     #[cfg(test)]
-//     fn check_invariants(&self) {
-//         let snapshot = &self.snapshot;
-//         if snapshot.transforms.summary().excerpt_map.len != snapshot.buffer.len() {
-//             panic!(
-//                 "incorrect input length. expected {}, got {}. transforms: {:+?}",
-//                 snapshot.buffer.len(),
-//                 snapshot.transforms.summary().excerpt_map.len,
-//                 snapshot.transforms.items(&()),
-//             );
-//         }
-
-//         let mut prev_transform: Option<&DiffTransform> = None;
-//         for item in snapshot.transforms.iter() {
-//             if let DiffTransform::BufferContent {
-//                 summary,
-//                 is_inserted_hunk,
-//             } = item
-//             {
-//                 if let Some(DiffTransform::BufferContent {
-//                     is_inserted_hunk: prev_is_inserted_hunk,
-//                     ..
-//                 }) = prev_transform
-//                 {
-//                     if *is_inserted_hunk == *prev_is_inserted_hunk {
-//                         panic!(
-//                             "multiple adjacent buffer content transforms with is_inserted_hunk = {is_inserted_hunk}. transforms: {:+?}",
-//                             snapshot.transforms.items(&()));
-//                     }
-//                 }
-//                 if summary.len == 0 && !snapshot.buffer().is_empty() {
-//                     panic!("empty buffer content transform");
-//                 }
-//             }
-//             prev_transform = Some(item);
-//         }
-//     }
-// }
-
-// impl DiffMapSnapshot {
-//     pub fn diff_hunks_in_range<'a, T: ToOffset>(
-//         &'a self,
-//         multibuffer_snapshot: &'a MultiBufferSnapshot,
-//         range: Range<T>,
-//     ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
-//         let range =
-//             range.start.to_offset(multibuffer_snapshot)..range.end.to_offset(multibuffer_snapshot);
-//         multibuffer_snapshot
-//             .excerpts_for_range(range.clone())
-//             .filter_map(move |excerpt| {
-//                 let buffer = excerpt.buffer();
-//                 let buffer_id = buffer.remote_id();
-//                 let diff = &self.diffs.get(&buffer_id)?.diff;
-//                 let buffer_range = excerpt.map_range_to_buffer(range.clone());
-//                 let buffer_range =
-//                     buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
-//                 Some(
-//                     diff.hunks_intersecting_range(buffer_range, excerpt.buffer())
-//                         .map(move |hunk| {
-//                             let start =
-//                                 excerpt.map_point_from_buffer(Point::new(hunk.row_range.start, 0));
-//                             let end =
-//                                 excerpt.map_point_from_buffer(Point::new(hunk.row_range.end, 0));
-//                             MultiBufferDiffHunk {
-//                                 row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
-//                                 buffer_id,
-//                                 buffer_range: hunk.buffer_range.clone(),
-//                                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-//                             }
-//                         }),
-//                 )
-//             })
-//             .flatten()
-//     }
-
-//     pub fn diff_hunks_in_range_rev<'a, T: ToOffset>(
-//         &'a self,
-//         multibuffer_snapshot: &'a MultiBufferSnapshot,
-//         range: Range<T>,
-//     ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
-//         let multibuffer_snapshot = self.buffer();
-//         let range =
-//             range.start.to_offset(multibuffer_snapshot)..range.end.to_offset(multibuffer_snapshot);
-//         multibuffer_snapshot
-//             .excerpts_for_range_rev(range.clone())
-//             .filter_map(move |excerpt| {
-//                 let buffer = excerpt.buffer();
-//                 let buffer_id = buffer.remote_id();
-//                 let diff = &self.diffs.get(&buffer_id)?.diff;
-//                 let buffer_range = excerpt.map_range_to_buffer(range.clone());
-//                 let buffer_range =
-//                     buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
-//                 Some(
-//                     diff.hunks_intersecting_range_rev(buffer_range, excerpt.buffer())
-//                         .map(move |hunk| {
-//                             let start_row = excerpt
-//                                 .map_point_from_buffer(Point::new(hunk.row_range.start, 0))
-//                                 .row;
-//                             let end_row = excerpt
-//                                 .map_point_from_buffer(Point::new(hunk.row_range.end, 0))
-//                                 .row;
-//                             MultiBufferDiffHunk {
-//                                 row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
-//                                 buffer_id,
-//                                 buffer_range: hunk.buffer_range.clone(),
-//                                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-//                             }
-//                         }),
-//                 )
-//             })
-//             .flatten()
-//     }
-
-//     pub fn has_diff_hunks(&self) -> bool {
-//         self.diffs.values().any(|diff| !diff.diff.is_empty())
-//     }
-
-//     #[cfg(any(test, feature = "test-support"))]
-//     pub fn text(&self) -> String {
-//         self.chunks(DiffOffset(0)..self.len(), false, None)
-//             .map(|c| c.text)
-//             .collect()
-//     }
-
-//     pub fn len(&self) -> DiffOffset {
-//         DiffOffset(self.transforms.summary().diff_map.len)
-//     }
-
-//     pub fn max_point(&self) -> DiffPoint {
-//         DiffPoint(self.transforms.summary().diff_map.lines)
-//     }
-
-//     pub fn text_summary(&self) -> TextSummary {
-//         self.transforms.summary().diff_map.clone()
-//     }
-
-//     pub fn text_summary_for_range(&self, range: Range<DiffOffset>) -> TextSummary {
-//         let mut cursor = self.transforms.cursor::<(DiffOffset, usize)>(&());
-//         cursor.seek(&range.start, Bias::Right, &());
-
-//         let Some(first_transform) = cursor.item() else {
-//             return TextSummary::default();
-//         };
-
-//         let (diff_transform_start, multibuffer_transform_start) = cursor.start().clone();
-//         let (diff_transform_end, _) = cursor.end(&());
-//         let diff_start = range.start;
-//         let diff_end = std::cmp::min(range.end, diff_transform_end);
-
-//         let mut result = match first_transform {
-//             DiffTransform::BufferContent { .. } => {
-//                 let multibuffer_start =
-//                     multibuffer_transform_start + (diff_start - diff_transform_start).0;
-//                 let multibuffer_end =
-//                     multibuffer_transform_start + (diff_end - diff_transform_start).0;
-
-//                 self.buffer
-//                     .text_summary_for_range(multibuffer_start..multibuffer_end)
-//             }
-//             DiffTransform::DeletedHunk {
-//                 buffer_id,
-//                 base_text_byte_range,
-//                 needs_newline,
-//                 ..
-//             } => {
-//                 let buffer_start =
-//                     base_text_byte_range.start + (diff_start - diff_transform_start).0;
-//                 let mut buffer_end =
-//                     base_text_byte_range.start + (diff_end - diff_transform_start).0;
-//                 let Some(buffer_diff) = self.diffs.get(buffer_id) else {
-//                     panic!("{:?} is in non-extant deleted hunk", range.start)
-//                 };
-
-//                 if *needs_newline && diff_end == diff_transform_end {
-//                     buffer_end -= 1;
-//                 }
-
-//                 let mut summary = buffer_diff
-//                     .base_text
-//                     .text_summary_for_range::<TextSummary, _>(buffer_start..buffer_end);
-
-//                 if *needs_newline && diff_end == diff_transform_end {
-//                     summary.add_newline();
-//                 }
-
-//                 summary
-//             }
-//         };
-//         if range.end < diff_transform_end {
-//             return result;
-//         }
-
-//         cursor.next(&());
-//         result = result + cursor.summary(&range.end, Bias::Right, &());
-
-//         let Some(last_transform) = cursor.item() else {
-//             return result;
-//         };
-
-//         let (diff_transform_start, multibuffer_transform_start) = cursor.start().clone();
-
-//         result += match last_transform {
-//             DiffTransform::BufferContent { .. } => {
-//                 let multibuffer_end =
-//                     multibuffer_transform_start + (range.end - diff_transform_start).0;
-
-//                 self.buffer.text_summary_for_range::<TextSummary, _>(
-//                     multibuffer_transform_start..multibuffer_end,
-//                 )
-//             }
-//             DiffTransform::DeletedHunk {
-//                 base_text_byte_range,
-//                 buffer_id,
-//                 needs_newline,
-//                 ..
-//             } => {
-//                 let buffer_end = base_text_byte_range.start + (range.end - diff_transform_start).0;
-//                 let Some(buffer_diff) = self.diffs.get(buffer_id) else {
-//                     panic!("{:?} is in non-extant deleted hunk", range.end)
-//                 };
-
-//                 let mut result = buffer_diff
-//                     .base_text
-//                     .text_summary_for_range::<TextSummary, _>(
-//                         base_text_byte_range.start..buffer_end,
-//                     );
-
-//                 if *needs_newline && buffer_end == base_text_byte_range.end + 1 {
-//                     result.add_newline();
-//                 }
-
-//                 result
-//             }
-//         };
-
-//         result
-//     }
-
-//     pub fn buffer(&self) -> &MultiBufferSnapshot {
-//         &self.buffer
-//     }
-
-//     pub fn offset_to_point(&self, offset: DiffOffset) -> DiffPoint {
-//         let mut cursor = self.transforms.cursor::<DiffTransformSummary>(&());
-//         cursor.seek(&offset, Bias::Right, &());
-//         let start_transform = cursor.start();
-//         let overshoot = offset - start_transform.diff_offset();
-//         if overshoot.0 == 0 {
-//             return start_transform.diff_point();
-//         }
-
-//         match cursor.item() {
-//             Some(DiffTransform::BufferContent { .. }) => {
-//                 let multibuffer_offset = start_transform.multibuffer_offset() + overshoot.0;
-//                 let multibuffer_point = self.buffer.offset_to_point(multibuffer_offset);
-//                 start_transform.diff_point()
-//                     + DiffPoint(multibuffer_point - start_transform.multibuffer_point())
-//             }
-//             Some(DiffTransform::DeletedHunk {
-//                 buffer_id,
-//                 base_text_start,
-//                 base_text_byte_range,
-//                 ..
-//             }) => {
-//                 let Some(buffer_diff) = self.diffs.get(buffer_id) else {
-//                     panic!("{:?} is in non-extant deleted hunk", offset)
-//                 };
-//                 let buffer_offset = base_text_byte_range.start + overshoot.0;
-//                 let buffer_point = buffer_diff.base_text.offset_to_point(buffer_offset);
-//                 start_transform.diff_point() + DiffPoint(buffer_point - base_text_start)
-//             }
-//             None => {
-//                 panic!("{:?} is past end of buffer", offset)
-//             }
-//         }
-//     }
-
-//     pub fn clip_point(&self, point: DiffPoint, bias: Bias) -> DiffPoint {
-//         let mut cursor = self.transforms.cursor::<DiffTransformSummary>(&());
-//         cursor.seek(&point, Bias::Right, &());
-//         let start_transform = cursor.start();
-//         let overshoot = point - start_transform.diff_point();
-//         if overshoot.0.is_zero() {
-//             return start_transform.diff_point();
-//         }
-
-//         match cursor.item() {
-//             Some(DiffTransform::BufferContent { .. }) => {
-//                 let inlay_point = start_transform.multibuffer_point() + overshoot.0;
-//                 let clipped = self.buffer.clip_point(inlay_point, bias);
-//                 start_transform.diff_point()
-//                     + DiffPoint(clipped - start_transform.multibuffer_point())
-//             }
-//             Some(DiffTransform::DeletedHunk {
-//                 buffer_id,
-//                 base_text_start,
-//                 ..
-//             }) => {
-//                 let Some(buffer_diff) = self.diffs.get(buffer_id) else {
-//                     panic!("{:?} is in non-extant deleted hunk", point)
-//                 };
-//                 let buffer_point = *base_text_start + overshoot.0;
-//                 let clipped = buffer_diff.base_text.clip_point(buffer_point, bias);
-//                 start_transform.diff_point() + DiffPoint(clipped - base_text_start)
-//             }
-//             None => cursor.end(&()).diff_point(),
-//         }
-//     }
-
-//     pub fn point_to_offset(&self, point: DiffPoint) -> DiffOffset {
-//         let mut cursor = self.transforms.cursor::<DiffTransformSummary>(&());
-//         cursor.seek(&point, Bias::Right, &());
-//         let start_transform = cursor.start();
-//         let overshoot = point - start_transform.diff_point();
-//         if overshoot.0.is_zero() {
-//             return start_transform.diff_offset();
-//         }
-
-//         match cursor.item() {
-//             Some(DiffTransform::BufferContent { .. }) => {
-//                 let multibuffer_point = start_transform.multibuffer_point() + overshoot.0;
-//                 let multibuffer_offset = self.buffer.point_to_offset(multibuffer_point);
-//                 start_transform.diff_offset()
-//                     + DiffOffset(multibuffer_offset - start_transform.multibuffer_offset())
-//             }
-//             Some(DiffTransform::DeletedHunk {
-//                 buffer_id,
-//                 base_text_start,
-//                 base_text_byte_range,
-//                 ..
-//             }) => {
-//                 let Some(buffer_diff) = self.diffs.get(buffer_id) else {
-//                     panic!("{:?} is in non-extant deleted hunk", point)
-//                 };
-//                 let buffer_point = *base_text_start + overshoot.0;
-//                 let buffer_offset = buffer_diff.base_text.point_to_offset(buffer_point);
-//                 start_transform.diff_offset()
-//                     + DiffOffset(buffer_offset - base_text_byte_range.start)
-//             }
-//             None => {
-//                 panic!("{:?} is past end of buffer", point)
-//             }
-//         }
-//     }
-
-//     // pub fn point_to_anchor(&self, point: DiffPoint, bias: Bias) -> DisplayAnchor {
-//     //     let mut cursor = self.transforms.cursor::<(DiffPoint, Point)>(&());
-//     //     cursor.seek(&point, Bias::Right, &());
-//     //     let (diff_start, multibuffer_start) = *cursor.start();
-//     //     match cursor.item() {
-//     //         Some(DiffTransform::BufferContent { .. }) => {
-//     //             let multibuffer_point = multibuffer_start + (point - diff_start).0;
-//     //             DisplayAnchor {
-//     //                 anchor: self.buffer.anchor_at(multibuffer_point, bias),
-//     //                 diff_base_anchor: None,
-//     //             }
-//     //         }
-//     //         Some(DiffTransform::DeletedHunk {
-//     //             buffer_id,
-//     //             base_text_start,
-//     //             ..
-//     //         }) => {
-//     //             let diff_base_point = *base_text_start + (point - diff_start).0;
-//     //             let diff_base_anchor = if let Some(diff_base_snapshot) = self.diffs.get(&buffer_id)
-//     //             {
-//     //                 Some(
-//     //                     diff_base_snapshot
-//     //                         .base_text
-//     //                         .anchor_at(diff_base_point, bias),
-//     //                 )
-//     //             } else {
-//     //                 debug_panic!("{} is missing diff base", buffer_id);
-//     //                 None
-//     //             };
-
-//     //             DisplayAnchor {
-//     //                 anchor: self.buffer.anchor_at(multibuffer_start, Bias::Left),
-//     //                 diff_base_anchor,
-//     //             }
-//     //         }
-//     //         None => {
-//     //             panic!("{:?} is out of range", point)
-//     //         }
-//     //     }
-//     // }
-
-//     // pub fn anchor_to_point(&self, anchor: DisplayAnchor) -> DiffPoint {
-//     //     let multibuffer_point = anchor.anchor.to_point(&self.buffer);
-
-//     //     let mut cursor = self.transforms.cursor::<(Point, DiffPoint)>(&());
-//     //     cursor.seek(&multibuffer_point, Bias::Left, &());
-
-//     //     if let Some(DiffTransform::DeletedHunk {
-//     //         buffer_id,
-//     //         base_text_start,
-//     //         ..
-//     //     }) = cursor.item()
-//     //     {
-//     //         if let Some(diff_base_anchor) = anchor.diff_base_anchor {
-//     //             if let Some(diff_base_snapshot) = self.diffs.get(&buffer_id) {
-//     //                 if diff_base_anchor.buffer_id == Some(diff_base_snapshot.base_text.remote_id())
-//     //                 {
-//     //                     let (_, diff_start) = *cursor.start();
-//     //                     let base_text_point =
-//     //                         diff_base_anchor.to_point(&diff_base_snapshot.base_text);
-//     //                     return diff_start + DiffPoint(base_text_point - base_text_start);
-//     //                 }
-//     //             }
-//     //         } else {
-//     //             cursor.next(&())
-//     //         }
-//     //     }
-
-//     //     debug_assert!(matches!(
-//     //         cursor.item(),
-//     //         Some(DiffTransform::BufferContent { .. })
-//     //     ));
-
-//     //     let (multibuffer_start, diff_start) = *cursor.start();
-//     //     diff_start + DiffPoint(multibuffer_point - multibuffer_start)
-//     // }
-
-//     // pub fn compare_anchors(&self, a: &DisplayAnchor, b: &DisplayAnchor) -> std::cmp::Ordering {
-//     //     let buffer_cmp = a.anchor.cmp(&b.anchor, self.buffer());
-//     //     if buffer_cmp != std::cmp::Ordering::Equal {
-//     //         return buffer_cmp;
-//     //     }
-
-//     //     match (a.diff_base_anchor.is_some(), b.diff_base_anchor.is_some()) {
-//     //         (false, true) => return std::cmp::Ordering::Greater,
-//     //         (true, false) => return std::cmp::Ordering::Less,
-//     //         (false, false) => return std::cmp::Ordering::Equal,
-//     //         (true, true) => {}
-//     //     }
-
-//     //     let diff_anchor_a = a.diff_base_anchor.unwrap();
-//     //     let diff_anchor_b = b.diff_base_anchor.unwrap();
-
-//     //     if diff_anchor_a.buffer_id != diff_anchor_b.buffer_id || diff_anchor_a.buffer_id.is_none() {
-//     //         return std::cmp::Ordering::Equal;
-//     //     }
-
-//     //     let Some(diff_base_snapshot) = self.diffs.get(&diff_anchor_a.buffer_id.unwrap()) else {
-//     //         return std::cmp::Ordering::Equal;
-//     //     };
-
-//     //     diff_anchor_a.cmp(&diff_anchor_b, &diff_base_snapshot.base_text)
-//     // }
-
-//     pub fn to_multibuffer_offset(&self, offset: DiffOffset) -> usize {
-//         let mut cursor = self.transforms.cursor::<(DiffOffset, usize)>(&());
-//         cursor.seek(&offset, Bias::Right, &());
-//         let mut multibuffer_offset = cursor.start().1;
-//         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
-//             let overshoot = offset.0 - cursor.start().0 .0;
-//             multibuffer_offset += overshoot;
-//         }
-//         multibuffer_offset
-//     }
-
-//     pub fn to_multibuffer_point(&self, point: DiffPoint) -> Point {
-//         let mut cursor = self.transforms.cursor::<(DiffPoint, Point)>(&());
-//         cursor.seek(&point, Bias::Right, &());
-//         let mut inlay_point = cursor.start().1;
-//         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
-//             let overshoot = point.0 - cursor.start().0 .0;
-//             inlay_point += overshoot;
-//         }
-//         inlay_point
-//     }
-
-//     pub fn to_diff_offset(&self, multibuffer_offset: usize) -> DiffOffset {
-//         let mut cursor = self.transforms.cursor::<(usize, DiffOffset)>(&());
-//         cursor.seek(&multibuffer_offset, Bias::Right, &());
-//         let mut diff_offset = cursor.start().1;
-//         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
-//             let overshoot = multibuffer_offset - cursor.start().0;
-//             diff_offset.0 += overshoot;
-//         }
-//         diff_offset
-//     }
-
-//     pub fn to_diff_point(&self, multibuffer_point: Point) -> DiffPoint {
-//         let mut cursor = self.transforms.cursor::<(Point, DiffPoint)>(&());
-//         cursor.seek(&multibuffer_point, Bias::Right, &());
-//         let mut diff_point = cursor.start().1;
-//         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
-//             let overshoot = multibuffer_point - cursor.start().0;
-//             diff_point.0 += overshoot;
-//         }
-//         diff_point
-//     }
-
-//     pub(crate) fn chunks<'a>(
-//         &'a self,
-//         range: Range<DiffOffset>,
-//         language_aware: bool,
-//         text_highlights: Option<&'a TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
-//     ) -> DiffMapChunks<'a> {
-//         let mut cursor = self.transforms.cursor::<(DiffOffset, usize)>(&());
-
-//         cursor.seek(&range.end, Bias::Right, &());
-//         let mut multibuffer_end = cursor.start().1;
-//         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
-//             let overshoot = range.end.0 - cursor.start().0 .0;
-//             multibuffer_end += overshoot;
-//         }
-
-//         cursor.seek(&range.start, Bias::Right, &());
-//         let mut multibuffer_start = cursor.start().1;
-//         if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
-//             let overshoot = range.start.0 - cursor.start().0 .0;
-//             multibuffer_start += overshoot;
-//         }
-
-//         let multibuffer_chunks = CustomHighlightsChunks::new(
-//             multibuffer_start..multibuffer_end,
-//             language_aware,
-//             text_highlights,
-//             &self.buffer,
-//         );
-
-//         DiffMapChunks {
-//             snapshot: self,
-//             language_aware,
-//             cursor,
-//             current_chunk: None,
-//             excerpt_map_chunks: multibuffer_chunks,
-//             excerpt_map_offset: multibuffer_start,
-//             offset: range.start,
-//             diff_base_chunks: None,
-//             end_offset: range.end,
-//         }
-//     }
-
-//     pub fn row_infos(&self, start_row: u32) -> DiffMapRows {
-//         if start_row > self.transforms.summary().diff_map.lines.row {
-//             panic!("invalid diff map row {}", start_row);
-//         }
-
-//         let diff_point = DiffPoint(Point::new(start_row, 0));
-//         let mut cursor = self.transforms.cursor::<(DiffPoint, Point)>(&());
-//         cursor.seek(&diff_point, Bias::Right, &());
-
-//         let (diff_transform_start, buffer_transform_start) = cursor.start().clone();
-
-//         let overshoot = if matches!(cursor.item(), Some(DiffTransform::BufferContent { .. })) {
-//             diff_point.row() - diff_transform_start.row()
-//         } else {
-//             0
-//         };
-//         let input_buffer_rows = self
-//             .buffer
-//             .buffer_rows(MultiBufferRow(buffer_transform_start.row + overshoot));
-
-//         DiffMapRows {
-//             diff_point,
-//             input_buffer_rows,
-//             cursor,
-//         }
-//     }
-// }
-
-// impl<'a> DiffMapChunks<'a> {
-//     pub fn seek(&mut self, range: Range<DiffOffset>) {
-//         self.cursor.seek(&range.end, Bias::Right, &());
-//         let mut inlay_end = self.cursor.start().1;
-//         if let Some(DiffTransform::BufferContent { .. }) = self.cursor.item() {
-//             let overshoot = range.end.0 - self.cursor.start().0 .0;
-//             inlay_end += overshoot;
-//         }
-
-//         self.cursor.seek(&range.start, Bias::Right, &());
-//         let mut inlay_start = self.cursor.start().1;
-//         if let Some(DiffTransform::BufferContent { .. }) = self.cursor.item() {
-//             let overshoot = range.start.0 - self.cursor.start().0 .0;
-//             inlay_start += overshoot;
-//         }
-
-//         self.excerpt_map_chunks.seek(inlay_start..inlay_end);
-//         self.current_chunk.take();
-//         self.excerpt_map_offset = inlay_start;
-//         self.offset = range.start;
-//         self.end_offset = range.end;
-//     }
-// }
-
-// impl<'a> Iterator for DiffMapChunks<'a> {
-//     type Item = Chunk<'a>;
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.offset >= self.end_offset {
-//             return None;
-//         }
-//         if self.offset == self.cursor.end(&()).0 {
-//             self.cursor.next(&());
-//         }
-
-//         let transform = self.cursor.item()?;
-
-//         match transform {
-//             DiffTransform::BufferContent { summary, .. } => {
-//                 let chunk = self
-//                     .current_chunk
-//                     .get_or_insert_with(|| self.excerpt_map_chunks.next().unwrap());
-
-//                 let chunk_end = self.offset + DiffOffset(chunk.text.len());
-//                 let mut transform_end = self.cursor.start().0 + DiffOffset(summary.len);
-
-//                 if transform_end > self.end_offset {
-//                     transform_end = self.end_offset
-//                 }
-
-//                 if transform_end < chunk_end {
-//                     let (before, after) = chunk.text.split_at(transform_end.0 - self.offset.0);
-//                     self.offset = transform_end;
-//                     chunk.text = after;
-//                     Some(Chunk {
-//                         text: before,
-//                         ..chunk.clone()
-//                     })
-//                 } else {
-//                     self.offset = chunk_end;
-//                     self.current_chunk.take()
-//                 }
-//             }
-//             DiffTransform::DeletedHunk {
-//                 buffer_id,
-//                 base_text_byte_range,
-//                 needs_newline,
-//                 ..
-//             } => {
-//                 let hunk_start_offset = self.cursor.start().0;
-//                 let base_text_start_offset = base_text_byte_range.start;
-//                 let base_text_end_offset = base_text_byte_range.end;
-//                 let diff_base_end_offset = base_text_end_offset
-//                     .min(base_text_start_offset + self.end_offset.0 - hunk_start_offset.0);
-//                 let diff_base_start_offset =
-//                     base_text_start_offset + self.offset.0 - hunk_start_offset.0;
-
-//                 let mut chunks = if let Some((_, mut chunks)) = self
-//                     .diff_base_chunks
-//                     .take()
-//                     .filter(|(id, _)| id == buffer_id)
-//                 {
-//                     if chunks.offset() != diff_base_start_offset {
-//                         chunks.seek(diff_base_start_offset..diff_base_end_offset);
-//                     }
-//                     chunks
-//                 } else {
-//                     let base_buffer = &self.snapshot.diffs.get(&buffer_id)?.base_text;
-//                     base_buffer.chunks(
-//                         diff_base_start_offset..diff_base_end_offset,
-//                         self.language_aware,
-//                     )
-//                 };
-
-//                 let chunk = if let Some(chunk) = chunks.next() {
-//                     self.offset.0 += chunk.text.len();
-//                     self.diff_base_chunks = Some((*buffer_id, chunks));
-//                     chunk
-//                 } else {
-//                     debug_assert!(needs_newline);
-//                     self.offset.0 += "\n".len();
-//                     Chunk {
-//                         text: "\n",
-//                         ..Default::default()
-//                     }
-//                 };
-//                 Some(chunk)
-//             }
-//         }
-//     }
-// }
-
-// impl<'a> DiffMapRows<'a> {
-//     pub fn seek(&mut self, row: u32) {
-//         self.diff_point = DiffPoint::new(row, 0);
-//         self.cursor.seek(&self.diff_point, Bias::Right, &());
-//         let (diff_transform_start, inlay_transform_start) = self.cursor.start().clone();
-//         let overshoot = if matches!(
-//             self.cursor.item(),
-//             Some(DiffTransform::BufferContent { .. })
-//         ) {
-//             self.diff_point.row() - diff_transform_start.row()
-//         } else {
-//             0
-//         };
-//         self.input_buffer_rows
-//             .seek(MultiBufferRow(inlay_transform_start.row + overshoot));
-//     }
-// }
-
-// impl<'a> Iterator for DiffMapRows<'a> {
-//     type Item = RowInfo;
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         let result = match self.cursor.item() {
-//             Some(DiffTransform::DeletedHunk { .. }) => Some(RowInfo {
-//                 buffer_row: None,
-//                 diff_status: Some(DiffHunkStatus::Removed),
-//             }),
-//             Some(DiffTransform::BufferContent {
-//                 is_inserted_hunk, ..
-//             }) => {
-//                 let row = self.input_buffer_rows.next();
-//                 row.map(|row| RowInfo {
-//                     buffer_row: row,
-//                     diff_status: if *is_inserted_hunk {
-//                         Some(DiffHunkStatus::Added)
-//                     } else {
-//                         None
-//                     },
-//                 })
-//             }
-//             None => self.input_buffer_rows.next().map(|row| RowInfo {
-//                 buffer_row: row,
-//                 diff_status: None,
-//             }),
-//         };
-//         self.diff_point.0 += Point::new(1, 0);
-//         if self.diff_point >= self.cursor.end(&()).0 {
-//             self.cursor.next(&());
-//         }
-//         result
-//     }
-// }
-
-// impl sum_tree::Item for DiffTransform {
-//     type Summary = DiffTransformSummary;
-
-//     fn summary(&self, _: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
-//         match self {
-//             DiffTransform::BufferContent { summary, .. } => DiffTransformSummary {
-//                 excerpt_map: summary.clone(),
-//                 diff_map: summary.clone(),
-//             },
-//             DiffTransform::DeletedHunk {
-//                 summary_including_newline: summary,
-//                 ..
-//             } => DiffTransformSummary {
-//                 excerpt_map: TextSummary::default(),
-//                 diff_map: summary.clone(),
-//             },
-//         }
-//     }
-// }
-
-// impl sum_tree::Summary for DiffTransformSummary {
-//     type Context = ();
-
-//     fn zero(_: &Self::Context) -> Self {
-//         DiffTransformSummary {
-//             excerpt_map: TextSummary::default(),
-//             diff_map: TextSummary::default(),
-//         }
-//     }
-
-//     fn add_summary(&mut self, summary: &Self, _: &Self::Context) {
-//         self.excerpt_map += &summary.excerpt_map;
-//         self.diff_map += &summary.diff_map;
-//     }
-// }
-
-// impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptMapOffset {
-//     fn zero(_: &()) -> Self {
-//         Default::default()
-//     }
-
-//     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
-//         self.value += summary.excerpt_map.len
-//     }
-// }
-
-// impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for DiffOffset {
-//     fn zero(_: &()) -> Self {
-//         Default::default()
-//     }
-
-//     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
-//         self.value += summary.diff_map.len
-//     }
-// }
-
-// impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptMapPoint {
-//     fn zero(_: &()) -> Self {
-//         Default::default()
-//     }
-
-//     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
-//         self.value += summary.excerpt_map.lines
-//     }
-// }
-
-// impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for DiffPoint {
-//     fn zero(_: &()) -> Self {
-//         Default::default()
-//     }
-
-//     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
-//         self.value += summary.diff_map.lines
-//     }
-// }
-
-// impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for TextSummary {
-//     fn zero(_cx: &()) -> Self {
-//         Default::default()
-//     }
-
-//     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
-//         *self += &summary.diff_map;
-//     }
-// }
-
-// impl<'a> sum_tree::SeekTarget<'a, DiffTransformSummary, DiffTransformSummary> for DiffPoint {
-//     fn cmp(
-//         &self,
-//         cursor_location: &DiffTransformSummary,
-//         _: &<DiffTransformSummary as sum_tree::Summary>::Context,
-//     ) -> std::cmp::Ordering {
-//         Ord::cmp(self, &cursor_location.diff_point())
-//     }
-// }
-
-// impl<'a> sum_tree::SeekTarget<'a, DiffTransformSummary, DiffTransformSummary> for DiffOffset {
-//     fn cmp(
-//         &self,
-//         cursor_location: &DiffTransformSummary,
-//         _: &<DiffTransformSummary as sum_tree::Summary>::Context,
-//     ) -> std::cmp::Ordering {
-//         Ord::cmp(self, &cursor_location.diff_offset())
-//     }
-// }
+use crate::{
+    excerpt_map::{
+        ExcerptMap, ExcerptMapChunks, ExcerptMapRows, ExcerptMapSnapshot, ExcerptOffset,
+        ExcerptPoint, ExcerptRow,
+    },
+    position::{TypedOffset, TypedPoint, TypedPointUtf16, TypedRow},
+    RowInfo,
+};
+
+use super::{
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow, MultiBufferRows,
+    MultiBufferSnapshot, ToOffset, ToPoint as _,
+};
+use collections::HashMap;
+use git::diff::DiffHunkStatus;
+use gpui::{AppContext, Context as _, HighlightStyle, Model, ModelContext, Subscription};
+use language::{BufferChunks, BufferId, Chunk};
+use project::buffer_store::BufferChangeSet;
+use std::{
+    any::TypeId,
+    mem::{self},
+    ops::Range,
+    sync::Arc,
+};
+use sum_tree::{Cursor, SumTree, TreeMap};
+use text::{Bias, Edit, Patch, Point, TextSummary, ToOffset as _, ToPoint as _};
+
+pub(crate) struct DiffMap {
+    excerpt_map: ExcerptMap,
+    snapshot: DiffMapSnapshot,
+    diff_bases: HashMap<BufferId, ChangeSetState>,
+    all_hunks_expanded: bool,
+    edits_since_sync: Patch<DiffOffset>,
+}
+
+struct ChangeSetState {
+    change_set: Model<BufferChangeSet>,
+    _subscription: Subscription,
+}
+
+#[derive(Clone)]
+struct DiffSnapshot {
+    diff: git::diff::BufferDiff,
+    base_text: language::BufferSnapshot,
+    base_text_version: usize,
+}
+
+#[derive(Clone)]
+pub struct DiffMapSnapshot {
+    diffs: TreeMap<BufferId, DiffSnapshot>,
+    excerpt_map_snapshot: ExcerptMapSnapshot,
+    pub(crate) transforms: SumTree<DiffTransform>,
+    pub(crate) version: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum DiffTransform {
+    BufferContent {
+        summary: TextSummary,
+        is_inserted_hunk: bool,
+    },
+    DeletedHunk {
+        summary_including_newline: TextSummary,
+        buffer_id: BufferId,
+        base_text_byte_range: Range<usize>,
+        base_text_start: Point,
+        needs_newline: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DiffTransformSummary {
+    excerpt_map: TextSummary,
+    diff_map: TextSummary,
+}
+
+impl DiffTransformSummary {
+    pub fn excerpt_point(&self) -> ExcerptPoint {
+        ExcerptPoint::wrap(self.excerpt_map.lines)
+    }
+    pub fn multibuffer_offset(&self) -> ExcerptOffset {
+        ExcerptOffset::new(self.excerpt_map.len)
+    }
+    pub fn diff_point(&self) -> DiffPoint {
+        DiffPoint::wrap(self.diff_map.lines)
+    }
+    pub fn diff_offset(&self) -> DiffOffset {
+        DiffOffset::new(self.diff_map.len)
+    }
+}
+
+pub struct DiffMapChunks<'a> {
+    snapshot: &'a DiffMapSnapshot,
+    language_aware: bool,
+    cursor: Cursor<'a, DiffTransform, (DiffOffset, ExcerptOffset)>,
+    excerpt_map_chunks: ExcerptMapChunks<'a>,
+    current_chunk: Option<Chunk<'a>>,
+    excerpt_map_offset: ExcerptOffset,
+    offset: DiffOffset,
+    end_offset: DiffOffset,
+    diff_base_chunks: Option<(BufferId, BufferChunks<'a>)>,
+}
+
+#[derive(Clone)]
+pub struct DiffMapRows<'a> {
+    cursor: Cursor<'a, DiffTransform, (DiffPoint, ExcerptPoint)>,
+    diff_point: DiffPoint,
+    input_buffer_rows: ExcerptMapRows<'a>,
+}
+
+pub type DiffEdit = text::Edit<DiffOffset>;
+
+#[derive(Debug)]
+enum ChangeKind {
+    DiffUpdated { base_changed: bool },
+    InputEdited,
+    ExpandOrCollapseHunks { range: Range<usize>, expand: bool },
+}
+
+pub type DiffOffset = TypedOffset<DiffMap>;
+pub type DiffPoint = TypedPoint<DiffMap>;
+pub type DiffPointUtf16 = TypedPointUtf16<DiffMap>;
+pub type DiffRow = TypedRow<DiffMap>;
+
+impl DiffMap {
+    pub fn new(excerpt_map: ExcerptMap, cx: &mut AppContext) -> Self {
+        let excerpt_map_snapshot = excerpt_map.snapshot(cx);
+        let snapshot = DiffMapSnapshot {
+            diffs: TreeMap::default(),
+            version: 0,
+            transforms: SumTree::from_item(
+                DiffTransform::BufferContent {
+                    summary: excerpt_map_snapshot.text_summary(),
+                    is_inserted_hunk: false,
+                },
+                &(),
+            ),
+            excerpt_map_snapshot,
+        };
+        Self {
+            excerpt_map,
+            snapshot,
+            all_hunks_expanded: false,
+            diff_bases: HashMap::default(),
+            edits_since_sync: Patch::default(),
+        }
+    }
+
+    pub fn add_change_set(
+        &mut self,
+        change_set: Model<BufferChangeSet>,
+        cx: &mut ModelContext<MultiBuffer>,
+    ) {
+        let buffer_id = change_set.read(cx).buffer_id;
+        self.buffer_diff_changed(change_set.clone(), cx);
+        self.diff_bases.insert(
+            buffer_id,
+            ChangeSetState {
+                _subscription: cx.observe(&change_set, |multibuffer, change_set, cx| {
+                    multibuffer
+                        .diff_map
+                        .buffer_diff_changed(change_set.clone(), cx);
+                }),
+                change_set,
+            },
+        );
+    }
+
+    pub fn diff_base_for(&self, buffer_id: BufferId) -> Option<&Model<BufferChangeSet>> {
+        self.diff_bases
+            .get(&buffer_id)
+            .map(|state| &state.change_set)
+    }
+
+    pub fn sync(
+        &mut self,
+        input_edits: Vec<text::Edit<ExcerptOffset>>,
+        cx: &AppContext,
+    ) -> (DiffMapSnapshot, Vec<DiffEdit>) {
+        let changes = input_edits
+            .iter()
+            .map(|edit| (edit.clone(), ChangeKind::InputEdited))
+            .collect::<Vec<_>>();
+
+        self.recompute_transforms(changes, cx);
+
+        // we probably need to update our excerpt map snapshot at this point.
+        todo!();
+
+        (
+            self.snapshot.clone(),
+            mem::take(&mut self.edits_since_sync).into_inner(),
+        )
+    }
+
+    fn buffer_diff_changed(&mut self, change_set: Model<BufferChangeSet>, cx: &AppContext) {
+        let change_set = change_set.read(cx);
+        let buffer_id = change_set.buffer_id;
+        let diff = change_set.diff_to_buffer.clone();
+        let base_text = change_set
+            .base_text
+            .as_ref()
+            .map(|buffer| buffer.read(cx).snapshot());
+        let base_text_version_changed = self
+            .snapshot
+            .diffs
+            .get(&buffer_id)
+            .map_or(true, |snapshot| {
+                snapshot.base_text_version != change_set.base_text_version
+            });
+
+        if let Some(base_text) = base_text.clone() {
+            self.snapshot.diffs.insert(
+                buffer_id,
+                DiffSnapshot {
+                    diff: diff.clone(),
+                    base_text,
+                    base_text_version: change_set.base_text_version,
+                },
+            );
+        } else {
+            self.snapshot.diffs.remove(&buffer_id);
+        }
+
+        let multibuffer_snapshot = &self.snapshot.excerpt_map_snapshot;
+        let changes = (&self.excerpt_map)
+            .ranges_for_buffer(buffer_id, cx)
+            .into_iter()
+            .map(|(_, range, _)| {
+                let multibuffer_start = multibuffer_snapshot.point_to_offset(range.start);
+                let multibuffer_end = multibuffer_snapshot.point_to_offset(range.end);
+                (
+                    text::Edit {
+                        old: multibuffer_start..multibuffer_end,
+                        new: multibuffer_start..multibuffer_end,
+                    },
+                    ChangeKind::DiffUpdated {
+                        base_changed: base_text_version_changed,
+                    },
+                )
+            })
+            .collect();
+        self.recompute_transforms(changes, cx);
+    }
+
+    pub(super) fn has_multiple_hunks(&self) -> bool {
+        self.snapshot
+            .diff_hunks_in_range(DiffOffset::new(0)..self.snapshot.len())
+            .nth(1)
+            .is_some()
+    }
+
+    pub(super) fn has_expanded_diff_hunks_in_ranges(&self, ranges: &[Range<DiffOffset>]) -> bool {
+        let mut cursor = self.snapshot.transforms.cursor::<DiffOffset>(&());
+        let excerpt_map_snapshot = &self.snapshot.excerpt_map_snapshot;
+        for range in ranges {
+            let range = range.to_point(excerpt_map_snapshot);
+            let start = excerpt_map_snapshot.point_to_offset(ExcerptPoint::new(range.start.row, 0));
+            let end = excerpt_map_snapshot.point_to_offset(Point::new(range.end.row + 1, 0));
+            let start = start.saturating_sub(1);
+            let end = excerpt_map_snapshot.len().min(end + 1);
+            cursor.seek(&start, Bias::Right, &());
+            while *cursor.start() < end {
+                match cursor.item() {
+                    Some(DiffTransform::DeletedHunk { .. })
+                    | Some(DiffTransform::BufferContent {
+                        is_inserted_hunk: true,
+                        ..
+                    }) => return true,
+                    _ => {}
+                }
+                cursor.next(&());
+            }
+        }
+        false
+    }
+
+    pub(super) fn expand_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut AppContext) {
+        self.expand_or_collapse_diff_hunks(ranges, true, cx);
+    }
+
+    pub(super) fn collapse_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut AppContext) {
+        self.expand_or_collapse_diff_hunks(ranges, false, cx);
+    }
+
+    pub(super) fn set_all_hunks_expanded(&mut self, cx: &mut AppContext) {
+        self.all_hunks_expanded = true;
+        self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
+    }
+
+    fn expand_or_collapse_diff_hunks(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        expand: bool,
+        cx: &AppContext,
+    ) {
+        let excerpt_map_snapshot = &self.snapshot.excerpt_map_snapshot;
+        let mut changes = Vec::new();
+        for range in ranges.iter() {
+            let multibuffer_start = range.start.to_point(excerpt_map_snapshot);
+            let multibuffer_end = range.end.to_point(excerpt_map_snapshot);
+            let multibuffer_start =
+                excerpt_map_snapshot.point_to_offset(Point::new(multibuffer_start.row, 0));
+            let multibuffer_end =
+                excerpt_map_snapshot.point_to_offset(Point::new(multibuffer_end.row + 1, 0));
+            let expanded_start = multibuffer_start.saturating_sub(1);
+            let expanded_end = excerpt_map_snapshot.len().min(multibuffer_end);
+            changes.push((
+                text::Edit {
+                    old: expanded_start..expanded_end,
+                    new: expanded_start..expanded_end,
+                },
+                ChangeKind::ExpandOrCollapseHunks {
+                    range: multibuffer_start..multibuffer_end,
+                    expand,
+                },
+            ));
+        }
+
+        self.recompute_transforms(changes, cx);
+    }
+
+    fn recompute_transforms(
+        &mut self,
+        changes: Vec<(text::Edit<ExcerptOffset>, ChangeKind)>,
+        cx: &AppContext,
+    ) {
+        let excerpt_map_snapshot = self.snapshot.excerpt_map_snapshot;
+        let mut cursor = self
+            .snapshot
+            .transforms
+            .cursor::<(ExcerptOffset, DiffOffset)>(&());
+        let mut new_transforms = SumTree::default();
+        let mut edits = Patch::default();
+
+        let mut changes = changes.into_iter().peekable();
+        let mut delta = 0_isize;
+        while let Some((mut edit, mut operation)) = changes.next() {
+            let mut to_skip = cursor.slice(&edit.old.start, Bias::Left, &());
+            while cursor.end(&()).0 < edit.old.start
+                || (cursor.end(&()).0 == edit.old.start && cursor.start().0 < edit.old.start)
+            {
+                to_skip.extend(cursor.item().cloned(), &());
+                cursor.next(&());
+            }
+
+            self.append_transforms(&mut new_transforms, to_skip);
+
+            let mut end_of_current_insert = ExcerptOffset::new(0);
+            loop {
+                let excerpt_map_range = edit.new.clone();
+                let edit_old_start =
+                    cursor.start().1 + DiffOffset::new((edit.old.start - cursor.start().0).value);
+                let mut edit_old_end =
+                    cursor.start().1 + DiffOffset::new((edit.old.end - cursor.start().0).value);
+
+                for (buffer, buffer_range, excerpt_id) in
+                    excerpt_map_snapshot.range_to_buffer_ranges(excerpt_map_range.clone())
+                {
+                    let excerpt_range = excerpt_map_snapshot
+                        .range_for_excerpt::<ExcerptOffset>(excerpt_id)
+                        .unwrap();
+                    let excerpt_buffer_range = excerpt_map_snapshot
+                        .buffer_range_for_excerpt(excerpt_id)
+                        .unwrap();
+                    let buffer_id = buffer.remote_id();
+                    let diff_state = self.snapshot.diffs.get(&buffer_id);
+
+                    let buffer_anchor_range = buffer.anchor_before(buffer_range.start)
+                        ..buffer.anchor_after(buffer_range.end);
+                    let change_start_buffer_offset = buffer_range.start;
+                    if let Some(diff_state) = diff_state {
+                        let diff = &diff_state.diff;
+                        let base_text = &diff_state.base_text;
+
+                        for hunk in diff.hunks_intersecting_range(buffer_anchor_range, &buffer) {
+                            let hunk_start_buffer_offset =
+                                hunk.buffer_range.start.to_offset(&buffer);
+                            let hunk_end_buffer_offset = hunk.buffer_range.end.to_offset(&buffer);
+
+                            let excerpt_buffer_range_start_offset =
+                                excerpt_buffer_range.start.to_offset(&buffer);
+                            let hunk_start_multibuffer_offset = excerpt_range.start
+                                + ExcerptOffset::new(
+                                    hunk_start_buffer_offset
+                                        .saturating_sub(excerpt_buffer_range_start_offset),
+                                );
+
+                            self.push_buffer_content_transform(
+                                &mut new_transforms,
+                                hunk_start_multibuffer_offset,
+                                end_of_current_insert,
+                            );
+
+                            while cursor.end(&()).0 < hunk_start_multibuffer_offset
+                                || (cursor.end(&()).0 == hunk_start_multibuffer_offset
+                                    && cursor.start().0 < hunk_start_multibuffer_offset)
+                            {
+                                let Some(item) = cursor.item() else {
+                                    break;
+                                };
+                                if let DiffTransform::DeletedHunk { .. } = item {
+                                    let old_range = cursor.start().1..cursor.end(&()).1;
+                                    let new_offset = DiffOffset::new(
+                                        (old_range.start.value as isize + delta) as usize,
+                                    );
+                                    delta -= (old_range.end - old_range.start).value as isize;
+                                    let edit = Edit {
+                                        old: old_range,
+                                        new: new_offset..new_offset,
+                                    };
+                                    edits.push(edit);
+                                }
+                                cursor.next(&());
+                            }
+
+                            let mut was_previously_expanded = false;
+                            let mut previous_expanded_summary = TextSummary::default();
+                            if cursor.start().0 == hunk_start_multibuffer_offset {
+                                match cursor.item() {
+                                    Some(DiffTransform::DeletedHunk {
+                                        summary_including_newline,
+                                        ..
+                                    }) => {
+                                        was_previously_expanded = true;
+                                        previous_expanded_summary =
+                                            summary_including_newline.clone();
+                                    }
+                                    Some(DiffTransform::BufferContent {
+                                        is_inserted_hunk, ..
+                                    }) => {
+                                        was_previously_expanded = *is_inserted_hunk;
+                                    }
+                                    None => {}
+                                };
+                            }
+
+                            let hunk_is_deletion =
+                                hunk_start_buffer_offset == hunk_end_buffer_offset;
+
+                            let should_expand_hunk = match &operation {
+                                ChangeKind::DiffUpdated { base_changed: true } => {
+                                    self.all_hunks_expanded
+                                }
+                                ChangeKind::ExpandOrCollapseHunks { range, expand } => {
+                                    let intersects = hunk_is_deletion
+                                        || (hunk_start_buffer_offset < range.end
+                                            && hunk_end_buffer_offset > range.start);
+                                    if *expand {
+                                        was_previously_expanded
+                                            || self.all_hunks_expanded
+                                            || intersects
+                                    } else {
+                                        !intersects
+                                            && (was_previously_expanded || self.all_hunks_expanded)
+                                    }
+                                }
+                                _ => was_previously_expanded || self.all_hunks_expanded,
+                            };
+
+                            if should_expand_hunk {
+                                if hunk.diff_base_byte_range.len() > 0
+                                    && hunk_start_buffer_offset >= change_start_buffer_offset
+                                {
+                                    let mut text_cursor = base_text.as_rope().cursor(0);
+                                    let base_text_start = text_cursor
+                                        .summary::<Point>(hunk.diff_base_byte_range.start);
+                                    let mut base_text_summary = text_cursor
+                                        .summary::<TextSummary>(hunk.diff_base_byte_range.end);
+                                    let mut needs_newline = false;
+                                    let mut diff_len =
+                                        DiffOffset::new(hunk.diff_base_byte_range.len());
+                                    if base_text_summary.last_line_chars > 0 {
+                                        diff_len.value += 1;
+                                        base_text_summary.add_newline();
+                                        needs_newline = true;
+                                    }
+
+                                    if !was_previously_expanded
+                                        || base_text_summary != previous_expanded_summary
+                                    {
+                                        let hunk_overshoot =
+                                            hunk_start_multibuffer_offset - cursor.start().0;
+                                        let old_start = cursor.start().1
+                                            + DiffOffset::new(hunk_overshoot.value);
+                                        let old_end = old_start
+                                            + DiffOffset::new(previous_expanded_summary.len);
+                                        let new_start =
+                                            DiffOffset::new(new_transforms.summary().diff_map.len);
+                                        let new_end = new_start + diff_len;
+                                        delta += diff_len.value as isize;
+                                        let edit = Edit {
+                                            old: old_start..old_end,
+                                            new: new_start..new_end,
+                                        };
+                                        edits.push(edit);
+                                    }
+
+                                    new_transforms.push(
+                                        DiffTransform::DeletedHunk {
+                                            base_text_byte_range: hunk.diff_base_byte_range.clone(),
+                                            summary_including_newline: base_text_summary,
+                                            buffer_id,
+                                            base_text_start,
+                                            needs_newline,
+                                        },
+                                        &(),
+                                    );
+                                }
+
+                                if hunk_end_buffer_offset > hunk_start_buffer_offset {
+                                    end_of_current_insert = excerpt_range.start
+                                        + ExcerptOffset::new(
+                                            hunk_end_buffer_offset
+                                                - excerpt_buffer_range_start_offset,
+                                        );
+                                }
+
+                                if was_previously_expanded {
+                                    cursor.next(&());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                while cursor.end(&()).0 <= edit.old.end {
+                    let Some(item) = cursor.item() else {
+                        break;
+                    };
+                    if let DiffTransform::DeletedHunk { .. } = item {
+                        let old_range = cursor.start().1..cursor.end(&()).1;
+                        let new_offset =
+                            DiffOffset::new((old_range.start.value as isize + delta) as usize);
+                        delta -= (old_range.end - old_range.start).value as isize;
+                        let edit = Edit {
+                            old: old_range,
+                            new: new_offset..new_offset,
+                        };
+                        edits.push(edit);
+                    }
+
+                    edit_old_end =
+                        cursor.start().1 + DiffOffset::new((edit.old.end - cursor.start().0).value);
+
+                    cursor.next(&());
+                }
+
+                self.push_buffer_content_transform(
+                    &mut new_transforms,
+                    edit.new.end,
+                    end_of_current_insert,
+                );
+
+                if let ChangeKind::InputEdited = operation {
+                    let edit_new_start =
+                        DiffOffset::new((edit_old_start.value as isize + delta) as usize);
+                    delta += (edit.new.end - edit.new.start).value as isize
+                        - (edit.old.end - edit.old.start).value as isize;
+                    let edit_new_end =
+                        DiffOffset::new((edit_old_end.value as isize + delta) as usize);
+                    let edit = DiffEdit {
+                        old: edit_old_start..edit_old_end,
+                        new: edit_new_start..edit_new_end,
+                    };
+                    edits.push(edit);
+                }
+
+                if let Some((next_edit, _)) = changes.peek() {
+                    if next_edit.old.start < cursor.end(&()).0 {
+                        (edit, operation) = changes.next().unwrap();
+                        continue;
+                    }
+                }
+
+                let suffix = cursor.end(&()).0 - edit.old.end;
+                let transform_end =
+                    ExcerptOffset::new(new_transforms.summary().excerpt_map.len) + suffix;
+                self.push_buffer_content_transform(
+                    &mut new_transforms,
+                    transform_end,
+                    end_of_current_insert,
+                );
+                cursor.next(&());
+                break;
+            }
+        }
+
+        self.append_transforms(&mut new_transforms, cursor.suffix(&()));
+        self.edits_since_sync = self.edits_since_sync.compose(edits);
+
+        drop(cursor);
+        self.snapshot.transforms = new_transforms;
+        self.snapshot.version += 1;
+
+        #[cfg(test)]
+        self.check_invariants();
+    }
+
+    fn append_transforms(
+        &self,
+        new_transforms: &mut SumTree<DiffTransform>,
+        subtree: SumTree<DiffTransform>,
+    ) {
+        if let Some(DiffTransform::BufferContent {
+            is_inserted_hunk,
+            summary,
+        }) = subtree.first()
+        {
+            if self.extend_last_buffer_content_transform(
+                new_transforms,
+                *is_inserted_hunk,
+                summary.clone(),
+            ) {
+                let mut cursor = subtree.cursor::<()>(&());
+                cursor.next(&());
+                cursor.next(&());
+                new_transforms.append(cursor.suffix(&()), &());
+                return;
+            }
+        }
+        new_transforms.append(subtree, &());
+    }
+
+    fn push_buffer_content_transform(
+        &self,
+        new_transforms: &mut SumTree<DiffTransform>,
+        end_offset: ExcerptOffset,
+        end_of_current_inserted_hunk: ExcerptOffset,
+    ) {
+        for (end_offset, region_is_inserted_hunk) in [
+            (end_offset.min(end_of_current_inserted_hunk), true),
+            (end_offset, false),
+        ] {
+            let start_offset = ExcerptOffset::new(new_transforms.summary().excerpt_map.len);
+            if end_offset <= start_offset {
+                continue;
+            }
+            let summary_to_add = self
+                .snapshot
+                .excerpt_map_snapshot
+                .text_summary_for_range::<TextSummary>(start_offset..end_offset);
+
+            if !self.extend_last_buffer_content_transform(
+                new_transforms,
+                region_is_inserted_hunk,
+                summary_to_add.clone(),
+            ) {
+                new_transforms.push(
+                    DiffTransform::BufferContent {
+                        summary: summary_to_add,
+                        is_inserted_hunk: region_is_inserted_hunk,
+                    },
+                    &(),
+                )
+            }
+        }
+    }
+
+    fn extend_last_buffer_content_transform(
+        &self,
+        new_transforms: &mut SumTree<DiffTransform>,
+        region_is_inserted_hunk: bool,
+        summary_to_add: TextSummary,
+    ) -> bool {
+        let mut did_extend = false;
+        new_transforms.update_last(
+            |last_transform| {
+                if let DiffTransform::BufferContent {
+                    summary,
+                    is_inserted_hunk,
+                } = last_transform
+                {
+                    if *is_inserted_hunk == region_is_inserted_hunk {
+                        *summary += summary_to_add.clone();
+                        did_extend = true;
+                    }
+                }
+            },
+            &(),
+        );
+        did_extend
+    }
+
+    #[cfg(test)]
+    fn check_invariants(&self) {
+        let snapshot = &self.snapshot;
+        if snapshot.transforms.summary().excerpt_map.len
+            != snapshot.excerpt_map_snapshot.len().value
+        {
+            panic!(
+                "incorrect input length. expected {}, got {}. transforms: {:+?}",
+                snapshot.excerpt_map_snapshot.len(),
+                snapshot.transforms.summary().excerpt_map.len,
+                snapshot.transforms.items(&()),
+            );
+        }
+
+        let mut prev_transform: Option<&DiffTransform> = None;
+        for item in snapshot.transforms.iter() {
+            if let DiffTransform::BufferContent {
+                summary,
+                is_inserted_hunk,
+            } = item
+            {
+                if let Some(DiffTransform::BufferContent {
+                    is_inserted_hunk: prev_is_inserted_hunk,
+                    ..
+                }) = prev_transform
+                {
+                    if *is_inserted_hunk == *prev_is_inserted_hunk {
+                        panic!(
+                            "multiple adjacent buffer content transforms with is_inserted_hunk = {is_inserted_hunk}. transforms: {:+?}",
+                            snapshot.transforms.items(&()));
+                    }
+                }
+                if summary.len == 0 && !snapshot.excerpt_map_snapshot.is_empty() {
+                    panic!("empty buffer content transform");
+                }
+            }
+            prev_transform = Some(item);
+        }
+    }
+}
+
+impl DiffMapSnapshot {
+    pub fn diff_hunks_in_range<'a>(
+        &'a self,
+        range: Range<DiffOffset>,
+    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        let range = self.to_excerpt_offset(range.start)..self.to_excerpt_offset(range.end);
+
+        self.excerpt_map_snapshot
+            .excerpts_for_range(range.clone())
+            .filter_map(move |excerpt| {
+                let buffer = excerpt.buffer();
+                let buffer_id = buffer.remote_id();
+                let diff = &self.diffs.get(&buffer_id)?.diff;
+                let buffer_range = excerpt.map_range_to_buffer(range.clone());
+                let buffer_range =
+                    buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
+                Some(
+                    diff.hunks_intersecting_range(buffer_range, excerpt.buffer())
+                        .map(move |hunk| {
+                            let start =
+                                excerpt.map_point_from_buffer(Point::new(hunk.row_range.start, 0));
+                            let end =
+                                excerpt.map_point_from_buffer(Point::new(hunk.row_range.end, 0));
+                            MultiBufferDiffHunk {
+                                row_range: MultiBufferRow(start.row())..MultiBufferRow(end.row()),
+                                buffer_id,
+                                buffer_range: hunk.buffer_range.clone(),
+                                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                            }
+                        }),
+                )
+            })
+            .flatten()
+    }
+
+    pub fn diff_hunks_in_range_rev<'a>(
+        &'a self,
+        range: Range<DiffOffset>,
+    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        let range = self.to_excerpt_offset(range.start)..self.to_excerpt_offset(range.end);
+
+        self.excerpt_map_snapshot
+            .excerpts_for_range_rev(range.clone())
+            .filter_map(move |excerpt| {
+                let buffer = excerpt.buffer();
+                let buffer_id = buffer.remote_id();
+                let diff = &self.diffs.get(&buffer_id)?.diff;
+                let buffer_range = excerpt.map_range_to_buffer(range.clone());
+                let buffer_range =
+                    buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end);
+                Some(
+                    diff.hunks_intersecting_range_rev(buffer_range, excerpt.buffer())
+                        .map(move |hunk| {
+                            let start_row = excerpt
+                                .map_point_from_buffer(Point::new(hunk.row_range.start, 0))
+                                .row();
+                            let end_row = excerpt
+                                .map_point_from_buffer(Point::new(hunk.row_range.end, 0))
+                                .row();
+                            MultiBufferDiffHunk {
+                                row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
+                                buffer_id,
+                                buffer_range: hunk.buffer_range.clone(),
+                                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                            }
+                        }),
+                )
+            })
+            .flatten()
+    }
+
+    pub fn has_diff_hunks(&self) -> bool {
+        self.diffs.values().any(|diff| !diff.diff.is_empty())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn text(&self) -> String {
+        self.chunks(DiffOffset(0)..self.len(), false)
+            .map(|c| c.text)
+            .collect()
+    }
+
+    pub fn len(&self) -> DiffOffset {
+        DiffOffset::new(self.transforms.summary().diff_map.len)
+    }
+
+    pub fn max_point(&self) -> DiffPoint {
+        DiffPoint::wrap(self.transforms.summary().diff_map.lines)
+    }
+
+    pub fn text_summary(&self) -> TextSummary {
+        self.transforms.summary().diff_map.clone()
+    }
+
+    pub fn text_summary_for_range(&self, range: Range<DiffOffset>) -> TextSummary {
+        let mut cursor = self.transforms.cursor::<(DiffOffset, ExcerptOffset)>(&());
+        cursor.seek(&range.start, Bias::Right, &());
+
+        let Some(first_transform) = cursor.item() else {
+            return TextSummary::default();
+        };
+
+        let (diff_transform_start, multibuffer_transform_start) = cursor.start().clone();
+        let (diff_transform_end, _) = cursor.end(&());
+        let diff_start = range.start;
+        let diff_end = std::cmp::min(range.end, diff_transform_end);
+
+        let mut result = match first_transform {
+            DiffTransform::BufferContent { .. } => {
+                let multibuffer_start = multibuffer_transform_start
+                    + ExcerptOffset::new((diff_start - diff_transform_start).value);
+                let multibuffer_end = multibuffer_transform_start
+                    + ExcerptOffset::new((diff_end - diff_transform_start).value);
+
+                self.excerpt_map_snapshot
+                    .text_summary_for_range(multibuffer_start..multibuffer_end)
+            }
+            DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_byte_range,
+                needs_newline,
+                ..
+            } => {
+                let buffer_start =
+                    base_text_byte_range.start + (diff_start - diff_transform_start).value;
+                let mut buffer_end =
+                    base_text_byte_range.start + (diff_end - diff_transform_start).value;
+                let Some(buffer_diff) = self.diffs.get(buffer_id) else {
+                    panic!("{:?} is in non-extant deleted hunk", range.start)
+                };
+
+                if *needs_newline && diff_end == diff_transform_end {
+                    buffer_end -= 1;
+                }
+
+                let mut summary = buffer_diff
+                    .base_text
+                    .text_summary_for_range::<TextSummary, _>(buffer_start..buffer_end);
+
+                if *needs_newline && diff_end == diff_transform_end {
+                    summary.add_newline();
+                }
+
+                summary
+            }
+        };
+        if range.end < diff_transform_end {
+            return result;
+        }
+
+        cursor.next(&());
+        result = result + cursor.summary(&range.end, Bias::Right, &());
+
+        let Some(last_transform) = cursor.item() else {
+            return result;
+        };
+
+        let (diff_transform_start, multibuffer_transform_start) = cursor.start().clone();
+
+        result += match last_transform {
+            DiffTransform::BufferContent { .. } => {
+                let multibuffer_end = multibuffer_transform_start
+                    + ExcerptOffset::new((range.end - diff_transform_start).value);
+
+                self.excerpt_map_snapshot
+                    .text_summary_for_range::<TextSummary>(
+                        multibuffer_transform_start..multibuffer_end,
+                    )
+            }
+            DiffTransform::DeletedHunk {
+                base_text_byte_range,
+                buffer_id,
+                needs_newline,
+                ..
+            } => {
+                let buffer_end =
+                    base_text_byte_range.start + (range.end - diff_transform_start).value;
+                let Some(buffer_diff) = self.diffs.get(buffer_id) else {
+                    panic!("{:?} is in non-extant deleted hunk", range.end)
+                };
+
+                let mut result = buffer_diff
+                    .base_text
+                    .text_summary_for_range::<TextSummary, _>(
+                        base_text_byte_range.start..buffer_end,
+                    );
+
+                if *needs_newline && buffer_end == base_text_byte_range.end + 1 {
+                    result.add_newline();
+                }
+
+                result
+            }
+        };
+
+        result
+    }
+
+    pub fn offset_to_point(&self, offset: DiffOffset) -> DiffPoint {
+        let mut cursor = self.transforms.cursor::<DiffTransformSummary>(&());
+        cursor.seek(&offset, Bias::Right, &());
+        let start_transform = cursor.start();
+        let overshoot = offset - start_transform.diff_offset();
+        if overshoot.value == 0 {
+            return start_transform.diff_point();
+        }
+
+        match cursor.item() {
+            Some(DiffTransform::BufferContent { .. }) => {
+                let multibuffer_offset =
+                    start_transform.multibuffer_offset() + ExcerptOffset::new(overshoot.value);
+                let multibuffer_point = self
+                    .excerpt_map_snapshot
+                    .offset_to_point(multibuffer_offset);
+                start_transform.diff_point()
+                    + DiffPoint::wrap((multibuffer_point - start_transform.excerpt_point()).value)
+            }
+            Some(DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_start,
+                base_text_byte_range,
+                ..
+            }) => {
+                let Some(buffer_diff) = self.diffs.get(buffer_id) else {
+                    panic!("{:?} is in non-extant deleted hunk", offset)
+                };
+                let buffer_offset = base_text_byte_range.start + overshoot.0;
+                let buffer_point = buffer_diff.base_text.offset_to_point(buffer_offset);
+                start_transform.diff_point() + DiffPoint::wrap(buffer_point - base_text_start)
+            }
+            None => {
+                panic!("{:?} is past end of buffer", offset)
+            }
+        }
+    }
+
+    pub fn clip_point(&self, point: DiffPoint, bias: Bias) -> DiffPoint {
+        let mut cursor = self.transforms.cursor::<DiffTransformSummary>(&());
+        cursor.seek(&point, Bias::Right, &());
+        let start_transform = cursor.start();
+        let overshoot = point - start_transform.diff_point();
+        if overshoot.value.is_zero() {
+            return start_transform.diff_point();
+        }
+
+        match cursor.item() {
+            Some(DiffTransform::BufferContent { .. }) => {
+                let excerpt_point =
+                    start_transform.excerpt_point() + ExcerptPoint::wrap(overshoot.value);
+                let clipped = self.excerpt_map_snapshot.clip_point(excerpt_point, bias);
+                start_transform.diff_point()
+                    + DiffPoint::wrap((clipped - start_transform.excerpt_point()).value)
+            }
+            Some(DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_start,
+                ..
+            }) => {
+                let Some(buffer_diff) = self.diffs.get(buffer_id) else {
+                    panic!("{:?} is in non-extant deleted hunk", point)
+                };
+                let buffer_point = *base_text_start + overshoot.value;
+                let clipped = buffer_diff.base_text.clip_point(buffer_point, bias);
+                start_transform.diff_point() + DiffPoint::wrap(clipped - base_text_start)
+            }
+            None => cursor.end(&()).diff_point(),
+        }
+    }
+
+    pub fn point_to_offset(&self, point: DiffPoint) -> DiffOffset {
+        let mut cursor = self.transforms.cursor::<DiffTransformSummary>(&());
+        cursor.seek(&point, Bias::Right, &());
+        let start_transform = cursor.start();
+        let overshoot = point - start_transform.diff_point();
+        if overshoot.is_zero() {
+            return start_transform.diff_offset();
+        }
+
+        match cursor.item() {
+            Some(DiffTransform::BufferContent { .. }) => {
+                let multibuffer_point = start_transform.multibuffer_point() + overshoot.0;
+                let multibuffer_offset = self.buffer.point_to_offset(multibuffer_point);
+                start_transform.diff_offset()
+                    + DiffOffset(multibuffer_offset - start_transform.multibuffer_offset())
+            }
+            Some(DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_start,
+                base_text_byte_range,
+                ..
+            }) => {
+                let Some(buffer_diff) = self.diffs.get(buffer_id) else {
+                    panic!("{:?} is in non-extant deleted hunk", point)
+                };
+                let buffer_point = *base_text_start + overshoot.0;
+                let buffer_offset = buffer_diff.base_text.point_to_offset(buffer_point);
+                start_transform.diff_offset()
+                    + DiffOffset(buffer_offset - base_text_byte_range.start)
+            }
+            None => {
+                panic!("{:?} is past end of buffer", point)
+            }
+        }
+    }
+
+    // pub fn point_to_anchor(&self, point: DiffPoint, bias: Bias) -> DisplayAnchor {
+    //     let mut cursor = self.transforms.cursor::<(DiffPoint, Point)>(&());
+    //     cursor.seek(&point, Bias::Right, &());
+    //     let (diff_start, multibuffer_start) = *cursor.start();
+    //     match cursor.item() {
+    //         Some(DiffTransform::BufferContent { .. }) => {
+    //             let multibuffer_point = multibuffer_start + (point - diff_start).0;
+    //             DisplayAnchor {
+    //                 anchor: self.buffer.anchor_at(multibuffer_point, bias),
+    //                 diff_base_anchor: None,
+    //             }
+    //         }
+    //         Some(DiffTransform::DeletedHunk {
+    //             buffer_id,
+    //             base_text_start,
+    //             ..
+    //         }) => {
+    //             let diff_base_point = *base_text_start + (point - diff_start).0;
+    //             let diff_base_anchor = if let Some(diff_base_snapshot) = self.diffs.get(&buffer_id)
+    //             {
+    //                 Some(
+    //                     diff_base_snapshot
+    //                         .base_text
+    //                         .anchor_at(diff_base_point, bias),
+    //                 )
+    //             } else {
+    //                 debug_panic!("{} is missing diff base", buffer_id);
+    //                 None
+    //             };
+
+    //             DisplayAnchor {
+    //                 anchor: self.buffer.anchor_at(multibuffer_start, Bias::Left),
+    //                 diff_base_anchor,
+    //             }
+    //         }
+    //         None => {
+    //             panic!("{:?} is out of range", point)
+    //         }
+    //     }
+    // }
+
+    // pub fn anchor_to_point(&self, anchor: DisplayAnchor) -> DiffPoint {
+    //     let multibuffer_point = anchor.anchor.to_point(&self.buffer);
+
+    //     let mut cursor = self.transforms.cursor::<(Point, DiffPoint)>(&());
+    //     cursor.seek(&multibuffer_point, Bias::Left, &());
+
+    //     if let Some(DiffTransform::DeletedHunk {
+    //         buffer_id,
+    //         base_text_start,
+    //         ..
+    //     }) = cursor.item()
+    //     {
+    //         if let Some(diff_base_anchor) = anchor.diff_base_anchor {
+    //             if let Some(diff_base_snapshot) = self.diffs.get(&buffer_id) {
+    //                 if diff_base_anchor.buffer_id == Some(diff_base_snapshot.base_text.remote_id())
+    //                 {
+    //                     let (_, diff_start) = *cursor.start();
+    //                     let base_text_point =
+    //                         diff_base_anchor.to_point(&diff_base_snapshot.base_text);
+    //                     return diff_start + DiffPoint(base_text_point - base_text_start);
+    //                 }
+    //             }
+    //         } else {
+    //             cursor.next(&())
+    //         }
+    //     }
+
+    //     debug_assert!(matches!(
+    //         cursor.item(),
+    //         Some(DiffTransform::BufferContent { .. })
+    //     ));
+
+    //     let (multibuffer_start, diff_start) = *cursor.start();
+    //     diff_start + DiffPoint(multibuffer_point - multibuffer_start)
+    // }
+
+    // pub fn compare_anchors(&self, a: &DisplayAnchor, b: &DisplayAnchor) -> std::cmp::Ordering {
+    //     let buffer_cmp = a.anchor.cmp(&b.anchor, self.buffer());
+    //     if buffer_cmp != std::cmp::Ordering::Equal {
+    //         return buffer_cmp;
+    //     }
+
+    //     match (a.diff_base_anchor.is_some(), b.diff_base_anchor.is_some()) {
+    //         (false, true) => return std::cmp::Ordering::Greater,
+    //         (true, false) => return std::cmp::Ordering::Less,
+    //         (false, false) => return std::cmp::Ordering::Equal,
+    //         (true, true) => {}
+    //     }
+
+    //     let diff_anchor_a = a.diff_base_anchor.unwrap();
+    //     let diff_anchor_b = b.diff_base_anchor.unwrap();
+
+    //     if diff_anchor_a.buffer_id != diff_anchor_b.buffer_id || diff_anchor_a.buffer_id.is_none() {
+    //         return std::cmp::Ordering::Equal;
+    //     }
+
+    //     let Some(diff_base_snapshot) = self.diffs.get(&diff_anchor_a.buffer_id.unwrap()) else {
+    //         return std::cmp::Ordering::Equal;
+    //     };
+
+    //     diff_anchor_a.cmp(&diff_anchor_b, &diff_base_snapshot.base_text)
+    // }
+
+    pub fn to_excerpt_offset(&self, offset: DiffOffset) -> ExcerptOffset {
+        let mut cursor = self.transforms.cursor::<(DiffOffset, ExcerptOffset)>(&());
+        cursor.seek(&offset, Bias::Right, &());
+        let mut excerpt_offset = cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
+            let overshoot = offset - cursor.start().0;
+            excerpt_offset.value += overshoot.value;
+        }
+        excerpt_offset
+    }
+
+    pub fn to_excerpt_point(&self, point: DiffPoint) -> ExcerptPoint {
+        let mut cursor = self.transforms.cursor::<(DiffPoint, ExcerptPoint)>(&());
+        cursor.seek(&point, Bias::Right, &());
+        let mut excerpt_point = cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
+            let overshoot = point - cursor.start().0;
+            excerpt_point.value += overshoot.value;
+        }
+        excerpt_point
+    }
+
+    pub fn to_diff_offset(&self, excerpt_offset: ExcerptOffset) -> DiffOffset {
+        let mut cursor = self.transforms.cursor::<(ExcerptOffset, DiffOffset)>(&());
+        cursor.seek(&excerpt_offset, Bias::Right, &());
+        let mut diff_offset = cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
+            let overshoot = excerpt_offset - cursor.start().0;
+            diff_offset.value += overshoot.value;
+        }
+        diff_offset
+    }
+
+    pub fn to_diff_point(&self, excerpt_point: ExcerptPoint) -> DiffPoint {
+        let mut cursor = self.transforms.cursor::<(ExcerptPoint, DiffPoint)>(&());
+        cursor.seek(&excerpt_point, Bias::Right, &());
+        let mut diff_point = cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
+            let overshoot = excerpt_point - cursor.start().0;
+            diff_point.value += overshoot.value;
+        }
+        diff_point
+    }
+
+    pub(crate) fn chunks<'a>(
+        &'a self,
+        range: Range<DiffOffset>,
+        language_aware: bool,
+    ) -> DiffMapChunks<'a> {
+        let mut cursor = self.transforms.cursor::<(DiffOffset, ExcerptOffset)>(&());
+
+        cursor.seek(&range.end, Bias::Right, &());
+        let mut excerpt_end = cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
+            let overshoot = range.end - cursor.start().0;
+            excerpt_end.value += overshoot.value;
+        }
+
+        cursor.seek(&range.start, Bias::Right, &());
+        let mut excerpt_start = cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = cursor.item() {
+            let overshoot = range.start - cursor.start().0;
+            excerpt_start.value += overshoot.value;
+        }
+
+        let excerpt_chunks = self
+            .excerpt_map_snapshot
+            .chunks(excerpt_start..excerpt_end, language_aware);
+
+        DiffMapChunks {
+            snapshot: self,
+            language_aware,
+            cursor,
+            current_chunk: None,
+            excerpt_map_chunks: excerpt_chunks,
+            excerpt_map_offset: excerpt_start,
+            offset: range.start,
+            diff_base_chunks: None,
+            end_offset: range.end,
+        }
+    }
+
+    pub fn row_infos(&self, start_row: u32) -> DiffMapRows {
+        if start_row > self.transforms.summary().diff_map.lines.row {
+            panic!("invalid diff map row {}", start_row);
+        }
+
+        let diff_point = DiffPoint::new(start_row, 0);
+        let mut cursor = self.transforms.cursor::<(DiffPoint, ExcerptPoint)>(&());
+        cursor.seek(&diff_point, Bias::Right, &());
+
+        let (diff_transform_start, buffer_transform_start) = cursor.start().clone();
+
+        let overshoot = if matches!(cursor.item(), Some(DiffTransform::BufferContent { .. })) {
+            diff_point.row() - diff_transform_start.row()
+        } else {
+            0
+        };
+        let input_buffer_rows = self
+            .excerpt_map_snapshot
+            .row_infos(ExcerptRow::new(buffer_transform_start.row() + overshoot));
+
+        DiffMapRows {
+            diff_point,
+            input_buffer_rows,
+            cursor,
+        }
+    }
+}
+
+impl<'a> DiffMapChunks<'a> {
+    pub fn seek(&mut self, range: Range<DiffOffset>) {
+        self.cursor.seek(&range.end, Bias::Right, &());
+        let mut excerpt_map_end = self.cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = self.cursor.item() {
+            let overshoot = range.end - self.cursor.start().0;
+            excerpt_map_end.value += overshoot.value;
+        }
+
+        self.cursor.seek(&range.start, Bias::Right, &());
+        let mut excerpt_map_start = self.cursor.start().1;
+        if let Some(DiffTransform::BufferContent { .. }) = self.cursor.item() {
+            let overshoot = range.start - self.cursor.start().0;
+            excerpt_map_start.value += overshoot.value;
+        }
+
+        self.excerpt_map_chunks
+            .seek(excerpt_map_start..excerpt_map_end);
+        self.current_chunk.take();
+        self.excerpt_map_offset = excerpt_map_start;
+        self.offset = range.start;
+        self.end_offset = range.end;
+    }
+}
+
+impl<'a> Iterator for DiffMapChunks<'a> {
+    type Item = Chunk<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.offset >= self.end_offset {
+            return None;
+        }
+        if self.offset == self.cursor.end(&()).0 {
+            self.cursor.next(&());
+        }
+
+        let transform = self.cursor.item()?;
+
+        match transform {
+            DiffTransform::BufferContent { summary, .. } => {
+                let chunk = self
+                    .current_chunk
+                    .get_or_insert_with(|| self.excerpt_map_chunks.next().unwrap());
+
+                let chunk_end = self.offset + DiffOffset::new(chunk.text.len());
+                let mut transform_end = self.cursor.start().0 + DiffOffset::new(summary.len);
+
+                if transform_end > self.end_offset {
+                    transform_end = self.end_offset
+                }
+
+                if transform_end < chunk_end {
+                    let (before, after) = chunk.text.split_at(transform_end.0 - self.offset.0);
+                    self.offset = transform_end;
+                    chunk.text = after;
+                    Some(Chunk {
+                        text: before,
+                        ..chunk.clone()
+                    })
+                } else {
+                    self.offset = chunk_end;
+                    self.current_chunk.take()
+                }
+            }
+            DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_byte_range,
+                needs_newline,
+                ..
+            } => {
+                let hunk_start_offset = self.cursor.start().0;
+                let base_text_start_offset = base_text_byte_range.start;
+                let base_text_end_offset = base_text_byte_range.end;
+                let diff_base_end_offset = base_text_end_offset
+                    .min(base_text_start_offset + self.end_offset.0 - hunk_start_offset.0);
+                let diff_base_start_offset =
+                    base_text_start_offset + self.offset.0 - hunk_start_offset.0;
+
+                let mut chunks = if let Some((_, mut chunks)) = self
+                    .diff_base_chunks
+                    .take()
+                    .filter(|(id, _)| id == buffer_id)
+                {
+                    if chunks.offset() != diff_base_start_offset {
+                        chunks.seek(diff_base_start_offset..diff_base_end_offset);
+                    }
+                    chunks
+                } else {
+                    let base_buffer = &self.snapshot.diffs.get(&buffer_id)?.base_text;
+                    base_buffer.chunks(
+                        diff_base_start_offset..diff_base_end_offset,
+                        self.language_aware,
+                    )
+                };
+
+                let chunk = if let Some(chunk) = chunks.next() {
+                    self.offset.0 += chunk.text.len();
+                    self.diff_base_chunks = Some((*buffer_id, chunks));
+                    chunk
+                } else {
+                    debug_assert!(needs_newline);
+                    self.offset.0 += "\n".len();
+                    Chunk {
+                        text: "\n",
+                        ..Default::default()
+                    }
+                };
+                Some(chunk)
+            }
+        }
+    }
+}
+
+impl<'a> DiffMapRows<'a> {
+    pub fn seek(&mut self, row: u32) {
+        self.diff_point = DiffPoint::new(row, 0);
+        self.cursor.seek(&self.diff_point, Bias::Right, &());
+        let (diff_transform_start, inlay_transform_start) = self.cursor.start().clone();
+        let overshoot = if matches!(
+            self.cursor.item(),
+            Some(DiffTransform::BufferContent { .. })
+        ) {
+            self.diff_point.row() - diff_transform_start.row()
+        } else {
+            0
+        };
+        self.input_buffer_rows
+            .seek(MultiBufferRow(inlay_transform_start.row + overshoot));
+    }
+}
+
+impl<'a> Iterator for DiffMapRows<'a> {
+    type Item = RowInfo;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = match self.cursor.item() {
+            Some(DiffTransform::DeletedHunk { .. }) => Some(RowInfo {
+                buffer_row: None,
+                diff_status: Some(DiffHunkStatus::Removed),
+            }),
+            Some(DiffTransform::BufferContent {
+                is_inserted_hunk, ..
+            }) => {
+                let row = self.input_buffer_rows.next();
+                row.map(|row| RowInfo {
+                    buffer_row: row,
+                    diff_status: if *is_inserted_hunk {
+                        Some(DiffHunkStatus::Added)
+                    } else {
+                        None
+                    },
+                })
+            }
+            None => self.input_buffer_rows.next().map(|row| RowInfo {
+                buffer_row: row,
+                diff_status: None,
+            }),
+        };
+        self.diff_point.0 += Point::new(1, 0);
+        if self.diff_point >= self.cursor.end(&()).0 {
+            self.cursor.next(&());
+        }
+        result
+    }
+}
+
+impl sum_tree::Item for DiffTransform {
+    type Summary = DiffTransformSummary;
+
+    fn summary(&self, _: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
+        match self {
+            DiffTransform::BufferContent { summary, .. } => DiffTransformSummary {
+                excerpt_map: summary.clone(),
+                diff_map: summary.clone(),
+            },
+            DiffTransform::DeletedHunk {
+                summary_including_newline: summary,
+                ..
+            } => DiffTransformSummary {
+                excerpt_map: TextSummary::default(),
+                diff_map: summary.clone(),
+            },
+        }
+    }
+}
+
+impl sum_tree::Summary for DiffTransformSummary {
+    type Context = ();
+
+    fn zero(_: &Self::Context) -> Self {
+        DiffTransformSummary {
+            excerpt_map: TextSummary::default(),
+            diff_map: TextSummary::default(),
+        }
+    }
+
+    fn add_summary(&mut self, summary: &Self, _: &Self::Context) {
+        self.excerpt_map += &summary.excerpt_map;
+        self.diff_map += &summary.diff_map;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptOffset {
+    fn zero(_: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
+        self.value += summary.excerpt_map.len
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for DiffOffset {
+    fn zero(_: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
+        self.value += summary.diff_map.len
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptPoint {
+    fn zero(_: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
+        self.value += summary.excerpt_map.lines
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for DiffPoint {
+    fn zero(_: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
+        self.value += summary.diff_map.lines
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for TextSummary {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
+        *self += &summary.diff_map;
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, DiffTransformSummary, DiffTransformSummary> for DiffPoint {
+    fn cmp(
+        &self,
+        cursor_location: &DiffTransformSummary,
+        _: &<DiffTransformSummary as sum_tree::Summary>::Context,
+    ) -> std::cmp::Ordering {
+        Ord::cmp(self, &cursor_location.diff_point())
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, DiffTransformSummary, DiffTransformSummary> for DiffOffset {
+    fn cmp(
+        &self,
+        cursor_location: &DiffTransformSummary,
+        _: &<DiffTransformSummary as sum_tree::Summary>::Context,
+    ) -> std::cmp::Ordering {
+        Ord::cmp(self, &cursor_location.diff_offset())
+    }
+}
 
 // #[cfg(test)]
 // mod tests {
@@ -2355,10 +2354,10 @@
 //         let mut text = old_snapshot.text();
 //         let new_text = new_snapshot.text();
 //         for edit in edits.iter().rev() {
-//             if !text.is_char_boundary(edit.old.start.0)
-//                 || !text.is_char_boundary(edit.old.end.0)
-//                 || !new_text.is_char_boundary(edit.new.start.0)
-//                 || !new_text.is_char_boundary(edit.new.end.0)
+//             if !text.is_char_boundary(edit.old.start.value)
+//                 || !text.is_char_boundary(edit.old.end.value)
+//                 || !new_text.is_char_boundary(edit.new.start.value)
+//                 || !new_text.is_char_boundary(edit.new.end.value)
 //             {
 //                 panic!(
 //                     "invalid edits: {:?}\nold text: {:?}\nnew text: {:?}",
@@ -2367,8 +2366,8 @@
 //             }
 
 //             text.replace_range(
-//                 edit.old.start.0..edit.old.end.0,
-//                 &new_text[edit.new.start.0..edit.new.end.0],
+//                 edit.old.start.value..edit.old.end.value,
+//                 &new_text[edit.new.start.value..edit.new.end.value],
 //             );
 //         }
 

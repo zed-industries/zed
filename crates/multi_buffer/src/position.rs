@@ -1,5 +1,5 @@
 use std::{
-    fmt::Debug,
+    fmt::{Debug, Display},
     marker::PhantomData,
     ops::{Add, AddAssign, Sub, SubAssign},
 };
@@ -55,6 +55,9 @@ impl<T> TypedPoint<T> {
     }
     pub fn column(&self) -> u32 {
         self.value.column
+    }
+    pub fn is_zero(&self) -> bool {
+        self.value.is_zero()
     }
 }
 impl<T> TypedPointUtf16<T> {
@@ -226,6 +229,17 @@ impl<T> Debug for TypedPoint<T> {
 impl<T> Debug for TypedRow<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}Row({})", type_name::<T>(), self.value)
+    }
+}
+
+impl<T> Display for TypedOffset<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.value, f)
+    }
+}
+impl<T> Display for TypedRow<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.value, f)
     }
 }
 

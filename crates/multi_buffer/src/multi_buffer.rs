@@ -68,6 +68,7 @@ pub struct MultiBuffer {
     /// Use [`MultiBuffer::snapshot`] to get a up-to-date snapshot.
     snapshot: RefCell<MultiBufferSnapshot>,
     excerpt_map: ExcerptMap,
+    diff_map: DiffMap,
     /// Contains the state of the buffers being edited
     buffers: RefCell<HashMap<BufferId, BufferState>>,
     subscriptions: Topic,

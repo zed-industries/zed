@@ -32,10 +32,10 @@ use sum_tree::{Bias, Cursor, SumTree};
 use text::{locator::Locator, BufferId, Edit, Patch, TextSummary};
 use util::post_inc;
 
-pub type ExcerptMapOffset = TypedOffset<ExcerptMap>;
-pub type ExcerptMapPoint = TypedPoint<ExcerptMap>;
-pub type ExcerptMapPointUtf16 = TypedPointUtf16<ExcerptMap>;
-pub type ExcerptMapRow = TypedRow<ExcerptMap>;
+pub type ExcerptOffset = TypedOffset<ExcerptMap>;
+pub type ExcerptPoint = TypedPoint<ExcerptMap>;
+pub type ExcerptPointUtf16 = TypedPointUtf16<ExcerptMap>;
+pub type ExcerptRow = TypedRow<ExcerptMap>;
 
 #[cfg(any(test, feature = "test-support"))]
 use gpui::Context;
@@ -56,7 +56,7 @@ pub struct ExcerptMap {
     history: History,
     title: Option<String>,
     capability: Capability,
-    edits: RefCell<Patch<ExcerptMapOffset>>,
+    edits: RefCell<Patch<ExcerptOffset>>,
 }
 
 /// A diff hunk, representing a range of consequent lines in a multibuffer.
@@ -188,8 +188,8 @@ struct Excerpt {
 #[derive(Clone)]
 pub struct MultiBufferExcerpt<'a> {
     excerpt: &'a Excerpt,
-    excerpt_offset: ExcerptMapOffset,
-    excerpt_position: ExcerptMapPoint,
+    excerpt_offset: ExcerptOffset,
+    excerpt_position: ExcerptPoint,
 }
 
 #[derive(Clone, Debug)]
@@ -210,26 +210,26 @@ pub struct ExcerptSummary {
 #[derive(Clone)]
 pub struct ExcerptMapRows<'a> {
     buffer_row_range: Range<u32>,
-    excerpts: Cursor<'a, Excerpt, ExcerptMapPoint>,
+    excerpts: Cursor<'a, Excerpt, ExcerptPoint>,
 }
 
 pub struct ExcerptMapChunks<'a> {
-    range: Range<ExcerptMapOffset>,
-    excerpts: Cursor<'a, Excerpt, ExcerptMapOffset>,
+    range: Range<ExcerptOffset>,
+    excerpts: Cursor<'a, Excerpt, ExcerptOffset>,
     excerpt_chunks: Option<ExcerptChunks<'a>>,
     language_aware: bool,
 }
 
 pub struct ExcerptMapBytes<'a> {
-    range: Range<ExcerptMapOffset>,
-    excerpts: Cursor<'a, Excerpt, ExcerptMapOffset>,
+    range: Range<ExcerptOffset>,
+    excerpts: Cursor<'a, Excerpt, ExcerptOffset>,
     excerpt_bytes: Option<ExcerptBytes<'a>>,
     chunk: &'a [u8],
 }
 
 pub struct ReversedExcerptMapBytes<'a> {
-    range: Range<ExcerptMapOffset>,
-    excerpts: Cursor<'a, Excerpt, ExcerptMapOffset>,
+    range: Range<ExcerptOffset>,
+    excerpts: Cursor<'a, Excerpt, ExcerptOffset>,
     excerpt_bytes: Option<ExcerptBytes<'a>>,
     chunk: &'a [u8],
 }
@@ -385,7 +385,7 @@ impl ExcerptMap {
     }
 
     /// Returns an up-to-date snapshot of the MultiBuffer.
-    pub fn snapshot(&mut self, cx: &AppContext) -> ExcerptMapSnapshot {
+    pub fn snapshot(&self, cx: &AppContext) -> ExcerptMapSnapshot {
         self.sync(cx);
         self.snapshot.borrow().clone()
     }
@@ -429,7 +429,7 @@ impl ExcerptMap {
 
     // The `is_empty` signature doesn't match what clippy expects
     #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self, cx: &AppContext) -> ExcerptMapOffset {
+    pub fn len(&self, cx: &AppContext) -> ExcerptOffset {
         self.read(cx).len()
     }
 
@@ -443,7 +443,7 @@ impl ExcerptMap {
         autoindent_mode: Option<AutoindentMode>,
         cx: &mut ModelContext<MultiBuffer>,
     ) where
-        I: IntoIterator<Item = (Range<ExcerptMapOffset>, T)>,
+        I: IntoIterator<Item = (Range<ExcerptOffset>, T)>,
         T: Into<Arc<str>>,
     {
         let snapshot = self.read(cx);
@@ -463,7 +463,7 @@ impl ExcerptMap {
         fn edit_internal(
             this: &ExcerptMap,
             snapshot: Ref<ExcerptMapSnapshot>,
-            edits: Vec<(Range<ExcerptMapOffset>, Arc<str>)>,
+            edits: Vec<(Range<ExcerptOffset>, Arc<str>)>,
             mut autoindent_mode: Option<AutoindentMode>,
             cx: &mut ModelContext<MultiBuffer>,
         ) {
@@ -576,13 +576,13 @@ impl ExcerptMap {
 
     fn convert_edits_to_buffer_edits(
         &self,
-        edits: Vec<(Range<ExcerptMapOffset>, Arc<str>)>,
+        edits: Vec<(Range<ExcerptOffset>, Arc<str>)>,
         snapshot: &ExcerptMapSnapshot,
         original_indent_columns: &[u32],
     ) -> (HashMap<BufferId, Vec<BufferEdit>>, Vec<ExcerptId>) {
         let mut buffer_edits: HashMap<BufferId, Vec<BufferEdit>> = Default::default();
         let mut edited_excerpt_ids = Vec::new();
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptMapOffset>(&());
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptOffset>(&());
         for (ix, (range, new_text)) in edits.into_iter().enumerate() {
             let original_indent_column = original_indent_columns.get(ix).copied().unwrap_or(0);
             cursor.seek(&range.start, Bias::Right, &());
@@ -680,7 +680,7 @@ impl ExcerptMap {
 
     pub fn autoindent_ranges<I>(&self, ranges: I, cx: &mut ModelContext<MultiBuffer>)
     where
-        I: IntoIterator<Item = Range<ExcerptMapOffset>>,
+        I: IntoIterator<Item = Range<ExcerptOffset>>,
     {
         let snapshot = self.read(cx);
         let empty = Arc::<str>::from("");
@@ -699,7 +699,7 @@ impl ExcerptMap {
         fn autoindent_ranges_internal(
             this: &ExcerptMap,
             snapshot: Ref<ExcerptMapSnapshot>,
-            edits: Vec<(Range<ExcerptMapOffset>, Arc<str>)>,
+            edits: Vec<(Range<ExcerptOffset>, Arc<str>)>,
             cx: &mut ModelContext<MultiBuffer>,
         ) {
             if this.read_only() || this.buffers.borrow().is_empty() {
@@ -755,13 +755,13 @@ impl ExcerptMap {
     // Panics if the given position is invalid.
     pub fn insert_empty_line(
         &mut self,
-        point: ExcerptMapPoint,
+        point: ExcerptPoint,
         space_above: bool,
         space_below: bool,
         cx: &mut ModelContext<MultiBuffer>,
-    ) -> ExcerptMapPoint {
+    ) -> ExcerptPoint {
         if let Some(buffer) = self.as_singleton() {
-            ExcerptMapPoint::wrap(buffer.update(cx, |buffer, cx| {
+            ExcerptPoint::wrap(buffer.update(cx, |buffer, cx| {
                 buffer.insert_empty_line(point.value, space_above, space_below, cx)
             }))
         } else {
@@ -771,7 +771,7 @@ impl ExcerptMap {
                 buffer.insert_empty_line(buffer_point, space_above, space_below, cx)
             });
             self.end_transaction(cx);
-            point + ExcerptMapPoint::wrap(empty_line_start - buffer_point)
+            point + ExcerptPoint::wrap(empty_line_start - buffer_point)
         }
     }
 
@@ -1340,7 +1340,7 @@ impl ExcerptMap {
         let mut new_excerpts = cursor.slice(&prev_locator, Bias::Right, &());
         prev_locator = cursor.start().unwrap_or(Locator::min_ref()).clone();
 
-        let edit_start = ExcerptMapOffset::new(new_excerpts.summary().text.len);
+        let edit_start = ExcerptOffset::new(new_excerpts.summary().text.len);
         new_excerpts.update_last(
             |excerpt| {
                 excerpt.has_trailing_newline = true;
@@ -1386,7 +1386,7 @@ impl ExcerptMap {
             new_excerpt_ids.push(ExcerptIdMapping { id, locator }, &());
         }
 
-        let edit_end = ExcerptMapOffset::new(new_excerpts.summary().text.len);
+        let edit_end = ExcerptOffset::new(new_excerpts.summary().text.len);
 
         let suffix = cursor.suffix(&());
         let changed_trailing_excerpt = suffix.is_empty();
@@ -1415,7 +1415,7 @@ impl ExcerptMap {
     }
 
     #[must_use]
-    pub fn clear(&mut self, cx: &mut ModelContext<MultiBuffer>) -> Edit<ExcerptMapOffset> {
+    pub fn clear(&mut self, cx: &mut ModelContext<MultiBuffer>) -> Edit<ExcerptOffset> {
         self.sync(cx);
         let ids = self.excerpt_ids();
         self.buffers.borrow_mut().clear();
@@ -1427,7 +1427,7 @@ impl ExcerptMap {
         snapshot.has_deleted_file = false;
         snapshot.has_conflict = false;
 
-        let zero = ExcerptMapOffset::new(0);
+        let zero = ExcerptOffset::new(0);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
             edited_buffer: None,
@@ -1470,7 +1470,7 @@ impl ExcerptMap {
         &self,
         buffer_id: BufferId,
         cx: &AppContext,
-    ) -> Vec<(ExcerptId, Range<ExcerptMapPoint>, Range<text::Anchor>)> {
+    ) -> Vec<(ExcerptId, Range<ExcerptPoint>, Range<text::Anchor>)> {
         let mut ranges = Vec::new();
         let snapshot = self.read(cx);
         for locator in self
@@ -1483,7 +1483,7 @@ impl ExcerptMap {
         {
             let mut cursor = snapshot
                 .excerpts
-                .cursor::<(Option<&Locator>, ExcerptMapPoint)>(&());
+                .cursor::<(Option<&Locator>, ExcerptPoint)>(&());
             cursor.seek_forward(&Some(locator), Bias::Left, &());
             if let Some(excerpt) = cursor.item() {
                 if excerpt.locator == *locator {
@@ -1502,12 +1502,12 @@ impl ExcerptMap {
         &self,
         buffer_id: BufferId,
         cx: &AppContext,
-    ) -> Vec<Range<ExcerptMapPoint>> {
+    ) -> Vec<Range<ExcerptPoint>> {
         let snapshot = self.read(cx);
         let buffers = self.buffers.borrow();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptMapPoint)>(&());
+            .cursor::<(Option<&Locator>, ExcerptPoint)>(&());
         buffers
             .get(&buffer_id)
             .into_iter()
@@ -1518,7 +1518,7 @@ impl ExcerptMap {
                     if excerpt.locator == *locator {
                         let excerpt_start = cursor.start().1;
                         let excerpt_end =
-                            excerpt_start + ExcerptMapPoint::wrap(excerpt.text_summary.lines);
+                            excerpt_start + ExcerptPoint::wrap(excerpt.text_summary.lines);
                         Some(excerpt_start..excerpt_end)
                     } else {
                         None
@@ -1548,12 +1548,12 @@ impl ExcerptMap {
 
     pub fn excerpt_containing(
         &self,
-        position: ExcerptMapOffset,
+        position: ExcerptOffset,
         cx: &AppContext,
     ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
         let snapshot = self.read(cx);
 
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptMapOffset>(&());
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptOffset>(&());
         cursor.seek(&position, Bias::Right, &());
         cursor
             .item()
@@ -1575,11 +1575,11 @@ impl ExcerptMap {
     // If point is at the end of the buffer, the last excerpt is returned
     pub fn offset_to_buffer_offset(
         &self,
-        offset: ExcerptMapOffset,
+        offset: ExcerptOffset,
         cx: &AppContext,
     ) -> Option<(Model<Buffer>, usize, ExcerptId)> {
         let snapshot = self.read(cx);
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptMapOffset>(&());
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptOffset>(&());
         cursor.seek(&offset, Bias::Right, &());
         if cursor.item().is_none() {
             cursor.prev(&());
@@ -1596,11 +1596,11 @@ impl ExcerptMap {
     // If point is at the end of the buffer, the last excerpt is returned
     pub fn point_to_buffer_point(
         &self,
-        point: ExcerptMapPoint,
+        point: ExcerptPoint,
         cx: &AppContext,
     ) -> Option<(Model<Buffer>, Point, ExcerptId)> {
         let snapshot = self.read(cx);
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptMapPoint>(&());
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptPoint>(&());
         cursor.seek(&point, Bias::Right, &());
         if cursor.item().is_none() {
             cursor.prev(&());
@@ -1616,7 +1616,7 @@ impl ExcerptMap {
 
     pub fn range_to_buffer_ranges(
         &self,
-        range: Range<ExcerptMapOffset>,
+        range: Range<ExcerptOffset>,
         cx: &AppContext,
     ) -> Vec<(Model<Buffer>, Range<usize>, ExcerptId)> {
         let snapshot = self.read(cx);
@@ -1624,7 +1624,7 @@ impl ExcerptMap {
         let end = range.end;
 
         let mut result = Vec::new();
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptMapOffset>(&());
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptOffset>(&());
         cursor.seek(&start, Bias::Right, &());
         if cursor.item().is_none() {
             cursor.prev(&());
@@ -1654,7 +1654,7 @@ impl ExcerptMap {
         &mut self,
         excerpt_ids: impl IntoIterator<Item = ExcerptId>,
         cx: &mut ModelContext<MultiBuffer>,
-    ) -> Vec<Edit<ExcerptMapOffset>> {
+    ) -> Vec<Edit<ExcerptOffset>> {
         self.sync(cx);
         let ids = excerpt_ids.into_iter().collect::<Vec<_>>();
         if ids.is_empty() {
@@ -1666,7 +1666,7 @@ impl ExcerptMap {
         let mut new_excerpts = SumTree::default();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptMapOffset)>(&());
+            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
         let mut edits = Vec::new();
         let mut excerpt_ids = ids.iter().copied().peekable();
 
@@ -1715,7 +1715,7 @@ impl ExcerptMap {
 
                 // Push an edit for the removal of this run of excerpts.
                 let old_end = cursor.start().1;
-                let new_start = ExcerptMapOffset::new(new_excerpts.summary().text.len);
+                let new_start = ExcerptOffset::new(new_excerpts.summary().text.len);
                 edits.push(Edit {
                     old: old_start..old_end,
                     new: new_start..new_start,
@@ -1776,7 +1776,7 @@ impl ExcerptMap {
 
     pub fn text_anchor_for_position(
         &self,
-        position: ExcerptMapOffset,
+        position: ExcerptOffset,
         cx: &AppContext,
     ) -> Option<(Model<Buffer>, language::Anchor)> {
         let snapshot = self.read(cx);
@@ -1898,14 +1898,14 @@ impl ExcerptMap {
         let mut new_excerpts = SumTree::default();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptMapOffset)>(&());
-        let mut edits = Vec::<Edit<ExcerptMapOffset>>::new();
+            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
+        let mut edits = Vec::<Edit<ExcerptOffset>>::new();
 
         let prefix = cursor.slice(&Some(locator), Bias::Left, &());
         new_excerpts.append(prefix, &());
 
         let mut excerpt = cursor.item().unwrap().clone();
-        let old_text_len = ExcerptMapOffset::new(excerpt.text_summary.len);
+        let old_text_len = ExcerptOffset::new(excerpt.text_summary.len);
 
         excerpt.range.context.start = range.start;
         excerpt.range.context.end = range.end;
@@ -1915,12 +1915,11 @@ impl ExcerptMap {
             .buffer
             .text_summary_for_range(excerpt.range.context.clone());
 
-        let new_start_offset = ExcerptMapOffset::new(new_excerpts.summary().text.len);
+        let new_start_offset = ExcerptOffset::new(new_excerpts.summary().text.len);
         let old_start_offset = cursor.start().1;
         let edit = Edit {
             old: old_start_offset..old_start_offset + old_text_len,
-            new: new_start_offset
-                ..new_start_offset + ExcerptMapOffset::new(excerpt.text_summary.len),
+            new: new_start_offset..new_start_offset + ExcerptOffset::new(excerpt.text_summary.len),
         };
 
         if let Some(last_edit) = edits.last_mut() {
@@ -1959,7 +1958,7 @@ impl ExcerptMap {
         line_count: u32,
         direction: ExpandExcerptDirection,
         cx: &mut ModelContext<MultiBuffer>,
-    ) -> Vec<Edit<ExcerptMapOffset>> {
+    ) -> Vec<Edit<ExcerptOffset>> {
         if line_count == 0 {
             return Vec::new();
         }
@@ -1971,8 +1970,8 @@ impl ExcerptMap {
         let mut new_excerpts = SumTree::default();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptMapOffset)>(&());
-        let mut edits = Vec::<Edit<ExcerptMapOffset>>::new();
+            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
+        let mut edits = Vec::<Edit<ExcerptOffset>>::new();
 
         for locator in &locators {
             let prefix = cursor.slice(&Some(locator), Bias::Left, &());
@@ -2016,12 +2015,12 @@ impl ExcerptMap {
                 .buffer
                 .text_summary_for_range(excerpt.range.context.clone());
 
-            let new_start_offset = ExcerptMapOffset::new(new_excerpts.summary().text.len);
+            let new_start_offset = ExcerptOffset::new(new_excerpts.summary().text.len);
             let old_start_offset = cursor.start().1;
             let edit = Edit {
-                old: old_start_offset..old_start_offset + ExcerptMapOffset::new(old_text_len),
+                old: old_start_offset..old_start_offset + ExcerptOffset::new(old_text_len),
                 new: new_start_offset
-                    ..new_start_offset + ExcerptMapOffset::new(excerpt.text_summary.len),
+                    ..new_start_offset + ExcerptOffset::new(excerpt.text_summary.len),
             };
 
             if let Some(last_edit) = edits.last_mut() {
@@ -2106,13 +2105,13 @@ impl ExcerptMap {
         let mut new_excerpts = SumTree::default();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptMapOffset)>(&());
+            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
 
         for (locator, buffer, buffer_edited) in excerpts_to_edit {
             new_excerpts.append(cursor.slice(&Some(locator), Bias::Left, &()), &());
             let old_excerpt = cursor.item().unwrap();
             let excerpt_old_start = cursor.start().1;
-            let excerpt_new_start = ExcerptMapOffset::new(new_excerpts.summary().text.len);
+            let excerpt_new_start = ExcerptOffset::new(new_excerpts.summary().text.len);
             let buffer = buffer.read(cx);
             let buffer_id = buffer.remote_id();
 
@@ -2125,10 +2124,10 @@ impl ExcerptMap {
                             old_excerpt.range.context.clone(),
                         )
                         .map(|edit| Edit {
-                            old: excerpt_old_start + ExcerptMapOffset::new(edit.old.start)
-                                ..excerpt_old_start + ExcerptMapOffset::new(edit.old.end),
-                            new: excerpt_new_start + ExcerptMapOffset::new(edit.new.start)
-                                ..excerpt_new_start + ExcerptMapOffset::new(edit.new.end),
+                            old: excerpt_old_start + ExcerptOffset::new(edit.old.start)
+                                ..excerpt_old_start + ExcerptOffset::new(edit.old.end),
+                            new: excerpt_new_start + ExcerptOffset::new(edit.new.start)
+                                ..excerpt_new_start + ExcerptOffset::new(edit.new.end),
                         }),
                 );
 
@@ -2173,22 +2172,22 @@ impl ExcerptMap {
         use util::RandomCharIter;
 
         let snapshot = self.read(cx);
-        let mut edits: Vec<(Range<ExcerptMapOffset>, Arc<str>)> = Vec::new();
+        let mut edits: Vec<(Range<ExcerptOffset>, Arc<str>)> = Vec::new();
         let mut last_end = None;
         for _ in 0..edit_count {
             if last_end.map_or(false, |last_end| last_end >= snapshot.len()) {
                 break;
             }
 
-            let new_start = last_end.map_or(ExcerptMapOffset::new(0), |last_end| {
-                last_end + ExcerptMapOffset::new(1)
+            let new_start = last_end.map_or(ExcerptOffset::new(0), |last_end| {
+                last_end + ExcerptOffset::new(1)
             });
             let end = snapshot.clip_offset(
-                ExcerptMapOffset::new(rng.gen_range(new_start.value..=snapshot.len().value)),
+                ExcerptOffset::new(rng.gen_range(new_start.value..=snapshot.len().value)),
                 Bias::Right,
             );
             let start = snapshot.clip_offset(
-                ExcerptMapOffset::new(rng.gen_range(new_start.value..=end.value)),
+                ExcerptOffset::new(rng.gen_range(new_start.value..=end.value)),
                 Bias::Right,
             );
             last_end = Some(end);
@@ -2379,20 +2378,16 @@ impl EventEmitter<Event> for ExcerptMap {}
 
 impl ExcerptMapSnapshot {
     pub fn text(&self) -> String {
-        self.chunks(ExcerptMapOffset::new(0)..self.len(), false)
+        self.chunks(ExcerptOffset::new(0)..self.len(), false)
             .map(|chunk| chunk.text)
             .collect()
     }
 
-    pub fn reversed_chars_at(
-        &self,
-        mut offset: ExcerptMapOffset,
-    ) -> impl Iterator<Item = char> + '_ {
-        let mut cursor = self.excerpts.cursor::<ExcerptMapOffset>(&());
+    pub fn reversed_chars_at(&self, mut offset: ExcerptOffset) -> impl Iterator<Item = char> + '_ {
+        let mut cursor = self.excerpts.cursor::<ExcerptOffset>(&());
         cursor.seek(&offset, Bias::Left, &());
         let mut excerpt_chunks = cursor.item().map(|excerpt| {
-            let end_before_footer =
-                *cursor.start() + ExcerptMapOffset::new(excerpt.text_summary.len);
+            let end_before_footer = *cursor.start() + ExcerptOffset::new(excerpt.text_summary.len);
             let start = excerpt.range.context.start.to_offset(&excerpt.buffer);
             let end = start + (cmp::min(offset, end_before_footer) - *cursor.start()).value;
             excerpt.buffer.reversed_chunks_in_range(start..end)
@@ -2423,13 +2418,13 @@ impl ExcerptMapSnapshot {
 
     pub fn range_to_buffer_ranges(
         &self,
-        range: Range<ExcerptMapOffset>,
+        range: Range<ExcerptOffset>,
     ) -> Vec<(BufferSnapshot, Range<usize>, ExcerptId)> {
         let start = range.start;
         let end = range.end;
 
         let mut result = Vec::new();
-        let mut cursor = self.excerpts.cursor::<ExcerptMapOffset>(&());
+        let mut cursor = self.excerpts.cursor::<ExcerptOffset>(&());
         cursor.seek(&start, Bias::Right, &());
         if cursor.item().is_none() {
             cursor.prev(&());
@@ -2465,8 +2460,8 @@ impl ExcerptMapSnapshot {
         }
     }
 
-    pub fn len(&self) -> ExcerptMapOffset {
-        ExcerptMapOffset::new(self.excerpts.summary().text.len)
+    pub fn len(&self) -> ExcerptOffset {
+        ExcerptOffset::new(self.excerpts.summary().text.len)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -2477,12 +2472,12 @@ impl ExcerptMapSnapshot {
         self.excerpts.summary().widest_line_number + 1
     }
 
-    pub fn clip_offset(&self, offset: ExcerptMapOffset, bias: Bias) -> ExcerptMapOffset {
+    pub fn clip_offset(&self, offset: ExcerptOffset, bias: Bias) -> ExcerptOffset {
         if let Some((_, _, buffer)) = self.as_singleton() {
-            return ExcerptMapOffset::new(buffer.clip_offset(offset.value, bias));
+            return ExcerptOffset::new(buffer.clip_offset(offset.value, bias));
         }
 
-        let mut cursor = self.excerpts.cursor::<ExcerptMapOffset>(&());
+        let mut cursor = self.excerpts.cursor::<ExcerptOffset>(&());
         cursor.seek(&offset, Bias::Right, &());
         let overshoot = if let Some(excerpt) = cursor.item() {
             let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
@@ -2493,15 +2488,15 @@ impl ExcerptMapSnapshot {
         } else {
             0
         };
-        *cursor.start() + ExcerptMapOffset::new(overshoot)
+        *cursor.start() + ExcerptOffset::new(overshoot)
     }
 
-    pub fn clip_point(&self, point: ExcerptMapPoint, bias: Bias) -> ExcerptMapPoint {
+    pub fn clip_point(&self, point: ExcerptPoint, bias: Bias) -> ExcerptPoint {
         if let Some((_, _, buffer)) = self.as_singleton() {
-            return ExcerptMapPoint::wrap(buffer.clip_point(point.value, bias));
+            return ExcerptPoint::wrap(buffer.clip_point(point.value, bias));
         }
 
-        let mut cursor = self.excerpts.cursor::<ExcerptMapPoint>(&());
+        let mut cursor = self.excerpts.cursor::<ExcerptPoint>(&());
         cursor.seek(&point, Bias::Right, &());
         let overshoot = if let Some(excerpt) = cursor.item() {
             let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer);
@@ -2512,7 +2507,7 @@ impl ExcerptMapSnapshot {
         } else {
             Point::zero()
         };
-        *cursor.start() + ExcerptMapPoint::wrap(overshoot)
+        *cursor.start() + ExcerptPoint::wrap(overshoot)
     }
 
     // pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
@@ -2555,8 +2550,8 @@ impl ExcerptMapSnapshot {
     //     *cursor.start() + overshoot
     // }
 
-    pub fn bytes_in_range(&self, range: Range<ExcerptMapOffset>) -> ExcerptMapBytes {
-        let mut excerpts = self.excerpts.cursor::<ExcerptMapOffset>(&());
+    pub fn bytes_in_range(&self, range: Range<ExcerptOffset>) -> ExcerptMapBytes {
+        let mut excerpts = self.excerpts.cursor::<ExcerptOffset>(&());
         excerpts.seek(&range.start, Bias::Right, &());
 
         let mut chunk = &[][..];
@@ -2577,11 +2572,8 @@ impl ExcerptMapSnapshot {
         }
     }
 
-    pub fn reversed_bytes_in_range(
-        &self,
-        range: Range<ExcerptMapOffset>,
-    ) -> ReversedExcerptMapBytes {
-        let mut excerpts = self.excerpts.cursor::<ExcerptMapOffset>(&());
+    pub fn reversed_bytes_in_range(&self, range: Range<ExcerptOffset>) -> ReversedExcerptMapBytes {
+        let mut excerpts = self.excerpts.cursor::<ExcerptOffset>(&());
         excerpts.seek(&range.end, Bias::Left, &());
 
         let mut chunk = &[][..];
@@ -2604,7 +2596,7 @@ impl ExcerptMapSnapshot {
         }
     }
 
-    pub fn rows(&self, start_row: ExcerptMapRow) -> ExcerptMapRows {
+    pub fn row_infos(&self, start_row: ExcerptRow) -> ExcerptMapRows {
         let mut result = ExcerptMapRows {
             buffer_row_range: 0..0,
             excerpts: self.excerpts.cursor(&()),
@@ -2613,7 +2605,7 @@ impl ExcerptMapSnapshot {
         result
     }
 
-    pub fn chunks(&self, range: Range<ExcerptMapOffset>, language_aware: bool) -> ExcerptMapChunks {
+    pub fn chunks(&self, range: Range<ExcerptOffset>, language_aware: bool) -> ExcerptMapChunks {
         let mut chunks = ExcerptMapChunks {
             range: range.clone(),
             excerpts: self.excerpts.cursor(&()),
@@ -2624,14 +2616,12 @@ impl ExcerptMapSnapshot {
         chunks
     }
 
-    pub fn offset_to_point(&self, offset: ExcerptMapOffset) -> ExcerptMapPoint {
+    pub fn offset_to_point(&self, offset: ExcerptOffset) -> ExcerptPoint {
         if let Some((_, _, buffer)) = self.as_singleton() {
-            return ExcerptMapPoint::wrap(buffer.offset_to_point(offset.value));
+            return ExcerptPoint::wrap(buffer.offset_to_point(offset.value));
         }
 
-        let mut cursor = self
-            .excerpts
-            .cursor::<(ExcerptMapOffset, ExcerptMapPoint)>(&());
+        let mut cursor = self.excerpts.cursor::<(ExcerptOffset, ExcerptPoint)>(&());
         cursor.seek(&offset, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
             let (start_offset, start_point) = cursor.start();
@@ -2641,7 +2631,7 @@ impl ExcerptMapSnapshot {
             let buffer_point = excerpt
                 .buffer
                 .offset_to_point(excerpt_start_offset + overshoot.value);
-            *start_point + ExcerptMapPoint::wrap(buffer_point - excerpt_start_point)
+            *start_point + ExcerptPoint::wrap(buffer_point - excerpt_start_point)
         } else {
             self.max_point()
         }
@@ -2692,14 +2682,12 @@ impl ExcerptMapSnapshot {
     //     }
     // }
 
-    pub fn point_to_offset(&self, point: ExcerptMapPoint) -> ExcerptMapOffset {
+    pub fn point_to_offset(&self, point: ExcerptPoint) -> ExcerptOffset {
         if let Some((_, _, buffer)) = self.as_singleton() {
-            return ExcerptMapOffset::new(buffer.point_to_offset(point.value));
+            return ExcerptOffset::new(buffer.point_to_offset(point.value));
         }
 
-        let mut cursor = self
-            .excerpts
-            .cursor::<(ExcerptMapPoint, ExcerptMapOffset)>(&());
+        let mut cursor = self.excerpts.cursor::<(ExcerptPoint, ExcerptOffset)>(&());
         cursor.seek(&point, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
             let (start_point, start_offset) = cursor.start();
@@ -2709,9 +2697,9 @@ impl ExcerptMapSnapshot {
             let buffer_offset = excerpt
                 .buffer
                 .point_to_offset(excerpt_start_point + overshoot.value);
-            *start_offset + ExcerptMapOffset::new(buffer_offset - excerpt_start_offset)
+            *start_offset + ExcerptOffset::new(buffer_offset - excerpt_start_offset)
         } else {
-            ExcerptMapOffset::new(self.excerpts.summary().text.len)
+            ExcerptOffset::new(self.excerpts.summary().text.len)
         }
     }
 
@@ -2786,9 +2774,9 @@ impl ExcerptMapSnapshot {
 
     pub fn point_to_buffer_offset(
         &self,
-        offset: ExcerptMapOffset,
+        offset: ExcerptOffset,
     ) -> Option<(&BufferSnapshot, usize)> {
-        let mut cursor = self.excerpts.cursor::<ExcerptMapOffset>(&());
+        let mut cursor = self.excerpts.cursor::<ExcerptOffset>(&());
         cursor.seek(&offset, Bias::Right, &());
         if cursor.item().is_none() {
             cursor.prev(&());
@@ -2809,13 +2797,13 @@ impl ExcerptMapSnapshot {
         let mut result = BTreeMap::new();
 
         let mut rows_for_excerpt = Vec::new();
-        let mut cursor = self.excerpts.cursor::<ExcerptMapPoint>(&());
+        let mut cursor = self.excerpts.cursor::<ExcerptPoint>(&());
         let mut rows = rows.into_iter().peekable();
         let mut prev_row = u32::MAX;
         let mut prev_language_indent_size = IndentSize::default();
 
         while let Some(row) = rows.next() {
-            cursor.seek(&ExcerptMapPoint::new(row, 0), Bias::Right, &());
+            cursor.seek(&ExcerptPoint::new(row, 0), Bias::Right, &());
             let excerpt = match cursor.item() {
                 Some(excerpt) => excerpt,
                 _ => continue,
@@ -2863,7 +2851,7 @@ impl ExcerptMapSnapshot {
         result
     }
 
-    pub fn indent_size_for_line(&self, row: ExcerptMapRow) -> IndentSize {
+    pub fn indent_size_for_line(&self, row: ExcerptRow) -> IndentSize {
         if let Some((buffer, range)) = self.buffer_line_for_row(row) {
             let mut size = buffer.indent_size_for_line(range.start.row);
             size.len = size
@@ -2876,12 +2864,9 @@ impl ExcerptMapSnapshot {
         }
     }
 
-    pub fn buffer_line_for_row(
-        &self,
-        row: ExcerptMapRow,
-    ) -> Option<(&BufferSnapshot, Range<Point>)> {
-        let mut cursor = self.excerpts.cursor::<ExcerptMapPoint>(&());
-        let point = ExcerptMapPoint::new(row.value, 0);
+    pub fn buffer_line_for_row(&self, row: ExcerptRow) -> Option<(&BufferSnapshot, Range<Point>)> {
+        let mut cursor = self.excerpts.cursor::<ExcerptPoint>(&());
+        let point = ExcerptPoint::new(row.value, 0);
         cursor.seek(&point, Bias::Right, &());
         if cursor.item().is_none() && *cursor.start() == point {
             cursor.prev(&());
@@ -2901,8 +2886,8 @@ impl ExcerptMapSnapshot {
         None
     }
 
-    pub fn max_point(&self) -> ExcerptMapPoint {
-        ExcerptMapPoint::wrap(self.excerpts.summary().text.lines)
+    pub fn max_point(&self) -> ExcerptPoint {
+        ExcerptPoint::wrap(self.excerpts.summary().text.lines)
     }
 
     pub fn max_row(&self) -> MultiBufferRow {
@@ -2913,12 +2898,12 @@ impl ExcerptMapSnapshot {
         self.excerpts.summary().text.clone()
     }
 
-    pub fn text_summary_for_range<D>(&self, mut range: Range<ExcerptMapOffset>) -> D
+    pub fn text_summary_for_range<D>(&self, mut range: Range<ExcerptOffset>) -> D
     where
         D: TextDimension,
     {
         let mut summary = D::zero(&());
-        let mut cursor = self.excerpts.cursor::<ExcerptMapOffset>(&());
+        let mut cursor = self.excerpts.cursor::<ExcerptOffset>(&());
         cursor.seek(&range.start, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
             let mut end_before_newline = cursor.end(&());
@@ -3059,7 +3044,7 @@ impl ExcerptMapSnapshot {
 
     pub fn dimensions_from_points<'a, D>(
         &'a self,
-        points: impl 'a + IntoIterator<Item = ExcerptMapPoint>,
+        points: impl 'a + IntoIterator<Item = ExcerptPoint>,
     ) -> impl 'a + Iterator<Item = D>
     where
         D: TextDimension,
@@ -3211,15 +3196,15 @@ impl ExcerptMapSnapshot {
     //     result
     // }
 
-    pub fn anchor_before(&self, position: ExcerptMapOffset) -> Anchor {
+    pub fn anchor_before(&self, position: ExcerptOffset) -> Anchor {
         self.anchor_at(position, Bias::Left)
     }
 
-    pub fn anchor_after(&self, position: ExcerptMapOffset) -> Anchor {
+    pub fn anchor_after(&self, position: ExcerptOffset) -> Anchor {
         self.anchor_at(position, Bias::Right)
     }
 
-    pub fn anchor_at(&self, offset: ExcerptMapOffset, mut bias: Bias) -> Anchor {
+    pub fn anchor_at(&self, offset: ExcerptOffset, mut bias: Bias) -> Anchor {
         if let Some((excerpt_id, buffer_id, buffer)) = self.as_singleton() {
             return Anchor {
                 buffer_id: Some(buffer_id),
@@ -3230,7 +3215,7 @@ impl ExcerptMapSnapshot {
 
         let mut cursor = self
             .excerpts
-            .cursor::<(ExcerptMapOffset, Option<ExcerptId>)>(&());
+            .cursor::<(ExcerptOffset, Option<ExcerptId>)>(&());
         cursor.seek(&offset, Bias::Right, &());
         if cursor.item().is_none() && offset == cursor.start().0 && bias == Bias::Left {
             cursor.prev(&());
@@ -3310,9 +3295,7 @@ impl ExcerptMapSnapshot {
     }
 
     pub fn all_excerpts(&self) -> impl Iterator<Item = MultiBufferExcerpt> {
-        let mut cursor = self
-            .excerpts
-            .cursor::<(ExcerptMapOffset, ExcerptMapPoint)>(&());
+        let mut cursor = self.excerpts.cursor::<(ExcerptOffset, ExcerptPoint)>(&());
         cursor.next(&());
         std::iter::from_fn(move || {
             let excerpt = cursor.item()?;
@@ -3324,11 +3307,9 @@ impl ExcerptMapSnapshot {
 
     pub fn excerpts_for_range(
         &self,
-        range: Range<ExcerptMapOffset>,
+        range: Range<ExcerptOffset>,
     ) -> impl Iterator<Item = MultiBufferExcerpt> + '_ {
-        let mut cursor = self
-            .excerpts
-            .cursor::<(ExcerptMapOffset, ExcerptMapPoint)>(&());
+        let mut cursor = self.excerpts.cursor::<(ExcerptOffset, ExcerptPoint)>(&());
         cursor.seek(&range.start, Bias::Right, &());
         cursor.prev(&());
 
@@ -3346,11 +3327,9 @@ impl ExcerptMapSnapshot {
 
     pub fn excerpts_for_range_rev(
         &self,
-        range: Range<ExcerptMapOffset>,
+        range: Range<ExcerptOffset>,
     ) -> impl Iterator<Item = MultiBufferExcerpt> + '_ {
-        let mut cursor = self
-            .excerpts
-            .cursor::<(ExcerptMapOffset, ExcerptMapPoint)>(&());
+        let mut cursor = self.excerpts.cursor::<(ExcerptOffset, ExcerptPoint)>(&());
         cursor.seek(&range.end, Bias::Left, &());
         if cursor.item().is_none() {
             cursor.prev(&());
@@ -3368,7 +3347,7 @@ impl ExcerptMapSnapshot {
         let start_locator = self.excerpt_locator_for_id(id);
         let mut cursor = self
             .excerpts
-            .cursor::<(Option<&Locator>, (ExcerptMapOffset, ExcerptMapPoint))>(&());
+            .cursor::<(Option<&Locator>, (ExcerptOffset, ExcerptPoint))>(&());
         cursor.seek(&Some(start_locator), Bias::Left, &());
         cursor.prev(&());
         let excerpt = cursor.item()?;
@@ -3385,7 +3364,7 @@ impl ExcerptMapSnapshot {
         let start_locator = self.excerpt_locator_for_id(id);
         let mut cursor = self
             .excerpts
-            .cursor::<(Option<&Locator>, (ExcerptMapOffset, ExcerptMapPoint))>(&());
+            .cursor::<(Option<&Locator>, (ExcerptOffset, ExcerptPoint))>(&());
         cursor.seek(&Some(start_locator), Bias::Left, &());
         cursor.next(&());
         let excerpt = cursor.item()?;
@@ -3403,7 +3382,7 @@ impl ExcerptMapSnapshot {
         range: R,
     ) -> impl Iterator<Item = ExcerptBoundary> + '_
     where
-        R: RangeBounds<ExcerptMapOffset>,
+        R: RangeBounds<ExcerptOffset>,
     {
         let start_offset;
         let start = match range.start_bound() {
@@ -3416,7 +3395,7 @@ impl ExcerptMapSnapshot {
                 Bound::Excluded(start_offset)
             }
             Bound::Unbounded => {
-                start_offset = ExcerptMapOffset::new(0);
+                start_offset = ExcerptOffset::new(0);
                 Bound::Unbounded
             }
         };
@@ -3427,9 +3406,7 @@ impl ExcerptMapSnapshot {
         };
         let bounds = (start, end);
 
-        let mut cursor = self
-            .excerpts
-            .cursor::<(ExcerptMapOffset, ExcerptMapPoint)>(&());
+        let mut cursor = self.excerpts.cursor::<(ExcerptOffset, ExcerptPoint)>(&());
         cursor.seek(&start_offset, Bias::Right, &());
         if cursor.item().is_none() {
             cursor.prev(&());
@@ -3492,9 +3469,9 @@ impl ExcerptMapSnapshot {
     /// Can optionally pass a range_filter to filter the ranges of brackets to consider
     pub fn innermost_enclosing_bracket_ranges(
         &self,
-        range: Range<ExcerptMapOffset>,
-        range_filter: Option<&dyn Fn(Range<ExcerptMapOffset>, Range<ExcerptMapOffset>) -> bool>,
-    ) -> Option<(Range<ExcerptMapOffset>, Range<ExcerptMapOffset>)> {
+        range: Range<ExcerptOffset>,
+        range_filter: Option<&dyn Fn(Range<ExcerptOffset>, Range<ExcerptOffset>) -> bool>,
+    ) -> Option<(Range<ExcerptOffset>, Range<ExcerptOffset>)> {
         let excerpt = self.excerpt_containing(range.clone())?;
 
         // Filter to ranges contained in the excerpt
@@ -3523,8 +3500,8 @@ impl ExcerptMapSnapshot {
     /// not contained in a single excerpt
     pub fn enclosing_bracket_ranges(
         &self,
-        range: Range<ExcerptMapOffset>,
-    ) -> Option<impl Iterator<Item = (Range<ExcerptMapOffset>, Range<ExcerptMapOffset>)> + '_> {
+        range: Range<ExcerptOffset>,
+    ) -> Option<impl Iterator<Item = (Range<ExcerptOffset>, Range<ExcerptOffset>)> + '_> {
         let excerpt = self.excerpt_containing(range.clone())?;
 
         Some(
@@ -3548,8 +3525,8 @@ impl ExcerptMapSnapshot {
     /// not contained in a single excerpt
     pub fn bracket_ranges(
         &self,
-        range: Range<ExcerptMapOffset>,
-    ) -> Option<impl Iterator<Item = (Range<ExcerptMapOffset>, Range<ExcerptMapOffset>)> + '_> {
+        range: Range<ExcerptOffset>,
+    ) -> Option<impl Iterator<Item = (Range<ExcerptOffset>, Range<ExcerptOffset>)> + '_> {
         let excerpt = self.excerpt_containing(range.clone())?;
 
         Some(
@@ -3572,9 +3549,9 @@ impl ExcerptMapSnapshot {
 
     pub fn redacted_ranges<'a>(
         &'a self,
-        range: Range<ExcerptMapOffset>,
+        range: Range<ExcerptOffset>,
         redaction_enabled: impl Fn(Option<&Arc<dyn File>>) -> bool + 'a,
-    ) -> impl Iterator<Item = Range<ExcerptMapOffset>> + 'a {
+    ) -> impl Iterator<Item = Range<ExcerptOffset>> + 'a {
         self.excerpts_for_range(range.clone())
             .filter(move |excerpt| redaction_enabled(excerpt.buffer().file()))
             .flat_map(move |excerpt| {
@@ -3757,10 +3734,8 @@ impl ExcerptMapSnapshot {
     }
 
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
-    pub fn excerpt_containing(&self, range: Range<ExcerptMapOffset>) -> Option<MultiBufferExcerpt> {
-        let mut cursor = self
-            .excerpts
-            .cursor::<(ExcerptMapOffset, ExcerptMapPoint)>(&());
+    pub fn excerpt_containing(&self, range: Range<ExcerptOffset>) -> Option<MultiBufferExcerpt> {
+        let mut cursor = self.excerpts.cursor::<(ExcerptOffset, ExcerptPoint)>(&());
         cursor.seek(&range.start, Bias::Right, &());
         let start_excerpt = cursor.item()?;
 
@@ -3782,12 +3757,10 @@ impl ExcerptMapSnapshot {
     // span across excerpt boundaries.
     pub fn split_ranges<'a, I>(&'a self, ranges: I) -> impl Iterator<Item = Range<Anchor>> + 'a
     where
-        I: IntoIterator<Item = Range<ExcerptMapOffset>> + 'a,
+        I: IntoIterator<Item = Range<ExcerptOffset>> + 'a,
     {
         let mut ranges = ranges.into_iter();
-        let mut cursor = self
-            .excerpts
-            .cursor::<(ExcerptMapOffset, ExcerptMapPoint)>(&());
+        let mut cursor = self.excerpts.cursor::<(ExcerptOffset, ExcerptPoint)>(&());
         cursor.next(&());
         let mut current_range = ranges.next();
         iter::from_fn(move || {
@@ -3802,7 +3775,7 @@ impl ExcerptMapSnapshot {
             let excerpt = cursor.item()?;
             let range_start_in_excerpt = cmp::max(range.start, cursor.start().0);
             let range_end_in_excerpt = if excerpt.has_trailing_newline {
-                cmp::min(range.end, cursor.end(&()).0 - ExcerptMapOffset::new(1))
+                cmp::min(range.end, cursor.end(&()).0 - ExcerptOffset::new(1))
             } else {
                 cmp::min(range.end, cursor.end(&()).0)
             };
@@ -3836,12 +3809,10 @@ impl ExcerptMapSnapshot {
     /// Each returned excerpt's range is in the coordinate space of its source buffer.
     pub fn excerpts_in_ranges(
         &self,
-        ranges: impl IntoIterator<Item = Range<ExcerptMapOffset>>,
+        ranges: impl IntoIterator<Item = Range<ExcerptOffset>>,
     ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, Range<usize>)> {
         let mut ranges = ranges.into_iter();
-        let mut cursor = self
-            .excerpts
-            .cursor::<(ExcerptMapOffset, ExcerptMapPoint)>(&());
+        let mut cursor = self.excerpts.cursor::<(ExcerptOffset, ExcerptPoint)>(&());
         cursor.next(&());
         let mut current_range = ranges.next();
         iter::from_fn(move || {
@@ -3856,7 +3827,7 @@ impl ExcerptMapSnapshot {
             let excerpt = cursor.item()?;
             let range_start_in_excerpt = cmp::max(range.start, cursor.start().0);
             let range_end_in_excerpt = if excerpt.has_trailing_newline {
-                cmp::min(range.end, cursor.end(&()).0 - ExcerptMapOffset::new(1))
+                cmp::min(range.end, cursor.end(&()).0 - ExcerptOffset::new(1))
             } else {
                 cmp::min(range.end, cursor.end(&()).0)
             };
@@ -3882,15 +3853,15 @@ impl ExcerptMapSnapshot {
 impl ExcerptMapSnapshot {
     pub fn random_byte_range(
         &self,
-        start_offset: ExcerptMapOffset,
+        start_offset: ExcerptOffset,
         rng: &mut impl rand::Rng,
-    ) -> Range<ExcerptMapOffset> {
+    ) -> Range<ExcerptOffset> {
         let end = self.clip_offset(
-            ExcerptMapOffset::new(rng.gen_range(start_offset.value..=self.len().value)),
+            ExcerptOffset::new(rng.gen_range(start_offset.value..=self.len().value)),
             Bias::Right,
         );
         let start = self.clip_offset(
-            ExcerptMapOffset::new(rng.gen_range(start_offset.value..=end.value)),
+            ExcerptOffset::new(rng.gen_range(start_offset.value..=end.value)),
             Bias::Right,
         );
         start..end
@@ -4252,7 +4223,7 @@ impl Excerpt {
 impl<'a> MultiBufferExcerpt<'a> {
     fn new(
         excerpt: &'a Excerpt,
-        (excerpt_offset, excerpt_position): (ExcerptMapOffset, ExcerptMapPoint),
+        (excerpt_offset, excerpt_position): (ExcerptOffset, ExcerptPoint),
     ) -> Self {
         MultiBufferExcerpt {
             excerpt,
@@ -4289,20 +4260,20 @@ impl<'a> MultiBufferExcerpt<'a> {
         self.excerpt.range.context.clone()
     }
 
-    pub fn start_offset(&self) -> ExcerptMapOffset {
+    pub fn start_offset(&self) -> ExcerptOffset {
         self.excerpt_offset
     }
 
-    pub fn start_point(&self) -> ExcerptMapPoint {
+    pub fn start_point(&self) -> ExcerptPoint {
         self.excerpt_position
     }
 
-    pub fn end_point(&self) -> ExcerptMapPoint {
-        self.excerpt_position + ExcerptMapPoint::wrap(self.excerpt.text_summary.lines)
+    pub fn end_point(&self) -> ExcerptPoint {
+        self.excerpt_position + ExcerptPoint::wrap(self.excerpt.text_summary.lines)
     }
 
     /// Maps an offset within the [`MultiBuffer`] to an offset within the [`Buffer`]
-    pub fn map_offset_to_buffer(&self, offset: ExcerptMapOffset) -> usize {
+    pub fn map_offset_to_buffer(&self, offset: ExcerptOffset) -> usize {
         self.excerpt.buffer_start_offset()
             + offset
                 .value
@@ -4311,7 +4282,7 @@ impl<'a> MultiBufferExcerpt<'a> {
     }
 
     /// Maps a point within the [`MultiBuffer`] to a point within the [`Buffer`]
-    pub fn map_point_to_buffer(&self, point: ExcerptMapPoint) -> Point {
+    pub fn map_point_to_buffer(&self, point: ExcerptPoint) -> Point {
         self.excerpt.buffer_start_point()
             + point
                 .value
@@ -4320,28 +4291,28 @@ impl<'a> MultiBufferExcerpt<'a> {
     }
 
     /// Maps a range within the [`MultiBuffer`] to a range within the [`Buffer`]
-    pub fn map_range_to_buffer(&self, range: Range<ExcerptMapOffset>) -> Range<usize> {
+    pub fn map_range_to_buffer(&self, range: Range<ExcerptOffset>) -> Range<usize> {
         self.map_offset_to_buffer(range.start)..self.map_offset_to_buffer(range.end)
     }
 
     /// Map an offset within the [`Buffer`] to an offset within the [`MultiBuffer`]
-    pub fn map_offset_from_buffer(&self, buffer_offset: usize) -> ExcerptMapOffset {
+    pub fn map_offset_from_buffer(&self, buffer_offset: usize) -> ExcerptOffset {
         let buffer_offset_in_excerpt = buffer_offset
             .saturating_sub(self.excerpt.buffer_start_offset())
             .min(self.excerpt.text_summary.len);
-        self.excerpt_offset + ExcerptMapOffset::new(buffer_offset_in_excerpt)
+        self.excerpt_offset + ExcerptOffset::new(buffer_offset_in_excerpt)
     }
 
     /// Map a point within the [`Buffer`] to a point within the [`MultiBuffer`]
-    pub fn map_point_from_buffer(&self, buffer_position: Point) -> ExcerptMapPoint {
+    pub fn map_point_from_buffer(&self, buffer_position: Point) -> ExcerptPoint {
         let position_in_excerpt = buffer_position.saturating_sub(self.excerpt.buffer_start_point());
         let position_in_excerpt =
             position_in_excerpt.min(self.excerpt.text_summary.lines + Point::new(1, 0));
-        self.excerpt_position + ExcerptMapPoint::wrap(position_in_excerpt)
+        self.excerpt_position + ExcerptPoint::wrap(position_in_excerpt)
     }
 
     /// Map a range within the [`Buffer`] to a range within the [`MultiBuffer`]
-    pub fn map_range_from_buffer(&self, buffer_range: Range<usize>) -> Range<ExcerptMapOffset> {
+    pub fn map_range_from_buffer(&self, buffer_range: Range<usize>) -> Range<ExcerptOffset> {
         self.map_offset_from_buffer(buffer_range.start)
             ..self.map_offset_from_buffer(buffer_range.end)
     }
@@ -4440,7 +4411,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for TextSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptMapOffset {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptOffset {
     fn zero(_cx: &()) -> Self {
         Default::default()
     }
@@ -4450,13 +4421,13 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptMapOffset {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for ExcerptMapOffset {
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for ExcerptOffset {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(&self.value, &cursor_location.text.len)
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, TextSummary> for ExcerptMapPoint {
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, TextSummary> for ExcerptPoint {
     fn cmp(&self, cursor_location: &TextSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(&self.value, &cursor_location.lines)
     }
@@ -4484,7 +4455,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for OffsetUtf16 {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptMapPoint {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptPoint {
     fn zero(_cx: &()) -> Self {
         Default::default()
     }
@@ -4494,7 +4465,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptMapPoint {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptMapPointUtf16 {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptPointUtf16 {
     fn zero(_cx: &()) -> Self {
         Default::default()
     }
@@ -4525,11 +4496,11 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<ExcerptId> {
 }
 
 impl<'a> ExcerptMapRows<'a> {
-    pub fn seek(&mut self, row: ExcerptMapRow) {
+    pub fn seek(&mut self, row: ExcerptRow) {
         self.buffer_row_range = 0..0;
 
         self.excerpts
-            .seek_forward(&ExcerptMapPoint::new(row.value, 0), Bias::Right, &());
+            .seek_forward(&ExcerptPoint::new(row.value, 0), Bias::Right, &());
         if self.excerpts.item().is_none() {
             self.excerpts.prev(&());
 
@@ -4569,11 +4540,11 @@ impl<'a> Iterator for ExcerptMapRows<'a> {
 }
 
 impl<'a> ExcerptMapChunks<'a> {
-    pub fn offset(&self) -> ExcerptMapOffset {
+    pub fn offset(&self) -> ExcerptOffset {
         self.range.start
     }
 
-    pub fn seek(&mut self, new_range: Range<ExcerptMapOffset>) {
+    pub fn seek(&mut self, new_range: Range<ExcerptOffset>) {
         self.range = new_range.clone();
         self.excerpts.seek(&new_range.start, Bias::Right, &());
         if let Some(excerpt) = self.excerpts.item() {
@@ -4603,7 +4574,7 @@ impl<'a> Iterator for ExcerptMapChunks<'a> {
         if self.range.is_empty() {
             None
         } else if let Some(chunk) = self.excerpt_chunks.as_mut()?.next() {
-            self.range.start += ExcerptMapOffset::new(chunk.text.len());
+            self.range.start += ExcerptOffset::new(chunk.text.len());
             Some(chunk)
         } else {
             self.excerpts.next(&());
