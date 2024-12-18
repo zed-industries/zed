@@ -65,21 +65,14 @@ impl<T: 'static> Render for PromptEditor<T> {
                 let codegen = codegen.read(cx);
 
                 if codegen.alternative_count(cx) > 1 {
-                    buttons.push(self.render_cycle_controls(cx));
+                    buttons.push(self.render_cycle_controls(&codegen, cx));
                 }
 
                 let gutter_dimensions = gutter_dimensions.lock();
 
                 gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0)
             }
-            PromptEditorMode::Terminal {
-                id: _,
-                codegen: _,
-                height_in_lines: _,
-            } => {
-                // todo(terminal-prompt-cycle)
-                Pixels::ZERO
-            }
+            PromptEditorMode::Terminal { .. } => Pixels::ZERO,
         };
 
         buttons.extend(self.render_buttons(cx));
@@ -395,16 +388,12 @@ impl<T: 'static> PromptEditor<T> {
             PromptEditorMode::Buffer { codegen, .. } => {
                 let codegen = codegen.read(cx);
                 if codegen.is_insertion {
-                    GenerationMode::Generate {
-                        supports_execute: false,
-                    }
+                    GenerationMode::Generate
                 } else {
                     GenerationMode::Transform
                 }
             }
-            PromptEditorMode::Terminal { .. } => GenerationMode::Generate {
-                supports_execute: true,
-            },
+            PromptEditorMode::Terminal { .. } => GenerationMode::Generate,
         };
 
         let codegen_status = self.codegen_status(cx);
@@ -521,26 +510,24 @@ impl<T: 'static> PromptEditor<T> {
             PromptEditorMode::Buffer { codegen, .. } => {
                 codegen.update(cx, |codegen, cx| codegen.cycle_prev(cx));
             }
-            PromptEditorMode::Terminal { codegen, .. } => todo!("terminal-prompt-cycle"),
+            PromptEditorMode::Terminal { .. } => {
+                // no cycle buttons in terminal mode
+            }
         }
     }
 
     fn cycle_next(&mut self, _: &CycleNextInlineAssist, cx: &mut ViewContext<Self>) {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
-                codegen.update(cx, |codegen, cx| codegen.cycle_prev(cx));
+                codegen.update(cx, |codegen, cx| codegen.cycle_next(cx));
             }
-            PromptEditorMode::Terminal { codegen, .. } => todo!("terminal-prompt-cycle"),
+            PromptEditorMode::Terminal { .. } => {
+                // no cycle buttons in terminal mode
+            }
         }
     }
 
-    fn render_cycle_controls(&self, cx: &ViewContext<Self>) -> AnyElement {
-        let PromptEditorMode::Buffer { codegen, .. } = &self.mode else {
-            // todo(terminal-prompt-cycle)
-            return div().into_any_element();
-        };
-
-        let codegen = codegen.read(cx);
+    fn render_cycle_controls(&self, codegen: &BufferCodegen, cx: &ViewContext<Self>) -> AnyElement {
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
         let model_registry = LanguageModelRegistry::read_global(cx);
@@ -598,9 +585,7 @@ impl<T: 'static> PromptEditor<T> {
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {
-                        // this.codegen
-                        //     .update(cx, |codegen, cx| codegen.cycle_prev(cx))
-                        todo!("terminal-prompt-cycle")
+                        this.cycle_prev(&CyclePreviousInlineAssist, cx);
                     })),
             )
             .child(
@@ -640,11 +625,9 @@ impl<T: 'static> PromptEditor<T> {
                             .into()
                         }
                     })
-                    .on_click(cx.listener(|this, _, cx| {
-                        // this.codegen
-                        //     .update(cx, |codegen, cx| codegen.cycle_next(cx))
-                        todo!("terminal-prompt-cycle")
-                    })),
+                    .on_click(
+                        cx.listener(|this, _, cx| this.cycle_next(&CycleNextInlineAssist, cx)),
+                    ),
             )
             .into_any_element()
     }
@@ -1110,7 +1093,7 @@ impl Into<CancelButtonState> for &CodegenStatus {
 
 #[derive(Copy, Clone)]
 pub enum GenerationMode {
-    Generate { supports_execute: bool },
+    Generate,
     Transform,
 }
 
