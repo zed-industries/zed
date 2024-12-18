@@ -3682,10 +3682,6 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
 
-        let aside_was_displayed = match self.context_menu.borrow().deref() {
-            Some(CodeContextMenu::Completions(menu)) => menu.aside_was_displayed.get(),
-            _ => false,
-        };
         let trigger_kind = match &options.trigger {
             Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
                 CompletionTriggerKind::TRIGGER_CHARACTER
@@ -3720,7 +3716,6 @@ impl Editor {
                         position,
                         buffer.clone(),
                         completions.into(),
-                        aside_was_displayed,
                     );
 
                     menu.filter(query.as_deref(), cx.background_executor().clone())
@@ -5118,12 +5113,27 @@ impl Editor {
     ) -> Option<AnyElement> {
         self.context_menu.borrow().as_ref().and_then(|menu| {
             if menu.visible() {
-                Some(menu.render(
+                Some(menu.render(style, max_height_in_lines, cx))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn render_context_menu_aside(
+        &self,
+        style: &EditorStyle,
+        max_height: Pixels,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<AnyElement> {
+        self.context_menu.borrow().as_ref().and_then(|menu| {
+            if menu.visible() {
+                menu.render_aside(
                     style,
-                    max_height_in_lines,
+                    max_height,
                     self.workspace.as_ref().map(|(w, _)| w.clone()),
                     cx,
-                ))
+                )
             } else {
                 None
             }

@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::{cell::Cell, cmp::Reverse, ops::Range, rc::Rc};
+use std::{cmp::Reverse, ops::Range, rc::Rc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -14,8 +14,8 @@ use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::{CodeAction, Completion, TaskSourceKind};
 use task::ResolvedTask;
-use ui::{prelude::*, Color, IntoElement, ListItem, Popover, Styled};
-use util::ResultExt as _;
+use ui::{prelude::*, Color, IntoElement, ListItem, Pixels, Popover, Styled};
+use util::ResultExt;
 use workspace::Workspace;
 
 use crate::{
@@ -25,6 +25,8 @@ use crate::{
     CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, ResolvedTasks,
 };
 use crate::{AcceptInlineCompletion, InlineCompletionMenuHint, InlineCompletionText};
+
+pub const MAX_COMPLETIONS_ASIDE_WIDTH: Pixels = px(500.);
 
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
@@ -109,18 +111,31 @@ impl CodeContextMenu {
             CodeContextMenu::CodeActions(menu) => menu.origin(cursor_position),
         }
     }
+
     pub fn render(
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
-        workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         match self {
-            CodeContextMenu::Completions(menu) => {
-                menu.render(style, max_height_in_lines, workspace, cx)
-            }
+            CodeContextMenu::Completions(menu) => menu.render(style, max_height_in_lines, cx),
             CodeContextMenu::CodeActions(menu) => menu.render(style, max_height_in_lines, cx),
+        }
+    }
+
+    pub fn render_aside(
+        &self,
+        style: &EditorStyle,
+        max_height: Pixels,
+        workspace: Option<WeakView<Workspace>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<AnyElement> {
+        match self {
+            CodeContextMenu::Completions(menu) => {
+                menu.render_aside(style, max_height, workspace, cx)
+            }
+            CodeContextMenu::CodeActions(_) => None,
         }
     }
 }
@@ -142,7 +157,6 @@ pub struct CompletionsMenu {
     pub selected_item: usize,
     scroll_handle: UniformListScrollHandle,
     resolve_completions: bool,
-    pub aside_was_displayed: Cell<bool>,
     show_completion_documentation: bool,
 }
 
@@ -160,7 +174,6 @@ impl CompletionsMenu {
         initial_position: Anchor,
         buffer: Model<Buffer>,
         completions: Box<[Completion]>,
-        aside_was_displayed: bool,
     ) -> Self {
         let match_candidates = completions
             .iter()
@@ -180,7 +193,6 @@ impl CompletionsMenu {
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
-            aside_was_displayed: Cell::new(aside_was_displayed),
         }
     }
 
@@ -236,7 +248,6 @@ impl CompletionsMenu {
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: false,
-            aside_was_displayed: Cell::new(false),
             show_completion_documentation: false,
         }
     }
@@ -362,11 +373,8 @@ impl CompletionsMenu {
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
-        workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
-        let max_height = max_height_in_lines as f32 * cx.line_height();
-
         let completions = self.completions.borrow_mut();
         let show_completion_documentation = self.show_completion_documentation;
         let widest_completion_ix = self
@@ -393,71 +401,12 @@ impl CompletionsMenu {
                 }) => provider_name.len(),
             })
             .map(|(ix, _)| ix);
+        drop(completions);
 
         let selected_item = self.selected_item;
-        let style = style.clone();
-
-        let multiline_docs = match &self.entries[selected_item] {
-            CompletionEntry::Match(mat) if show_completion_documentation => {
-                match &completions[mat.candidate_id].documentation {
-                    Some(Documentation::MultiLinePlainText(text)) => {
-                        Some(div().child(SharedString::from(text.clone())))
-                    }
-                    Some(Documentation::MultiLineMarkdown(parsed)) if !parsed.text.is_empty() => {
-                        Some(div().child(render_parsed_markdown(
-                            "completions_markdown",
-                            parsed,
-                            &style,
-                            workspace,
-                            cx,
-                        )))
-                    }
-                    Some(Documentation::Undocumented) if self.aside_was_displayed.get() => {
-                        Some(div().child("No documentation"))
-                    }
-                    _ => None,
-                }
-            }
-            CompletionEntry::InlineCompletionHint(hint) => Some(match &hint.text {
-                InlineCompletionText::Edit { text, highlights } => div()
-                    .my_1()
-                    .rounded(px(6.))
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(
-                        gpui::StyledText::new(text.clone())
-                            .with_highlights(&style.text, highlights.clone()),
-                    ),
-                InlineCompletionText::Move(text) => div().child(text.clone()),
-            }),
-            _ => None,
-        };
-
-        let aside_contents = if let Some(multiline_docs) = multiline_docs {
-            Some(multiline_docs)
-        } else if show_completion_documentation && self.aside_was_displayed.get() {
-            Some(div().child("Fetching documentation..."))
-        } else {
-            None
-        };
-        self.aside_was_displayed.set(aside_contents.is_some());
-
-        let aside_contents = aside_contents.map(|div| {
-            div.id("multiline_docs")
-                .max_h(max_height)
-                .flex_1()
-                .px_1p5()
-                .py_1()
-                .max_w(px(640.))
-                .w(px(450.))
-                .overflow_y_scroll()
-                .occlude()
-        });
-
-        drop(completions);
         let completions = self.completions.clone();
         let matches = self.entries.clone();
+        let style = style.clone();
         let list = uniform_list(
             cx.view().clone(),
             "completions",
@@ -588,12 +537,71 @@ impl CompletionsMenu {
         .with_width_from_item(widest_completion_ix)
         .with_sizing_behavior(ListSizingBehavior::Infer);
 
-        Popover::new()
-            .child(list)
-            .when_some(aside_contents, |popover, aside_contents| {
-                popover.aside(aside_contents)
-            })
-            .into_any_element()
+        Popover::new().child(list).into_any_element()
+    }
+
+    fn render_aside(
+        &self,
+        style: &EditorStyle,
+        max_height: Pixels,
+        workspace: Option<WeakView<Workspace>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<AnyElement> {
+        if !self.show_completion_documentation {
+            return None;
+        }
+
+        let multiline_docs = match &self.entries[self.selected_item] {
+            CompletionEntry::Match(mat) => {
+                match self.completions.borrow_mut()[mat.candidate_id]
+                    .documentation
+                    .as_ref()?
+                {
+                    Documentation::MultiLinePlainText(text) => {
+                        div().child(SharedString::from(text.clone()))
+                    }
+                    Documentation::MultiLineMarkdown(parsed) if !parsed.text.is_empty() => div()
+                        .child(render_parsed_markdown(
+                            "completions_markdown",
+                            parsed,
+                            &style,
+                            workspace,
+                            cx,
+                        )),
+                    Documentation::MultiLineMarkdown(_) => return None,
+                    Documentation::SingleLine(_) => return None,
+                    Documentation::Undocumented => return None,
+                }
+            }
+            CompletionEntry::InlineCompletionHint(hint) => match &hint.text {
+                InlineCompletionText::Edit { text, highlights } => div()
+                    .my_1()
+                    .rounded(px(6.))
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        gpui::StyledText::new(text.clone())
+                            .with_highlights(&style.text, highlights.clone()),
+                    ),
+                InlineCompletionText::Move(text) => div().child(text.clone()),
+            },
+        };
+
+        Some(
+            Popover::new()
+                .child(
+                    multiline_docs
+                        .id("multiline_docs")
+                        .max_h(max_height)
+                        .px_0p5()
+                        .min_w(px(260.))
+                        .max_w(MAX_COMPLETIONS_ASIDE_WIDTH)
+                        .overflow_y_scroll()
+                        .occlude(),
+                )
+                .into_any_element(),
+        )
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {

@@ -1,6 +1,6 @@
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
-    code_context_menus::CodeActionsMenu,
+    code_context_menus::{CodeActionsMenu, MAX_COMPLETIONS_ASIDE_WIDTH},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -2901,38 +2901,44 @@ impl EditorElement {
         else {
             return;
         };
-        let target_offset = match context_menu_origin {
-            crate::ContextMenuOrigin::EditorPoint(display_point) => {
-                let cursor_row_layout =
-                    &line_layouts[display_point.row().minus(start_row) as usize];
-                gpui::Point {
-                    x: cursor_row_layout.x_for_index(display_point.column() as usize)
-                        - scroll_pixel_position.x,
-                    y: display_point.row().next_row().as_f32() * line_height
-                        - scroll_pixel_position.y,
+        let target_position = content_origin
+            + match context_menu_origin {
+                crate::ContextMenuOrigin::EditorPoint(display_point) => {
+                    let cursor_row_layout =
+                        &line_layouts[display_point.row().minus(start_row) as usize];
+                    gpui::Point {
+                        x: cmp::max(
+                            px(0.),
+                            cursor_row_layout.x_for_index(display_point.column() as usize)
+                                - scroll_pixel_position.x,
+                        ),
+                        y: cmp::max(
+                            px(0.),
+                            display_point.row().next_row().as_f32() * line_height
+                                - scroll_pixel_position.y,
+                        ),
+                    }
                 }
-            }
-            crate::ContextMenuOrigin::GutterIndicator(row) => {
-                // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
-                // text field.
-                gpui::Point {
-                    x: -gutter_overshoot,
-                    y: row.next_row().as_f32() * line_height - scroll_pixel_position.y,
+                crate::ContextMenuOrigin::GutterIndicator(row) => {
+                    // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
+                    // text field.
+                    gpui::Point {
+                        x: -gutter_overshoot,
+                        y: row.next_row().as_f32() * line_height - scroll_pixel_position.y,
+                    }
                 }
-            }
-        };
+            };
 
         // If the context menu's max height won't fit below, then flip it above the line and display
         // it in reverse order. If the available space above is less than below.
         let unconstrained_max_height = line_height * 12. + POPOVER_Y_PADDING;
         let min_height = line_height * 3. + POPOVER_Y_PADDING;
-        let target_position = content_origin + target_offset;
-        let y_overflows_below = target_position.y + unconstrained_max_height > text_hitbox.bottom();
         let bottom_y_when_flipped = target_position.y - line_height;
         let available_above = bottom_y_when_flipped - text_hitbox.top();
         let available_below = text_hitbox.bottom() - target_position.y;
+        let y_overflows_below = unconstrained_max_height > available_below;
         let mut y_is_flipped = y_overflows_below && available_above > available_below;
-        let mut max_height = cmp::min(
+        let mut height = cmp::min(
             unconstrained_max_height,
             if y_is_flipped {
                 available_above
@@ -2942,33 +2948,33 @@ impl EditorElement {
         );
 
         // If less than 3 lines fit within the text bounds, instead fit within the window.
-        if max_height < 3. * line_height {
+        if height < min_height {
             let available_above = bottom_y_when_flipped;
             let available_below = cx.viewport_size().height - target_position.y;
             if available_below > 3. * line_height {
                 y_is_flipped = false;
-                max_height = min_height;
+                height = min_height;
             } else if available_above > 3. * line_height {
                 y_is_flipped = true;
-                max_height = min_height;
+                height = min_height;
             } else if available_above > available_below {
                 y_is_flipped = true;
-                max_height = available_above;
+                height = available_above;
             } else {
                 y_is_flipped = false;
-                max_height = available_below;
+                height = available_below;
             }
         }
 
-        let max_height_in_lines = ((max_height - POPOVER_Y_PADDING) / line_height).floor() as u32;
+        let max_height_in_lines = ((height - POPOVER_Y_PADDING) / line_height).floor() as u32;
 
-        let Some(mut menu) = self.editor.update(cx, |editor, cx| {
+        let Some(mut menu_element) = self.editor.update(cx, |editor, cx| {
             editor.render_context_menu(&self.style, max_height_in_lines, cx)
         }) else {
             return;
         };
 
-        let menu_size = menu.layout_as_root(AvailableSpace::min_size(), cx);
+        let menu_size = menu_element.layout_as_root(AvailableSpace::min_size(), cx);
         let menu_position = gpui::Point {
             x: if target_position.x + menu_size.width > cx.viewport_size().width {
                 // Snap the right edge of the list to the right edge of the window if its horizontal bounds
@@ -2983,8 +2989,114 @@ impl EditorElement {
                 target_position.y
             },
         };
+        cx.defer_draw(menu_element, menu_position, 1);
 
-        cx.defer_draw(menu, menu_position, 1);
+        let aside_element = self.editor.update(cx, |editor, cx| {
+            editor.render_context_menu_aside(&self.style, unconstrained_max_height, cx)
+        });
+        if let Some(aside_element) = aside_element {
+            let menu_bounds = Bounds::new(menu_position, menu_size);
+            let max_menu_size = size(menu_size.width, unconstrained_max_height);
+            let max_menu_bounds = if y_is_flipped {
+                Bounds::new(
+                    point(
+                        menu_position.x,
+                        bottom_y_when_flipped - max_menu_size.height,
+                    ),
+                    max_menu_size,
+                )
+            } else {
+                Bounds::new(target_position, max_menu_size)
+            };
+
+            // Pad the target by 4 pixels to create a gap.
+            let mut extend_amount = Edges::all(px(4.));
+            // Extend to include the cursored line to avoid overlapping it.
+            if y_is_flipped {
+                extend_amount.bottom = line_height;
+            } else {
+                extend_amount.top = line_height;
+            }
+            self.layout_context_menu_aside(
+                text_hitbox,
+                y_is_flipped,
+                menu_position,
+                menu_bounds.extend(extend_amount),
+                max_menu_bounds.extend(extend_amount),
+                unconstrained_max_height,
+                aside_element,
+                cx,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_context_menu_aside(
+        &self,
+        text_hitbox: &Hitbox,
+        y_is_flipped: bool,
+        menu_position: gpui::Point<Pixels>,
+        target_bounds: Bounds<Pixels>,
+        max_target_bounds: Bounds<Pixels>,
+        max_height: Pixels,
+        aside: AnyElement,
+        cx: &mut WindowContext,
+    ) {
+        let mut aside = aside;
+        let actual_size = aside.layout_as_root(AvailableSpace::min_size(), cx);
+
+        // Snap to right side of window if it would overflow.
+        let aside_x = cmp::min(
+            menu_position.x,
+            cx.viewport_size().width - actual_size.width,
+        );
+        if aside_x < px(0.) {
+            // Not enough space, skip drawing.
+            return;
+        }
+
+        let top_position = point(aside_x, target_bounds.top() - actual_size.height);
+        let bottom_position = point(aside_x, target_bounds.bottom());
+        let right_position = point(target_bounds.right(), menu_position.y);
+
+        let fit_horizontally_within = |available: Edges<Pixels>, wanted: Size<Pixels>| {
+            // Prefer to fit to the right, then on the same side of the line as the menu, then on
+            // the other side of the line.
+            if wanted.width < available.right {
+                Some(right_position)
+            } else if !y_is_flipped && wanted.height < available.bottom {
+                Some(bottom_position)
+            } else if !y_is_flipped && wanted.height < available.top {
+                Some(top_position)
+            } else if y_is_flipped && wanted.height < available.top {
+                Some(top_position)
+            } else if y_is_flipped && wanted.height < available.bottom {
+                Some(bottom_position)
+            } else {
+                None
+            }
+        };
+
+        // Prefer choosing a direction using max sizes rather than actual size for stability.
+        let mut available = max_target_bounds.space_within(&text_hitbox.bounds);
+        let mut wanted = size(MAX_COMPLETIONS_ASIDE_WIDTH, max_height);
+        let aside_position = fit_horizontally_within(available, wanted)
+            .or_else(|| {
+                // Fallback: fit max size in window.
+                available = max_target_bounds
+                    .space_within(&Bounds::new(Default::default(), cx.viewport_size()));
+                fit_horizontally_within(available, wanted)
+            })
+            .or_else(|| {
+                // Fallback: fit actual size in window.
+                wanted = actual_size;
+                fit_horizontally_within(available, wanted)
+            });
+
+        // Skip drawing if it doesn't fit anywhere.
+        if let Some(aside_position) = aside_position {
+            cx.defer_draw(aside, aside_position, 1);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
