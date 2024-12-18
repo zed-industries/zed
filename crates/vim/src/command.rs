@@ -3,6 +3,7 @@ use std::{
     ops::{Deref, Range},
     str::Chars,
     sync::OnceLock,
+    time::Instant,
 };
 
 use anyhow::{anyhow, Result};
@@ -1021,8 +1022,8 @@ impl OnMatchingLines {
                 }
                 editor
                     .update(&mut cx, |editor, cx| {
-                        // use change_with to avoid pushing to selection history.
-                        editor.selections.change_with(cx, |s| {
+                        editor.start_transaction_at(Instant::now(), cx);
+                        editor.change_selections(None, cx, |s| {
                             s.replace_cursors_with(|_| new_selections);
                         });
                         cx.dispatch_action(action);
@@ -1030,7 +1031,8 @@ impl OnMatchingLines {
                             let newest = editor.selections.newest::<Point>(cx).clone();
                             editor.change_selections(None, cx, |s| {
                                 s.select(vec![newest]);
-                            })
+                            });
+                            editor.end_transaction_at(Instant::now(), cx);
                         })
                     })
                     .ok();
@@ -1309,5 +1311,47 @@ mod test {
         cx.workspace(|workspace, cx| {
             assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_command_filter(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇa
+            b
+            a
+            b
+            a
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(":").await;
+        cx.simulate_shared_keystrokes("g / a / d").await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            b
+            b
+            ˇ"});
+
+        cx.simulate_shared_keystrokes("u").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇa
+            b
+            a
+            b
+            a
+        "});
+
+        cx.simulate_shared_keystrokes(":").await;
+        cx.simulate_shared_keystrokes("v / a / d").await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            a
+            a
+            ˇa"});
     }
 }
