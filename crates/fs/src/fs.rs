@@ -2030,12 +2030,12 @@ fn create_temp_file(path: &Path) -> Result<NamedTempFile> {
 }
 
 #[cfg(target_os = "macos")]
-async fn write_to_file_as_root(temp_file_path: &Path, target_file_path: &Path) -> Result<()> {
+async fn write_to_file_as_root(_temp_file_path: &Path, _target_file_path: &Path) -> Result<()> {
     unimplemented!("write_to_file_as_root is not implemented")
 }
 
 #[cfg(target_os = "windows")]
-async fn write_to_file_as_root(temp_file_path: &Path, target_file_path: &Path) -> Result<()> {
+async fn write_to_file_as_root(_temp_file_path: &Path, _target_file_path: &Path) -> Result<()> {
     unimplemented!("write_to_file_as_root is not implemented")
 }
 
