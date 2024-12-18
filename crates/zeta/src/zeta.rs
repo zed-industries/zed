@@ -932,6 +932,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         "Zeta"
     }
 
+    fn show_completions_in_menu() -> bool {
+        true
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,

@@ -2473,7 +2473,7 @@ impl Editor {
         }
 
         if self.hide_context_menu(cx).is_some() {
-            if self.has_active_inline_completion() {
+            if self.show_inline_completions_in_menu(cx) && self.has_active_inline_completion() {
                 self.update_visible_inline_completion(cx);
             }
             return true;
@@ -2856,6 +2856,7 @@ impl Editor {
                 );
             }
 
+            let had_active_inline_completion = this.has_active_inline_completion();
             this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
                 s.select(new_selections)
             });
@@ -2876,7 +2877,9 @@ impl Editor {
                 this.show_signature_help(&ShowSignatureHelp, cx);
             }
 
-            this.trigger_completion_on_input(&text, true, cx);
+            let trigger_in_words =
+                this.show_inline_completions_in_menu(cx) || !had_active_inline_completion;
+            this.trigger_completion_on_input(&text, trigger_in_words, cx);
             linked_editing_ranges::refresh_linked_ranges(this, cx);
             this.refresh_inline_completion(true, false, cx);
         });
@@ -3741,9 +3744,13 @@ impl Editor {
                         let mut menu = menu.unwrap();
                         menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
 
-                        if let Some(hint) = editor.inline_completion_menu_hint(cx) {
-                            editor.hide_active_inline_completion(cx);
-                            menu.show_inline_completion_hint(hint);
+                        if editor.show_inline_completions_in_menu(cx) {
+                            if let Some(hint) = editor.inline_completion_menu_hint(cx) {
+                                editor.hide_active_inline_completion(cx);
+                                menu.show_inline_completion_hint(hint);
+                            }
+                        } else {
+                            editor.discard_inline_completion(false, cx);
                         }
 
                         *editor.context_menu.borrow_mut() =
@@ -3752,9 +3759,14 @@ impl Editor {
                         cx.notify();
                     } else if editor.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
-                        // empty, we should hide it. If it was already hidden, we should
-                        // also show the copilot completion when available.
-                        editor.hide_context_menu(cx);
+                        // empty, we should hide it.
+                        let was_hidden = editor.hide_context_menu(cx).is_none();
+                        // If it was already hidden and we don't show inline
+                        // completions in the menu, we should also show the
+                        // inline-completion when available.
+                        if was_hidden && editor.show_inline_completions_in_menu(cx) {
+                            editor.update_visible_inline_completion(cx);
+                        }
                     }
                 })?;
 
@@ -3808,7 +3820,9 @@ impl Editor {
                 return Some(Task::ready(Ok(())));
             }
             CompletionEntry::Match(mat) => {
-                self.discard_inline_completion(true, cx);
+                if self.show_inline_completions_in_menu(cx) {
+                    self.discard_inline_completion(true, cx);
+                }
                 mat
             }
         };
@@ -4546,7 +4560,9 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        self.hide_context_menu(cx);
+        if self.show_inline_completions_in_menu(cx) {
+            self.hide_context_menu(cx);
+        }
 
         let Some(active_inline_completion) = self.active_inline_completion.as_ref() else {
             return;
@@ -4713,7 +4729,11 @@ impl Editor {
         let offset_selection = selection.map(|endpoint| endpoint.to_offset(&multibuffer));
         let excerpt_id = cursor.excerpt_id;
 
-        if !offset_selection.is_empty()
+        let completions_menu_has_precedence = !self.show_inline_completions_in_menu(cx)
+            && (self.context_menu.borrow().is_some()
+                || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion()));
+        if completions_menu_has_precedence
+            || !offset_selection.is_empty()
             || self
                 .active_inline_completion
                 .as_ref()
@@ -4771,7 +4791,7 @@ impl Editor {
             invalidation_row_range = edit_start_row..cursor_row;
             completion = InlineCompletion::Move(first_edit_start);
         } else {
-            if !self.has_active_completions_menu() {
+            if !self.show_inline_completions_in_menu(cx) || !self.has_active_completions_menu() {
                 if edits
                     .iter()
                     .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
@@ -4818,7 +4838,7 @@ impl Editor {
             invalidation_range,
         });
 
-        if self.has_active_completions_menu() {
+        if self.show_inline_completions_in_menu(cx) && self.has_active_completions_menu() {
             if let Some(hint) = self.inline_completion_menu_hint(cx) {
                 match self.context_menu.borrow_mut().as_mut() {
                     Some(CodeContextMenu::Completions(menu)) => {
@@ -4867,6 +4887,13 @@ impl Editor {
 
     fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
         Some(self.inline_completion_provider.as_ref()?.provider.clone())
+    }
+
+    fn show_inline_completions_in_menu(&self, cx: &AppContext) -> bool {
+        EditorSettings::get_global(cx).show_inline_completions_in_menu
+            && self
+                .inline_completion_provider()
+                .map_or(false, |provider| provider.show_completions_in_menu())
     }
 
     fn render_code_actions_indicator(
@@ -5137,7 +5164,11 @@ impl Editor {
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<CodeContextMenu> {
         cx.notify();
         self.completion_tasks.clear();
-        self.context_menu.borrow_mut().take()
+        let context_menu = self.context_menu.borrow_mut().take();
+        if context_menu.is_some() && !self.show_inline_completions_in_menu(cx) {
+            self.update_visible_inline_completion(cx);
+        }
+        context_menu
     }
 
     fn show_snippet_choices(
