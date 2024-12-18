@@ -44,11 +44,10 @@ impl InlineAssistId {
     }
 }
 
-pub struct PromptEditor {
+pub struct PromptEditor<T> {
     pub id: InlineAssistId,
     pub editor: View<Editor>,
-    // todo (agus): try to make private
-    pub mode: PromptEditorMode,
+    mode: PromptEditorMode,
     context_strip: View<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     language_model_selector: View<LanguageModelSelector>,
@@ -59,11 +58,12 @@ pub struct PromptEditor {
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
     show_rate_limit_notice: bool,
+    _phantom: std::marker::PhantomData<T>,
 }
 
-impl EventEmitter<PromptEditorEvent> for PromptEditor {}
+impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
 
-impl Render for PromptEditor {
+impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut buttons = Vec::new();
 
@@ -217,93 +217,14 @@ impl Render for PromptEditor {
     }
 }
 
-impl FocusableView for PromptEditor {
+impl<T: 'static> FocusableView for PromptEditor<T> {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
 
-impl PromptEditor {
+impl<T: 'static> PromptEditor<T> {
     const MAX_LINES: u8 = 8;
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_buffer(
-        id: InlineAssistId,
-        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
-        prompt_history: VecDeque<String>,
-        prompt_buffer: Model<MultiBuffer>,
-        codegen: Model<BufferCodegen>,
-        fs: Arc<dyn Fs>,
-        context_store: Model<ContextStore>,
-        workspace: WeakView<Workspace>,
-        thread_store: Option<WeakModel<ThreadStore>>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
-        let mode = PromptEditorMode::Buffer {
-            codegen,
-            gutter_dimensions,
-        };
-
-        let prompt_editor = cx.new_view(|cx| {
-            let mut editor = Editor::new(
-                EditorMode::AutoHeight {
-                    max_lines: Self::MAX_LINES as usize,
-                },
-                prompt_buffer,
-                None,
-                false,
-                cx,
-            );
-            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            // Since the prompt editors for all inline assistants are linked,
-            // always show the cursor (even when it isn't focused) because
-            // typing in one will make what you typed appear in all of them.
-            editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text(Self::placeholder_text(&mode, cx), cx);
-            editor
-        });
-        let context_picker_menu_handle = PopoverMenuHandle::default();
-
-        let mut this = Self {
-            id,
-            editor: prompt_editor.clone(),
-            context_strip: cx.new_view(|cx| {
-                ContextStrip::new(
-                    context_store,
-                    workspace.clone(),
-                    thread_store.clone(),
-                    prompt_editor.focus_handle(cx),
-                    context_picker_menu_handle.clone(),
-                    cx,
-                )
-            }),
-            context_picker_menu_handle,
-            language_model_selector: cx.new_view(|cx| {
-                let fs = fs.clone();
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    },
-                    cx,
-                )
-            }),
-            edited_since_done: false,
-            prompt_history,
-            prompt_history_ix: None,
-            pending_prompt: String::new(),
-            _codegen_subscription: codegen_subscription,
-            editor_subscriptions: Vec::new(),
-            show_rate_limit_notice: false,
-            mode,
-        };
-        this.subscribe_to_editor(cx);
-        this
-    }
 
     fn codegen_status<'a>(&'a self, cx: &'a AppContext) -> &'a CodegenStatus {
         match &self.mode {
@@ -417,37 +338,6 @@ impl PromptEditor {
                 }
             }
             _ => {}
-        }
-    }
-
-    fn handle_codegen_changed(&mut self, _: Model<BufferCodegen>, cx: &mut ViewContext<Self>) {
-        match self.codegen_status(cx) {
-            CodegenStatus::Idle => {
-                self.editor
-                    .update(cx, |editor, _| editor.set_read_only(false));
-            }
-            CodegenStatus::Pending => {
-                self.editor
-                    .update(cx, |editor, _| editor.set_read_only(true));
-            }
-            CodegenStatus::Done => {
-                self.edited_since_done = false;
-                self.editor
-                    .update(cx, |editor, _| editor.set_read_only(false));
-            }
-            CodegenStatus::Error(error) => {
-                if cx.has_flag::<ZedPro>()
-                    && error.error_code() == proto::ErrorCode::RateLimitExceeded
-                    && !dismissed_rate_limit_notice()
-                {
-                    self.show_rate_limit_notice = true;
-                    cx.notify();
-                }
-
-                self.edited_since_done = false;
-                self.editor
-                    .update(cx, |editor, _| editor.set_read_only(false));
-            }
         }
     }
 
@@ -747,6 +637,140 @@ impl PromptEditor {
                 )
             })
             .into_any_element()
+    }
+}
+
+impl PromptEditor<BufferCodegen> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_buffer(
+        id: InlineAssistId,
+        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+        prompt_history: VecDeque<String>,
+        prompt_buffer: Model<MultiBuffer>,
+        codegen: Model<BufferCodegen>,
+        fs: Arc<dyn Fs>,
+        context_store: Model<ContextStore>,
+        workspace: WeakView<Workspace>,
+        thread_store: Option<WeakModel<ThreadStore>>,
+        cx: &mut ViewContext<PromptEditor<BufferCodegen>>,
+    ) -> PromptEditor<BufferCodegen> {
+        let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
+        let mode = PromptEditorMode::Buffer {
+            codegen,
+            gutter_dimensions,
+        };
+
+        let prompt_editor = cx.new_view(|cx| {
+            let mut editor = Editor::new(
+                EditorMode::AutoHeight {
+                    max_lines: Self::MAX_LINES as usize,
+                },
+                prompt_buffer,
+                None,
+                false,
+                cx,
+            );
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            // Since the prompt editors for all inline assistants are linked,
+            // always show the cursor (even when it isn't focused) because
+            // typing in one will make what you typed appear in all of them.
+            editor.set_show_cursor_when_unfocused(true, cx);
+            editor.set_placeholder_text(Self::placeholder_text(&mode, cx), cx);
+            editor
+        });
+        let context_picker_menu_handle = PopoverMenuHandle::default();
+
+        let mut this: PromptEditor<BufferCodegen> = PromptEditor {
+            id,
+            editor: prompt_editor.clone(),
+            context_strip: cx.new_view(|cx| {
+                ContextStrip::new(
+                    context_store,
+                    workspace.clone(),
+                    thread_store.clone(),
+                    prompt_editor.focus_handle(cx),
+                    context_picker_menu_handle.clone(),
+                    cx,
+                )
+            }),
+            context_picker_menu_handle,
+            language_model_selector: cx.new_view(|cx| {
+                let fs = fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    cx,
+                )
+            }),
+            edited_since_done: false,
+            prompt_history,
+            prompt_history_ix: None,
+            pending_prompt: String::new(),
+            _codegen_subscription: codegen_subscription,
+            editor_subscriptions: Vec::new(),
+            show_rate_limit_notice: false,
+            mode,
+            _phantom: Default::default(),
+        };
+
+        this.subscribe_to_editor(cx);
+        this
+    }
+
+    fn handle_codegen_changed(
+        &mut self,
+        _: Model<BufferCodegen>,
+        cx: &mut ViewContext<PromptEditor<BufferCodegen>>,
+    ) {
+        match self.codegen_status(cx) {
+            CodegenStatus::Idle => {
+                self.editor
+                    .update(cx, |editor, _| editor.set_read_only(false));
+            }
+            CodegenStatus::Pending => {
+                self.editor
+                    .update(cx, |editor, _| editor.set_read_only(true));
+            }
+            CodegenStatus::Done => {
+                self.edited_since_done = false;
+                self.editor
+                    .update(cx, |editor, _| editor.set_read_only(false));
+            }
+            CodegenStatus::Error(error) => {
+                if cx.has_flag::<ZedPro>()
+                    && error.error_code() == proto::ErrorCode::RateLimitExceeded
+                    && !dismissed_rate_limit_notice()
+                {
+                    self.show_rate_limit_notice = true;
+                    cx.notify();
+                }
+
+                self.edited_since_done = false;
+                self.editor
+                    .update(cx, |editor, _| editor.set_read_only(false));
+            }
+        }
+    }
+
+    pub fn codegen(&self) -> Model<BufferCodegen> {
+        match &self.mode {
+            PromptEditorMode::Buffer { codegen, .. } => codegen.clone(),
+            PromptEditorMode::Terminal { .. } => unreachable!(),
+        }
+    }
+
+    pub fn gutter_dimensions(&self) -> &Arc<Mutex<GutterDimensions>> {
+        match &self.mode {
+            PromptEditorMode::Buffer {
+                gutter_dimensions, ..
+            } => gutter_dimensions,
+            PromptEditorMode::Terminal { .. } => unreachable!(),
+        }
     }
 }
 

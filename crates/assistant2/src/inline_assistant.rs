@@ -395,10 +395,7 @@ impl InlineAssistant {
             .or_insert_with(|| EditorInlineAssists::new(&editor, cx));
         let mut assist_group = InlineAssistGroup::new();
         for (assist_id, range, prompt_editor, prompt_block_id, end_block_id) in assists {
-            let codegen = match &prompt_editor.read(cx).mode {
-                PromptEditorMode::Buffer { codegen, .. } => codegen.clone(),
-                PromptEditorMode::Terminal { .. } => unreachable!("Unexpected terminal mode"),
-            };
+            let codegen = prompt_editor.read(cx).codegen().clone();
 
             self.assists.insert(
                 assist_id,
@@ -519,7 +516,7 @@ impl InlineAssistant {
         &self,
         editor: &View<Editor>,
         range: &Range<Anchor>,
-        prompt_editor: &View<PromptEditor>,
+        prompt_editor: &View<PromptEditor<BufferCodegen>>,
         cx: &mut WindowContext,
     ) -> [CustomBlockId; 2] {
         let prompt_editor_height = prompt_editor.update(cx, |prompt_editor, cx| {
@@ -621,7 +618,7 @@ impl InlineAssistant {
 
     fn handle_prompt_editor_event(
         &mut self,
-        prompt_editor: View<PromptEditor>,
+        prompt_editor: View<PromptEditor<BufferCodegen>>,
         event: &PromptEditorEvent,
         cx: &mut WindowContext,
     ) {
@@ -1429,17 +1426,11 @@ impl InlineAssistGroup {
     }
 }
 
-fn build_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
+fn build_assist_editor_renderer(editor: &View<PromptEditor<BufferCodegen>>) -> RenderBlock {
     let editor = editor.clone();
 
     Arc::new(move |cx: &mut BlockContext| {
-        let gutter_dimensions = match &editor.read(cx).mode {
-            PromptEditorMode::Terminal { .. } => unreachable!("Unexpected terminal mode"),
-            PromptEditorMode::Buffer {
-                gutter_dimensions,
-                codegen: _,
-            } => gutter_dimensions,
-        };
+        let gutter_dimensions = editor.read(cx).gutter_dimensions();
 
         *gutter_dimensions.lock() = *cx.gutter_dimensions;
         editor.clone().into_any_element()
@@ -1473,7 +1464,7 @@ impl InlineAssist {
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,
         editor: &View<Editor>,
-        prompt_editor: &View<PromptEditor>,
+        prompt_editor: &View<PromptEditor<BufferCodegen>>,
         prompt_block_id: CustomBlockId,
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
@@ -1572,7 +1563,7 @@ impl InlineAssist {
 
 struct InlineAssistDecorations {
     prompt_block_id: CustomBlockId,
-    prompt_editor: View<PromptEditor>,
+    prompt_editor: View<PromptEditor<BufferCodegen>>,
     removed_line_block_ids: HashSet<CustomBlockId>,
     end_block_id: CustomBlockId,
 }
