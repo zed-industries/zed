@@ -41,7 +41,7 @@ You can trigger formatting via {#kb editor::Format} or the `editor: format` acti
 
 ```json
   "languages": {
-    "C" {
+    "C": {
       "format_on_save": "on",
       "tab_size": 2
     }
