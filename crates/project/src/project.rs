@@ -1210,7 +1210,7 @@ impl Project {
             project.update(cx, |project, cx| {
                 let tree_id = tree.read(cx).id();
                 project.environment.update(cx, |environment, _| {
-                    environment.set_cached(&[(tree_id, HashMap::default())])
+                    environment.set_environments(&[(tree_id, HashMap::default())])
                 });
             });
 
