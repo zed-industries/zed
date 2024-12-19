@@ -1,4 +1,3 @@
-use backtrace::Backtrace;
 use gpui::*;
 use prelude::FluentBuilder as _;
 

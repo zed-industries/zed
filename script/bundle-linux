@@ -62,8 +62,7 @@ if [[ "$remote_server_triple" == "$musl_triple" ]]; then
 fi
 cargo build --release --target "${remote_server_triple}" --package remote_server
 
-# Strip the binary of all debug symbols
-# Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
+# Strip debug symbols and save them for upload to DigitalOcean
 objcopy --only-keep-debug "${target_dir}/${target_triple}/release/zed" "${target_dir}/${target_triple}/release/zed.dbg"
 objcopy --only-keep-debug "${target_dir}/${remote_server_triple}/release/remote_server" "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
 objcopy --strip-debug "${target_dir}/${target_triple}/release/zed"

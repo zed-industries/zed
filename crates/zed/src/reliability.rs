@@ -67,25 +67,23 @@ pub fn init_panic_hook(
                 location.column(),
                 backtrace,
             );
-            // TODO: std::process::exit(-1); :ODOT
+            std::process::exit(-1);
         }
-        let main_module_base_address = unsafe { get_main_module_base_address() };
+        let main_module_base_address = get_main_module_base_address();
 
         let backtrace = Backtrace::new();
         let mut symbols = backtrace
             .frames()
             .iter()
             .flat_map(|frame| {
+                let base = frame
+                    .module_base_address()
+                    .unwrap_or(main_module_base_address);
                 frame.symbols().iter().filter_map(|symbol| {
                     Some(format!(
                         "{:#}+{}",
                         symbol.name()?,
-                        (frame.ip() as u64).saturating_sub(
-                            frame
-                                .module_base_address()
-                                .map(|m| m as u64)
-                                .unwrap_or(main_module_base_address)
-                        )
+                        (frame.ip() as isize).saturating_sub(base as isize)
                     ))
                 })
             })
@@ -120,10 +118,7 @@ pub fn init_panic_hook(
         };
 
         if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
-            println!("{}", panic_data_json);
             log::error!("{}", panic_data_json);
-        } else {
-            println!("RUH ROH");
         }
 
         if !is_pty {
@@ -147,20 +142,22 @@ pub fn init_panic_hook(
 }
 
 #[cfg(not(target_os = "windows"))]
-unsafe fn get_main_module_base_address() -> u64 {
+fn get_main_module_base_address() -> *mut c_void {
     let mut dl_info = libc::Dl_info {
-        dli_sname: std::ptr::null_mut(),
-        dli_fname: std::ptr::null_mut(),
+        dli_fname: std::ptr::null(),
         dli_fbase: std::ptr::null_mut(),
+        dli_sname: std::ptr::null(),
         dli_saddr: std::ptr::null_mut(),
     };
-    unsafe { libc::dladdr(get_main_module_base_address as _, &mut dl_info) };
-    dl_info.dli_fbase as u64
+    unsafe {
+        libc::dladdr(get_main_module_base_address as _, &mut dl_info);
+    }
+    dl_info.dli_fbase
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn get_main_module_base_address() -> u64 {
-    0
+unsafe fn get_main_module_base_address() -> *mut c_void {
+    std::ptr::null_mut()
 }
 
 pub fn init(
