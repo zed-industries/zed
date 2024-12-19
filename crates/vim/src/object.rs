@@ -1760,6 +1760,134 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_anyquotes_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+    
+        const ANYQUOTES_EXAMPLES: &[&str] = &[
+            // Single quote examples
+            "It's a 'qˇuote' example.",
+            // Double quote examples
+            "This is a \"qˇuote\" example.",
+            // Backtick examples
+            "This is a `qˇuote` example.",
+            // Nested quotes
+            "This is a 'n\"estˇed\"' example.",
+            // Mixed single, double, and back quotes
+            "This is a 'mix`ed` ˇ\"example\"'.",
+            // Multiline quotes
+            indoc! {"
+                'This is
+                a mulˇtiline
+                quote.'
+            "},
+            indoc! {"
+                \"This is
+                a mulˇtiline
+                quote.\"
+            "},
+        ];
+    
+        for example in ANYQUOTES_EXAMPLES {
+            // Change inside quotes
+            cx.simulate_at_each_offset("c i q", example)
+                .await
+                .assert_matches();
+    
+            // Change around quotes
+            cx.simulate_at_each_offset("c a q", example)
+                .await
+                .assert_matches();
+    
+            // Delete inside quotes
+            cx.simulate_at_each_offset("d i q", example)
+                .await
+                .assert_matches();
+    
+            // Delete around quotes
+            cx.simulate_at_each_offset("d a q", example)
+                .await
+                .assert_matches();
+    
+            // Visual inside quotes
+            cx.simulate_at_each_offset("v i q", example)
+                .await
+                .assert_matches();
+    
+            // Visual around quotes
+            cx.simulate_at_each_offset("v a q", example)
+                .await
+                .assert_matches();
+        }
+    }
+    
+    #[gpui::test]
+    async fn test_anyquotes_with_escapes(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+    
+        const ESCAPED_QUOTES: &str = "This is 'it\\'s ˇescaped', \"an \\\"escape\"\", and `\\`escaped\\``.";
+    
+        // Change inside any escaped quotes
+        cx.simulate_at_each_offset("c i q", ESCAPED_QUOTES)
+            .await
+            .assert_matches();
+    
+        // Delete inside any escaped quotes
+        cx.simulate_at_each_offset("d i q", ESCAPED_QUOTES)
+            .await
+            .assert_matches();
+    
+        // Visual inside escaped quotes
+        cx.simulate_at_each_offset("v i q", ESCAPED_QUOTES)
+            .await
+            .assert_matches();
+    }
+    
+    #[gpui::test]
+    async fn test_anyquotes_multiline(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+    
+        const MULTILINE_QUOTES: &[&str] = &[
+            indoc! {"
+                'This is
+                a mulˇtiline
+                quote.'
+            "},
+            indoc! {"
+                \"This is
+                a mulˇtiline
+                quote.\"
+            "},
+            indoc! {"
+                `This is
+                a mulˇtiline
+                quote.`
+            "},
+        ];
+    
+        for example in MULTILINE_QUOTES {
+            // Change inside quotes
+            cx.simulate_at_each_offset("c i q", example)
+                .await
+                .assert_matches();
+    
+            // Change around quotes
+            cx.simulate_at_each_offset("c a q", example)
+                .await
+                .assert_matches();
+    
+            // Visual inside quotes
+            cx.simulate_at_each_offset("v i q", example)
+                .await
+                .assert_matches();
+    
+            // Visual around quotes
+            cx.simulate_at_each_offset("v a q", example)
+                .await
+                .assert_matches();
+        }
+    }
+
+    #[gpui::test]
     async fn test_tags(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new_html(cx).await;
 
