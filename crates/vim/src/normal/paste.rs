@@ -196,10 +196,11 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
+    use crate::vim_settings::UseSystemClipboard;
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
-        UseSystemClipboard, VimSettings,
+        VimSettings,
     };
     use gpui::ClipboardItem;
     use indoc::indoc;

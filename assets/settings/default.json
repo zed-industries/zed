@@ -1168,7 +1168,10 @@
     "use_multiline_find": false,
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
-    "custom_digraphs": {}
+    "custom_digraphs": {},
+    "mode_indicator": {
+      "location": "right"
+    }
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
