@@ -7023,7 +7023,16 @@ impl CursorLayout {
             let name_origin = if cursor_name.is_top_row {
                 point(bounds.right() - px(1.), bounds.top())
             } else {
-                point(bounds.left(), bounds.top() - text_size / 2. - px(1.))
+                match self.shape {
+                    CursorShape::Bar => point(
+                        bounds.right() - px(2.),
+                        bounds.top() - text_size / 2. - px(1.),
+                    ),
+                    _ => point(
+                        bounds.right() - px(1.),
+                        bounds.top() - text_size / 2. - px(1.),
+                    ),
+                }
             };
             let mut name_element = div()
                 .bg(self.color)
