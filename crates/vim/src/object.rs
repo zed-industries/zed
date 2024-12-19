@@ -25,6 +25,7 @@ pub enum Object {
     Paragraph,
     Quotes,
     BackQuotes,
+    AnyQuotes,
     DoubleQuotes,
     VerticalBars,
     Parentheses,
@@ -61,6 +62,7 @@ actions!(
         Paragraph,
         Quotes,
         BackQuotes,
+        AnyQuotes,
         DoubleQuotes,
         VerticalBars,
         Parentheses,
@@ -95,6 +97,9 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &BackQuotes, cx| {
         vim.object(Object::BackQuotes, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &AnyQuotes, cx| {
+        vim.object(Object::AnyQuotes, cx)
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, cx| {
         vim.object(Object::DoubleQuotes, cx)
@@ -156,6 +161,7 @@ impl Object {
             Object::Word { .. }
             | Object::Quotes
             | Object::BackQuotes
+            | Object::AnyQuotes
             | Object::VerticalBars
             | Object::DoubleQuotes => false,
             Object::Sentence
@@ -182,6 +188,7 @@ impl Object {
             | Object::IndentObj { .. } => false,
             Object::Quotes
             | Object::BackQuotes
+            | Object::AnyQuotes
             | Object::DoubleQuotes
             | Object::VerticalBars
             | Object::Parentheses
@@ -200,6 +207,7 @@ impl Object {
             Object::Word { .. }
             | Object::Sentence
             | Object::Quotes
+            | Object::AnyQuotes
             | Object::BackQuotes
             | Object::DoubleQuotes => {
                 if current_mode == Mode::VisualBlock {
@@ -250,6 +258,33 @@ impl Object {
             }
             Object::BackQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
+            }
+            Object::AnyQuotes => {
+                let multiline = self.is_multiline();
+
+                // Collect ranges for all quote types
+                let candidates = vec![
+                    surrounding_markers(map, relative_to, around, multiline, '\'', '\''),
+                    surrounding_markers(map, relative_to, around, multiline, '"', '"'),
+                    surrounding_markers(map, relative_to, around, multiline, '`', '`'),
+                ];
+
+                // Find the closest matching quote range based on proximity
+                candidates
+                    .into_iter()
+                    .flatten() // Remove `None` values
+                    .min_by_key(|range| {
+                        // Calculate proximity by comparing distances to the range's start and end
+                        let start_distance = (relative_to.to_offset(map, Bias::Left) as isize
+                            - range.start.to_offset(map, Bias::Left) as isize)
+                            .abs();
+                        let end_distance = (relative_to.to_offset(map, Bias::Left) as isize
+                            - range.end.to_offset(map, Bias::Right) as isize)
+                            .abs();
+
+                        // Use the sum of start and end distances as the proximity metric
+                        start_distance + end_distance
+                    })
             }
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
@@ -1742,6 +1777,135 @@ mod test {
                 .await
                 .assert_matches();
             cx.simulate_at_each_offset(&format!("d a {end}"), &marked_string)
+                .await
+                .assert_matches();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_anyquotes_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        const ANYQUOTES_EXAMPLES: &[&str] = &[
+            // Single quote examples
+            "It's a 'qˇuote' example.",
+            // Double quote examples
+            "This is a \"qˇuote\" example.",
+            // Backtick examples
+            "This is a `qˇuote` example.",
+            // Nested quotes
+            "This is a 'n\"estˇed\"' example.",
+            // Mixed single, double, and back quotes
+            "This is a 'mix`ed` ˇ\"example\"'.",
+            // Multiline quotes
+            indoc! {"
+                'This is
+                a mulˇtiline
+                quote.'
+            "},
+            indoc! {"
+                \"This is
+                a mulˇtiline
+                quote.\"
+            "},
+        ];
+
+        for example in ANYQUOTES_EXAMPLES {
+            // Change inside quotes
+            cx.simulate_at_each_offset("c i q", example)
+                .await
+                .assert_matches();
+
+            // Change around quotes
+            cx.simulate_at_each_offset("c a q", example)
+                .await
+                .assert_matches();
+
+            // Delete inside quotes
+            cx.simulate_at_each_offset("d i q", example)
+                .await
+                .assert_matches();
+
+            // Delete around quotes
+            cx.simulate_at_each_offset("d a q", example)
+                .await
+                .assert_matches();
+
+            // Visual inside quotes
+            cx.simulate_at_each_offset("v i q", example)
+                .await
+                .assert_matches();
+
+            // Visual around quotes
+            cx.simulate_at_each_offset("v a q", example)
+                .await
+                .assert_matches();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_anyquotes_with_escapes(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        const ESCAPED_QUOTES: &str =
+            "This is 'it\\'s ˇescaped', \"an \\\"escape\"\", and `\\`escaped\\``.";
+
+        // Change inside any escaped quotes
+        cx.simulate_at_each_offset("c i q", ESCAPED_QUOTES)
+            .await
+            .assert_matches();
+
+        // Delete inside any escaped quotes
+        cx.simulate_at_each_offset("d i q", ESCAPED_QUOTES)
+            .await
+            .assert_matches();
+
+        // Visual inside escaped quotes
+        cx.simulate_at_each_offset("v i q", ESCAPED_QUOTES)
+            .await
+            .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_anyquotes_multiline(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        const MULTILINE_QUOTES: &[&str] = &[
+            indoc! {"
+                'This is
+                a mulˇtiline
+                quote.'
+            "},
+            indoc! {"
+                \"This is
+                a mulˇtiline
+                quote.\"
+            "},
+            indoc! {"
+                `This is
+                a mulˇtiline
+                quote.`
+            "},
+        ];
+
+        for example in MULTILINE_QUOTES {
+            // Change inside quotes
+            cx.simulate_at_each_offset("c i q", example)
+                .await
+                .assert_matches();
+
+            // Change around quotes
+            cx.simulate_at_each_offset("c a q", example)
+                .await
+                .assert_matches();
+
+            // Visual inside quotes
+            cx.simulate_at_each_offset("v i q", example)
+                .await
+                .assert_matches();
+
+            // Visual around quotes
+            cx.simulate_at_each_offset("v a q", example)
                 .await
                 .assert_matches();
         }
