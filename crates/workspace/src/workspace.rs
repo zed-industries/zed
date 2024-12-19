@@ -136,7 +136,7 @@ actions!(
         CopyPath,
         CopyRelativePath,
         CopyFileName,
-        CopyFileNameWithExtension,
+        CopyFileNameWithoutExtension,
         Feedback,
         FollowNextCollaborator,
         NewCenterTerminal,
