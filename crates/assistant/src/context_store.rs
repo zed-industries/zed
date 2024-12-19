@@ -22,6 +22,7 @@ use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
 use rpc::AnyProtoClient;
+use std::sync::LazyLock;
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -753,8 +754,8 @@ impl ContextStore {
                     continue;
                 }
 
-                let pattern = r" - \d+.zed.json$";
-                let re = Regex::new(pattern).unwrap();
+                static ASSISTANT_CONTEXT_REGEX: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r" - \d+.zed.json$").unwrap());
 
                 let metadata = fs.metadata(&path).await?;
                 if let Some((file_name, metadata)) = path
@@ -763,11 +764,15 @@ impl ContextStore {
                     .zip(metadata)
                 {
                     // This is used to filter out contexts saved by the new assistant.
-                    if !re.is_match(file_name) {
+                    if !ASSISTANT_CONTEXT_REGEX.is_match(file_name) {
                         continue;
                     }
 
-                    if let Some(title) = re.replace(file_name, "").lines().next() {
+                    if let Some(title) = ASSISTANT_CONTEXT_REGEX
+                        .replace(file_name, "")
+                        .lines()
+                        .next()
+                    {
                         contexts.push(SavedContextMetadata {
                             title: title.to_string(),
                             path,

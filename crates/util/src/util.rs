@@ -9,7 +9,7 @@ pub mod test;
 use futures::Future;
 
 use regex::Regex;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -567,8 +567,9 @@ impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
 }
 
 fn emoji_regex() -> &'static Regex {
-    static EMOJI_REGEX: OnceLock<Regex> = OnceLock::new();
-    EMOJI_REGEX.get_or_init(|| Regex::new("(\\p{Emoji}|\u{200D})").unwrap())
+    static EMOJI_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new("(\\p{Emoji}|\u{200D})").unwrap());
+    &EMOJI_REGEX
 }
 
 /// Returns true if the given string consists of emojis only.
