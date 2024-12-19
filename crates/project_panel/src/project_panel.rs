@@ -3200,7 +3200,7 @@ impl ProjectPanel {
             item_colors.default
         };
 
-        let bg_hover_color = if self.mouse_down {
+        let bg_hover_color = if self.mouse_down || is_marked || is_active {
             item_colors.marked_active
         } else {
             item_colors.hover
@@ -3224,9 +3224,7 @@ impl ProjectPanel {
             .border_1()
             .border_r_2()
             .border_color(border_color)
-            .when(!is_marked && !is_active, |div| {
-                div.hover(|style| style.bg(bg_hover_color))
-            })
+            .hover(|style| style.bg(bg_hover_color))
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
@@ -3392,13 +3390,6 @@ impl ProjectPanel {
                             let is_warning = diagnostic_severity
                                 .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
                                 .unwrap_or(false);
-
-                            let knockout_hover_color = if !is_marked && !is_active {
-                                bg_hover_color
-                            } else {
-                                default_color
-                            };
-
                             div().child(
                                 DecoratedIcon::new(
                                     Icon::from_path(icon.clone()).color(Color::Muted),
@@ -3417,7 +3408,7 @@ impl ProjectPanel {
                                             cx,
                                         )
                                         .group_name(Some(GROUP_NAME.into()))
-                                        .knockout_hover_color(knockout_hover_color)
+                                        .knockout_hover_color(bg_hover_color)
                                         .color(decoration_color.color(cx))
                                         .position(Point {
                                             x: px(-2.),
