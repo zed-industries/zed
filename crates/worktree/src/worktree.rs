@@ -3706,7 +3706,10 @@ impl<'a, 'b> SeekTarget<'a, GitEntrySummary, (TraversalProgress<'a>, GitStatuses
 
 struct AllStatusesCursor<'a, I> {
     repositories: I,
-    current_cursor: Option<Cursor<'a, GitEntry, (TraversalProgress<'a>, GitStatuses)>>,
+    current_cursor: Option<(
+        RepositoryWorkDirectory,
+        Cursor<'a, GitEntry, (TraversalProgress<'a>, GitStatuses)>,
+    )>,
     statuses_so_far: GitStatuses,
 }
 
@@ -3715,33 +3718,58 @@ where
     I: FusedIterator + Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)>,
 {
     fn seek_forward(&mut self, target: &GitEntryTraversalTarget<'_>) {
+        let mut target_was_in_last_repo = false;
         loop {
-            let cursor = match &mut self.current_cursor {
+            let (work_dir, cursor) = match &mut self.current_cursor {
                 Some(cursor) => cursor,
                 None => {
-                    let Some((_, entry)) = self.repositories.next() else {
+                    let Some((work_dir, entry)) = self.repositories.next() else {
                         break;
                     };
 
-                    self.current_cursor = Some(
+                    self.current_cursor = Some((
+                        work_dir.clone(),
                         entry
                             .git_entries_by_path
                             .cursor::<(TraversalProgress<'_>, GitStatuses)>(&()),
-                    );
+                    ));
                     self.current_cursor.as_mut().unwrap()
                 }
             };
-            cursor.seek_forward(target, Bias::Left, &());
-            if cursor.item().is_some() {
-                break;
+
+            let path = match target {
+                GitEntryTraversalTarget::PathSuccessor(path) => path,
+                GitEntryTraversalTarget::Path(path) => path,
+            };
+            if let Some(relative_path) = path.strip_prefix(&work_dir.0).ok() {
+                target_was_in_last_repo = true;
+
+                let new_target = match target {
+                    GitEntryTraversalTarget::PathSuccessor(_) => {
+                        GitEntryTraversalTarget::PathSuccessor(relative_path.as_ref())
+                    }
+                    GitEntryTraversalTarget::Path(_) => {
+                        GitEntryTraversalTarget::Path(relative_path.as_ref())
+                    }
+                };
+
+                cursor.seek_forward(&new_target, Bias::Left, &());
+                if cursor.item().is_some() {
+                    break;
+                }
+            } else {
+                if target_was_in_last_repo {
+                    break;
+                }
             }
+
             self.statuses_so_far += cursor.start().1;
             self.current_cursor = None;
         }
     }
 
     fn start(&self) -> GitStatuses {
-        if let Some(cursor) = self.current_cursor.as_ref() {
+        if let Some((_, cursor)) = self.current_cursor.as_ref() {
             cursor.start().1 + self.statuses_so_far
         } else {
             self.statuses_so_far
