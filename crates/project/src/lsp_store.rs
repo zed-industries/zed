@@ -10,8 +10,8 @@ use crate::{
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
-    CodeAction, Completion, CoreCompletion, Hover, InlayHint, ProjectItem as _, ProjectPath,
-    ProjectTransaction, ResolveState, Symbol, ToolchainStore,
+    CodeAction, Completion, CoreCompletion, Hover, InlayHint, LspDiagnostics, ProjectItem as _,
+    ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -4492,6 +4492,74 @@ impl LspStore {
         }
     }
 
+    pub fn document_diagnostic(
+        &mut self,
+        buffer_handle: &Model<Buffer>,
+        position: Anchor,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
+        let buffer = buffer_handle.read(cx);
+        let buffer_id = buffer.remote_id();
+
+        if let Some((client, upstream_project_id)) = self.upstream_client() {
+            let request_task = client.request(proto::MultiLspQuery {
+                buffer_id: buffer_id.into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id: upstream_project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetDocumentDiagnostics(
+                    GetDocumentDiagnostics { position }
+                        .to_proto(upstream_project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(|weak_project, cx| async move {
+                let Some(project) = weak_project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let responses = request_task.await?.responses;
+                let diagnostics = join_all(
+                    responses
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
+                                response,
+                            ) => Some(response),
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|diagnostics_response| {
+                            GetDocumentDiagnostics { position }.response_from_proto(
+                                diagnostics_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                        }),
+                )
+                .await;
+
+                Ok(diagnostics
+                    .into_iter()
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    .collect())
+            })
+        } else {
+            let all_actions_task = self.request_multiple_lsp_locally(
+                buffer_handle,
+                Some(position),
+                GetDocumentDiagnostics { position },
+                cx,
+            );
+            cx.spawn(|_, _| async move { Ok(all_actions_task.await.into_iter().collect()) })
+        }
+    }
+
     pub fn inlay_hints(
         &mut self,
         buffer_handle: Model<Buffer>,
@@ -5768,6 +5836,47 @@ impl LspStore {
                                 proto::lsp_response::Response::GetSignatureHelpResponse(
                                     GetSignatureHelp::response_to_proto(
                                         signature_help,
+                                        project,
+                                        sender_id,
+                                        &buffer_version,
+                                        cx,
+                                    ),
+                                ),
+                            ),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetDocumentDiagnostics(
+                get_document_diagnostics,
+            )) => {
+                let get_document_diagnostics = GetDocumentDiagnostics::from_proto(
+                    get_document_diagnostics,
+                    this.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let all_diagnostics = this
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_document_diagnostics.position),
+                            get_document_diagnostics,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                this.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: all_diagnostics
+                        .map(|lsp_diagnostic| proto::LspResponse {
+                            response: Some(
+                                proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
+                                    GetDocumentDiagnostics::response_to_proto(
+                                        lsp_diagnostic,
                                         project,
                                         sender_id,
                                         &buffer_version,
