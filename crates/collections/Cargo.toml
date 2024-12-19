@@ -16,4 +16,5 @@ doctest = false
 test-support = []
 
 [dependencies]
-rustc-hash = "1.1"
+indexmap.workspace = true
+rustc-hash.workspace = true

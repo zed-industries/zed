@@ -561,7 +561,7 @@ impl LocalBufferStore {
                     buffer_change_sets
                         .into_iter()
                         .filter_map(|(change_set, buffer_snapshot, path)| {
-                            let (repo_entry, local_repo_entry) = snapshot.repo_for_path(&path)?;
+                            let repo = snapshot.repo_for_path(&path)?;
                             let relative_path = repo_entry.relativize(&snapshot, &path).ok()?;
                             let base_text = local_repo_entry.repo().load_index_text(&relative_path);
                             Some((change_set, buffer_snapshot, base_text))
