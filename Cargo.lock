@@ -6185,6 +6185,7 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
+ "image",
  "project",
  "settings",
  "theme",
