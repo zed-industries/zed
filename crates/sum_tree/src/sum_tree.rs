@@ -341,6 +341,7 @@ impl<T: Item> SumTree<T> {
         items
     }
 
+    /// NOTE: This iterator is not fused and may produce results after the iterator is complete
     pub fn iter(&self) -> Iter<T> {
         Iter::new(self)
     }
