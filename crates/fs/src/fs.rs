@@ -2065,8 +2065,8 @@ async fn write_to_file_as_root(temp_file_path: PathBuf, target_file_path: PathBu
         writeln!(
             script_file.as_file(),
             "#!/usr/bin/env sh\nset -eu\ncat \"{}\" > \"{}\"",
-            try_quote(&temp_file_path.to_string_lossy())?.to_string(),
-            try_quote(&target_file_path.to_string_lossy())?.to_string()
+            try_quote(&temp_file_path.to_string_lossy())?,
+            try_quote(&target_file_path.to_string_lossy())?
         )?;
 
         let mut perms = script_file.as_file().metadata()?.permissions();
