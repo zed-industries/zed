@@ -3103,8 +3103,8 @@ fn html_lang() -> Language {
     .with_injection_query(
         r#"
         (script_element
-            (raw_text) @content
-            (#set! "language" "javascript"))
+            (raw_text) @injection.content
+            (#set! injection.language "javascript"))
         "#,
     )
     .unwrap()
@@ -3126,15 +3126,15 @@ fn erb_lang() -> Language {
     .with_injection_query(
         r#"
             (
-                (code) @content
-                (#set! "language" "ruby")
-                (#set! "combined")
+                (code) @injection.content
+                (#set! injection.language "ruby")
+                (#set! injection.combined)
             )
 
             (
-                (content) @content
-                (#set! "language" "html")
-                (#set! "combined")
+                (content) @injection.content
+                (#set! injection.language "html")
+                (#set! injection.combined)
             )
         "#,
     )
@@ -3267,10 +3267,10 @@ pub fn markdown_lang() -> Language {
             (fenced_code_block
                 (info_string
                     (language) @language)
-                (code_fence_content) @content)
+                (code_fence_content) @injection.content)
 
-            ((inline) @content
-                (#set! "language" "markdown-inline"))
+                ((inline) @injection.content
+                (#set! injection.language "markdown-inline"))
         "#,
     )
     .unwrap()

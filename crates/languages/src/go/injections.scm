@@ -9,5 +9,5 @@
     [
       (raw_string_literal)
       (interpreted_string_literal)
-    ] @content
-    (#set! "language" "regex")))
+    ] @injection.content
+    (#set! injection.language "regex")))
