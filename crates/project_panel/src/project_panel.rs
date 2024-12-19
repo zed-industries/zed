@@ -1963,7 +1963,11 @@ impl ProjectPanel {
         }
     }
 
-    fn copy_file_name_without_extension(&mut self, _: &CopyFileNameWithoutExtension, cx: &mut ViewContext<Self>) {
+    fn copy_file_name_without_extension(
+        &mut self,
+        _: &CopyFileNameWithoutExtension,
+        cx: &mut ViewContext<Self>,
+    ) {
         let file_names = {
             let project = self.project.read(cx);
             self.marked_entries()

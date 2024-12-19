@@ -11334,7 +11334,11 @@ impl Editor {
         }
     }
 
-    pub fn copy_file_name_without_extension(&mut self, _: &CopyFileNameWithoutExtension, cx: &mut ViewContext<Self>) {
+    pub fn copy_file_name_without_extension(
+        &mut self,
+        _: &CopyFileNameWithoutExtension,
+        cx: &mut ViewContext<Self>,
+    ) {
         if let Some(file) = self.target_file(cx) {
             if let Some(file_stem) = file.path().file_stem() {
                 if let Some(name) = file_stem.to_str() {
