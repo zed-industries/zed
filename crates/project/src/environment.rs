@@ -14,8 +14,7 @@ use crate::{
 
 pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
-    get_environment_task: Option<Shared<Task<Option<HashMap<String, String>>>>>,
-    cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
+    environments: HashMap<WorktreeId, Shared<Task<Option<HashMap<String, String>>>>>,
     environment_error_messages: HashMap<WorktreeId, EnvironmentErrorMessage>,
 }
 
@@ -35,27 +34,15 @@ impl ProjectEnvironment {
 
             Self {
                 cli_environment,
-                get_environment_task: None,
-                cached_shell_environments: Default::default(),
+                environments: Default::default(),
                 environment_error_messages: Default::default(),
             }
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn set_cached(
-        &mut self,
-        shell_environments: &[(WorktreeId, HashMap<String, String>)],
-    ) {
-        self.cached_shell_environments = shell_environments
-            .iter()
-            .cloned()
-            .collect::<HashMap<_, _>>();
-    }
-
     pub(crate) fn remove_worktree_environment(&mut self, worktree_id: WorktreeId) {
-        self.cached_shell_environments.remove(&worktree_id);
         self.environment_error_messages.remove(&worktree_id);
+        self.environments.remove(&worktree_id);
     }
 
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
@@ -91,43 +78,38 @@ impl ProjectEnvironment {
         worktree_abs_path: Option<Arc<Path>>,
         cx: &ModelContext<Self>,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        if let Some(task) = self.get_environment_task.as_ref() {
+        if cfg!(any(test, feature = "test-support")) {
+            return Task::ready(Some(HashMap::default())).shared();
+        }
+
+        if let Some(cli_environment) = self.get_cli_environment() {
+            return cx
+                .spawn(|_, _| async move {
+                    let path = cli_environment
+                        .get("PATH")
+                        .map(|path| path.as_str())
+                        .unwrap_or_default();
+                    log::info!(
+                        "using project environment variables from CLI. PATH={:?}",
+                        path
+                    );
+                    Some(cli_environment)
+                })
+                .shared();
+        }
+
+        let Some((worktree_id, worktree_abs_path)) = worktree_id.zip(worktree_abs_path) else {
+            return Task::ready(None).shared();
+        };
+
+        if let Some(task) = self.environments.get(&worktree_id) {
             task.clone()
         } else {
             let task = self
-                .build_environment_task(worktree_id, worktree_abs_path, cx)
+                .get_worktree_env(worktree_id, worktree_abs_path, cx)
                 .shared();
-
-            self.get_environment_task = Some(task.clone());
+            self.environments.insert(worktree_id, task.clone());
             task
-        }
-    }
-
-    fn build_environment_task(
-        &mut self,
-        worktree_id: Option<WorktreeId>,
-        worktree_abs_path: Option<Arc<Path>>,
-        cx: &ModelContext<Self>,
-    ) -> Task<Option<HashMap<String, String>>> {
-        let worktree = worktree_id.zip(worktree_abs_path);
-
-        let cli_environment = self.get_cli_environment();
-        if let Some(environment) = cli_environment {
-            cx.spawn(|_, _| async move {
-                let path = environment
-                    .get("PATH")
-                    .map(|path| path.as_str())
-                    .unwrap_or_default();
-                log::info!(
-                    "using project environment variables from CLI. PATH={:?}",
-                    path
-                );
-                Some(environment)
-            })
-        } else if let Some((worktree_id, worktree_abs_path)) = worktree {
-            self.get_worktree_env(worktree_id, worktree_abs_path, cx)
-        } else {
-            Task::ready(None)
         }
     }
 
@@ -137,50 +119,42 @@ impl ProjectEnvironment {
         worktree_abs_path: Arc<Path>,
         cx: &ModelContext<Self>,
     ) -> Task<Option<HashMap<String, String>>> {
-        let cached_env = self.cached_shell_environments.get(&worktree_id).cloned();
-        if let Some(env) = cached_env {
-            Task::ready(Some(env))
-        } else {
-            let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
+        let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
-            cx.spawn(|this, mut cx| async move {
-                let (mut shell_env, error_message) = cx
-                    .background_executor()
-                    .spawn({
-                        let cwd = worktree_abs_path.clone();
-                        async move { load_shell_environment(&cwd, &load_direnv).await }
-                    })
-                    .await;
+        cx.spawn(|this, mut cx| async move {
+            let (mut shell_env, error_message) = cx
+                .background_executor()
+                .spawn({
+                    let worktree_abs_path = worktree_abs_path.clone();
+                    async move {
+                        load_worktree_shell_environment(&worktree_abs_path, &load_direnv).await
+                    }
+                })
+                .await;
 
-                if let Some(shell_env) = shell_env.as_mut() {
-                    let path = shell_env
-                        .get("PATH")
-                        .map(|path| path.as_str())
-                        .unwrap_or_default();
-                    log::info!(
-                        "using project environment variables shell launched in {:?}. PATH={:?}",
-                        worktree_abs_path,
-                        path
-                    );
-                    this.update(&mut cx, |this, _| {
-                        this.cached_shell_environments
-                            .insert(worktree_id, shell_env.clone());
-                    })
-                    .log_err();
+            if let Some(shell_env) = shell_env.as_mut() {
+                let path = shell_env
+                    .get("PATH")
+                    .map(|path| path.as_str())
+                    .unwrap_or_default();
+                log::info!(
+                    "using project environment variables shell launched in {:?}. PATH={:?}",
+                    worktree_abs_path,
+                    path
+                );
 
-                    set_origin_marker(shell_env, EnvironmentOrigin::WorktreeShell);
-                }
+                set_origin_marker(shell_env, EnvironmentOrigin::WorktreeShell);
+            }
 
-                if let Some(error) = error_message {
-                    this.update(&mut cx, |this, _| {
-                        this.environment_error_messages.insert(worktree_id, error);
-                    })
-                    .log_err();
-                }
+            if let Some(error) = error_message {
+                this.update(&mut cx, |this, _| {
+                    this.environment_error_messages.insert(worktree_id, error);
+                })
+                .log_err();
+            }
 
-                shell_env
-            })
-        }
+            shell_env
+        })
     }
 }
 
@@ -210,6 +184,42 @@ impl EnvironmentErrorMessage {
     #[allow(dead_code)]
     fn from_str(s: &str) -> Self {
         Self(String::from(s))
+    }
+}
+
+async fn load_worktree_shell_environment(
+    worktree_abs_path: &Path,
+    load_direnv: &DirenvSettings,
+) -> (
+    Option<HashMap<String, String>>,
+    Option<EnvironmentErrorMessage>,
+) {
+    match smol::fs::metadata(worktree_abs_path).await {
+        Ok(meta) => {
+            let dir = if meta.is_dir() {
+                worktree_abs_path
+            } else if let Some(parent) = worktree_abs_path.parent() {
+                parent
+            } else {
+                return (
+                    None,
+                    Some(EnvironmentErrorMessage(format!(
+                        "Failed to load shell environment in {}: not a directory",
+                        worktree_abs_path.display()
+                    ))),
+                );
+            };
+
+            load_shell_environment(&dir, load_direnv).await
+        }
+        Err(err) => (
+            None,
+            Some(EnvironmentErrorMessage(format!(
+                "Failed to load shell environment in {}: {}",
+                worktree_abs_path.display(),
+                err
+            ))),
+        ),
     }
 }
 
