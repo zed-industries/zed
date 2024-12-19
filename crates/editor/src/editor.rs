@@ -5379,7 +5379,6 @@ impl Editor {
     }
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
-        panic!("ola!");
         self.transact(cx, |this, cx| {
             this.select_autoclose_pair(cx);
             let mut linked_ranges = HashMap::<_, Vec<_>>::default();

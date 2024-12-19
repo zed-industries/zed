@@ -108,7 +108,7 @@ pub fn init_panic_hook(
             }),
             app_version: app_version.to_string(),
             release_channel: RELEASE_CHANNEL.dev_name().into(),
-            target: env!("CARGO_BUILD_TARGET"),
+            target: env!("TARGET").into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
             architecture: env::consts::ARCH.into(),
