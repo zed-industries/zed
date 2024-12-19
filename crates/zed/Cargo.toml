@@ -69,6 +69,7 @@ language_selector.workspace = true
 language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 libc.workspace = true
+llm_feedback_modal.workspace = true
 log.workspace = true
 markdown.workspace = true
 markdown_preview.workspace = true

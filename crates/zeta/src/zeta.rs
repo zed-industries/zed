@@ -1,7 +1,3 @@
-mod rate_completion_modal;
-
-pub use rate_completion_modal::*;
-
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
 use client::Client;
@@ -68,20 +64,20 @@ impl Global for ZetaGlobal {}
 
 #[derive(Clone)]
 pub struct InlineCompletion {
-    id: InlineCompletionId,
-    path: Arc<Path>,
-    excerpt_range: Range<usize>,
-    edits: Arc<[(Range<Anchor>, String)]>,
-    snapshot: BufferSnapshot,
-    input_events: Arc<str>,
-    input_excerpt: Arc<str>,
-    output_excerpt: Arc<str>,
-    request_sent_at: Instant,
-    response_received_at: Instant,
+    pub id: InlineCompletionId,
+    pub path: Arc<Path>,
+    pub excerpt_range: Range<usize>,
+    pub edits: Arc<[(Range<Anchor>, String)]>,
+    pub snapshot: BufferSnapshot,
+    pub input_events: Arc<str>,
+    pub input_excerpt: Arc<str>,
+    pub output_excerpt: Arc<str>,
+    pub request_sent_at: Instant,
+    pub response_received_at: Instant,
 }
 
 impl InlineCompletion {
-    fn latency(&self) -> Duration {
+    pub fn latency(&self) -> Duration {
         self.response_received_at
             .duration_since(self.request_sent_at)
     }
@@ -702,6 +698,10 @@ and then another
 
     pub fn recent_completions(&self) -> impl DoubleEndedIterator<Item = &InlineCompletion> {
         self.recent_completions.iter()
+    }
+
+    pub fn recent_completion(&self, ix: usize) -> Option<&InlineCompletion> {
+        self.recent_completions.get(ix)
     }
 
     pub fn recent_completions_len(&self) -> usize {

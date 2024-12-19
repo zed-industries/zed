@@ -13,6 +13,7 @@ use language::{
     },
     File, Language,
 };
+use llm_feedback_modal::RateResponseModal;
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use supermaven::{AccountStatus, Supermaven};
@@ -26,7 +27,6 @@ use workspace::{
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zeta::RateCompletionModal;
 
 actions!(zeta, [RateCompletions]);
 
@@ -217,7 +217,7 @@ impl Render for InlineCompletionButton {
                         .on_click(cx.listener(|this, _, cx| {
                             if let Some(workspace) = this.workspace.upgrade() {
                                 workspace.update(cx, |workspace, cx| {
-                                    RateCompletionModal::toggle(workspace, cx)
+                                    RateResponseModal::toggle(workspace, cx)
                                 });
                             }
                         })),

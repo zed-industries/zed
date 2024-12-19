@@ -68,6 +68,7 @@ members = [
     "crates/livekit_client",
     "crates/livekit_client_macos",
     "crates/livekit_server",
+    "crates/llm_feedback_modal",
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
@@ -256,6 +257,7 @@ languages = { path = "crates/languages" }
 livekit_client = { path = "crates/livekit_client" }
 livekit_client_macos = { path = "crates/livekit_client_macos" }
 livekit_server = { path = "crates/livekit_server" }
+llm_feedback_modal = { path = "crates/llm_feedback_modal" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }

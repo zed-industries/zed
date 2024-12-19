@@ -67,7 +67,7 @@
       "cmd-v": "editor::Paste",
       "cmd-z": "editor::Undo",
       "cmd-shift-z": "editor::Redo",
-      "ctrl-shift-z": "zeta::RateCompletions",
+      "ctrl-shift-z": "llm_feedback::RateResponses",
       "up": "editor::MoveUp",
       "ctrl-up": "editor::MoveToStartOfParagraph",
       "pageup": "editor::MovePageUp",
@@ -796,22 +796,22 @@
     }
   },
   {
-    "context": "RateCompletionModal",
+    "context": "RateResponseModal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-enter": "zeta::ThumbsUp",
-      "shift-down": "zeta::NextEdit",
-      "shift-up": "zeta::PreviousEdit",
-      "right": "zeta::PreviewCompletion"
+      "cmd-enter": "llm_feedback::ThumbsUp",
+      "shift-down": "llm_feedback::NextEdit",
+      "shift-up": "llm_feedback::PreviousEdit",
+      "right": "llm_feedback::PreviewResponse"
     }
   },
   {
-    "context": "RateCompletionModal > Editor",
+    "context": "RateResponseModal > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "escape": "zeta::FocusCompletions",
-      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
-      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion"
+      "escape": "llm_feedback::FocusResponse",
+      "cmd-shift-enter": "llm_feedback::ThumbsUpActiveResponse",
+      "cmd-shift-backspace": "llm_feedback::ThumbsDownActiveResponse"
     }
   }
 ]

@@ -6298,6 +6298,7 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
+ "llm_feedback_modal",
  "lsp",
  "paths",
  "project",
@@ -6308,7 +6309,6 @@ dependencies = [
  "ui",
  "workspace",
  "zed_actions",
- "zeta",
 ]
 
 [[package]]
@@ -7262,6 +7262,45 @@ dependencies = [
  "prost-types 0.9.0",
  "reqwest 0.12.8",
  "serde",
+]
+
+[[package]]
+name = "llm_feedback_modal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "call",
+ "client",
+ "clock",
+ "collections",
+ "ctor",
+ "editor",
+ "env_logger 0.11.5",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "indoc",
+ "inline_completion",
+ "language",
+ "language_models",
+ "log",
+ "menu",
+ "reqwest_client",
+ "rpc",
+ "serde_json",
+ "settings",
+ "similar",
+ "telemetry",
+ "telemetry_events",
+ "theme",
+ "tree-sitter-go",
+ "tree-sitter-rust",
+ "ui",
+ "uuid",
+ "workspace",
+ "worktree",
+ "zeta",
 ]
 
 [[package]]
@@ -16043,6 +16082,7 @@ dependencies = [
  "language_tools",
  "languages",
  "libc",
+ "llm_feedback_modal",
  "log",
  "markdown",
  "markdown_preview",
