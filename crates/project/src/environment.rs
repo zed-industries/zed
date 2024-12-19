@@ -204,7 +204,7 @@ async fn load_worktree_shell_environment(
     match smol::fs::metadata(worktree_abs_path).await {
         Ok(meta) => {
             let dir = if meta.is_dir() {
-                &*worktree_abs_path
+                worktree_abs_path
             } else if let Some(parent) = worktree_abs_path.parent() {
                 parent
             } else {
