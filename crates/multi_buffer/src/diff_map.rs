@@ -112,9 +112,14 @@ pub type DiffEdit = text::Edit<DiffOffset>;
 
 #[derive(Debug)]
 enum ChangeKind {
-    DiffUpdated { base_changed: bool },
+    DiffUpdated {
+        base_changed: bool,
+    },
     InputEdited,
-    ExpandOrCollapseHunks { range: Range<usize>, expand: bool },
+    ExpandOrCollapseHunks {
+        range: Range<ExcerptOffset>,
+        expand: bool,
+    },
 }
 
 pub type DiffOffset = TypedOffset<DiffMap>;
@@ -251,14 +256,18 @@ impl DiffMap {
     }
 
     pub(super) fn has_expanded_diff_hunks_in_ranges(&self, ranges: &[Range<DiffOffset>]) -> bool {
-        let mut cursor = self.snapshot.transforms.cursor::<DiffOffset>(&());
+        let mut cursor = self.snapshot.transforms.cursor::<ExcerptOffset>(&());
         let excerpt_map_snapshot = &self.snapshot.excerpt_map_snapshot;
         for range in ranges {
-            let range = range.to_point(excerpt_map_snapshot);
-            let start = excerpt_map_snapshot.point_to_offset(ExcerptPoint::new(range.start.row, 0));
-            let end = excerpt_map_snapshot.point_to_offset(Point::new(range.end.row + 1, 0));
-            let start = start.saturating_sub(1);
-            let end = excerpt_map_snapshot.len().min(end + 1);
+            let range = excerpt_map_snapshot
+                .offset_to_point(self.snapshot.to_excerpt_offset(range.start))
+                ..excerpt_map_snapshot.offset_to_point(self.snapshot.to_excerpt_offset(range.end));
+            let mut start =
+                excerpt_map_snapshot.point_to_offset(ExcerptPoint::new(range.start.row(), 0));
+            let mut end =
+                excerpt_map_snapshot.point_to_offset(ExcerptPoint::new(range.end.row() + 1, 0));
+            start.value = start.value.saturating_sub(1);
+            end = excerpt_map_snapshot.len().min(end + ExcerptOffset::new(1));
             cursor.seek(&start, Bias::Right, &());
             while *cursor.start() < end {
                 match cursor.item() {
@@ -276,42 +285,52 @@ impl DiffMap {
     }
 
     pub(super) fn expand_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut AppContext) {
-        self.expand_or_collapse_diff_hunks(ranges, true, cx);
+        todo!();
+        // self.expand_or_collapse_diff_hunks(ranges, true, cx);
     }
 
     pub(super) fn collapse_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut AppContext) {
-        self.expand_or_collapse_diff_hunks(ranges, false, cx);
+        todo!();
+        // self.expand_or_collapse_diff_hunks(ranges, false, cx);
     }
 
     pub(super) fn set_all_hunks_expanded(&mut self, cx: &mut AppContext) {
-        self.all_hunks_expanded = true;
-        self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
+        todo!();
+        // self.all_hunks_expanded = true;
+        // self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
     }
 
     fn expand_or_collapse_diff_hunks(
         &mut self,
-        ranges: Vec<Range<Anchor>>,
+        ranges: Vec<Range<DiffOffset>>,
         expand: bool,
         cx: &AppContext,
     ) {
         let excerpt_map_snapshot = &self.snapshot.excerpt_map_snapshot;
         let mut changes = Vec::new();
         for range in ranges.iter() {
-            let multibuffer_start = range.start.to_point(excerpt_map_snapshot);
-            let multibuffer_end = range.end.to_point(excerpt_map_snapshot);
-            let multibuffer_start =
-                excerpt_map_snapshot.point_to_offset(Point::new(multibuffer_start.row, 0));
-            let multibuffer_end =
-                excerpt_map_snapshot.point_to_offset(Point::new(multibuffer_end.row + 1, 0));
-            let expanded_start = multibuffer_start.saturating_sub(1);
-            let expanded_end = excerpt_map_snapshot.len().min(multibuffer_end);
+            let excerpt_start = self
+                .snapshot
+                .excerpt_map_snapshot
+                .offset_to_point(self.snapshot.to_excerpt_offset(range.start));
+            let excerpt_end = self
+                .snapshot
+                .excerpt_map_snapshot
+                .offset_to_point(self.snapshot.to_excerpt_offset(range.start));
+
+            let excerpt_start =
+                excerpt_map_snapshot.point_to_offset(ExcerptPoint::new(excerpt_start.row(), 0));
+            let excerpt_end =
+                excerpt_map_snapshot.point_to_offset(ExcerptPoint::new(excerpt_end.row() + 1, 0));
+            let expanded_start = excerpt_start.saturating_sub(ExcerptOffset::new(1));
+            let expanded_end = excerpt_map_snapshot.len().min(excerpt_end);
             changes.push((
                 text::Edit {
                     old: expanded_start..expanded_end,
                     new: expanded_start..expanded_end,
                 },
                 ChangeKind::ExpandOrCollapseHunks {
-                    range: multibuffer_start..multibuffer_end,
+                    range: excerpt_start..excerpt_end,
                     expand,
                 },
             ));
@@ -325,7 +344,6 @@ impl DiffMap {
         changes: Vec<(text::Edit<ExcerptOffset>, ChangeKind)>,
         cx: &AppContext,
     ) {
-        let excerpt_map_snapshot = self.snapshot.excerpt_map_snapshot;
         let mut cursor = self
             .snapshot
             .transforms
@@ -354,13 +372,19 @@ impl DiffMap {
                 let mut edit_old_end =
                     cursor.start().1 + DiffOffset::new((edit.old.end - cursor.start().0).value);
 
-                for (buffer, buffer_range, excerpt_id) in
-                    excerpt_map_snapshot.range_to_buffer_ranges(excerpt_map_range.clone())
+                for (buffer, buffer_range, excerpt_id) in self
+                    .snapshot
+                    .excerpt_map_snapshot
+                    .range_to_buffer_ranges(excerpt_map_range.clone())
                 {
-                    let excerpt_range = excerpt_map_snapshot
+                    let excerpt_range = self
+                        .snapshot
+                        .excerpt_map_snapshot
                         .range_for_excerpt::<ExcerptOffset>(excerpt_id)
                         .unwrap();
-                    let excerpt_buffer_range = excerpt_map_snapshot
+                    let excerpt_buffer_range = self
+                        .snapshot
+                        .excerpt_map_snapshot
                         .buffer_range_for_excerpt(excerpt_id)
                         .unwrap();
                     let buffer_id = buffer.remote_id();
@@ -383,6 +407,11 @@ impl DiffMap {
                             let hunk_start_multibuffer_offset = excerpt_range.start
                                 + ExcerptOffset::new(
                                     hunk_start_buffer_offset
+                                        .saturating_sub(excerpt_buffer_range_start_offset),
+                                );
+                            let hunk_end_multibuffer_offset = excerpt_range.start
+                                + ExcerptOffset::new(
+                                    hunk_end_buffer_offset
                                         .saturating_sub(excerpt_buffer_range_start_offset),
                                 );
 
@@ -444,8 +473,8 @@ impl DiffMap {
                                 }
                                 ChangeKind::ExpandOrCollapseHunks { range, expand } => {
                                     let intersects = hunk_is_deletion
-                                        || (hunk_start_buffer_offset < range.end
-                                            && hunk_end_buffer_offset > range.start);
+                                        || (hunk_start_multibuffer_offset < range.end
+                                            && hunk_end_multibuffer_offset > range.start);
                                     if *expand {
                                         was_previously_expanded
                                             || self.all_hunks_expanded
@@ -800,7 +829,7 @@ impl DiffMapSnapshot {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn text(&self) -> String {
-        self.chunks(DiffOffset(0)..self.len(), false)
+        self.chunks(DiffOffset::zero()..self.len(), false)
             .map(|c| c.text)
             .collect()
     }
@@ -949,7 +978,7 @@ impl DiffMapSnapshot {
                 let Some(buffer_diff) = self.diffs.get(buffer_id) else {
                     panic!("{:?} is in non-extant deleted hunk", offset)
                 };
-                let buffer_offset = base_text_byte_range.start + overshoot.0;
+                let buffer_offset = base_text_byte_range.start + overshoot.value;
                 let buffer_point = buffer_diff.base_text.offset_to_point(buffer_offset);
                 start_transform.diff_point() + DiffPoint::wrap(buffer_point - base_text_start)
             }
@@ -1003,10 +1032,13 @@ impl DiffMapSnapshot {
 
         match cursor.item() {
             Some(DiffTransform::BufferContent { .. }) => {
-                let multibuffer_point = start_transform.multibuffer_point() + overshoot.0;
-                let multibuffer_offset = self.buffer.point_to_offset(multibuffer_point);
+                let excerpt_point =
+                    start_transform.excerpt_point() + ExcerptPoint::wrap(overshoot.value);
+                let multibuffer_offset = self.excerpt_map_snapshot.point_to_offset(excerpt_point);
                 start_transform.diff_offset()
-                    + DiffOffset(multibuffer_offset - start_transform.multibuffer_offset())
+                    + DiffOffset::new(
+                        (multibuffer_offset - start_transform.multibuffer_offset()).value,
+                    )
             }
             Some(DiffTransform::DeletedHunk {
                 buffer_id,
@@ -1017,10 +1049,10 @@ impl DiffMapSnapshot {
                 let Some(buffer_diff) = self.diffs.get(buffer_id) else {
                     panic!("{:?} is in non-extant deleted hunk", point)
                 };
-                let buffer_point = *base_text_start + overshoot.0;
+                let buffer_point = *base_text_start + overshoot.value;
                 let buffer_offset = buffer_diff.base_text.point_to_offset(buffer_point);
                 start_transform.diff_offset()
-                    + DiffOffset(buffer_offset - base_text_byte_range.start)
+                    + DiffOffset::new(buffer_offset - base_text_byte_range.start)
             }
             None => {
                 panic!("{:?} is past end of buffer", point)
@@ -1294,7 +1326,8 @@ impl<'a> Iterator for DiffMapChunks<'a> {
                 }
 
                 if transform_end < chunk_end {
-                    let (before, after) = chunk.text.split_at(transform_end.0 - self.offset.0);
+                    let (before, after) =
+                        chunk.text.split_at(transform_end.value - self.offset.value);
                     self.offset = transform_end;
                     chunk.text = after;
                     Some(Chunk {
@@ -1316,9 +1349,9 @@ impl<'a> Iterator for DiffMapChunks<'a> {
                 let base_text_start_offset = base_text_byte_range.start;
                 let base_text_end_offset = base_text_byte_range.end;
                 let diff_base_end_offset = base_text_end_offset
-                    .min(base_text_start_offset + self.end_offset.0 - hunk_start_offset.0);
+                    .min(base_text_start_offset + self.end_offset.value - hunk_start_offset.value);
                 let diff_base_start_offset =
-                    base_text_start_offset + self.offset.0 - hunk_start_offset.0;
+                    base_text_start_offset + self.offset.value - hunk_start_offset.value;
 
                 let mut chunks = if let Some((_, mut chunks)) = self
                     .diff_base_chunks
@@ -1338,12 +1371,12 @@ impl<'a> Iterator for DiffMapChunks<'a> {
                 };
 
                 let chunk = if let Some(chunk) = chunks.next() {
-                    self.offset.0 += chunk.text.len();
+                    self.offset.value += chunk.text.len();
                     self.diff_base_chunks = Some((*buffer_id, chunks));
                     chunk
                 } else {
                     debug_assert!(needs_newline);
-                    self.offset.0 += "\n".len();
+                    self.offset.value += "\n".len();
                     Chunk {
                         text: "\n",
                         ..Default::default()
@@ -1369,7 +1402,7 @@ impl<'a> DiffMapRows<'a> {
             0
         };
         self.input_buffer_rows
-            .seek(MultiBufferRow(inlay_transform_start.row + overshoot));
+            .seek(ExcerptRow::new(inlay_transform_start.row() + overshoot));
     }
 }
 
@@ -1400,7 +1433,7 @@ impl<'a> Iterator for DiffMapRows<'a> {
                 diff_status: None,
             }),
         };
-        self.diff_point.0 += Point::new(1, 0);
+        self.diff_point.value += Point::new(1, 0);
         if self.diff_point >= self.cursor.end(&()).0 {
             self.cursor.next(&());
         }

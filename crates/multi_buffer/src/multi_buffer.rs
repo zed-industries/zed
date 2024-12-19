@@ -4,6 +4,7 @@ mod excerpt_map;
 mod position;
 
 pub use anchor::{Anchor, AnchorRangeExt, Offset};
+use diff_map::DiffMap;
 use excerpt_map::{ExcerptMap, ExcerptMapSnapshot};
 
 use anyhow::{anyhow, Result};
@@ -387,12 +388,13 @@ impl std::ops::Deref for MultiBufferIndentGuide {
 
 impl MultiBuffer {
     pub fn new(capability: Capability) -> Self {
+        let excerpt_map = ExcerptMap::new(capability);
         Self {
+            diff_map: DiffMap::new(excerpt_map),
             snapshot: RefCell::new(MultiBufferSnapshot {
                 show_headers: true,
                 ..MultiBufferSnapshot::default()
             }),
-            excerpt_map: ExcerptMap::new(capability),
             buffers: RefCell::default(),
             subscriptions: Topic::default(),
             singleton: false,

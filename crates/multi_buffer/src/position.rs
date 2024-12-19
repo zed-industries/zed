@@ -1,5 +1,6 @@
 use std::{
     fmt::{Debug, Display},
+    iter::zip,
     marker::PhantomData,
     ops::{Add, AddAssign, Sub, SubAssign},
 };
@@ -36,6 +37,21 @@ impl<T> TypedOffset<T> {
             _marker: PhantomData,
         }
     }
+
+    pub fn saturating_sub(self, n: TypedOffset<T>) -> Self {
+        Self {
+            value: self.value.saturating_sub(n.value),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn zero() -> Self {
+        Self::new(0)
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.value == 0
+    }
 }
 impl<T> TypedPoint<T> {
     pub fn new(row: u32, column: u32) -> Self {
@@ -55,6 +71,9 @@ impl<T> TypedPoint<T> {
     }
     pub fn column(&self) -> u32 {
         self.value.column
+    }
+    pub fn zero() -> Self {
+        Self::wrap(Point::zero())
     }
     pub fn is_zero(&self) -> bool {
         self.value.is_zero()
