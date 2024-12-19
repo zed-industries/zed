@@ -195,13 +195,13 @@ impl StackFrameList {
 
         cx.spawn({
             let client_id = self.client_id;
-            let workspace = self.workspace.clone();
             move |this, mut cx| async move {
-                workspace
-                    .update(&mut cx, |workspace, cx| {
+                this.update(&mut cx, |this, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
                         workspace.open_path_preview(project_path.clone(), None, false, true, cx)
-                    })?
-                    .await?;
+                    })
+                })??
+                .await?;
 
                 this.update(&mut cx, |this, cx| {
                     this.dap_store.update(cx, |store, cx| {

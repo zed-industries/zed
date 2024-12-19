@@ -103,9 +103,6 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
         })
     });
 
-    // If we don't end session client will still be awaiting to recv messages
-    // from fake transport that will never be transmitted, thus resulting in
-    // a "panic: parked with nothing to run"
     shutdown_client.await.unwrap();
 
     // assert we don't have a debug panel item anymore because the client shutdown
@@ -253,9 +250,6 @@ async fn test_we_can_only_have_one_panel_per_debug_thread(
         })
     });
 
-    // If we don't end session client will still be awaiting to recv messages
-    // from fake transport that will never be transmitted, thus resulting in
-    // a "panic: parked with nothing to run"
     shutdown_client.await.unwrap();
 
     // assert we don't have a debug panel item anymore because the client shutdown
@@ -403,9 +397,6 @@ async fn test_client_can_open_multiple_thread_panels(
         })
     });
 
-    // If we don't end session client will still be awaiting to recv messages
-    // from fake transport that will never be transmitted, thus resulting in
-    // a "panic: parked with nothing to run"
     shutdown_client.await.unwrap();
 
     // assert we don't have a debug panel item anymore because the client shutdown
