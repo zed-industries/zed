@@ -276,7 +276,7 @@ impl From<&RepositoryEntry> for proto::RepositoryEntry {
 /// In the majority of the cases, this is the folder that contains the .git folder.
 /// But if a sub-folder of a git repository is opened, this corresponds to the
 /// project root and the .git folder is located in a parent directory.
-#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct RepositoryWorkDirectory(pub(crate) Arc<Path>);
 
 impl Default for RepositoryWorkDirectory {
@@ -1348,7 +1348,7 @@ impl LocalWorktree {
 
     pub fn local_git_repo(&self, path: &Path) -> Option<Arc<dyn GitRepository>> {
         self.repo_for_path(path)
-            .map(|(_, entry)| entry.repo_ptr.clone())
+            .map(|(_, _, entry)| entry.repo_ptr.clone())
     }
 
     pub fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
@@ -2631,10 +2631,21 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
-    pub fn repo_for_path(&self, path: &Path) -> Option<(RepositoryEntry, &LocalRepositoryEntry)> {
-        let (_, repo_entry) = self.repository_and_work_directory_for_path(path)?;
+    pub fn repo_for_path(
+        &self,
+        path: &Path,
+    ) -> Option<(
+        RepositoryWorkDirectory,
+        RepositoryEntry,
+        &LocalRepositoryEntry,
+    )> {
+        let (work_directory, repo_entry) = self.repository_and_work_directory_for_path(path)?;
         let work_directory_id = repo_entry.work_directory_id();
-        Some((repo_entry, self.git_repositories.get(&work_directory_id)?))
+        Some((
+            work_directory,
+            repo_entry,
+            self.git_repositories.get(&work_directory_id)?,
+        ))
     }
 
     fn build_update(
@@ -2919,18 +2930,16 @@ impl BackgroundScannerState {
         let mut ancestor_inodes = self.snapshot.ancestor_inodes_for_path(&path);
         let mut containing_repository = None;
         if !ignore_stack.is_abs_path_ignored(&abs_path, true) {
-            if let Some((repo_entry, repo)) = self.snapshot.repo_for_path(&path) {
-                if let Some(workdir_path) = repo_entry.work_directory(&self.snapshot) {
-                    if let Ok(repo_path) = repo_entry.relativize(&self.snapshot, &path) {
-                        containing_repository = Some(ScanJobContainingRepository {
-                            work_directory: workdir_path,
-                            statuses: repo
-                                .repo_ptr
-                                .status(&mut [repo_path].iter())
-                                .log_err()
-                                .unwrap_or_default(),
-                        });
-                    }
+            if let Some((workdir_path, repo_entry, repo)) = self.snapshot.repo_for_path(&path) {
+                if let Ok(repo_path) = repo_entry.relativize(&self.snapshot, &path) {
+                    containing_repository = Some(ScanJobContainingRepository {
+                        work_directory: workdir_path,
+                        statuses: repo
+                            .repo_ptr
+                            .status(&mut [repo_path].iter())
+                            .log_err()
+                            .unwrap_or_default(),
+                    });
                 }
             }
         }
@@ -4554,16 +4563,10 @@ impl BackgroundScanner {
         // Group all relative paths by their git repository.
         let mut paths_by_git_repo = HashMap::default();
         for relative_path in relative_paths.iter() {
-            if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(relative_path) {
+            if let Some((work_directory, repo_entry, repo)) =
+                state.snapshot.repo_for_path(relative_path)
+            {
                 if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, relative_path) {
-                    // TODO: Remove workdirectoryEntry type (maybe) to remove unwrap
-                    let work_directory = state
-                        .snapshot
-                        .entry_for_id(repo_entry.work_directory.0)
-                        .unwrap()
-                        .path
-                        .clone();
-
                     paths_by_git_repo
                         .entry(work_directory)
                         .or_insert_with(|| RepoPaths {
@@ -4580,7 +4583,7 @@ impl BackgroundScanner {
             if let Ok(status) = paths.repo.status(&mut paths.repo_paths.iter()) {
                 let mut changed_path_statuses = Vec::new();
                 for (repo_path, status) in &*status.entries {
-                    paths.remove_repo_path(repo_path);
+                    paths.repo_paths.remove(repo_path);
                     changed_path_statuses.push(Edit::Insert(GitEntry {
                         path: repo_path.clone(),
                         git_status: *status,
@@ -4590,7 +4593,7 @@ impl BackgroundScanner {
                     changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                 }
                 state.snapshot.repository_entries.update(
-                    &RepositoryWorkDirectory(work_directory_path),
+                    &work_directory_path,
                     move |repository_entry| {
                         repository_entry
                             .git_entries_by_path
@@ -4812,7 +4815,7 @@ impl BackgroundScanner {
                 path_entry.scan_id = snapshot.scan_id;
                 path_entry.is_ignored = entry.is_ignored;
                 if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
-                    if let Some((ref repo_entry, local_repo)) = repo {
+                    if let Some((_, ref repo_entry, local_repo)) = repo {
                         if let Ok(repo_path) = repo_entry.relativize(snapshot, &entry.path) {
                             let status = local_repo
                                 .repo_ptr
