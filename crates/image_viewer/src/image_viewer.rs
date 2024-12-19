@@ -1,3 +1,5 @@
+pub mod image_info;
+
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -137,8 +139,9 @@ impl Item for ImageView {
 
     fn breadcrumbs(&self, _theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         let text = breadcrumbs_text_for_image(self.project.read(cx), self.image_item.read(cx), cx);
+
         Some(vec![BreadcrumbText {
-            text,
+            text: text,
             highlights: None,
             font: None,
         }])
