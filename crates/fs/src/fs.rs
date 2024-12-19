@@ -542,17 +542,25 @@ impl Fs for RealFs {
             }
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
                 if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                    let tmp_file = create_temp_file(&path)?;
-                    let mut async_file = smol::fs::File::from(tmp_file.as_file().try_clone()?);
+                    let target_path = path.to_path_buf();
+                    let temp_file = smol::unblock(move || create_temp_file(&target_path)).await?;
 
-                    let mut writer =
-                        smol::io::BufWriter::with_capacity(buffer_size, &mut async_file);
-                    for chunk in chunks(text, line_ending) {
-                        writer.write_all(chunk.as_bytes()).await?;
+                    let temp_path = temp_file.path().to_path_buf();
+
+                    {
+                        let mut async_file = smol::fs::File::from(
+                            smol::unblock(move || temp_file.as_file().try_clone()).await?,
+                        );
+                        let mut writer =
+                            smol::io::BufWriter::with_capacity(buffer_size, &mut async_file);
+
+                        for chunk in chunks(text, line_ending) {
+                            writer.write_all(chunk.as_bytes()).await?;
+                        }
+                        writer.flush().await?;
                     }
-                    writer.flush().await?;
 
-                    write_to_file_as_root(&tmp_file.path(), path).await
+                    write_to_file_as_root(temp_path, path.to_path_buf()).await
                 } else {
                     // Todo: Implement for Mac and Windows
                     Err(e.into())
@@ -2030,36 +2038,43 @@ fn create_temp_file(path: &Path) -> Result<NamedTempFile> {
 }
 
 #[cfg(target_os = "macos")]
-async fn write_to_file_as_root(_temp_file_path: &Path, _target_file_path: &Path) -> Result<()> {
+async fn write_to_file_as_root(_temp_file_path: PathBuf, _target_file_path: PathBuf) -> Result<()> {
     unimplemented!("write_to_file_as_root is not implemented")
 }
 
 #[cfg(target_os = "windows")]
-async fn write_to_file_as_root(_temp_file_path: &Path, _target_file_path: &Path) -> Result<()> {
+async fn write_to_file_as_root(_temp_file_path: PathBuf, _target_file_path: PathBuf) -> Result<()> {
     unimplemented!("write_to_file_as_root is not implemented")
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-async fn write_to_file_as_root(temp_file_path: &Path, target_file_path: &Path) -> Result<()> {
+async fn write_to_file_as_root(temp_file_path: PathBuf, target_file_path: PathBuf) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     use which::which;
 
-    let pkexec_path = which("pkexec").map_err(|_| anyhow::anyhow!("pkexec not found in PATH"))?;
+    let pkexec_path = smol::unblock(|| which("pkexec"))
+        .await
+        .map_err(|_| anyhow::anyhow!("pkexec not found in PATH"))?;
 
-    let script_file = tempfile::Builder::new()
-        .prefix("write-to-file-as-root-")
-        .tempfile_in(paths::temp_dir())?;
+    let script_file = smol::unblock(move || {
+        let script_file = tempfile::Builder::new()
+            .prefix("write-to-file-as-root-")
+            .tempfile_in(paths::temp_dir())?;
 
-    writeln!(
-        script_file.as_file(),
-        "#!/usr/bin/env bash\ncat \"{}\" > \"{}\"",
-        temp_file_path.display(),
-        target_file_path.display()
-    )?;
+        writeln!(
+            script_file.as_file(),
+            "#!/usr/bin/env bash\ncat \"{}\" > \"{}\"",
+            temp_file_path.display(),
+            target_file_path.display()
+        )?;
 
-    let mut perms = script_file.as_file().metadata()?.permissions();
-    perms.set_mode(0o700); // rwx------
-    script_file.as_file().set_permissions(perms)?;
+        let mut perms = script_file.as_file().metadata()?.permissions();
+        perms.set_mode(0o700); // rwx------
+        script_file.as_file().set_permissions(perms)?;
+
+        Result::<_>::Ok(script_file)
+    })
+    .await?;
 
     let output = Command::new(&pkexec_path)
         .arg("--disable-internal-agent")
