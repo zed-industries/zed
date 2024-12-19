@@ -3392,6 +3392,13 @@ impl ProjectPanel {
                             let is_warning = diagnostic_severity
                                 .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
                                 .unwrap_or(false);
+
+                            let knockout_hover_color = if !is_marked && !is_active {
+                                bg_hover_color
+                            } else {
+                                default_color
+                            };
+
                             div().child(
                                 DecoratedIcon::new(
                                     Icon::from_path(icon.clone()).color(Color::Muted),
@@ -3410,7 +3417,7 @@ impl ProjectPanel {
                                             cx,
                                         )
                                         .group_name(Some(GROUP_NAME.into()))
-                                        .knockout_hover_color(bg_hover_color)
+                                        .knockout_hover_color(knockout_hover_color)
                                         .color(decoration_color.color(cx))
                                         .position(Point {
                                             x: px(-2.),
