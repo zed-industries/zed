@@ -467,6 +467,11 @@ impl DebugPanelItem {
         &self.stack_frame_list
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn variable_list(&self) -> &View<VariableList> {
+        &self.variable_list
+    }
+
     pub fn capabilities(&self, cx: &mut ViewContext<Self>) -> Capabilities {
         self.dap_store
             .read_with(cx, |store, _| store.capabilities_by_id(&self.client_id))

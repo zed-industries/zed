@@ -227,7 +227,7 @@ impl VariableListEntry {
 }
 
 #[derive(Debug)]
-struct ScopeVariableIndex {
+pub struct ScopeVariableIndex {
     fetched_ids: HashSet<u64>,
     variables: Vec<VariableContainer>,
 }
@@ -489,6 +489,19 @@ impl VariableList {
                 self.fetch_variables(cx);
             }
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn scopes(&self) -> &HashMap<StackFrameId, Vec<Scope>> {
+        &self.scopes
+    }
+
+    pub fn variables_by_scope(
+        &self,
+        stack_frame_id: StackFrameId,
+        scope_id: ScopeId,
+    ) -> Option<&ScopeVariableIndex> {
+        self.variables.get(&(stack_frame_id, scope_id))
     }
 
     pub fn variables(&self, cx: &mut ViewContext<Self>) -> Vec<VariableContainer> {
@@ -999,7 +1012,7 @@ impl VariableList {
 
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
 
-        let Some(index) = self.variables.get(&(stack_frame_id, scope_id)) else {
+        let Some(index) = self.variables_by_scope(stack_frame_id, scope_id) else {
             return;
         };
 
