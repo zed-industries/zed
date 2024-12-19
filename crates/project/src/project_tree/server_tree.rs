@@ -10,7 +10,6 @@
 
 use std::{
     collections::BTreeMap,
-    path::Path,
     sync::{Arc, OnceLock},
 };
 

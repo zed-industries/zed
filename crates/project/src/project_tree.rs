@@ -2,6 +2,7 @@
 //!
 //! A Project Tree is responsible for determining where the roots of subprojects are located in a project.
 
+mod path_trie;
 mod server_tree;
 mod toolchain_tree;
 
@@ -132,10 +133,12 @@ impl ProjectTree {
             }
         };
 
-        let mut filled_adapters = vec![false; adapters.len()];
-        let mut adapters_with_roots = 0;
+        // Forward scan to find topmost roots for each adapter
+        let ancestors = path.ancestors().skip(1).collect::<Vec<_>>();
+        for component in ancestors.iter().rev() {
+            worktree_roots.update(cx, |this, cx| {})
+        }
         for ancestor in path.ancestors().skip(1) {
-            // TODO: scan up until worktree root and no further.
             if adapters_with_roots == adapters.len() {
                 // We've found roots for all adapters, no need to continue
                 break;
