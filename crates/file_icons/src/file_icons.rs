@@ -51,8 +51,8 @@ impl FileIcons {
     pub fn get_icon(path: &Path, cx: &AppContext) -> Option<SharedString> {
         let this = cx.try_global::<Self>()?;
 
-        // FIXME: Associate a type with the languages and have the file's language
-        //        override these associations
+        // TODO: Associate a type with the languages and have the file's language
+        //       override these associations
         maybe!({
             let suffix = path.icon_stem_or_suffix()?;
 

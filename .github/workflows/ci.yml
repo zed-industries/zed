@@ -90,6 +90,13 @@ jobs:
         with:
           config: ./typos.toml
 
+      # To support writing comments that they will certainly be revisited.
+      - name: Check for FIXME comments
+        uses: bbugh/action-fixme-check@5db47ef17c01f87b3db4110abb17c6e38fbbe33f
+        with:
+          terms: 'FIXME'
+          case-sensitive: false
+
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests

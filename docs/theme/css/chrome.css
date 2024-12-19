@@ -327,7 +327,7 @@ pre > code {
   padding: 1rem;
 }
 
-/* FIXME: ACE editors overlap their buttons because ACE does absolute
+/* TODO: ACE editors overlap their buttons because ACE does absolute
    positioning within the code block which breaks padding. The only solution I
    can think of is to move the padding to the outer pre tag (or insert a div
    wrapper), but that would require fixing a whole bunch of CSS rules.
