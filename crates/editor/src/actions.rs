@@ -236,6 +236,8 @@ gpui::actions!(
         ConvertToUpperCase,
         Copy,
         CopyFileLocation,
+        CopyFileName,
+        CopyFileNameWithoutExtension,
         CopyHighlightJson,
         CopyPath,
         CopyPermalinkToLine,
