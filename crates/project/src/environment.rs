@@ -40,17 +40,6 @@ impl ProjectEnvironment {
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn set_environments(
-        &mut self,
-        shell_environments: &[(WorktreeId, HashMap<String, String>)],
-    ) {
-        for (worktree, env) in shell_environments.iter().cloned() {
-            self.environments
-                .insert(worktree, Task::ready(Some(env)).shared());
-        }
-    }
-
     pub(crate) fn remove_worktree_environment(&mut self, worktree_id: WorktreeId) {
         self.environment_error_messages.remove(&worktree_id);
         self.environments.remove(&worktree_id);
@@ -89,6 +78,10 @@ impl ProjectEnvironment {
         worktree_abs_path: Option<Arc<Path>>,
         cx: &ModelContext<Self>,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        if cfg!(any(test, feature = "test-support")) {
+            return Task::ready(Some(HashMap::default())).shared();
+        }
+
         if let Some(cli_environment) = self.get_cli_environment() {
             return cx
                 .spawn(|_, _| async move {
