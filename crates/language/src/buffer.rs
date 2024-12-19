@@ -481,6 +481,65 @@ struct BufferChunkHighlights<'a> {
     highlight_maps: Vec<HighlightMap>,
 }
 
+impl<'a> BufferChunkHighlights<'a> {
+    fn new(captures: SyntaxMapCaptures<'a>, highlight_maps: Vec<HighlightMap>) -> Self {
+        BufferChunkHighlights {
+            captures,
+            next_capture: None,
+            stack: Default::default(),
+            highlight_maps,
+        }
+    }
+    /// Preserve the existing highlights only if they fall within a provided range.
+    fn narrow(&mut self, range: Range<usize>) {
+        self.stack
+            .retain(|(end_offset, _)| *end_offset > range.start);
+        if let Some(capture) = &self.next_capture {
+            if range.start >= capture.node.start_byte() {
+                let next_capture_end = capture.node.end_byte();
+                if range.start < next_capture_end {
+                    self.stack.push((
+                        next_capture_end,
+                        self.highlight_maps[capture.grammar_index].get(capture.index),
+                    ));
+                }
+                self.next_capture.take();
+            }
+        }
+    }
+
+    fn seek_next_capture_offset(&mut self, current_offset: usize) -> usize {
+        let mut next_capture_start = usize::MAX;
+        while let Some((parent_capture_end, _)) = self.stack.last() {
+            if *parent_capture_end <= current_offset {
+                self.stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        if self.next_capture.is_none() {
+            self.next_capture = self.captures.next();
+        }
+
+        while let Some(capture) = self.next_capture.as_ref() {
+            let start_byte = capture.node.start_byte();
+            if current_offset < start_byte {
+                next_capture_start = start_byte;
+                break;
+            } else {
+                let highlight_id = self.highlight_maps[capture.grammar_index].get(capture.index);
+                self.stack.push((capture.node.end_byte(), highlight_id));
+                self.next_capture = self.captures.next();
+            }
+        }
+        next_capture_start
+    }
+    fn current_capture(&self) -> Option<&(usize, HighlightId)> {
+        self.stack.last()
+    }
+}
+
 /// An iterator that yields chunks of a buffer's text, along with their
 /// syntax highlights and diagnostic status.
 pub struct BufferChunks<'a> {
@@ -4059,12 +4118,7 @@ impl<'a> BufferChunks<'a> {
     ) -> Self {
         let mut highlights = None;
         if let Some((captures, highlight_maps)) = syntax {
-            highlights = Some(BufferChunkHighlights {
-                captures,
-                next_capture: None,
-                stack: Default::default(),
-                highlight_maps,
-            })
+            highlights = Some(BufferChunkHighlights::new(captures, highlight_maps));
         }
 
         let diagnostic_endpoints = diagnostics.then(|| Vec::new().into_iter().peekable());
@@ -4093,29 +4147,10 @@ impl<'a> BufferChunks<'a> {
         if let Some(highlights) = self.highlights.as_mut() {
             if old_range.start <= self.range.start && old_range.end >= self.range.end {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
-                highlights
-                    .stack
-                    .retain(|(end_offset, _)| *end_offset > range.start);
-                if let Some(capture) = &highlights.next_capture {
-                    if range.start >= capture.node.start_byte() {
-                        let next_capture_end = capture.node.end_byte();
-                        if range.start < next_capture_end {
-                            highlights.stack.push((
-                                next_capture_end,
-                                highlights.highlight_maps[capture.grammar_index].get(capture.index),
-                            ));
-                        }
-                        highlights.next_capture.take();
-                    }
-                }
+                highlights.narrow(range);
             } else if let Some(snapshot) = self.buffer_snapshot {
                 let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
-                *highlights = BufferChunkHighlights {
-                    captures,
-                    next_capture: None,
-                    stack: Default::default(),
-                    highlight_maps,
-                };
+                *highlights = BufferChunkHighlights::new(captures, highlight_maps);
             } else {
                 // We cannot obtain new highlights for a language-aware buffer iterator, as we don't have a buffer snapshot.
                 // Seeking such BufferChunks is not supported.
@@ -4207,35 +4242,10 @@ impl<'a> Iterator for BufferChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut next_capture_start = usize::MAX;
         let mut next_diagnostic_endpoint = usize::MAX;
-
+        let mut next_capture_start = usize::MAX;
         if let Some(highlights) = self.highlights.as_mut() {
-            while let Some((parent_capture_end, _)) = highlights.stack.last() {
-                if *parent_capture_end <= self.range.start {
-                    highlights.stack.pop();
-                } else {
-                    break;
-                }
-            }
-
-            if highlights.next_capture.is_none() {
-                highlights.next_capture = highlights.captures.next();
-            }
-
-            while let Some(capture) = highlights.next_capture.as_ref() {
-                if self.range.start < capture.node.start_byte() {
-                    next_capture_start = capture.node.start_byte();
-                    break;
-                } else {
-                    let highlight_id =
-                        highlights.highlight_maps[capture.grammar_index].get(capture.index);
-                    highlights
-                        .stack
-                        .push((capture.node.end_byte(), highlight_id));
-                    highlights.next_capture = highlights.captures.next();
-                }
-            }
+            next_capture_start = highlights.seek_next_capture_offset(self.range.start);
         }
 
         let mut diagnostic_endpoints = std::mem::take(&mut self.diagnostic_endpoints);
@@ -4259,7 +4269,9 @@ impl<'a> Iterator for BufferChunks<'a> {
                 .min(next_diagnostic_endpoint);
             let mut highlight_id = None;
             if let Some(highlights) = self.highlights.as_ref() {
-                if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
+                if let Some((parent_capture_end, parent_highlight_id)) =
+                    highlights.current_capture()
+                {
                     chunk_end = chunk_end.min(*parent_capture_end);
                     highlight_id = Some(*parent_highlight_id);
                 }
