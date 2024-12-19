@@ -54,7 +54,7 @@ use std::{
     fmt,
     future::Future,
     iter::FusedIterator,
-    mem,
+    mem::{self, take},
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     pin::Pin,
@@ -3681,10 +3681,28 @@ impl<'a> sum_tree::Dimension<'a, GitEntrySummary> for TraversalProgress<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 enum GitEntryTraversalTarget<'a> {
     PathSuccessor(&'a Path),
     Path(&'a Path),
+}
+
+impl<'a> GitEntryTraversalTarget<'a> {
+    fn path(&self) -> &'a Path {
+        match self {
+            GitEntryTraversalTarget::Path(path) => path,
+            GitEntryTraversalTarget::PathSuccessor(path) => path,
+        }
+    }
+
+    fn with_path(self, path: &Path) -> GitEntryTraversalTarget<'_> {
+        match self {
+            GitEntryTraversalTarget::PathSuccessor(_) => {
+                GitEntryTraversalTarget::PathSuccessor(path)
+            }
+            GitEntryTraversalTarget::Path(_) => GitEntryTraversalTarget::Path(path),
+        }
+    }
 }
 
 impl<'a, 'b> SeekTarget<'a, GitEntrySummary, (TraversalProgress<'a>, GitStatuses)>
@@ -3705,74 +3723,89 @@ impl<'a, 'b> SeekTarget<'a, GitEntrySummary, (TraversalProgress<'a>, GitStatuses
 }
 
 struct AllStatusesCursor<'a, I> {
-    repositories: I,
-    current_cursor: Option<(
-        RepositoryWorkDirectory,
+    repos: I,
+    snapshot: &'a Snapshot,
+    current_location: Option<(
+        &'a RepositoryEntry,
         Cursor<'a, GitEntry, (TraversalProgress<'a>, GitStatuses)>,
     )>,
-    statuses_so_far: GitStatuses,
+    statuses_before_current_repo: GitStatuses,
 }
 
 impl<'a, I> AllStatusesCursor<'a, I>
 where
-    I: FusedIterator + Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)>,
+    I: Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)> + FusedIterator,
 {
     fn seek_forward(&mut self, target: &GitEntryTraversalTarget<'_>) {
-        let mut target_was_in_last_repo = false;
+        eprintln!("seek to {target:?}");
+        let mut hold_at_beginning = false;
+
         loop {
-            let (work_dir, cursor) = match &mut self.current_cursor {
-                Some(cursor) => cursor,
+            let (entry, cursor) = match &mut self.current_location {
+                Some(location) => location,
                 None => {
-                    let Some((work_dir, entry)) = self.repositories.next() else {
+                    let Some((work_dir, entry)) = self.repos.next() else {
+                        eprintln!("exhausted repositories");
                         break;
                     };
+                    eprintln!("next repository: {work_dir:?}");
 
-                    self.current_cursor = Some((
-                        work_dir.clone(),
+                    self.current_location.insert((
+                        entry,
                         entry
                             .git_entries_by_path
                             .cursor::<(TraversalProgress<'_>, GitStatuses)>(&()),
-                    ));
-                    self.current_cursor.as_mut().unwrap()
+                    ))
                 }
             };
 
-            let path = match target {
-                GitEntryTraversalTarget::PathSuccessor(path) => path,
-                GitEntryTraversalTarget::Path(path) => path,
-            };
-            if let Some(relative_path) = path.strip_prefix(&work_dir.0).ok() {
-                target_was_in_last_repo = true;
-
-                let new_target = match target {
-                    GitEntryTraversalTarget::PathSuccessor(_) => {
-                        GitEntryTraversalTarget::PathSuccessor(relative_path.as_ref())
-                    }
-                    GitEntryTraversalTarget::Path(_) => {
-                        GitEntryTraversalTarget::Path(relative_path.as_ref())
-                    }
-                };
-
-                cursor.seek_forward(&new_target, Bias::Left, &());
-                if cursor.item().is_some() {
-                    break;
-                }
-            } else {
-                if target_was_in_last_repo {
-                    break;
-                }
+            if take(&mut hold_at_beginning) {
+                eprintln!("hold at beginning");
+                break;
             }
 
-            self.statuses_so_far += cursor.start().1;
-            self.current_cursor = None;
+            if let Ok(RepoPath(repo_path)) = entry.relativize(self.snapshot, target.path()) {
+                let target = &target.with_path(&repo_path);
+                eprintln!("internal seek to {target:?}");
+                cursor.seek_forward(target, Bias::Left, &());
+                if let Some(item) = cursor.item() {
+                    eprintln!("found {item:?}");
+                    break;
+                }
+                match target {
+                    GitEntryTraversalTarget::Path(_) => panic!("wat"),
+                    GitEntryTraversalTarget::PathSuccessor(path) => {
+                        eprintln!("end of repo, hold");
+                        hold_at_beginning = true;
+                    }
+                }
+            } else {
+                eprintln!("seek to end of repo");
+                cursor.seek_forward(
+                    // FIXME
+                    &GitEntryTraversalTarget::Path("2775f0d7-ad3a-4ae0-b921-85ce581b258c".as_ref()),
+                    Bias::Left,
+                    &(),
+                );
+            }
+
+            let old_statuses = self.statuses_before_current_repo;
+            self.statuses_before_current_repo += cursor.start().1;
+            eprintln!(
+                "adding: {:?} + {:?} = {:?}",
+                old_statuses,
+                cursor.start().1,
+                self.statuses_before_current_repo
+            );
+            self.current_location = None;
         }
     }
 
     fn start(&self) -> GitStatuses {
-        if let Some((_, cursor)) = self.current_cursor.as_ref() {
-            cursor.start().1 + self.statuses_so_far
+        if let Some((_, cursor)) = self.current_location.as_ref() {
+            cursor.start().1 + self.statuses_before_current_repo
         } else {
-            self.statuses_so_far
+            self.statuses_before_current_repo
         }
     }
 }
@@ -3783,11 +3816,12 @@ fn all_statuses_cursor<'a>(
     'a,
     impl Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)> + FusedIterator,
 > {
-    let repositories = snapshot.repositories();
+    let repos = snapshot.repositories();
     AllStatusesCursor {
-        repositories,
-        current_cursor: None,
-        statuses_so_far: Default::default(),
+        snapshot,
+        repos,
+        current_location: None,
+        statuses_before_current_repo: Default::default(),
     }
 }
 

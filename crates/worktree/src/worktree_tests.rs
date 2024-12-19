@@ -2908,11 +2908,14 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
         ],
     );
 
+    eprintln!("*******************************");
+
     check_propagated_statuses(
         &snapshot,
         &[
             (Path::new("y"), Some(GitFileStatus::Conflict)),
             (Path::new("y/y1.txt"), Some(GitFileStatus::Conflict)),
+            (Path::new("y/y2.txt"), Some(GitFileStatus::Modified)),
         ],
     );
 
