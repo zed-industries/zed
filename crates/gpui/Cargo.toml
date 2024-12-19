@@ -146,6 +146,7 @@ pathfinder_geometry = "0.5"
 # Always used
 flume = "0.11"
 oo7 = "0.3.0"
+reliability.workspace = true
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
