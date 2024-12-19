@@ -9592,6 +9592,7 @@ dependencies = [
  "tempfile",
  "terminal",
  "text",
+ "toml 0.8.19",
  "unindent",
  "url",
  "util",
