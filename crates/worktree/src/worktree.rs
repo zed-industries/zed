@@ -3118,13 +3118,10 @@ impl BackgroundScannerState {
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
 
-        let actual_repo_path = repository.dot_git_dir();
+        let actual_dot_git_dir_abs_path = repository.dot_git_dir();
+        watcher.add(&actual_dot_git_dir_abs_path).log_err()?;
 
-        let actual_dot_git_dir_abs_path = smol::block_on(find_git_dir(&actual_repo_path, fs))?;
-        watcher.add(&actual_repo_path).log_err()?;
-
-        let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path.as_ref() == dot_git_abs_path
-        {
+        let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path == dot_git_abs_path {
             None
         } else {
             // The two paths could be different because we opened a git worktree.
@@ -3157,7 +3154,7 @@ impl BackgroundScannerState {
             LocalRepositoryEntry {
                 git_dir_scan_id: 0,
                 repo_ptr: repository.clone(),
-                dot_git_dir_abs_path: actual_dot_git_dir_abs_path,
+                dot_git_dir_abs_path: actual_dot_git_dir_abs_path.into(),
                 dot_git_worktree_abs_path,
             },
         );
@@ -3180,15 +3177,6 @@ async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
     }
     let config_metadata = fs.metadata(&path.join("config")).await;
     matches!(config_metadata, Ok(Some(_)))
-}
-
-async fn find_git_dir(path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
-    for ancestor in path.ancestors() {
-        if is_git_dir(ancestor, fs).await {
-            return Some(Arc::from(ancestor));
-        }
-    }
-    None
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
