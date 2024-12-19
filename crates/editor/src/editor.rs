@@ -3746,7 +3746,6 @@ impl Editor {
 
                         if editor.show_inline_completions_in_menu(cx) {
                             if let Some(hint) = editor.inline_completion_menu_hint(cx) {
-                                editor.hide_active_inline_completion(cx);
                                 menu.show_inline_completion_hint(hint);
                             }
                         } else {
@@ -4711,17 +4710,6 @@ impl Editor {
         Some(active_inline_completion.completion)
     }
 
-    fn hide_active_inline_completion(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(active_inline_completion) = self.active_inline_completion.as_ref() {
-            self.splice_inlays(
-                active_inline_completion.inlay_ids.clone(),
-                Default::default(),
-                cx,
-            );
-            self.clear_highlights::<InlineCompletionHighlight>(cx);
-        }
-    }
-
     fn update_visible_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
@@ -4791,34 +4779,32 @@ impl Editor {
             invalidation_row_range = edit_start_row..cursor_row;
             completion = InlineCompletion::Move(first_edit_start);
         } else {
-            if !self.show_inline_completions_in_menu(cx) || !self.has_active_completions_menu() {
-                if edits
-                    .iter()
-                    .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
-                {
-                    let mut inlays = Vec::new();
-                    for (range, new_text) in &edits {
-                        let inlay = Inlay::inline_completion(
-                            post_inc(&mut self.next_inlay_id),
-                            range.start,
-                            new_text.as_str(),
-                        );
-                        inlay_ids.push(inlay.id);
-                        inlays.push(inlay);
-                    }
-
-                    self.splice_inlays(vec![], inlays, cx);
-                } else {
-                    let background_color = cx.theme().status().deleted_background;
-                    self.highlight_text::<InlineCompletionHighlight>(
-                        edits.iter().map(|(range, _)| range.clone()).collect(),
-                        HighlightStyle {
-                            background_color: Some(background_color),
-                            ..Default::default()
-                        },
-                        cx,
+            if edits
+                .iter()
+                .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
+            {
+                let mut inlays = Vec::new();
+                for (range, new_text) in &edits {
+                    let inlay = Inlay::inline_completion(
+                        post_inc(&mut self.next_inlay_id),
+                        range.start,
+                        new_text.as_str(),
                     );
+                    inlay_ids.push(inlay.id);
+                    inlays.push(inlay);
                 }
+
+                self.splice_inlays(vec![], inlays, cx);
+            } else {
+                let background_color = cx.theme().status().deleted_background;
+                self.highlight_text::<InlineCompletionHighlight>(
+                    edits.iter().map(|(range, _)| range.clone()).collect(),
+                    HighlightStyle {
+                        background_color: Some(background_color),
+                        ..Default::default()
+                    },
+                    cx,
+                );
             }
 
             invalidation_row_range = edit_start_row..edit_end_row;
