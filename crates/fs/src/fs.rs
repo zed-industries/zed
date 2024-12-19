@@ -548,12 +548,10 @@ impl Fs for RealFs {
                     let temp_path = temp_file.into_temp_path();
                     let temp_path_for_write = temp_path.to_path_buf();
 
-                    let async_file = smol::fs::File::from(
-                        smol::fs::OpenOptions::new()
-                            .write(true)
-                            .open(&temp_path)
-                            .await?,
-                    );
+                    let async_file = smol::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&temp_path)
+                        .await?;
 
                     let mut writer = smol::io::BufWriter::with_capacity(buffer_size, async_file);
 
