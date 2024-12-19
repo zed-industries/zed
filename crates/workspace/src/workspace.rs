@@ -135,8 +135,6 @@ actions!(
         CloseWindow,
         CopyPath,
         CopyRelativePath,
-        CopyFileName,
-        CopyFileNameWithoutExtension,
         Feedback,
         FollowNextCollaborator,
         NewCenterTerminal,

@@ -7,7 +7,7 @@ use crate::{
     notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, CopyPath, CopyRelativePath, CopyFileName, CopyFileNameWithoutExtension, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
+    CloseWindow, CopyPath, CopyRelativePath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
     OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
@@ -2354,32 +2354,6 @@ impl Pane {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
                                             relative_path.to_string_lossy().to_string(),
                                         ));
-                                    }),
-                                )
-                            })
-                            .when_some(relative_path.clone(), |menu, relative_path| {
-                                menu.entry(
-                                    "Copy File Name",
-                                    Some(Box::new(CopyFileName)),
-                                    cx.handler_for(&pane, move |_, cx| {
-                                        if let Some(name) = relative_path.file_stem() {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                name.to_string_lossy().to_string(),
-                                            ));
-                                        }
-                                    }),
-                                )
-                            })
-                            .when_some(relative_path.clone(), |menu, relative_path| {
-                                menu.entry(
-                                    "Copy File Name without Extension",
-                                    Some(Box::new(CopyFileNameWithoutExtension)),
-                                    cx.handler_for(&pane, move |_, cx| {
-                                        if let Some(name) = relative_path.file_name() {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                name.to_string_lossy().to_string(),
-                                            ));
-                                        }
                                     }),
                                 )
                             })
