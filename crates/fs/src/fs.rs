@@ -545,22 +545,24 @@ impl Fs for RealFs {
                     let target_path = path.to_path_buf();
                     let temp_file = smol::unblock(move || create_temp_file(&target_path)).await?;
 
-                    let temp_path = temp_file.path().to_path_buf();
+                    let temp_path = temp_file.into_temp_path();
+                    let temp_path_for_write = temp_path.to_path_buf();
 
-                    {
-                        let mut async_file = smol::fs::File::from(
-                            smol::unblock(move || temp_file.as_file().try_clone()).await?,
-                        );
-                        let mut writer =
-                            smol::io::BufWriter::with_capacity(buffer_size, &mut async_file);
+                    let async_file = smol::fs::File::from(
+                        smol::fs::OpenOptions::new()
+                            .write(true)
+                            .open(&temp_path)
+                            .await?,
+                    );
 
-                        for chunk in chunks(text, line_ending) {
-                            writer.write_all(chunk.as_bytes()).await?;
-                        }
-                        writer.flush().await?;
+                    let mut writer = smol::io::BufWriter::with_capacity(buffer_size, async_file);
+
+                    for chunk in chunks(text, line_ending) {
+                        writer.write_all(chunk.as_bytes()).await?;
                     }
+                    writer.flush().await?;
 
-                    write_to_file_as_root(temp_path, path.to_path_buf()).await
+                    write_to_file_as_root(temp_path_for_write, path.to_path_buf()).await
                 } else {
                     // Todo: Implement for Mac and Windows
                     Err(e.into())
@@ -2049,6 +2051,7 @@ async fn write_to_file_as_root(_temp_file_path: PathBuf, _target_file_path: Path
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 async fn write_to_file_as_root(temp_file_path: PathBuf, target_file_path: PathBuf) -> Result<()> {
+    use shlex::try_quote;
     use std::os::unix::fs::PermissionsExt;
     use which::which;
 
@@ -2063,9 +2066,9 @@ async fn write_to_file_as_root(temp_file_path: PathBuf, target_file_path: PathBu
 
         writeln!(
             script_file.as_file(),
-            "#!/usr/bin/env bash\ncat \"{}\" > \"{}\"",
-            temp_file_path.display(),
-            target_file_path.display()
+            "#!/usr/bin/env sh\nset -eu\ncat \"{}\" > \"{}\"",
+            try_quote(&temp_file_path.to_string_lossy())?.to_string(),
+            try_quote(&target_file_path.to_string_lossy())?.to_string()
         )?;
 
         let mut perms = script_file.as_file().metadata()?.permissions();
@@ -2076,9 +2079,11 @@ async fn write_to_file_as_root(temp_file_path: PathBuf, target_file_path: PathBu
     })
     .await?;
 
+    let script_path = script_file.into_temp_path();
+
     let output = Command::new(&pkexec_path)
         .arg("--disable-internal-agent")
-        .arg(script_file.path())
+        .arg(&script_path)
         .output()
         .await?;
 

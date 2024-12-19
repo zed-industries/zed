@@ -4792,6 +4792,7 @@ dependencies = [
  "rope",
  "serde",
  "serde_json",
+ "shlex",
  "smol",
  "tempfile",
  "text",
