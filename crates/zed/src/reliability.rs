@@ -74,12 +74,15 @@ pub fn init_panic_hook(
                 let base = frame
                     .module_base_address()
                     .unwrap_or(main_module_base_address);
-                frame.symbols().iter().filter_map(move |symbol| {
-                    Some(format!(
-                        "{:#}+{}",
-                        symbol.name()?,
+                frame.symbols().iter().map(move |symbol| {
+                    format!(
+                        "{}+{}",
+                        symbol
+                            .name()
+                            .as_ref()
+                            .map_or("<unknown>".to_owned(), <_>::to_string),
                         (frame.ip() as isize).saturating_sub(base as isize)
-                    ))
+                    )
                 })
             })
             .collect::<Vec<_>>();
