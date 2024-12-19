@@ -53,6 +53,7 @@ use std::{
     ffi::OsStr,
     fmt,
     future::Future,
+    iter::FusedIterator,
     mem,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
@@ -66,7 +67,6 @@ use std::{
 use sum_tree::{Bias, Cursor, Edit, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
-    maybe,
     paths::{home_dir, PathMatcher, SanitizedPath},
     ResultExt,
 };
@@ -2423,8 +2423,8 @@ impl Snapshot {
 
     pub fn repositories(
         &self,
-    ) -> impl Iterator<Item = (&RepositoryWorkDirectory, &RepositoryEntry)> {
-        self.repository_entries.iter()
+    ) -> impl Iterator<Item = (&RepositoryWorkDirectory, &RepositoryEntry)> + FusedIterator {
+        self.repository_entries.iter().fuse()
     }
 
     /// Get the repository whose work directory contains the given path.
@@ -2491,29 +2491,17 @@ impl Snapshot {
                     return None;
                 }
 
-                let (work_directory, repo_entry) =
-                    self.repository_and_work_directory_for_path(&entry.path)?;
+                let (_, repo_entry) = self.repository_and_work_directory_for_path(&entry.path)?;
                 let RepoPath(path) = repo_entry.relativize(self, &entry.path).ok()?;
                 let git_entry = repo_entry.git_entries_by_path.get(&PathKey(path), &())?;
                 Some(git_entry.git_status)
             })
             .collect::<Vec<_>>();
 
-        // dbg!(entries
-        //     .iter()
-        //     .zip(result.iter())
-        //     .map(|(entry, status)| { (entry.path.clone(), status) })
-        //     .collect::<Vec<_>>());
-
         let mut entry_ix = 0;
         loop {
             let next_entry = entries.get(entry_ix);
             let containing_entry = entry_stack.last().map(|(ix, _)| &entries[*ix]);
-
-            dbg!(entry_stack
-                .iter()
-                .map(|(ix, statuses)| (entries[*ix].path.clone(), statuses))
-                .collect::<Vec<_>>());
 
             let entry_to_finish = match (containing_entry, next_entry) {
                 (Some(_), None) => entry_stack.pop(),
@@ -2529,14 +2517,11 @@ impl Snapshot {
             };
 
             if let Some((entry_ix, prev_statuses)) = entry_to_finish {
-                dbg!("seeking for entry to finish");
-                cursor.seek_forward(dbg!(&GitEntryTraversalTarget::PathSuccessor(
-                    &entries[entry_ix].path
-                )));
+                cursor.seek_forward(&GitEntryTraversalTarget::PathSuccessor(
+                    &entries[entry_ix].path,
+                ));
 
-                let statuses = dbg!(cursor.start()) - dbg!(prev_statuses);
-
-                dbg!((&entries[entry_ix].path, &statuses));
+                let statuses = cursor.start() - prev_statuses;
 
                 result[entry_ix] = if statuses.conflict > 0 {
                     Some(GitFileStatus::Conflict)
@@ -2549,7 +2534,6 @@ impl Snapshot {
                 };
             } else {
                 if entries[entry_ix].is_dir() {
-                    dbg!("seeking for entry is_dir");
                     cursor.seek_forward(&GitEntryTraversalTarget::Path(&entries[entry_ix].path));
                     entry_stack.push((entry_ix, cursor.start()));
                 }
@@ -3728,18 +3712,17 @@ struct AllStatusesCursor<'a, I> {
 
 impl<'a, I> AllStatusesCursor<'a, I>
 where
-    I: Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)>,
+    I: FusedIterator + Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)>,
 {
     fn seek_forward(&mut self, target: &GitEntryTraversalTarget<'_>) {
         loop {
-            dbg!("starting loop");
             let cursor = match &mut self.current_cursor {
                 Some(cursor) => cursor,
                 None => {
-                    let Some((work_dir, entry)) = self.repositories.next() else {
+                    let Some((_, entry)) = self.repositories.next() else {
                         break;
                     };
-                    dbg!(work_dir);
+
                     self.current_cursor = Some(
                         entry
                             .git_entries_by_path
@@ -3748,26 +3731,18 @@ where
                     self.current_cursor.as_mut().unwrap()
                 }
             };
-            let found = cursor.seek_forward(target, Bias::Left, &());
-            if dbg!(found) {
+            cursor.seek_forward(target, Bias::Left, &());
+            if cursor.item().is_some() {
                 break;
             }
-            self.statuses_so_far = cursor.start().1;
+            self.statuses_so_far += cursor.start().1;
             self.current_cursor = None;
         }
     }
 
-    fn item(&self) -> Option<&GitEntry> {
-        self.current_cursor
-            .as_ref()
-            .and_then(|cursor| cursor.item())
-    }
-
     fn start(&self) -> GitStatuses {
-        dbg!(self.current_cursor.is_none());
-
         if let Some(cursor) = self.current_cursor.as_ref() {
-            cursor.start().1
+            cursor.start().1 + self.statuses_so_far
         } else {
             self.statuses_so_far
         }
@@ -3776,22 +3751,11 @@ where
 
 fn all_statuses_cursor<'a>(
     snapshot: &'a Snapshot,
-) -> AllStatusesCursor<'a, impl Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)>>
-{
-    dbg!(snapshot
-        .repositories()
-        .map(|(workdir, _)| workdir)
-        .collect::<Vec<_>>());
-    let mut repositories = snapshot.repositories();
-    // let cursor = util::maybe!({
-    //     let (workdir, entry) = repositories.next()?;
-    //     dbg!(workdir);
-    //     Some(
-    //         entry
-    //             .git_entries_by_path
-    //             .cursor::<(TraversalProgress<'_>, GitStatuses)>(&()),
-    //     )
-    // });
+) -> AllStatusesCursor<
+    'a,
+    impl Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)> + FusedIterator,
+> {
+    let repositories = snapshot.repositories();
     AllStatusesCursor {
         repositories,
         current_cursor: None,
@@ -5414,10 +5378,7 @@ impl RepoPaths {
             Ok(ix) => {
                 self.repo_paths.remove(ix);
             }
-            Err(_) => {
-                log::error!("Attempted to remove a repo path that was never added");
-                debug_assert!(false);
-            }
+            Err(_) => {}
         }
     }
 }
