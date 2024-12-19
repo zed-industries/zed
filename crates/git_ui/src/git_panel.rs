@@ -19,6 +19,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
+    usize,
 };
 use ui::{
     prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
@@ -476,9 +477,9 @@ impl GitPanel {
                             entries
                                 .iter()
                                 .filter_map(|entry| {
+                                    let git_status = entry.git_status()?;
                                     let (entry_path, unstaged_changes_task) =
                                         project.update(cx, |project, cx| {
-                                            // TODO kb are these None for Added?
                                             let entry_path =
                                                 project.path_for_entry(entry.id, cx)?;
                                             let open_task =
@@ -495,6 +496,7 @@ impl GitPanel {
                                                                 "accessing buffer for entry"
                                                             )
                                                         })?;
+                                                    // TODO added files have noop changes and those are not expanded properly in the multi buffer
                                                     let unstaged_changes = project
                                                         .update(&mut cx, |project, cx| {
                                                             project.open_unstaged_changes(
@@ -505,20 +507,49 @@ impl GitPanel {
                                                         .await
                                                         .context("opening unstaged changes")?;
 
-                                                    let hunks = unstaged_changes.update(
-                                                        &mut cx,
-                                                        |unstaged_changes, cx| {
-                                                            let buffer_snapshot =
-                                                                buffer.read(cx).snapshot();
-                                                            unstaged_changes
-                                                                .diff_to_buffer
-                                                                .hunks_in_row_range(
-                                                                    0..BufferRow::MAX,
-                                                                    &buffer_snapshot,
-                                                                )
-                                                                .collect::<Vec<_>>()
-                                                        },
-                                                    )?;
+                                                    let hunks = match git_status {
+                                                        GitFileStatus::Added => {
+                                                            let buffer_snapshot = buffer
+                                                                .update(&mut cx, |buffer, _| {
+                                                                    buffer.snapshot()
+                                                                })?;
+                                                            let entire_buffer_range =
+                                                                buffer_snapshot.anchor_after(0)
+                                                                    ..buffer_snapshot
+                                                                        .anchor_before(
+                                                                            buffer_snapshot.len(),
+                                                                        );
+                                                            let entire_buffer_point_range =
+                                                                entire_buffer_range
+                                                                    .clone()
+                                                                    .to_point(&buffer_snapshot);
+
+                                                            vec![DiffHunk {
+                                                                row_range: entire_buffer_point_range
+                                                                    .start
+                                                                    .row
+                                                                    ..entire_buffer_point_range
+                                                                        .end
+                                                                        .row,
+                                                                buffer_range: entire_buffer_range,
+                                                                diff_base_byte_range: 0..0,
+                                                            }]
+                                                        }
+                                                        GitFileStatus::Modified => unstaged_changes
+                                                            .update(&mut cx, |changes, cx| {
+                                                                let buffer_snapshot =
+                                                                    buffer.read(cx).snapshot();
+                                                                changes
+                                                                    .diff_to_buffer
+                                                                    .hunks_in_row_range(
+                                                                        0..BufferRow::MAX,
+                                                                        &buffer_snapshot,
+                                                                    )
+                                                                    .collect::<Vec<_>>()
+                                                            })?,
+                                                        // TODO support conflicts display
+                                                        GitFileStatus::Conflict => Vec::new(),
+                                                    };
 
                                                     anyhow::Ok((buffer, unstaged_changes, hunks))
                                                 });
@@ -548,11 +579,13 @@ impl GitPanel {
                     let multi_buffer = editor.read(cx).buffer().clone();
                     let mut buffers_with_ranges = Vec::with_capacity(project_buffers.len());
                     for (buffer_path, open_result) in project_buffers {
-                        if let Some((buffer, change_set, diff_hunks)) = open_result
+                        if let Some((buffer, unstaged_changes, diff_hunks)) = open_result
                             .with_context(|| format!("opening buffer {buffer_path:?}"))
                             .log_err()
                         {
-                            editor.update(cx, |editor, cx| editor.add_change_set(change_set, cx));
+                            editor.update(cx, |editor, cx| {
+                                editor.add_change_set(unstaged_changes, cx)
+                            });
                             buffers_with_ranges.push((
                                 buffer,
                                 diff_hunks
@@ -866,7 +899,6 @@ impl GitPanel {
                                 }
                             };
                             // TODO kb scroll to the entry clicked
-                            // TODO kb all new added files are not displayed
                         })
                         .ok();
                 });
