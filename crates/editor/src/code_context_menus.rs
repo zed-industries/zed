@@ -325,7 +325,9 @@ impl CompletionsMenu {
             }
         }
         .into();
-        self.selected_item = 0;
+        if self.selected_item != 0 && self.selected_item + 1 < self.entries.len() {
+            self.selected_item += 1;
+        }
     }
 
     pub fn resolve_selected_completion(
