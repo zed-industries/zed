@@ -4792,11 +4792,13 @@ dependencies = [
  "rope",
  "serde",
  "serde_json",
+ "shlex",
  "smol",
  "tempfile",
  "text",
  "time",
  "util",
+ "which 6.0.3",
  "windows 0.58.0",
 ]
 
