@@ -1,31 +1,26 @@
+use crate::stdout_is_a_pty;
 use anyhow::{Context, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
 use client::{telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{AppContext, SemanticVersion};
-use http_client::{HttpRequestExt, Method};
-
-use http_client::{self, HttpClient, HttpClientWithUrl};
+use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
-use release_channel::ReleaseChannel;
-use release_channel::RELEASE_CHANNEL;
+use release_channel::{ReleaseChannel, RELEASE_CHANNEL};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
     env,
-    ffi::OsStr,
+    ffi::{c_void, OsStr},
     sync::{atomic::Ordering, Arc},
 };
 use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
-use telemetry_events::LocationData;
-use telemetry_events::Panic;
-use telemetry_events::PanicRequest;
+use telemetry_events::{LocationData, Panic, PanicRequest};
 use url::Url;
 use util::ResultExt;
 
-use crate::stdout_is_a_pty;
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn init_panic_hook(
@@ -79,7 +74,7 @@ pub fn init_panic_hook(
                 let base = frame
                     .module_base_address()
                     .unwrap_or(main_module_base_address);
-                frame.symbols().iter().filter_map(|symbol| {
+                frame.symbols().iter().filter_map(move |symbol| {
                     Some(format!(
                         "{:#}+{}",
                         symbol.name()?,
