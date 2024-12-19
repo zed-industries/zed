@@ -80,7 +80,6 @@ gpui_macros.workspace = true
 http_client = { optional = true, workspace = true }
 image = "0.25.1"
 itertools.workspace = true
-libc.workspace = true
 linkme = "0.3"
 log.workspace = true
 num_cpus = "1.13"
