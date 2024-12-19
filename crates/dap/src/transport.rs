@@ -834,8 +834,8 @@ impl Transport for FakeTransport {
                         break anyhow!(error);
                     }
                     Ok(Message::Request(request)) => {
-                        if let Some(mut handle) =
-                            handlers.lock().await.remove(request.command.as_str())
+                        if let Some(handle) =
+                            handlers.lock().await.get_mut(request.command.as_str())
                         {
                             handle(
                                 request.seq,
