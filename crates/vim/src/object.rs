@@ -25,6 +25,7 @@ pub enum Object {
     Paragraph,
     Quotes,
     BackQuotes,
+    AnyQuotes,
     DoubleQuotes,
     VerticalBars,
     Parentheses,
@@ -61,6 +62,7 @@ actions!(
         Paragraph,
         Quotes,
         BackQuotes,
+        AnyQuotes,
         DoubleQuotes,
         VerticalBars,
         Parentheses,
@@ -95,6 +97,9 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &BackQuotes, cx| {
         vim.object(Object::BackQuotes, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &AnyQuotes, cx| {
+        vim.object(Object::AnyQuotes, cx)
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, cx| {
         vim.object(Object::DoubleQuotes, cx)
@@ -156,6 +161,7 @@ impl Object {
             Object::Word { .. }
             | Object::Quotes
             | Object::BackQuotes
+            | Object::AnyQuotes
             | Object::VerticalBars
             | Object::DoubleQuotes => false,
             Object::Sentence
@@ -182,6 +188,7 @@ impl Object {
             | Object::IndentObj { .. } => false,
             Object::Quotes
             | Object::BackQuotes
+            | Object::AnyQuotes
             | Object::DoubleQuotes
             | Object::VerticalBars
             | Object::Parentheses
@@ -250,6 +257,11 @@ impl Object {
             }
             Object::BackQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
+            }
+            Object::AnyQuotes => {
+                surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
+                    .or_else(|| surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"'))
+                    .or_else(|| surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`'))
             }
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
