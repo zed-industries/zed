@@ -38,7 +38,8 @@ pub trait GitRepository: Send + Sync {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
+    //fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
+    fn status(&self, path_prefixes: &mut dyn Iterator<Item = &RepoPath>) -> Result<GitStatus>;
 
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -133,7 +134,7 @@ impl GitRepository for RealGitRepository {
         Some(self.repository.lock().head().ok()?.target()?.to_string())
     }
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
+    fn status(&self, path_prefixes: &mut dyn Iterator<Item = &RepoPath>) -> Result<GitStatus> {
         let working_directory = self
             .repository
             .lock()
@@ -290,16 +291,13 @@ impl GitRepository for FakeGitRepository {
         state.dot_git_dir.clone()
     }
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
+    fn status(&self, mut path_prefixes: &mut dyn Iterator<Item = &RepoPath>) -> Result<GitStatus> {
         let state = self.state.lock();
         let mut entries = state
             .worktree_statuses
             .iter()
             .filter_map(|(repo_path, status)| {
-                if path_prefixes
-                    .iter()
-                    .any(|path_prefix| repo_path.0.starts_with(path_prefix))
-                {
+                if (&mut path_prefixes).any(|path_prefix| repo_path.0.starts_with(path_prefix)) {
                     Some((repo_path.to_owned(), *status))
                 } else {
                     None
@@ -396,6 +394,7 @@ pub enum GitFileStatus {
     Modified,
     Conflict,
     Deleted,
+    Untracked,
 }
 
 impl GitFileStatus {

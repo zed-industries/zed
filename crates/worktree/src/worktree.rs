@@ -6,7 +6,7 @@ mod worktree_tests;
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context as _, Result};
 use clock::ReplicaId;
-use collections::{HashMap, HashSet, VecDeque};
+use collections::{HashMap, HashSet, IndexSet, VecDeque};
 use fs::{copy_recursive, Fs, MTime, PathEvent, RemoveOptions, Watcher};
 use futures::{
     channel::{
@@ -51,6 +51,7 @@ use std::{
     cmp::Ordering,
     collections::hash_map,
     convert::TryFrom,
+    f32::consts::PI,
     ffi::OsStr,
     fmt,
     future::Future,
@@ -2925,7 +2926,7 @@ impl BackgroundScannerState {
                             work_directory: workdir_path,
                             statuses: repo
                                 .repo_ptr
-                                .status(&[repo_path])
+                                .status(&mut [repo_path].iter())
                                 .log_err()
                                 .unwrap_or_default(),
                         });
@@ -4504,6 +4505,8 @@ impl BackgroundScanner {
         abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
     ) {
+        eprintln!("reload_entries_for_paths({relative_paths:?})");
+        // grab metadata for all requested paths
         let metadata = futures::future::join_all(
             abs_paths
                 .iter()
@@ -4551,11 +4554,8 @@ impl BackgroundScanner {
         // Group all relative paths by their git repository.
         let mut paths_by_git_repo = HashMap::default();
         for relative_path in relative_paths.iter() {
-            dbg!(relative_path);
             if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(relative_path) {
-                dbg!(&repo.dot_git_dir_abs_path);
                 if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, relative_path) {
-                    dbg!(&repo_path);
                     // TODO: Remove workdirectoryEntry type (maybe) to remove unwrap
                     let work_directory = state
                         .snapshot
@@ -4568,47 +4568,27 @@ impl BackgroundScanner {
                         .entry(work_directory)
                         .or_insert_with(|| RepoPaths {
                             repo: repo.repo_ptr.clone(),
-                            repo_paths: Vec::new(),
-                            relative_paths: Vec::new(),
+                            repo_paths: HashSet::default(),
                         })
-                        .add_paths(relative_path, repo_path);
+                        .add_path(dbg!(repo_path));
                 }
             }
         }
 
         // TODO: Should we do this outside of the state lock?
-        for (work_directory_path, paths) in paths_by_git_repo.into_iter() {
-            dbg!(&paths.relative_paths, &paths.repo_paths);
-            if let Ok(status) = paths.repo.status(&paths.repo_paths) {
-                let mut changed_path_statuses = Vec::with_capacity(status.entries.len());
-
-                for (repo_path, status) in status.entries.iter() {
-                    let ix = paths
-                        .relative_paths
-                        .iter()
-                        .enumerate()
-                        .find(|(_, path)| path == repo_path)
-                        .map(|(ix, path)| ix);
-
-                    if let Some(ix) = ix {
-                        paths.relative_paths.swap_remove(ix);
-                    }
-
-                    dbg!((&repo_path, &status));
+        for (work_directory_path, mut paths) in paths_by_git_repo {
+            if let Ok(status) = paths.repo.status(&mut paths.repo_paths.iter()) {
+                let mut changed_path_statuses = Vec::new();
+                for (repo_path, status) in &*status.entries {
+                    paths.remove_repo_path(repo_path);
                     changed_path_statuses.push(Edit::Insert(GitEntry {
                         path: repo_path.clone(),
                         git_status: *status,
                     }));
                 }
-
-                for path in paths.relative_paths {
-                    // TODO: relativize it
-                    changed_path_statuses.push(Edit::Remove(RepoPath(path)));
+                for path in paths.repo_paths {
+                    changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                 }
-                // Find the diff between status results, and paths
-                // and generate Edit::Remove() for them
-
-                // Update the statuses for new/updated paths associated with this repository
                 state.snapshot.repository_entries.update(
                     &RepositoryWorkDirectory(work_directory_path),
                     move |repository_entry| {
@@ -4836,7 +4816,7 @@ impl BackgroundScanner {
                         if let Ok(repo_path) = repo_entry.relativize(snapshot, &entry.path) {
                             let status = local_repo
                                 .repo_ptr
-                                .status(&[repo_path.clone()])
+                                .status(&mut [repo_path.clone()].iter())
                                 .ok()
                                 .and_then(|status| status.get(&repo_path));
                             // TODO: figure out what to do here
@@ -4973,7 +4953,6 @@ impl BackgroundScanner {
             .scoped(|scope| {
                 scope.spawn(async {
                     for repo_update in repo_updates {
-                        dbg!("update git status for ", &repo_update.work_directory);
                         self.update_git_statuses(repo_update);
                     }
                     updates_done_tx.blocking_send(()).ok();
@@ -5005,7 +4984,7 @@ impl BackgroundScanner {
 
         let Some(statuses) = job
             .repository
-            .status(&[git::WORK_DIRECTORY_REPO_PATH.clone()])
+            .status(&mut [git::WORK_DIRECTORY_REPO_PATH.clone()].iter())
             .log_err()
         else {
             return;
@@ -5237,16 +5216,19 @@ fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
     result
 }
 
+#[derive(Debug)]
 struct RepoPaths {
     repo: Arc<dyn GitRepository>,
-    relative_paths: Vec<Arc<Path>>,
-    repo_paths: Vec<RepoPath>,
+    repo_paths: HashSet<RepoPath>,
 }
 
 impl RepoPaths {
-    fn add_paths(&mut self, relative_path: &Arc<Path>, repo_path: RepoPath) {
-        self.relative_paths.push(relative_path.clone());
-        self.repo_paths.push(repo_path);
+    fn add_path(&mut self, repo_path: RepoPath) {
+        self.repo_paths.insert(repo_path.clone());
+    }
+
+    fn remove_repo_path(&mut self, repo_path: &RepoPath) {
+        self.repo_paths.remove(repo_path);
     }
 }
 
@@ -5676,6 +5658,7 @@ fn git_status_to_proto(status: GitFileStatus) -> i32 {
         GitFileStatus::Modified => proto::GitStatus::Modified as i32,
         GitFileStatus::Conflict => proto::GitStatus::Conflict as i32,
         GitFileStatus::Deleted => proto::GitStatus::Deleted as i32,
+        GitFileStatus::Untracked => todo!(),
     }
 }
 

@@ -2795,7 +2795,8 @@ dependencies = [
 name = "collections"
 version = "0.1.0"
 dependencies = [
- "rustc-hash 1.1.0",
+ "indexmap 2.7.0",
+ "rustc-hash 2.1.0",
 ]
 
 [[package]]
@@ -6229,7 +6230,7 @@ dependencies = [
  "heed",
  "html_to_markdown",
  "http_client",
- "indexmap 1.9.3",
+ "indexmap 2.7.0",
  "indoc",
  "parking_lot",
  "paths",
@@ -9621,7 +9622,7 @@ dependencies = [
  "file_icons",
  "git",
  "gpui",
- "indexmap 1.9.3",
+ "indexmap 2.7.0",
  "language",
  "menu",
  "pretty_assertions",
@@ -11016,6 +11017,7 @@ checksum = "09c024468a378b7e36765cd36702b7a90cc3cba11654f6685c8f233408e89e92"
 dependencies = [
  "dyn-clone",
  "indexmap 1.9.3",
+ "indexmap 2.7.0",
  "schemars_derive",
  "serde",
  "serde_json",
@@ -12806,7 +12808,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "indexmap 1.9.3",
+ "indexmap 2.7.0",
  "log",
  "palette",
  "parking_lot",
@@ -12841,7 +12843,7 @@ dependencies = [
  "anyhow",
  "clap",
  "gpui",
- "indexmap 1.9.3",
+ "indexmap 2.7.0",
  "log",
  "palette",
  "rust-embed",

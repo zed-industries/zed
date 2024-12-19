@@ -11,7 +11,7 @@ impl GitStatus {
     pub(crate) fn new(
         git_binary: &Path,
         working_directory: &Path,
-        path_prefixes: &[RepoPath],
+        path_prefixes: &mut dyn Iterator<Item = &RepoPath>,
     ) -> Result<Self> {
         let child = util::command::new_std_command(git_binary)
             .current_dir(working_directory)
@@ -22,7 +22,7 @@ impl GitStatus {
                 "--untracked-files=all",
                 "-z",
             ])
-            .args(path_prefixes.iter().map(|path_prefix| {
+            .args(path_prefixes.map(|path_prefix| {
                 if path_prefix.0.as_ref() == Path::new("") {
                     Path::new(".")
                 } else {
@@ -53,9 +53,10 @@ impl GitStatus {
                     Some((
                         RepoPath(Path::new(path).into()),
                         match status {
-                            "A" | "??" => GitFileStatus::Added,
+                            "A" => GitFileStatus::Added,
                             "M" => GitFileStatus::Modified,
                             "D" => GitFileStatus::Deleted,
+                            "??" => GitFileStatus::Untracked,
                             _ => return None,
                         },
                     ))

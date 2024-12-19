@@ -2574,15 +2574,14 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
         assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
         assert_eq!(entries[0].git_status, GitFileStatus::Modified);
         assert_eq!(entries[1].path.as_ref(), Path::new("b.txt"));
-        // TODO: make this untracked;
-        assert_eq!(entries[1].git_status, GitFileStatus::Added);
+        assert_eq!(entries[1].git_status, GitFileStatus::Untracked);
         assert_eq!(entries[2].path.as_ref(), Path::new("d.txt"));
         assert_eq!(entries[2].git_status, GitFileStatus::Deleted);
     });
 
     std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
+    eprintln!("File c.txt has been modified");
 
-    dbg!("*************************************************");
     tree.flush_fs_events(cx).await;
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
@@ -2595,12 +2594,11 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
         // Takes a work directory, and returns all file entries with a git status.
         let entries = snapshot.git_status(dir).unwrap();
 
-        assert_eq!(entries.len(), 4);
+        std::assert_eq!(entries.len(), 4, "entries: {entries:?}");
         assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
         assert_eq!(entries[0].git_status, GitFileStatus::Modified);
         assert_eq!(entries[1].path.as_ref(), Path::new("b.txt"));
-        // TODO: make this untracked
-        assert_eq!(entries[1].git_status, GitFileStatus::Added);
+        assert_eq!(entries[1].git_status, GitFileStatus::Untracked);
         // Status updated
         assert_eq!(entries[2].path.as_ref(), Path::new("c.txt"));
         assert_eq!(entries[2].git_status, GitFileStatus::Modified);
@@ -2617,7 +2615,6 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
         .await;
     cx.executor().run_until_parked();
 
-    dbg!("*************************************************");
     std::fs::remove_file(work_dir.join("a.txt")).unwrap();
     std::fs::remove_file(work_dir.join("b.txt")).unwrap();
     tree.flush_fs_events(cx).await;
@@ -2629,8 +2626,6 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         let (dir, _) = snapshot.repositories().next().unwrap();
         let entries = snapshot.git_status(dir).unwrap();
-
-        dbg!(&entries);
 
         // Deleting an untracked entry, b.txt, should leave no status
         // a.txt was tracked, and so should have a status
