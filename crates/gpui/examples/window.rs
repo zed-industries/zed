@@ -167,58 +167,6 @@ impl Render for WindowDemo {
 }
 
 fn main() {
-    std::panic::set_hook(Box::new(move |info| {
-        let thread = std::thread::current();
-        let thread_name = thread.name().unwrap_or("<unnamed>");
-
-        let payload = info
-            .payload()
-            .downcast_ref::<&str>()
-            .map(|s| s.to_string())
-            .or_else(|| info.payload().downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "Box<Any>".to_string());
-
-        let location = info.location().unwrap();
-        let backtrace = Backtrace::new();
-        eprintln!(
-            "Thread {:?} panicked with {:?} at {}:{}:{}\n{:?}",
-            thread_name,
-            payload,
-            location.file(),
-            location.line(),
-            location.column(),
-            backtrace,
-        );
-
-        let backtrace = Backtrace::new();
-        for frame in backtrace.frames() {
-            let mut dl_info = libc::Dl_info {
-                dli_sname: std::ptr::null_mut(),
-                dli_fname: std::ptr::null_mut(),
-                dli_fbase: std::ptr::null_mut(),
-                dli_saddr: std::ptr::null_mut(),
-            };
-            let ret = unsafe { libc::dladdr(frame.ip(), &mut dl_info) };
-            eprintln!(
-                "Base: {:p}, IP: {:p}, Saddr: {:p}, Ret: {}, Symbols: {}",
-                // unsafe { CStr::from_ptr(dl_info.dli_fname).to_string_lossy() },
-                // unsafe { CStr::from_ptr(dl_info.dli_sname).to_string_lossy() },
-                dl_info.dli_fbase,
-                frame.ip(),
-                dl_info.dli_saddr,
-                ret,
-                frame
-                    .symbols()
-                    .iter()
-                    .map(|s| format!("{:?}", s))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
-
-        std::process::abort();
-    }));
-
     App::new().run(|cx: &mut AppContext| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(
