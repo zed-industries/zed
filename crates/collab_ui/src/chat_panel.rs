@@ -1135,6 +1135,7 @@ impl Panel for ChatPanel {
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
+        ActiveCall::global(cx).read(cx).room()?;
         Some(ui::IconName::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 
