@@ -269,12 +269,12 @@ impl Object {
                     surrounding_markers(map, relative_to, around, multiline, '`', '`'),
                 ];
 
-                // Find the closest matching quote range
+                // Find the closest matching quote range based on proximity
                 candidates
                     .into_iter()
                     .flatten() // Remove `None` values
                     .min_by_key(|range| {
-                        // Calculate proximity by comparing distances
+                        // Calculate proximity by comparing distances to the range's start and end
                         let start_distance = (relative_to.to_offset(map, Bias::Left) as isize
                             - range.start.to_offset(map, Bias::Left) as isize)
                             .abs();
@@ -282,12 +282,8 @@ impl Object {
                             - range.end.to_offset(map, Bias::Right) as isize)
                             .abs();
 
-                        // Prioritize smaller ranges, then closer ranges
-                        (
-                            range.end.to_offset(map, Bias::Right)
-                                - range.start.to_offset(map, Bias::Left),
-                            start_distance + end_distance,
-                        )
+                        // Use the sum of start and end distances as the proximity metric
+                        start_distance + end_distance
                     })
             }
             Object::DoubleQuotes => {
