@@ -52,10 +52,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
     MultiBufferSnapshot, ToOffset,
 };
-use project::{
-    project_settings::{GitGutterSetting, ProjectSettings},
-    ProjectPath,
-};
+use project::project_settings::{GitGutterSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -2310,7 +2307,7 @@ impl EditorElement {
                     }
                 }
 
-                let jump_data = jump_data(snapshot, block_row_start, *height, first_excerpt, cx);
+                let jump_data = jump_data(snapshot, block_row_start, *height, first_excerpt);
                 result
                     .child(self.render_buffer_header(
                         first_excerpt,
@@ -2365,7 +2362,6 @@ impl EditorElement {
 
                         result = result.child(
                             expand_area(format!("block-{}-down", block_id).into())
-                                // .debug_bg_green()
                                 .group(group_name)
                                 .child(
                                     h_flex()
@@ -2374,8 +2370,6 @@ impl EditorElement {
                                         .flex_none()
                                         .justify_end()
                                         .child(self.render_expand_excerpt_button(
-                                            // prev_excerpt.id,
-                                            // ExpandExcerptDirection::Down,
                                             IconName::ArrowDownFromLine,
                                             Some(group_name.to_string()),
                                             cx,
@@ -2394,71 +2388,7 @@ impl EditorElement {
                 }
 
                 if let Some(next_excerpt) = next_excerpt {
-                    let editor = self.editor.clone();
-                    let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt, cx);
-                    let jump_data_clone = jump_data.clone(); // Clone once here
-                    let focus_handle_clone = focus_handle.clone(); // Clone focus_handle here
-
-                    // let jump_to_location = || {
-                    //     h_flex()
-                    //         .id("jump-to-location-hit-space")
-                    //         .cursor_pointer()
-                    //         .h_full()
-                    //         .w_40()
-                    //         .gap_2()
-                    //         .pl_4()
-                    //         .pr_7()
-                    //         .border_l_1()
-                    //         .border_b_1()
-                    //         .border_color(color.border_variant)
-                    //         .justify_end()
-                    //         .child(
-                    //             Label::new("Jump to Location")
-                    //                 .size(LabelSize::Small)
-                    //                 .color(Color::Muted),
-                    //         )
-                    //         .child(
-                    //             Icon::new(IconName::ArrowUpRight)
-                    //                 .size(IconSize::XSmall)
-                    //                 .color(Color::Muted),
-                    //         )
-                    //         .hover(|style| style.bg(hover_color))
-                    //         .tooltip({
-                    //             move |cx| {
-                    //                 let jump_location = format!(
-                    //                     "{}:L{}",
-                    //                     match &jump_data_clone.path {
-                    //                         Some(project_path) =>
-                    //                             project_path.path.display().to_string(),
-                    //                         None => {
-                    //                             let editor = editor.read(cx);
-                    //                             editor
-                    //                                 .file_at(jump_data_clone.position, cx)
-                    //                                 .map(|file| {
-                    //                                     file.full_path(cx).display().to_string()
-                    //                                 })
-                    //                                 .or_else(|| {
-                    //                                     Some(
-                    //                                         editor
-                    //                                             .tab_description(0, cx)?
-                    //                                             .to_string(),
-                    //                                     )
-                    //                                 })
-                    //                                 .unwrap_or_else(|| "Unknown buffer".to_string())
-                    //                         }
-                    //                     },
-                    //                     jump_data_clone.position.row + 1
-                    //                 );
-                    //                 Tooltip::with_meta_in(
-                    //                     "Jump to Location",
-                    //                     Some(&OpenExcerpts),
-                    //                     jump_location,
-                    //                     &focus_handle_clone,
-                    //                     cx,
-                    //                 )
-                    //             }
-                    //         })
-                    // };
+                    let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt);
 
                     if *starts_new_buffer {
                         result = result.child(self.render_buffer_header(
@@ -2499,25 +2429,7 @@ impl EditorElement {
                                                 cx.stop_propagation();
                                             }
                                         })),
-                                ), // .child(
-                                   //     jump_to_location()
-                                   //         .id("jump-to-location-hit-space")
-                                   //         .visible_on_hover(group_name),
-                                   //     // .on_click({
-                                   //     //     let jump_data = jump_data.clone();
-                                   //     //     cx.listener_for(&self.editor, {
-                                   //     //         let jump_data = jump_data.clone();
-                                   //     //         move |editor, e: &ClickEvent, cx| {
-                                   //     //             cx.stop_propagation();
-                                   //     //             editor.open_excerpts_common(
-                                   //     //                 Some(jump_data.clone()),
-                                   //     //                 e.down.modifiers.secondary(),
-                                   //     //                 cx,
-                                   //     //             );
-                                   //     //         }
-                                   //     //     })
-                                   //     // }),
-                                   // ),
+                                ),
                             );
                         }
                     } else {
@@ -2584,25 +2496,7 @@ impl EditorElement {
                                                     cx.stop_propagation();
                                                 }
                                             })),
-                                    ), // .child(
-                                       //     jump_to_location()
-                                       //         .id("jump-to-location-hit-space")
-                                       //         .visible_on_hover(group_name)
-                                       //         .on_click({
-                                       //             let jump_data = jump_data.clone();
-                                       //             cx.listener_for(&self.editor, {
-                                       //                 let jump_data = jump_data.clone();
-                                       //                 move |editor, e: &ClickEvent, cx| {
-                                       //                     cx.stop_propagation();
-                                       //                     editor.open_excerpts_common(
-                                       //                         Some(jump_data.clone()),
-                                       //                         e.down.modifiers.secondary(),
-                                       //                         cx,
-                                       //                     );
-                                       //                 }
-                                       //             })
-                                       //         }),
-                                       // ),
+                                    ),
                             );
                         }
                     };
@@ -2750,41 +2644,13 @@ impl EditorElement {
                             )
                             .child(
                                 h_flex()
-                                    .gap_2()
-                                    // .child(
-                                    //     Icon::new(IconName::ArrowUpRight)
-                                    //         .size(IconSize::XSmall)
-                                    //         .color(Color::Muted),
-                                    // )
-                                    .child(
-                                        Label::new("Jump To File"),
-                                        // .size(LabelSize::Small)
-                                        // .color(Color::Muted),
-                                    )
+                                    .gap_2p5()
+                                    .child(Label::new("Jump To File"))
                                     .children(
-                                        ui::KeyBinding::for_action_in(
-                                            &OpenExcerpts,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                        .map(|binding| binding.into_any_element()),
-                                    ), // .child(
-                                       //     Icon::new(IconName::ArrowUpRight)
-                                       //         .size(IconSize::XSmall)
-                                       //         .color(Color::Muted),
-                                       // ),
+                                        KeyBinding::for_action_in(&OpenExcerpts, &focus_handle, cx)
+                                            .map(|binding| binding.into_any_element()),
+                                    ),
                             )
-                            // .tooltip({
-                            //     let focus_handle = focus_handle.clone();
-                            //     move |cx| {
-                            //         Tooltip::for_action_in(
-                            //             "Jump To File",
-                            //             &OpenExcerpts,
-                            //             &focus_handle,
-                            //             cx,
-                            //         )
-                            //     }
-                            // })
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                             .on_click(cx.listener_for(&self.editor, {
                                 move |editor, e: &ClickEvent, cx| {
@@ -4931,14 +4797,9 @@ fn jump_data(
     block_row_start: DisplayRow,
     height: u32,
     for_excerpt: &ExcerptInfo,
-    cx: &mut WindowContext<'_>,
 ) -> JumpData {
     let range = &for_excerpt.range;
     let buffer = &for_excerpt.buffer;
-    let jump_path = project::File::from_dyn(buffer.file()).map(|file| ProjectPath {
-        worktree_id: file.worktree_id(cx),
-        path: file.path.clone(),
-    });
     let jump_anchor = range
         .primary
         .as_ref()
@@ -4961,7 +4822,6 @@ fn jump_data(
         excerpt_id: for_excerpt.id,
         anchor: jump_anchor,
         position: language::ToPoint::to_point(&jump_anchor, buffer),
-        path: jump_path,
         line_offset_from_top,
     }
 }
