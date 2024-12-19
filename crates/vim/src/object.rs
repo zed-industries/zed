@@ -207,6 +207,7 @@ impl Object {
             Object::Word { .. }
             | Object::Sentence
             | Object::Quotes
+            | Object::AnyQuotes
             | Object::BackQuotes
             | Object::DoubleQuotes => {
                 if current_mode == Mode::VisualBlock {
