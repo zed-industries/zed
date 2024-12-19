@@ -116,36 +116,36 @@ jobs:
         with:
           clean: false
 
-      - name: Skip for docs-only changes
-        if: needs.check_docs_only.outputs.docs_only == 'true'
-        run: |
-          echo "Skipping for docs-only changes"
-          exit 0
-
       - name: cargo clippy
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/clippy
 
       - name: Check unused dependencies
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: bnjbvr/cargo-machete@main
 
       - name: Check licenses
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: |
           script/check-licenses
           script/generate-licenses /tmp/zed_licenses_output
 
       - name: Check for new vulnerable dependencies
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && needs.check_docs_only.outputs.docs_only == 'false'
         uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4
         with:
           license-check: false
 
       - name: Run tests
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: ./.github/actions/run_tests
 
       - name: Build collab
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: cargo build -p collab
 
       - name: Build other binaries and features
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: |
           cargo build --workspace --bins --all-features
           cargo check -p gpui --features "macos-blade"
@@ -169,28 +169,27 @@ jobs:
         with:
           clean: false
 
-      - name: Skip for docs-only changes
-        if: needs.check_docs_only.outputs.docs_only == 'true'
-        run: |
-          echo "Skipping for docs-only changes"
-          exit 0
-
       - name: Cache dependencies
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
 
       - name: Install Linux dependencies
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/linux
 
       - name: cargo clippy
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/clippy
 
       - name: Run tests
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: ./.github/actions/run_tests
 
       - name: Build other binaries and features
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: |
           cargo build -p zed
           cargo check -p workspace
@@ -211,22 +210,19 @@ jobs:
         with:
           clean: false
 
-      - name: Skip for docs-only changes
-        if: needs.check_docs_only.outputs.docs_only == 'true'
-        run: |
-          echo "Skipping for docs-only changes"
-          exit 0
-
       - name: Cache dependencies
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
 
       - name: Install Clang & Mold
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/remote-server && ./script/install-mold 2.34.0
 
       - name: Build Remote Server
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: cargo build -p remote_server
 
   # todo(windows): Actually run the tests
@@ -245,23 +241,20 @@ jobs:
         with:
           clean: false
 
-      - name: Skip for docs-only changes
-        if: needs.check_docs_only.outputs.docs_only == 'true'
-        run: |
-          echo "Skipping for docs-only changes"
-          exit 0
-
       - name: Cache dependencies
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "github"
 
       - name: cargo clippy
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         # Windows can't run shell scripts, so we need to use `cargo xtask`.
         run: cargo xtask clippy
 
       - name: Build Zed
+        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: cargo build
 
   bundle-mac:
