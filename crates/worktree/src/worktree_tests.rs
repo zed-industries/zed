@@ -2842,7 +2842,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_propagate_statuses_repos_under_project(cx: &mut TestAppContext) {
+async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
@@ -2850,11 +2850,18 @@ async fn test_propagate_statuses_repos_under_project(cx: &mut TestAppContext) {
         json!({
             "x": {
                 ".git": {},
-                "x1.txt": "foo"
+                "x1.txt": "foo",
+                "x2.txt": "bar"
             },
             "y": {
                 ".git": {},
-                "y1.txt": "bar"
+                "y1.txt": "baz",
+                "y2.txt": "qux"
+            },
+            "z": {
+                ".git": {},
+                "z1.txt": "quux",
+                "z2.txt": "quuux"
             }
         }),
     )
@@ -2867,6 +2874,14 @@ async fn test_propagate_statuses_repos_under_project(cx: &mut TestAppContext) {
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/y/.git"),
         &[(Path::new("y1.txt"), GitFileStatus::Conflict)],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/y/.git"),
+        &[(Path::new("y2.txt"), GitFileStatus::Modified)],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/z/.git"),
+        &[(Path::new("z2.txt"), GitFileStatus::Modified)],
     );
 
     let tree = Worktree::local(
@@ -2888,11 +2903,49 @@ async fn test_propagate_statuses_repos_under_project(cx: &mut TestAppContext) {
     check_propagated_statuses(
         &snapshot,
         &[
-            // (Path::new(""), None), // /root, doesn't have a git repository in it and so should not have a git repository status
             (Path::new("x"), Some(GitFileStatus::Added)),
             (Path::new("x/x1.txt"), Some(GitFileStatus::Added)),
+        ],
+    );
+
+    check_propagated_statuses(
+        &snapshot,
+        &[
             (Path::new("y"), Some(GitFileStatus::Conflict)),
             (Path::new("y/y1.txt"), Some(GitFileStatus::Conflict)),
+        ],
+    );
+
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new("z"), Some(GitFileStatus::Modified)),
+            (Path::new("z/z2.txt"), Some(GitFileStatus::Modified)),
+        ],
+    );
+
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new(""), None), // /root doesn't have a git repository in it and so should not have a git repository status
+            (Path::new("x"), Some(GitFileStatus::Added)),
+            (Path::new("x/x1.txt"), Some(GitFileStatus::Added)),
+        ],
+    );
+
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new(""), None),
+            (Path::new("x"), Some(GitFileStatus::Added)),
+            (Path::new("x/x1.txt"), Some(GitFileStatus::Added)),
+            (Path::new("x/x2.txt"), None),
+            (Path::new("y"), Some(GitFileStatus::Conflict)),
+            (Path::new("y/y1.txt"), Some(GitFileStatus::Conflict)),
+            (Path::new("y/y2.txt"), Some(GitFileStatus::Modified)),
+            (Path::new("z"), Some(GitFileStatus::Modified)),
+            (Path::new("z/z1.txt"), None),
+            (Path::new("z/z2.txt"), Some(GitFileStatus::Modified)),
         ],
     );
 }
