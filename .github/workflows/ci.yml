@@ -7,14 +7,9 @@ on:
       - "v[0-9]+.[0-9]+.x"
     tags:
       - "v*"
-    paths-ignore:
-      - "docs/**"
   pull_request:
     branches:
       - "**"
-    paths-ignore:
-      - "docs/**/*"
-      - ".github/workflows/community_*"
   merge_group:
 
 concurrency:
@@ -29,6 +24,23 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  check_docs_only:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.check_changes.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check for non-docs changes
+        id: check_changes
+        run: |
+          if git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep -qvE '^docs/'; then
+            echo "docs_only=false" >> $GITHUB_OUTPUT
+          else
+            echo "docs_only=true" >> $GITHUB_OUTPUT
+          fi
+
   migration_checks:
     name: Check Postgres and Protobuf migrations, mergability
     if: github.repository_owner == 'zed-industries'
@@ -97,11 +109,18 @@ jobs:
     runs-on:
       - self-hosted
       - test
+    needs: check_docs_only
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
+
+      - name: Skip for docs-only changes
+        if: needs.check_docs_only.outputs.docs_only == 'true'
+        run: |
+          echo "Skipping for docs-only changes"
+          exit 0
 
       - name: cargo clippy
         run: ./script/clippy
@@ -140,6 +159,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
+    needs: check_docs_only
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -148,6 +168,12 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
+
+      - name: Skip for docs-only changes
+        if: needs.check_docs_only.outputs.docs_only == 'true'
+        run: |
+          echo "Skipping for docs-only changes"
+          exit 0
 
       - name: Cache dependencies
         uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
@@ -175,6 +201,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
+    needs: check_docs_only
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -183,6 +210,12 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
+
+      - name: Skip for docs-only changes
+        if: needs.check_docs_only.outputs.docs_only == 'true'
+        run: |
+          echo "Skipping for docs-only changes"
+          exit 0
 
       - name: Cache dependencies
         uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
@@ -202,6 +235,7 @@ jobs:
     name: (Windows) Run Clippy and tests
     if: github.repository_owner == 'zed-industries'
     runs-on: hosted-windows-1
+    needs: check_docs_only
     steps:
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
@@ -210,6 +244,12 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
+
+      - name: Skip for docs-only changes
+        if: needs.check_docs_only.outputs.docs_only == 'true'
+        run: |
+          echo "Skipping for docs-only changes"
+          exit 0
 
       - name: Cache dependencies
         uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
