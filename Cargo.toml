@@ -26,6 +26,9 @@ members = [
     "crates/context_server",
     "crates/context_server_settings",
     "crates/copilot",
+    "crates/dap",
+    "crates/dap_adapters",
+    "crates/debugger_ui",
     "crates/db",
     "crates/diagnostics",
     "crates/docs_preprocessor",
@@ -180,6 +183,7 @@ members = [
     #
 
     "tooling/xtask",
+    "crates/debugger_tools",
 ]
 default-members = ["crates/zed"]
 
@@ -215,7 +219,11 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
+dap = { path = "crates/dap" }
+dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
+debugger_ui = { path = "crates/debugger_ui" }
+debugger_tools = { path = "crates/debugger_tools" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
