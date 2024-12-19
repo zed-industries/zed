@@ -52,17 +52,17 @@
 
 [
   "("
-  ")"
   "{"
-  "}"
   "["
-  "]"
-] @punctuation.bracket
+  "<"
+] @punctuation.bracket.open
 
-(_
-  .
-  "<" @punctuation.bracket
-  ">" @punctuation.bracket)
+[
+  ")"
+  "}"
+  "]"
+  ">"
+] @punctuation.bracket.close
 
 [
   "."
