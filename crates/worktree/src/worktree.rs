@@ -4579,7 +4579,7 @@ impl BackgroundScanner {
         }
 
         // TODO: Should we do this outside of the state lock?
-        for (work_directory_path, mut paths) in paths_by_git_repo {
+        for (work_directory, mut paths) in paths_by_git_repo {
             if let Ok(status) = paths.repo.status(&mut paths.repo_paths.iter()) {
                 let mut changed_path_statuses = Vec::new();
                 for (repo_path, status) in &*status.entries {
@@ -4593,7 +4593,7 @@ impl BackgroundScanner {
                     changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                 }
                 state.snapshot.repository_entries.update(
-                    &work_directory_path,
+                    &work_directory,
                     move |repository_entry| {
                         repository_entry
                             .git_entries_by_path
