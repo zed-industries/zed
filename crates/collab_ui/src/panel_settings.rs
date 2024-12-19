@@ -55,10 +55,7 @@ impl<'de> Deserialize<'de> for ChatPanelButton {
                     "never" => Ok(ChatPanelButton::Never),
                     "always" => Ok(ChatPanelButton::Always),
                     "when_in_call" => Ok(ChatPanelButton::WhenInCall),
-                    _ => Err(E::unknown_variant(
-                        s,
-                        &["false", "never", "true", "always", "when_in_call"],
-                    )),
+                    _ => Err(E::unknown_variant(s, &["never", "always", "when_in_call"])),
                 }
             }
         }

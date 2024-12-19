@@ -482,8 +482,8 @@
   },
   "chat_panel": {
     // When to show the chat panel button in the status bar.
-    // Can be "never", "always", or "when_in_call",
-    // or a boolean (interpreted as "never"/"always").
+    // Can be 'never', 'always', or 'when_in_call',
+    // or a boolean (interpreted as 'never'/'always').
     "button": "when_in_call",
     // Where to the chat panel. Can be 'left' or 'right'.
     "dock": "right",
