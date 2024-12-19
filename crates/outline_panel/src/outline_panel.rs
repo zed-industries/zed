@@ -6032,8 +6032,8 @@ mod tests {
         .with_injection_query(
             r#"
                 (macro_invocation
-                    (token_tree) @content
-                    (#set! "language" "rust"))
+                    (token_tree) @injection.content
+                    (#set! injection.language "rust"))
             "#,
         )
         .unwrap()
