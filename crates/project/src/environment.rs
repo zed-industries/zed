@@ -132,8 +132,10 @@ impl ProjectEnvironment {
             let (mut shell_env, error_message) = cx
                 .background_executor()
                 .spawn({
-                    let cwd = worktree_abs_path.clone();
-                    async move { load_shell_environment(&cwd, &load_direnv).await }
+                    let worktree_abs_path = worktree_abs_path.clone();
+                    async move {
+                        load_worktree_shell_environment(&worktree_abs_path, &load_direnv).await
+                    }
                 })
                 .await;
 
@@ -189,6 +191,42 @@ impl EnvironmentErrorMessage {
     #[allow(dead_code)]
     fn from_str(s: &str) -> Self {
         Self(String::from(s))
+    }
+}
+
+async fn load_worktree_shell_environment(
+    worktree_abs_path: &Path,
+    load_direnv: &DirenvSettings,
+) -> (
+    Option<HashMap<String, String>>,
+    Option<EnvironmentErrorMessage>,
+) {
+    match smol::fs::metadata(worktree_abs_path).await {
+        Ok(meta) => {
+            let dir = if meta.is_dir() {
+                &*worktree_abs_path
+            } else if let Some(parent) = worktree_abs_path.parent() {
+                parent
+            } else {
+                return (
+                    None,
+                    Some(EnvironmentErrorMessage(format!(
+                        "Failed to load shell environment in {}: not a directory",
+                        worktree_abs_path.display()
+                    ))),
+                );
+            };
+
+            load_shell_environment(&dir, load_direnv).await
+        }
+        Err(err) => (
+            None,
+            Some(EnvironmentErrorMessage(format!(
+                "Failed to load shell environment in {}: {}",
+                worktree_abs_path.display(),
+                err
+            ))),
+        ),
     }
 }
 
