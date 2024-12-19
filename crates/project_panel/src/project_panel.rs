@@ -177,6 +177,8 @@ actions!(
         Copy,
         CopyPath,
         CopyRelativePath,
+        CopyFileName,
+        CopyFileNameWithoutExtension,
         Duplicate,
         RevealInFileManager,
         RemoveFromProject,
@@ -677,6 +679,8 @@ impl ProjectPanel {
                             .separator()
                             .action("Copy Path", Box::new(CopyPath))
                             .action("Copy Relative Path", Box::new(CopyRelativePath))
+                            .action("Copy File Name without Extension", Box::new(CopyFileName))
+                            .action("Copy File Name", Box::new(CopyFileNameWithoutExtension))
                             .separator()
                             .action("Rename", Box::new(Rename))
                             .when(!is_root & !is_remote, |menu| {
@@ -1956,6 +1960,44 @@ impl ProjectPanel {
         };
         if !file_paths.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(file_paths.join("\n")));
+        }
+    }
+
+    fn copy_file_name_without_extension(
+        &mut self,
+        _: &CopyFileNameWithoutExtension,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let file_names = {
+            let project = self.project.read(cx);
+            self.marked_entries()
+                .into_iter()
+                .filter_map(|entry| {
+                    let path = project.path_for_entry(entry.entry_id, cx)?.path;
+                    path.file_stem()
+                        .map(|name| name.to_string_lossy().to_string())
+                })
+                .collect::<Vec<_>>()
+        };
+        if !file_names.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(file_names.join("\n")));
+        }
+    }
+
+    fn copy_file_name(&mut self, _: &CopyFileName, cx: &mut ViewContext<Self>) {
+        let file_names = {
+            let project = self.project.read(cx);
+            self.marked_entries()
+                .into_iter()
+                .filter_map(|entry| {
+                    let path = project.path_for_entry(entry.entry_id, cx)?.path;
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                })
+                .collect::<Vec<_>>()
+        };
+        if !file_names.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(file_names.join("\n")));
         }
     }
 
@@ -3925,6 +3967,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
                 .on_action(cx.listener(Self::copy_relative_path))
+                .on_action(cx.listener(Self::copy_file_name))
+                .on_action(cx.listener(Self::copy_file_name_without_extension))
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
