@@ -54,7 +54,7 @@ use std::{
     fmt,
     future::Future,
     iter::FusedIterator,
-    mem::{self, take},
+    mem::{self},
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     pin::Pin,
@@ -2423,8 +2423,8 @@ impl Snapshot {
 
     pub fn repositories(
         &self,
-    ) -> impl Iterator<Item = (&RepositoryWorkDirectory, &RepositoryEntry)> + FusedIterator {
-        self.repository_entries.iter().fuse()
+    ) -> impl Iterator<Item = (&RepositoryWorkDirectory, &RepositoryEntry)> {
+        self.repository_entries.iter()
     }
 
     /// Get the repository whose work directory contains the given path.
@@ -3703,6 +3703,19 @@ impl<'a> GitEntryTraversalTarget<'a> {
             GitEntryTraversalTarget::Path(_) => GitEntryTraversalTarget::Path(path),
         }
     }
+
+    fn cmp_path(&self, other: &Path) -> std::cmp::Ordering {
+        self.cmp(
+            &(
+                TraversalProgress {
+                    max_path: other,
+                    ..Default::default()
+                },
+                Default::default(),
+            ),
+            &(),
+        )
+    }
 }
 
 impl<'a, 'b> SeekTarget<'a, GitEntrySummary, (TraversalProgress<'a>, GitStatuses)>
@@ -3724,9 +3737,8 @@ impl<'a, 'b> SeekTarget<'a, GitEntrySummary, (TraversalProgress<'a>, GitStatuses
 
 struct AllStatusesCursor<'a, I> {
     repos: I,
-    snapshot: &'a Snapshot,
     current_location: Option<(
-        &'a RepositoryEntry,
+        &'a RepositoryWorkDirectory,
         Cursor<'a, GitEntry, (TraversalProgress<'a>, GitStatuses)>,
     )>,
     statuses_before_current_repo: GitStatuses,
@@ -3737,21 +3749,16 @@ where
     I: Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)> + FusedIterator,
 {
     fn seek_forward(&mut self, target: &GitEntryTraversalTarget<'_>) {
-        eprintln!("seek to {target:?}");
-        let mut hold_at_beginning = false;
-
         loop {
-            let (entry, cursor) = match &mut self.current_location {
+            let (work_dir, cursor) = match &mut self.current_location {
                 Some(location) => location,
                 None => {
                     let Some((work_dir, entry)) = self.repos.next() else {
-                        eprintln!("exhausted repositories");
                         break;
                     };
-                    eprintln!("next repository: {work_dir:?}");
 
                     self.current_location.insert((
-                        entry,
+                        work_dir,
                         entry
                             .git_entries_by_path
                             .cursor::<(TraversalProgress<'_>, GitStatuses)>(&()),
@@ -3759,44 +3766,20 @@ where
                 }
             };
 
-            if take(&mut hold_at_beginning) {
-                eprintln!("hold at beginning");
+            if let Some(repo_path) = target.path().strip_prefix(&work_dir.0).ok() {
+                let target = &target.with_path(&repo_path);
+                cursor.seek_forward(target, Bias::Left, &());
+                if let Some(_) = cursor.item() {
+                    break;
+                }
+            } else if target.cmp_path(&work_dir.0).is_gt() {
+                // Fill the cursor with everything from this intermediary repository
+                cursor.seek_forward(target, Bias::Right, &());
+            } else {
                 break;
             }
 
-            if let Ok(RepoPath(repo_path)) = entry.relativize(self.snapshot, target.path()) {
-                let target = &target.with_path(&repo_path);
-                eprintln!("internal seek to {target:?}");
-                cursor.seek_forward(target, Bias::Left, &());
-                if let Some(item) = cursor.item() {
-                    eprintln!("found {item:?}");
-                    break;
-                }
-                match target {
-                    GitEntryTraversalTarget::Path(_) => panic!("wat"),
-                    GitEntryTraversalTarget::PathSuccessor(path) => {
-                        eprintln!("end of repo, hold");
-                        hold_at_beginning = true;
-                    }
-                }
-            } else {
-                eprintln!("seek to end of repo");
-                cursor.seek_forward(
-                    // FIXME
-                    &GitEntryTraversalTarget::Path("2775f0d7-ad3a-4ae0-b921-85ce581b258c".as_ref()),
-                    Bias::Left,
-                    &(),
-                );
-            }
-
-            let old_statuses = self.statuses_before_current_repo;
             self.statuses_before_current_repo += cursor.start().1;
-            eprintln!(
-                "adding: {:?} + {:?} = {:?}",
-                old_statuses,
-                cursor.start().1,
-                self.statuses_before_current_repo
-            );
             self.current_location = None;
         }
     }
@@ -3816,9 +3799,8 @@ fn all_statuses_cursor<'a>(
     'a,
     impl Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)> + FusedIterator,
 > {
-    let repos = snapshot.repositories();
+    let repos = snapshot.repositories().fuse();
     AllStatusesCursor {
-        snapshot,
         repos,
         current_location: None,
         statuses_before_current_repo: Default::default(),
@@ -4725,7 +4707,6 @@ impl BackgroundScanner {
         abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
     ) {
-        eprintln!("reload_entries_for_paths({relative_paths:?})");
         // grab metadata for all requested paths
         let metadata = futures::future::join_all(
             abs_paths

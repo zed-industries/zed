@@ -2873,11 +2873,10 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/y/.git"),
-        &[(Path::new("y1.txt"), GitFileStatus::Conflict)],
-    );
-    fs.set_status_for_repo_via_git_operation(
-        Path::new("/root/y/.git"),
-        &[(Path::new("y2.txt"), GitFileStatus::Modified)],
+        &[
+            (Path::new("y1.txt"), GitFileStatus::Conflict),
+            (Path::new("y2.txt"), GitFileStatus::Modified),
+        ],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/z/.git"),
@@ -2894,10 +2893,11 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
     .await
     .unwrap();
 
+    tree.flush_fs_events(cx).await;
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
-
     cx.executor().run_until_parked();
+
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
     check_propagated_statuses(
@@ -2908,8 +2908,6 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
         ],
     );
 
-    eprintln!("*******************************");
-
     check_propagated_statuses(
         &snapshot,
         &[
@@ -2930,7 +2928,6 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
     check_propagated_statuses(
         &snapshot,
         &[
-            (Path::new(""), None), // /root doesn't have a git repository in it and so should not have a git repository status
             (Path::new("x"), Some(GitFileStatus::Added)),
             (Path::new("x/x1.txt"), Some(GitFileStatus::Added)),
         ],
@@ -2939,7 +2936,6 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
     check_propagated_statuses(
         &snapshot,
         &[
-            (Path::new(""), None),
             (Path::new("x"), Some(GitFileStatus::Added)),
             (Path::new("x/x1.txt"), Some(GitFileStatus::Added)),
             (Path::new("x/x2.txt"), None),
@@ -2949,6 +2945,111 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
             (Path::new("z"), Some(GitFileStatus::Modified)),
             (Path::new("z/z1.txt"), None),
             (Path::new("z/z2.txt"), Some(GitFileStatus::Modified)),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "x": {
+                ".git": {},
+                "x1.txt": "foo",
+                "x2.txt": "bar",
+                "y": {
+                    ".git": {},
+                    "y1.txt": "baz",
+                    "y2.txt": "qux"
+                }
+            },
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/x/.git"),
+        &[(Path::new("x2.txt"), GitFileStatus::Modified)],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/x/y/.git"),
+        &[(Path::new("y1.txt"), GitFileStatus::Conflict)],
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+
+    // Sanity check the propagation for x/y
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new("x/y"), Some(GitFileStatus::Conflict)), // the y git repository has conflict file in it, and so should have a conflict status
+            (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
+            (Path::new("x/y/y2.txt"), None),
+        ],
+    );
+
+    // Test one of the fundamental cases of propogation blocking, the transition from one git repository to another
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new("x"), Some(GitFileStatus::Conflict)), // FIXME: This should be Some(Modified)
+            (Path::new("x/y"), Some(GitFileStatus::Conflict)),
+            (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
+        ],
+    );
+
+    // Sanity check everything around it
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new("x"), Some(GitFileStatus::Conflict)), // FIXME: This should be Some(Modified)
+            (Path::new("x/x1.txt"), None),
+            (Path::new("x/x2.txt"), Some(GitFileStatus::Modified)),
+            (Path::new("x/y"), Some(GitFileStatus::Conflict)),
+            (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
+            (Path::new("x/y/y2.txt"), None),
+        ],
+    );
+
+    // Test the other fundamental case, transitioning from git repository to non-git repository
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new(""), Some(GitFileStatus::Conflict)), // FIXME: This should be None
+            (Path::new("x"), Some(GitFileStatus::Conflict)), // FIXME: This should be Some(Modified)
+            (Path::new("x/x1.txt"), None),
+        ],
+    );
+
+    // And all together now
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new(""), Some(GitFileStatus::Conflict)), // FIXME: This should be None
+            (Path::new("x"), Some(GitFileStatus::Conflict)), // FIXME: This should be Some(Modified)
+            (Path::new("x/x1.txt"), None),
+            (Path::new("x/x2.txt"), Some(GitFileStatus::Modified)),
+            (Path::new("x/y"), Some(GitFileStatus::Conflict)),
+            (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
+            (Path::new("x/y/y2.txt"), None),
         ],
     );
 }

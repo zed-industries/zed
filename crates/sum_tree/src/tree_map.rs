@@ -149,7 +149,6 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         self.0 = new_map;
     }
 
-    /// NOTE: This iterator is not fused and may produce results after the iterator is complete
     pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + '_ {
         self.0.iter().map(|entry| (&entry.key, &entry.value))
     }

@@ -292,6 +292,7 @@ impl GitRepository for FakeGitRepository {
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
         let state = self.state.lock();
+
         let mut entries = state
             .worktree_statuses
             .iter()
@@ -307,6 +308,7 @@ impl GitRepository for FakeGitRepository {
             })
             .collect::<Vec<_>>();
         entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
         Ok(GitStatus {
             entries: entries.into(),
         })
