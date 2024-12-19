@@ -588,6 +588,18 @@ impl DebugPanelItem {
         });
     }
 
+    pub fn step_back(&mut self, cx: &mut ViewContext<Self>) {
+        self.update_thread_state_status(ThreadStatus::Running, cx);
+
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
+
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .step_back(&self.client_id, self.thread_id, granularity, cx)
+                .detach_and_log_err(cx);
+        });
+    }
+
     pub fn restart_client(&self, cx: &mut ViewContext<Self>) {
         self.dap_store.update(cx, |store, cx| {
             store
@@ -779,6 +791,17 @@ impl Render for DebugPanelItem {
                                             }),
                                     )
                                 }
+                            })
+                            .when(capabilities.supports_step_back.unwrap_or(false), |this| {
+                                this.child(
+                                    IconButton::new("debug-step-back", IconName::DebugStepBack)
+                                        .icon_size(IconSize::Small)
+                                        .on_click(cx.listener(|this, _, cx| {
+                                            this.step_back(cx);
+                                        }))
+                                        .disabled(thread_status != ThreadStatus::Stopped)
+                                        .tooltip(move |cx| Tooltip::text("Step back", cx)),
+                                )
                             })
                             .child(
                                 IconButton::new("debug-step-over", IconName::DebugStepOver)

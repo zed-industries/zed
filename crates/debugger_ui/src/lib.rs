@@ -5,8 +5,8 @@ use gpui::AppContext;
 use settings::Settings;
 use ui::ViewContext;
 use workspace::{
-    Continue, Pause, Restart, ShutdownDebugAdapters, Start, StepInto, StepOut, StepOver, Stop,
-    ToggleIgnoreBreakpoints, Workspace,
+    Continue, Pause, Restart, ShutdownDebugAdapters, Start, StepBack, StepInto, StepOut, StepOver,
+    Stop, ToggleIgnoreBreakpoints, Workspace,
 };
 
 mod attach_modal;
@@ -76,6 +76,17 @@ pub fn init(cx: &mut AppContext) {
                         };
 
                         active_item.update(cx, |item, cx| item.step_in(cx))
+                    });
+                })
+                .register_action(|workspace: &mut Workspace, _: &StepBack, cx| {
+                    let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+
+                    debug_panel.update(cx, |panel, cx| {
+                        let Some(active_item) = panel.active_debug_panel_item(cx) else {
+                            return;
+                        };
+
+                        active_item.update(cx, |item, cx| item.step_back(cx))
                     });
                 })
                 .register_action(|workspace: &mut Workspace, _: &StepOut, cx| {

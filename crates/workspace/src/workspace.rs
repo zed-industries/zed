@@ -135,6 +135,7 @@ actions!(
         StepInto,
         StepOver,
         StepOut,
+        StepBack,
         Stop,
         ToggleIgnoreBreakpoints
     ]

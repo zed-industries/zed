@@ -168,6 +168,7 @@ pub enum IconName {
     DebugStepOver,
     DebugStepInto,
     DebugStepOut,
+    DebugStepBack,
     DebugRestart,
     Debug,
     DebugStop,

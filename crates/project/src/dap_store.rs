@@ -3,15 +3,15 @@ use crate::{ProjectEnvironment, ProjectItem as _, ProjectPath};
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use dap::adapters::{DapDelegate, DapStatus, DebugAdapter, DebugAdapterBinary, DebugAdapterName};
 use dap::{
+    adapters::{DapDelegate, DapStatus, DebugAdapter, DebugAdapterBinary, DebugAdapterName},
     client::{DebugAdapterClient, DebugAdapterClientId},
     messages::{Message, Response},
     requests::{
         Attach, Completions, ConfigurationDone, Continue, Disconnect, Evaluate, Initialize, Launch,
         LoadedSources, Modules, Next, Pause, Request as _, Restart, RunInTerminal, Scopes,
-        SetBreakpoints, SetExpression, SetVariable, StackTrace, StartDebugging, StepIn, StepOut,
-        Terminate, TerminateThreads, Variables,
+        SetBreakpoints, SetExpression, SetVariable, StackTrace, StartDebugging, StepBack, StepIn,
+        StepOut, Terminate, TerminateThreads, Variables,
     },
     AttachRequestArguments, Capabilities, CompletionItem, CompletionsArguments,
     ConfigurationDoneArguments, ContinueArguments, DisconnectArguments, ErrorResponse,
@@ -20,8 +20,9 @@ use dap::{
     ModulesArguments, NextArguments, PauseArguments, RestartArguments, RunInTerminalResponse,
     Scope, ScopesArguments, SetBreakpointsArguments, SetExpressionArguments, SetVariableArguments,
     Source, SourceBreakpoint, StackFrame, StackTraceArguments, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest, StepInArguments, StepOutArguments, SteppingGranularity,
-    TerminateArguments, TerminateThreadsArguments, Variable, VariablesArguments,
+    StartDebuggingRequestArgumentsRequest, StepBackArguments, StepInArguments, StepOutArguments,
+    SteppingGranularity, TerminateArguments, TerminateThreadsArguments, Variable,
+    VariablesArguments,
 };
 use dap_adapters::build_adapter;
 use fs::Fs;
@@ -1069,6 +1070,44 @@ impl DapStore {
         cx.background_executor().spawn(async move {
             client
                 .request::<StepOut>(StepOutArguments {
+                    thread_id,
+                    granularity: supports_stepping_granularity.then(|| granularity),
+                    single_thread: supports_single_thread_execution_requests.then(|| true),
+                })
+                .await
+        })
+    }
+
+    pub fn step_back(
+        &self,
+        client_id: &DebugAdapterClientId,
+        thread_id: u64,
+        granularity: SteppingGranularity,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let Some(client) = self.client_by_id(client_id) else {
+            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
+        };
+
+        let capabilities = self.capabilities_by_id(client_id);
+
+        if capabilities.supports_step_back.unwrap_or(false) {
+            return Task::ready(Err(anyhow!(
+                "Step back request isn't support for client_id: {:?}",
+                client_id
+            )));
+        }
+
+        let supports_single_thread_execution_requests = capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default();
+        let supports_stepping_granularity = capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+
+        cx.background_executor().spawn(async move {
+            client
+                .request::<StepBack>(StepBackArguments {
                     thread_id,
                     granularity: supports_stepping_granularity.then(|| granularity),
                     single_thread: supports_single_thread_execution_requests.then(|| true),

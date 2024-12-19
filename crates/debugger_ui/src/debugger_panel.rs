@@ -26,8 +26,8 @@ use terminal_view::terminal_panel::TerminalPanel;
 use ui::prelude::*;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    pane, Continue, Disconnect, Pane, Pause, Restart, Start, StepInto, StepOut, StepOver, Stop,
-    ToggleIgnoreBreakpoints, Workspace,
+    pane, Continue, Disconnect, Pane, Pause, Restart, Start, StepBack, StepInto, StepOut, StepOver,
+    Stop, ToggleIgnoreBreakpoints, Workspace,
 };
 
 pub enum DebugPanelEvent {
@@ -214,8 +214,19 @@ impl DebugPanel {
                 let debug_panel = DebugPanel::new(workspace, cx);
 
                 cx.observe(&debug_panel, |_, debug_panel, cx| {
-                    let has_active_session = debug_panel
-                        .update(cx, |this, cx| this.active_debug_panel_item(cx).is_some());
+                    let (has_active_session, support_step_back) =
+                        debug_panel.update(cx, |this, cx| {
+                            this.active_debug_panel_item(cx)
+                                .map(|item| {
+                                    (
+                                        true,
+                                        item.update(cx, |this, cx| this.capabilities(cx))
+                                            .supports_step_back
+                                            .unwrap_or(false),
+                                    )
+                                })
+                                .unwrap_or((false, false))
+                        });
 
                     let filter = CommandPaletteFilter::global_mut(cx);
                     let debugger_action_types = [
@@ -230,11 +241,20 @@ impl DebugPanel {
                         TypeId::of::<ToggleIgnoreBreakpoints>(),
                     ];
 
+                    let step_back_action_type = [TypeId::of::<StepBack>()];
+
                     if has_active_session {
                         filter.show_action_types(debugger_action_types.iter());
+
+                        if support_step_back {
+                            filter.show_action_types(step_back_action_type.iter());
+                        } else {
+                            filter.hide_action_types(&step_back_action_type);
+                        }
                     } else {
                         // show only the `debug: start`
                         filter.hide_action_types(&debugger_action_types);
+                        filter.hide_action_types(&step_back_action_type);
                     }
                 })
                 .detach();
