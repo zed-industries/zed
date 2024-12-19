@@ -1243,6 +1243,12 @@
   //   }
   // ]
   "ssh_connections": [],
+
   // Configures context servers for use in the Assistant.
-  "context_servers": {}
+  "context_servers": {},
+  "debugger": {
+    "stepping_granularity": "line",
+    "save_breakpoints": true,
+    "button": true
+  }
 }

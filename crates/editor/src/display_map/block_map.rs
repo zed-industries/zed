@@ -70,7 +70,7 @@ impl From<CustomBlockId> for ElementId {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq, Hash)]
 pub struct BlockPoint(pub Point);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
