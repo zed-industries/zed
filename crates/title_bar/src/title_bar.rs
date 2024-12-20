@@ -28,7 +28,7 @@ use ui::{
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::Workspace;
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
 #[cfg(feature = "stories")]
@@ -163,7 +163,6 @@ impl Render for TitleBar {
                                     el.child(self.render_user_menu_button(cx))
                                 } else {
                                     el.children(self.render_connection_status(status, cx))
-                                        .child(self.render_sign_in_button(cx))
                                         .child(self.render_user_menu_button(cx))
                                 }
                             }),
@@ -555,22 +554,6 @@ impl TitleBar {
         }
     }
 
-    pub fn render_sign_in_button(&mut self, _: &mut ViewContext<Self>) -> Button {
-        let client = self.client.clone();
-        Button::new("sign_in", "Sign in")
-            .label_size(LabelSize::Small)
-            .on_click(move |_, cx| {
-                let client = client.clone();
-                cx.spawn(move |mut cx| async move {
-                    client
-                        .authenticate_and_connect(true, &cx)
-                        .await
-                        .notify_async_err(&mut cx);
-                })
-                .detach();
-            })
-    }
-
     pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
@@ -650,6 +633,7 @@ impl TitleBar {
                                 }
                                 .boxed_clone(),
                             )
+                            .action("Sign in", client::SignIn.boxed_clone())
                     })
                     .into()
                 })
