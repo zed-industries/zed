@@ -15,8 +15,9 @@ use std::{
     cell::OnceCell,
     collections::HashSet,
     ffi::OsStr,
-    ops::Range,
+    ops::{Deref, Range},
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     time::Duration,
     usize,
@@ -66,6 +67,7 @@ struct EntryDetails {
     depth: usize,
     is_expanded: bool,
     status: Option<GitFileStatus>,
+    hunks: Rc<OnceCell<Vec<DiffHunk>>>,
 }
 
 impl EntryDetails {
@@ -95,10 +97,42 @@ pub struct GitPanel {
 
     // The entries that are currently shown in the panel, aka
     // not hidden by folding or such
-    visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
+    visible_entries: Vec<WorktreeEntries>,
     width: Option<Pixels>,
     git_diff_editor: View<Editor>,
     git_diff_editor_updates: Task<()>,
+}
+
+#[derive(Debug, Clone)]
+struct WorktreeEntries {
+    worktree_id: WorktreeId,
+    visible_entries: Vec<GitPanelEntry>,
+    paths: Rc<OnceCell<HashSet<Arc<Path>>>>,
+}
+
+#[derive(Debug, Clone)]
+struct GitPanelEntry {
+    entry: Entry,
+    hunks: Rc<OnceCell<Vec<DiffHunk>>>,
+}
+
+impl Deref for GitPanelEntry {
+    type Target = Entry;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entry
+    }
+}
+
+impl WorktreeEntries {
+    fn paths(&self) -> &HashSet<Arc<Path>> {
+        self.paths.get_or_init(|| {
+            self.visible_entries
+                .iter()
+                .map(|e| (e.entry.path.clone()))
+                .collect()
+        })
+    }
 }
 
 impl GitPanel {
@@ -315,8 +349,9 @@ impl GitPanel {
     fn entry_count(&self) -> usize {
         self.visible_entries
             .iter()
-            .map(|(_, entries, _)| {
-                entries
+            .map(|worktree_entries| {
+                worktree_entries
+                    .visible_entries
                     .iter()
                     .filter(|entry| entry.git_status.is_some())
                     .count()
@@ -331,19 +366,23 @@ impl GitPanel {
         mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<Self>),
     ) {
         let mut ix = 0;
-        for (worktree_id, visible_worktree_entries, entries_paths) in &self.visible_entries {
+        for worktree_entries in &self.visible_entries {
             if ix >= range.end {
                 return;
             }
 
-            if ix + visible_worktree_entries.len() <= range.start {
-                ix += visible_worktree_entries.len();
+            if ix + worktree_entries.visible_entries.len() <= range.start {
+                ix += worktree_entries.visible_entries.len();
                 continue;
             }
 
-            let end_ix = range.end.min(ix + visible_worktree_entries.len());
+            let end_ix = range.end.min(ix + worktree_entries.visible_entries.len());
             // let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-            if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
+            if let Some(worktree) = self
+                .project
+                .read(cx)
+                .worktree_for_id(worktree_entries.worktree_id, cx)
+            {
                 let snapshot = worktree.read(cx).snapshot();
                 let root_name = OsStr::new(snapshot.root_name());
                 let expanded_entry_ids = self
@@ -353,14 +392,9 @@ impl GitPanel {
                     .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                let entries = entries_paths.get_or_init(|| {
-                    visible_worktree_entries
-                        .iter()
-                        .map(|e| (e.path.clone()))
-                        .collect()
-                });
+                let entries = worktree_entries.paths();
 
-                for entry in visible_worktree_entries[entry_range].iter() {
+                for entry in worktree_entries.visible_entries[entry_range].iter() {
                     let status = entry.git_status;
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
@@ -382,15 +416,14 @@ impl GitPanel {
                             .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
                     };
 
-                    let display_name = entry.path.to_string_lossy().into_owned();
-
                     let details = EntryDetails {
                         filename,
-                        display_name,
+                        display_name: entry.path.to_string_lossy().into_owned(),
                         kind: entry.kind,
                         is_expanded,
                         path: entry.path.clone(),
                         status,
+                        hunks: entry.hunks.clone(),
                         depth,
                     };
                     callback(entry.id, details, cx);
@@ -411,22 +444,21 @@ impl GitPanel {
         let project = self.project.read(cx);
         let mut old_entries_removed = false;
         let mut after_update = Vec::new();
-        self.visible_entries.retain(
-            |visible_entry @ (visible_worktree_id, _, _)| match for_worktree {
+        self.visible_entries
+            .retain(|worktree_entries| match for_worktree {
                 Some(for_worktree) => {
-                    if *visible_worktree_id == for_worktree {
+                    if worktree_entries.worktree_id == for_worktree {
                         old_entries_removed = true;
                         false
                     } else if old_entries_removed {
-                        after_update.push(visible_entry.clone());
+                        after_update.push(worktree_entries.clone());
                         false
                     } else {
                         true
                     }
                 }
                 None => true,
-            },
-        );
+            });
         for worktree in project.visible_worktrees(cx) {
             let worktree_id = worktree.read(cx).id();
             if for_worktree.is_some() && for_worktree != Some(worktree_id) {
@@ -444,20 +476,33 @@ impl GitPanel {
             project::sort_worktree_entries(&mut visible_worktree_entries);
 
             if !visible_worktree_entries.is_empty() {
-                self.visible_entries
-                    .push((worktree_id, visible_worktree_entries, OnceCell::new()));
+                self.visible_entries.push(WorktreeEntries {
+                    worktree_id,
+                    visible_entries: visible_worktree_entries
+                        .into_iter()
+                        .map(|entry| GitPanelEntry {
+                            entry,
+                            hunks: Rc::default(),
+                        })
+                        .collect(),
+                    paths: Rc::default(),
+                });
             }
         }
         self.visible_entries.extend(after_update);
 
         if let Some((worktree_id, entry_id)) = new_selected_entry {
             self.selected_item = self.visible_entries.iter().enumerate().find_map(
-                |(worktree_index, (id, entries, _))| {
-                    if *id == worktree_id {
-                        entries
+                |(worktree_index, worktree_entries)| {
+                    if worktree_entries.worktree_id == worktree_id {
+                        worktree_entries
+                            .visible_entries
                             .iter()
                             .position(|entry| entry.id == entry_id)
-                            .map(|entry_index| worktree_index * entries.len() + entry_index)
+                            .map(|entry_index| {
+                                worktree_index * worktree_entries.visible_entries.len()
+                                    + entry_index
+                            })
                     } else {
                         None
                     }
@@ -472,12 +517,14 @@ impl GitPanel {
                 .await;
             let Some(project_buffers) = git_panel
                 .update(&mut cx, |git_panel, cx| {
-                    futures::future::join_all(git_panel.visible_entries.iter().flat_map(
-                        move |(_, entries, _)| {
-                            entries
+                    futures::future::join_all(git_panel.visible_entries.iter_mut().flat_map(
+                        move |worktree_entries| {
+                            worktree_entries
+                                .visible_entries
                                 .iter()
                                 .filter_map(|entry| {
                                     let git_status = entry.git_status()?;
+                                    let entry_hunks = entry.hunks.clone();
                                     let (entry_path, unstaged_changes_task) =
                                         project.update(cx, |project, cx| {
                                             let entry_path =
@@ -507,49 +554,50 @@ impl GitPanel {
                                                         .await
                                                         .context("opening unstaged changes")?;
 
-                                                    let hunks = match git_status {
-                                                        GitFileStatus::Added => {
-                                                            let buffer_snapshot = buffer
-                                                                .update(&mut cx, |buffer, _| {
-                                                                    buffer.snapshot()
-                                                                })?;
-                                                            let entire_buffer_range =
-                                                                buffer_snapshot.anchor_after(0)
-                                                                    ..buffer_snapshot
-                                                                        .anchor_before(
-                                                                            buffer_snapshot.len(),
-                                                                        );
-                                                            let entire_buffer_point_range =
-                                                                entire_buffer_range
-                                                                    .clone()
-                                                                    .to_point(&buffer_snapshot);
+                                                    let hunks = cx.update(|cx| {
+                                                        entry_hunks
+                                                            .get_or_init(|| {
+                                                                match git_status {
+                                                                    GitFileStatus::Added => {
+                                                                        let buffer_snapshot = buffer.read(cx).snapshot();
+                                                                        let entire_buffer_range =
+                                                                            buffer_snapshot.anchor_after(0)
+                                                                                ..buffer_snapshot
+                                                                                    .anchor_before(
+                                                                                        buffer_snapshot.len(),
+                                                                                    );
+                                                                        let entire_buffer_point_range =
+                                                                            entire_buffer_range
+                                                                                .clone()
+                                                                                .to_point(&buffer_snapshot);
 
-                                                            vec![DiffHunk {
-                                                                row_range: entire_buffer_point_range
-                                                                    .start
-                                                                    .row
-                                                                    ..entire_buffer_point_range
-                                                                        .end
-                                                                        .row,
-                                                                buffer_range: entire_buffer_range,
-                                                                diff_base_byte_range: 0..0,
-                                                            }]
-                                                        }
-                                                        GitFileStatus::Modified => unstaged_changes
-                                                            .update(&mut cx, |changes, cx| {
-                                                                let buffer_snapshot =
-                                                                    buffer.read(cx).snapshot();
-                                                                changes
-                                                                    .diff_to_buffer
-                                                                    .hunks_in_row_range(
-                                                                        0..BufferRow::MAX,
-                                                                        &buffer_snapshot,
-                                                                    )
-                                                                    .collect::<Vec<_>>()
-                                                            })?,
-                                                        // TODO support conflicts display
-                                                        GitFileStatus::Conflict => Vec::new(),
-                                                    };
+                                                                        vec![DiffHunk {
+                                                                            row_range: entire_buffer_point_range
+                                                                                .start
+                                                                                .row
+                                                                                ..entire_buffer_point_range
+                                                                                    .end
+                                                                                    .row,
+                                                                            buffer_range: entire_buffer_range,
+                                                                            diff_base_byte_range: 0..0,
+                                                                        }]
+                                                                    }
+                                                                    GitFileStatus::Modified => {
+                                                                            let buffer_snapshot =
+                                                                                buffer.read(cx).snapshot();
+                                                                            unstaged_changes.read(cx)
+                                                                                .diff_to_buffer
+                                                                                .hunks_in_row_range(
+                                                                                    0..BufferRow::MAX,
+                                                                                    &buffer_snapshot,
+                                                                                )
+                                                                                .collect()
+                                                                    }
+                                                                    // TODO support conflicts display
+                                                                    GitFileStatus::Conflict => Vec::new(),
+                                                                }
+                                                            }).clone()
+                                                    })?;
 
                                                     anyhow::Ok((buffer, unstaged_changes, hunks))
                                                 });
@@ -820,7 +868,7 @@ impl GitPanel {
         let item_count = self
             .visible_entries
             .iter()
-            .map(|(_, worktree_entries, _)| worktree_entries.len())
+            .map(|worktree_entries| worktree_entries.visible_entries.len())
             .sum();
         h_flex()
             .size_full()
@@ -898,7 +946,51 @@ impl GitPanel {
                                     git_panel.git_diff_editor.clone()
                                 }
                             };
-                            // TODO kb scroll to the entry clicked
+                            if let Some(first_hunk) =
+                                details.hunks.get().and_then(|hunks| hunks.first())
+                            {
+                                let hunk_buffer_range = &first_hunk.buffer_range;
+                                if let Some(buffer_id) = hunk_buffer_range
+                                    .start
+                                    .buffer_id
+                                    .or_else(|| first_hunk.buffer_range.end.buffer_id)
+                                {
+                                    editor.update(cx, |editor, cx| {
+                                        let multi_buffer = editor.buffer().read(cx);
+                                        let buffer = multi_buffer.buffer(buffer_id)?;
+                                        let buffer_snapshot = buffer.read(cx).snapshot();
+                                        let (excerpt_id, _) = multi_buffer
+                                            .excerpts_for_buffer(&buffer, cx)
+                                            .into_iter()
+                                            .find(|(_, excerpt)| {
+                                                hunk_buffer_range
+                                                    .start
+                                                    .cmp(&excerpt.context.start, &buffer_snapshot)
+                                                    .is_ge()
+                                                    && hunk_buffer_range
+                                                        .end
+                                                        .cmp(&excerpt.context.end, &buffer_snapshot)
+                                                        .is_le()
+                                            })?;
+                                        let multi_buffer_hunk_start =
+                                            multi_buffer.snapshot(cx).anchor_in_excerpt(
+                                                excerpt_id,
+                                                hunk_buffer_range.start,
+                                            )?;
+                                        editor.change_selections(
+                                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
+                                            cx,
+                                            |s| {
+                                                s.select_ranges(Some(
+                                                    multi_buffer_hunk_start
+                                                        ..multi_buffer_hunk_start,
+                                                ))
+                                            },
+                                        );
+                                        Some(())
+                                    });
+                                }
+                            }
                         })
                         .ok();
                 });
