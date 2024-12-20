@@ -6,7 +6,6 @@ use crate::{
     outputs::{ExecutionStatus, ExecutionView},
     KernelStatus,
 };
-use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{
@@ -37,7 +36,6 @@ pub struct Session {
     pub kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
     pub kernel_specification: KernelSpecification,
-    telemetry: Arc<Telemetry>,
     _buffer_subscription: Subscription,
 }
 
@@ -194,7 +192,6 @@ impl Session {
     pub fn new(
         editor: WeakView<Editor>,
         fs: Arc<dyn Fs>,
-        telemetry: Arc<Telemetry>,
         kernel_specification: KernelSpecification,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -221,7 +218,6 @@ impl Session {
             blocks: HashMap::default(),
             kernel_specification,
             _buffer_subscription: subscription,
-            telemetry,
         };
 
         session.start_kernel(cx);
@@ -237,10 +233,11 @@ impl Session {
             .and_then(|editor| editor.read(cx).working_directory(cx))
             .unwrap_or_else(temp_dir);
 
-        self.telemetry.report_repl_event(
-            kernel_language.into(),
-            KernelStatus::Starting.to_string(),
-            cx.entity_id().to_string(),
+        telemetry::event!(
+            "Kernel Status Changed",
+            kernel_language,
+            kernel_status = KernelStatus::Starting.to_string(),
+            repl_session_id = cx.entity_id().to_string(),
         );
 
         let session_view = cx.view().clone();
@@ -488,10 +485,11 @@ impl Session {
             JupyterMessageContent::Status(status) => {
                 self.kernel.set_execution_state(&status.execution_state);
 
-                self.telemetry.report_repl_event(
-                    self.kernel_specification.language().into(),
-                    KernelStatus::from(&self.kernel).to_string(),
-                    cx.entity_id().to_string(),
+                telemetry::event!(
+                    "Kernel Status Changed",
+                    kernel_language = self.kernel_specification.language(),
+                    kernel_status = KernelStatus::from(&self.kernel).to_string(),
+                    repl_session_id = cx.entity_id().to_string(),
                 );
 
                 cx.notify();
@@ -540,12 +538,13 @@ impl Session {
         }
 
         let kernel_status = KernelStatus::from(&kernel).to_string();
-        let kernel_language = self.kernel_specification.language().into();
+        let kernel_language = self.kernel_specification.language();
 
-        self.telemetry.report_repl_event(
+        telemetry::event!(
+            "Kernel Status Changed",
             kernel_language,
             kernel_status,
-            cx.entity_id().to_string(),
+            repl_session_id = cx.entity_id().to_string(),
         );
 
         self.kernel = kernel;

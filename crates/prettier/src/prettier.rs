@@ -58,6 +58,7 @@ impl Prettier {
         "prettier.config.js",
         "prettier.config.cjs",
         ".editorconfig",
+        ".prettierignore",
     ];
 
     pub async fn locate_prettier_installation(
@@ -134,6 +135,101 @@ impl Prettier {
         }
     }
 
+    pub async fn locate_prettier_ignore(
+        fs: &dyn Fs,
+        prettier_ignores: &HashSet<PathBuf>,
+        locate_from: &Path,
+    ) -> anyhow::Result<ControlFlow<(), Option<PathBuf>>> {
+        let mut path_to_check = locate_from
+            .components()
+            .take_while(|component| component.as_os_str().to_string_lossy() != "node_modules")
+            .collect::<PathBuf>();
+        if path_to_check != locate_from {
+            log::debug!(
+                "Skipping prettier ignore location for path {path_to_check:?} that is inside node_modules"
+            );
+            return Ok(ControlFlow::Break(()));
+        }
+
+        let path_to_check_metadata = fs
+            .metadata(&path_to_check)
+            .await
+            .with_context(|| format!("failed to get metadata for initial path {path_to_check:?}"))?
+            .with_context(|| format!("empty metadata for initial path {path_to_check:?}"))?;
+        if !path_to_check_metadata.is_dir {
+            path_to_check.pop();
+        }
+
+        let mut closest_package_json_path = None;
+        loop {
+            if prettier_ignores.contains(&path_to_check) {
+                log::debug!("Found prettier ignore at {path_to_check:?}");
+                return Ok(ControlFlow::Continue(Some(path_to_check)));
+            } else if let Some(package_json_contents) =
+                read_package_json(fs, &path_to_check).await?
+            {
+                let ignore_path = path_to_check.join(".prettierignore");
+                if let Some(metadata) = fs
+                    .metadata(&ignore_path)
+                    .await
+                    .with_context(|| format!("fetching metadata for {ignore_path:?}"))?
+                {
+                    if !metadata.is_dir && !metadata.is_symlink {
+                        log::info!("Found prettier ignore at {ignore_path:?}");
+                        return Ok(ControlFlow::Continue(Some(path_to_check)));
+                    }
+                }
+                match &closest_package_json_path {
+                    None => closest_package_json_path = Some(path_to_check.clone()),
+                    Some(closest_package_json_path) => {
+                        if let Some(serde_json::Value::Array(workspaces)) =
+                            package_json_contents.get("workspaces")
+                        {
+                            let subproject_path = closest_package_json_path
+                                .strip_prefix(&path_to_check)
+                                .expect("traversing path parents, should be able to strip prefix");
+
+                            if workspaces
+                                .iter()
+                                .filter_map(|value| {
+                                    if let serde_json::Value::String(s) = value {
+                                        Some(s.clone())
+                                    } else {
+                                        log::warn!(
+                                            "Skipping non-string 'workspaces' value: {value:?}"
+                                        );
+                                        None
+                                    }
+                                })
+                                .any(|workspace_definition| {
+                                    workspace_definition == subproject_path.to_string_lossy()
+                                        || PathMatcher::new(&[workspace_definition])
+                                            .ok()
+                                            .map_or(false, |path_matcher| {
+                                                path_matcher.is_match(subproject_path)
+                                            })
+                                })
+                            {
+                                let workspace_ignore = path_to_check.join(".prettierignore");
+                                if let Some(metadata) = fs.metadata(&workspace_ignore).await? {
+                                    if !metadata.is_dir {
+                                        log::info!("Found prettier ignore at workspace root {workspace_ignore:?}");
+                                        return Ok(ControlFlow::Continue(Some(path_to_check)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !path_to_check.pop() {
+                log::debug!("Found no prettier ignore in ancestors of {locate_from:?}");
+                return Ok(ControlFlow::Continue(None));
+            }
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub async fn start(
         _: LanguageServerId,
@@ -201,6 +297,7 @@ impl Prettier {
         &self,
         buffer: &Model<Buffer>,
         buffer_path: Option<PathBuf>,
+        ignore_dir: Option<PathBuf>,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<Diff> {
         match self {
@@ -315,11 +412,17 @@ impl Prettier {
 
                         }
 
+                        let ignore_path = ignore_dir.and_then(|dir| {
+                            let ignore_file = dir.join(".prettierignore");
+                            ignore_file.is_file().then_some(ignore_file)
+                        });
+
                         log::debug!(
-                            "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}",
+                            "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}, ignore_path: {:?}",
                             buffer.file().map(|f| f.full_path(cx)),
                             plugins,
                             prettier_options,
+                            ignore_path,
                         );
 
                         anyhow::Ok(FormatParams {
@@ -329,6 +432,7 @@ impl Prettier {
                                 plugins,
                                 path: buffer_path,
                                 prettier_options,
+                                ignore_path,
                             },
                         })
                     })?
@@ -449,6 +553,7 @@ struct FormatOptions {
     #[serde(rename = "filepath")]
     path: Option<PathBuf>,
     prettier_options: Option<HashMap<String, serde_json::Value>>,
+    ignore_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -839,5 +944,151 @@ mod tests {
                 assert!(message.contains("/root/work/full-stack-foundations"), "Error message should mention potential candidates without prettier node_modules contents");
             },
         };
+    }
+
+    #[gpui::test]
+    async fn test_prettier_ignore_with_editor_prettier(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    "src": {
+                        "index.js": "// index.js file contents",
+                        "ignored.js": "// this file should be ignored",
+                    },
+                    ".prettierignore": "ignored.js",
+                    "package.json": r#"{
+                        "name": "test-project"
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            Prettier::locate_prettier_ignore(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/project/src/index.js"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(Some(PathBuf::from("/root/project"))),
+            "Should find prettierignore in project root"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_prettier_ignore_in_monorepo_with_only_child_ignore(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "monorepo": {
+                    "node_modules": {
+                        "prettier": {
+                            "index.js": "// Dummy prettier package file",
+                        }
+                    },
+                    "packages": {
+                        "web": {
+                            "src": {
+                                "index.js": "// index.js contents",
+                                "ignored.js": "// this should be ignored",
+                            },
+                            ".prettierignore": "ignored.js",
+                            "package.json": r#"{
+                                "name": "web-package"
+                            }"#
+                        }
+                    },
+                    "package.json": r#"{
+                        "workspaces": ["packages/*"],
+                        "devDependencies": {
+                            "prettier": "^2.0.0"
+                        }
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            Prettier::locate_prettier_ignore(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/monorepo/packages/web/src/index.js"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(Some(PathBuf::from("/root/monorepo/packages/web"))),
+            "Should find prettierignore in child package"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_prettier_ignore_in_monorepo_with_root_and_child_ignores(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "monorepo": {
+                    "node_modules": {
+                        "prettier": {
+                            "index.js": "// Dummy prettier package file",
+                        }
+                    },
+                    ".prettierignore": "main.js",
+                    "packages": {
+                        "web": {
+                            "src": {
+                                "main.js": "// this should not be ignored",
+                                "ignored.js": "// this should be ignored",
+                            },
+                            ".prettierignore": "ignored.js",
+                            "package.json": r#"{
+                                "name": "web-package"
+                            }"#
+                        }
+                    },
+                    "package.json": r#"{
+                        "workspaces": ["packages/*"],
+                        "devDependencies": {
+                            "prettier": "^2.0.0"
+                        }
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            Prettier::locate_prettier_ignore(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/monorepo/packages/web/src/main.js"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(Some(PathBuf::from("/root/monorepo/packages/web"))),
+            "Should find child package prettierignore first"
+        );
+
+        assert_eq!(
+            Prettier::locate_prettier_ignore(
+                fs.as_ref(),
+                &HashSet::default(),
+                Path::new("/root/monorepo/packages/web/src/ignored.js"),
+            )
+            .await
+            .unwrap(),
+            ControlFlow::Continue(Some(PathBuf::from("/root/monorepo/packages/web"))),
+            "Should find child package prettierignore first"
+        );
     }
 }

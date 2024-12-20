@@ -53,7 +53,7 @@ use lsp::{
     WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use postage::watch;
 use rand::prelude::*;
 
@@ -66,12 +66,14 @@ use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
     any::Any,
+    cell::RefCell,
     cmp::Ordering,
     convert::TryInto,
     ffi::OsStr,
     iter, mem,
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
+    rc::Rc,
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -4190,7 +4192,7 @@ impl LspStore {
         &self,
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completions: Rc<RefCell<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<bool>> {
         let client = self.upstream_client();
@@ -4204,8 +4206,8 @@ impl LspStore {
             if let Some((client, project_id)) = client {
                 for completion_index in completion_indices {
                     let (server_id, completion) = {
-                        let completions_guard = completions.read();
-                        let completion = &completions_guard[completion_index];
+                        let completions = completions.borrow_mut();
+                        let completion = &completions[completion_index];
                         did_resolve = true;
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
@@ -4228,8 +4230,8 @@ impl LspStore {
             } else {
                 for completion_index in completion_indices {
                     let (server_id, completion) = {
-                        let completions_guard = completions.read();
-                        let completion = &completions_guard[completion_index];
+                        let completions = completions.borrow_mut();
+                        let completion = &completions[completion_index];
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
 
@@ -4271,7 +4273,7 @@ impl LspStore {
         server: Arc<lsp::LanguageServer>,
         adapter: Arc<CachedLspAdapter>,
         snapshot: &BufferSnapshot,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
         language_registry: Arc<LanguageRegistry>,
@@ -4299,11 +4301,11 @@ impl LspStore {
             )
             .await;
 
-            let mut completions = completions.write();
+            let mut completions = completions.borrow_mut();
             let completion = &mut completions[completion_index];
             completion.documentation = Some(documentation);
         } else {
-            let mut completions = completions.write();
+            let mut completions = completions.borrow_mut();
             let completion = &mut completions[completion_index];
             completion.documentation = Some(Documentation::Undocumented);
         }
@@ -4318,7 +4320,7 @@ impl LspStore {
             if let Some((old_range, mut new_text)) = edit {
                 LineEnding::normalize(&mut new_text);
 
-                let mut completions = completions.write();
+                let mut completions = completions.borrow_mut();
                 let completion = &mut completions[completion_index];
 
                 completion.new_text = new_text;
@@ -4327,7 +4329,7 @@ impl LspStore {
         }
         if completion_item.insert_text_format == Some(InsertTextFormat::SNIPPET) {
             // vtsls might change the type of completion after resolution.
-            let mut completions = completions.write();
+            let mut completions = completions.borrow_mut();
             let completion = &mut completions[completion_index];
             if completion_item.insert_text_format != completion.lsp_completion.insert_text_format {
                 completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
@@ -4353,10 +4355,21 @@ impl LspStore {
             )
         });
 
-        let mut completions = completions.write();
+        let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         completion.lsp_completion = completion_item;
-        completion.label = new_label;
+        if completion.label.filter_text() == new_label.filter_text() {
+            completion.label = new_label;
+        } else {
+            log::error!(
+                "Resolved completion changed display label from {} to {}. \
+                 Refusing to apply this because it changes the fuzzy match text from {} to {}",
+                completion.label.text(),
+                new_label.text(),
+                completion.label.filter_text(),
+                new_label.filter_text()
+            );
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4364,7 +4377,7 @@ impl LspStore {
         project_id: u64,
         server_id: LanguageServerId,
         buffer_id: BufferId,
-        completions: Arc<RwLock<Box<[Completion]>>>,
+        completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
         client: AnyProtoClient,
@@ -4402,7 +4415,7 @@ impl LspStore {
             Documentation::MultiLinePlainText(response.documentation)
         };
 
-        let mut completions = completions.write();
+        let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         completion.documentation = Some(documentation);
         completion.lsp_completion = lsp_completion;
