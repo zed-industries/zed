@@ -42,6 +42,8 @@ actions!(git_panel, [ToggleFocus]);
 
 const GIT_PANEL_KEY: &str = "GitPanel";
 
+const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
@@ -104,6 +106,7 @@ pub struct GitPanel {
     width: Option<Pixels>,
     git_diff_editor: View<Editor>,
     git_diff_editor_updates: Task<()>,
+    reveal_in_editor: Task<()>,
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +210,7 @@ impl GitPanel {
                 hide_scrollbar_task: None,
                 git_diff_editor: diff_display_editor(project.clone(), cx),
                 git_diff_editor_updates: Task::ready(()),
+                reveal_in_editor: Task::ready(()),
                 project,
             };
             this.update_visible_entries(None, None, cx);
@@ -336,7 +340,16 @@ impl GitPanel {
             }
         };
         self.scroll_handle
-            .scroll_to_item(dbg!(selection), ScrollStrategy::Center);
+            .scroll_to_item(selection, ScrollStrategy::Center);
+
+        let mut hunks = None;
+        self.for_each_visible_entry(selection..selection + 1, cx, |_, entry, _| {
+            hunks = Some(entry.hunks.clone());
+        });
+        if let Some(hunks) = hunks {
+            self.reveal_entry_in_git_editor(hunks, false, Some(UPDATE_DEBOUNCE), cx);
+        }
+
         cx.notify();
     }
 
@@ -366,6 +379,15 @@ impl GitPanel {
         };
         self.scroll_handle
             .scroll_to_item(selection, ScrollStrategy::Center);
+
+        let mut hunks = None;
+        self.for_each_visible_entry(selection..selection + 1, cx, |_, entry, _| {
+            hunks = Some(entry.hunks.clone());
+        });
+        if let Some(hunks) = hunks {
+            self.reveal_entry_in_git_editor(hunks, false, Some(UPDATE_DEBOUNCE), cx);
+        }
+
         cx.notify();
     }
 }
@@ -580,7 +602,7 @@ impl GitPanel {
         let project = self.project.clone();
         self.git_diff_editor_updates = cx.spawn(|git_panel, mut cx| async move {
             cx.background_executor()
-                .timer(Duration::from_millis(50))
+                .timer(UPDATE_DEBOUNCE)
                 .await;
             let Some(project_buffers) = git_panel
                 .update(&mut cx, |git_panel, cx| {
@@ -1001,86 +1023,105 @@ impl GitPanel {
                         handle.update(cx, |git_panel, cx| {
                             git_panel.selected_item = Some(details.index);
                             let change_focus = e.down.click_count > 1;
-                            git_panel.reveal_entry_in_git_editor(&details.hunks, change_focus, cx);
+                            git_panel.reveal_entry_in_git_editor(
+                                details.hunks.clone(),
+                                change_focus,
+                                None,
+                                cx,
+                            );
                         });
                     }),
             )
     }
 
-    // TODO kb timeouts and tasks
     fn reveal_entry_in_git_editor(
         &mut self,
-        hunks: &OnceCell<Vec<DiffHunk>>,
+        hunks: Rc<OnceCell<Vec<DiffHunk>>>,
         change_focus: bool,
+        debounce: Option<Duration>,
         cx: &mut ViewContext<'_, Self>,
     ) {
-        let Some(editor) = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                let git_diff_editor = workspace
-                    .items_of_type::<Editor>(cx)
-                    .find(|editor| &self.git_diff_editor == editor);
-                match git_diff_editor {
-                    Some(existing_editor) => {
-                        workspace.activate_item(&existing_editor, true, change_focus, cx);
-                        existing_editor
-                    }
-                    None => {
-                        workspace.active_pane().update(cx, |pane, cx| {
-                            pane.add_item(
-                                self.git_diff_editor.boxed_clone(),
-                                true,
-                                change_focus,
-                                None,
-                                cx,
-                            )
-                        });
-                        self.git_diff_editor.clone()
-                    }
-                }
-            })
-            .ok()
-        else {
-            return;
-        };
-
-        if let Some(first_hunk) = hunks.get().and_then(|hunks| hunks.first()) {
-            let hunk_buffer_range = &first_hunk.buffer_range;
-            if let Some(buffer_id) = hunk_buffer_range
-                .start
-                .buffer_id
-                .or_else(|| first_hunk.buffer_range.end.buffer_id)
-            {
-                editor.update(cx, |editor, cx| {
-                    let multi_buffer = editor.buffer().read(cx);
-                    let buffer = multi_buffer.buffer(buffer_id)?;
-                    let buffer_snapshot = buffer.read(cx).snapshot();
-                    let (excerpt_id, _) = multi_buffer
-                        .excerpts_for_buffer(&buffer, cx)
-                        .into_iter()
-                        .find(|(_, excerpt)| {
-                            hunk_buffer_range
-                                .start
-                                .cmp(&excerpt.context.start, &buffer_snapshot)
-                                .is_ge()
-                                && hunk_buffer_range
-                                    .end
-                                    .cmp(&excerpt.context.end, &buffer_snapshot)
-                                    .is_le()
-                        })?;
-                    let multi_buffer_hunk_start = multi_buffer
-                        .snapshot(cx)
-                        .anchor_in_excerpt(excerpt_id, hunk_buffer_range.start)?;
-                    editor.change_selections(
-                        Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
-                        cx,
-                        |s| s.select_ranges(Some(multi_buffer_hunk_start..multi_buffer_hunk_start)),
-                    );
-                    cx.notify();
-                    Some(())
-                });
+        let workspace = self.workspace.clone();
+        let diff_editor = self.git_diff_editor.clone();
+        self.reveal_in_editor = cx.spawn(|_, mut cx| async move {
+            if let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
             }
-        }
+
+            let Some(editor) = workspace
+                .update(&mut cx, |workspace, cx| {
+                    let git_diff_editor = workspace
+                        .items_of_type::<Editor>(cx)
+                        .find(|editor| &diff_editor == editor);
+                    match git_diff_editor {
+                        Some(existing_editor) => {
+                            workspace.activate_item(&existing_editor, true, change_focus, cx);
+                            existing_editor
+                        }
+                        None => {
+                            workspace.active_pane().update(cx, |pane, cx| {
+                                pane.add_item(
+                                    diff_editor.boxed_clone(),
+                                    true,
+                                    change_focus,
+                                    None,
+                                    cx,
+                                )
+                            });
+                            diff_editor.clone()
+                        }
+                    }
+                })
+                .ok()
+            else {
+                return;
+            };
+
+            if let Some(first_hunk) = hunks.get().and_then(|hunks| hunks.first()) {
+                let hunk_buffer_range = &first_hunk.buffer_range;
+                if let Some(buffer_id) = hunk_buffer_range
+                    .start
+                    .buffer_id
+                    .or_else(|| first_hunk.buffer_range.end.buffer_id)
+                {
+                    editor
+                        .update(&mut cx, |editor, cx| {
+                            let multi_buffer = editor.buffer().read(cx);
+                            let buffer = multi_buffer.buffer(buffer_id)?;
+                            let buffer_snapshot = buffer.read(cx).snapshot();
+                            let (excerpt_id, _) = multi_buffer
+                                .excerpts_for_buffer(&buffer, cx)
+                                .into_iter()
+                                .find(|(_, excerpt)| {
+                                    hunk_buffer_range
+                                        .start
+                                        .cmp(&excerpt.context.start, &buffer_snapshot)
+                                        .is_ge()
+                                        && hunk_buffer_range
+                                            .end
+                                            .cmp(&excerpt.context.end, &buffer_snapshot)
+                                            .is_le()
+                                })?;
+                            let multi_buffer_hunk_start = multi_buffer
+                                .snapshot(cx)
+                                .anchor_in_excerpt(excerpt_id, hunk_buffer_range.start)?;
+                            editor.change_selections(
+                                Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
+                                cx,
+                                |s| {
+                                    s.select_ranges(Some(
+                                        multi_buffer_hunk_start..multi_buffer_hunk_start,
+                                    ))
+                                },
+                            );
+                            cx.notify();
+                            Some(())
+                        })
+                        .ok()
+                        .flatten();
+                }
+            }
+        });
     }
 }
 
