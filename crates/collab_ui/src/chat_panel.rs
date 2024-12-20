@@ -311,7 +311,7 @@ impl ChatPanel {
             None => {
                 return div().child(
                     h_flex()
-                        .text_ui_xs(cx)
+                        .text_ui(cx)
                         .my_0p5()
                         .px_0p5()
                         .gap_x_1()
@@ -320,7 +320,7 @@ impl ChatPanel {
                         .when(reply_to_message.is_none(), |el| {
                             el.child(
                                 Label::new("Message has been deleted...")
-                                    .size(LabelSize::XSmall)
+                                    .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
                         }),
@@ -346,7 +346,7 @@ impl ChatPanel {
         div().child(
             h_flex()
                 .id(message_element_id)
-                .text_ui_xs(cx)
+                .text_ui(cx)
                 .my_0p5()
                 .px_0p5()
                 .gap_x_1()
@@ -357,14 +357,14 @@ impl ChatPanel {
                 .child(Avatar::new(user_being_replied_to.avatar_uri.clone()).size(rems(0.7)))
                 .child(
                     Label::new(format!("@{}", user_being_replied_to.github_login))
-                        .size(LabelSize::XSmall)
+                        .size(LabelSize::Default)
                         .weight(FontWeight::SEMIBOLD)
                         .color(Color::Muted),
                 )
                 .child(
                     div().overflow_y_hidden().child(
                         Label::new(message_being_replied_to.body.replace('\n', " "))
-                            .size(LabelSize::XSmall)
+                            .size(LabelSize::Default)
                             .color(Color::Default),
                     ),
                 )
@@ -491,14 +491,14 @@ impl ChatPanel {
                             this.child(
                                 h_flex()
                                     .gap_2()
-                                    .text_ui_sm(cx)
+                                    .text_ui(cx)
                                     .child(
                                         Avatar::new(message.sender.avatar_uri.clone())
                                             .size(rems(1.)),
                                     )
                                     .child(
                                         Label::new(message.sender.github_login.clone())
-                                            .size(LabelSize::Small)
+                                            .size(LabelSize::Default)
                                             .weight(FontWeight::BOLD),
                                     )
                                     .child(
@@ -508,7 +508,7 @@ impl ChatPanel {
                                             self.local_timezone,
                                             time_format::TimestampFormat::EnhancedAbsolute,
                                         ))
-                                        .size(LabelSize::Small)
+                                        .size(LabelSize::Default)
                                         .color(Color::Muted),
                                     ),
                             )
@@ -528,7 +528,7 @@ impl ChatPanel {
                         el.child(
                             v_flex()
                                 .w_full()
-                                .text_ui_sm(cx)
+                                .text_ui(cx)
                                 .id(element_id)
                                 .child(text.element("body".into(), cx)),
                         )
@@ -551,7 +551,7 @@ impl ChatPanel {
                                 div()
                                     .px_1()
                                     .rounded_md()
-                                    .text_ui_xs(cx)
+                                    .text_ui(cx)
                                     .bg(cx.theme().colors().background)
                                     .child("New messages"),
                             )
@@ -962,7 +962,7 @@ impl Render for ChatPanel {
                             .p_4()
                             .child(
                                 Label::new("Select a channel to chat in.")
-                                    .size(LabelSize::Small)
+                                    .size(LabelSize::Default)
                                     .color(Color::Muted),
                             )
                             .child(
@@ -990,7 +990,7 @@ impl Render for ChatPanel {
                 el.child(
                     h_flex()
                         .px_2()
-                        .text_ui_xs(cx)
+                        .text_ui(cx)
                         .justify_between()
                         .border_t_1()
                         .border_color(cx.theme().colors().border)
@@ -1034,13 +1034,13 @@ impl Render for ChatPanel {
                                 div().flex_shrink().overflow_hidden().child(
                                     h_flex()
                                         .id(("reply-preview", reply_to_message_id))
-                                        .child(Label::new("Replying to ").size(LabelSize::Small))
+                                        .child(Label::new("Replying to ").size(LabelSize::Default))
                                         .child(
                                             Label::new(format!(
                                                 "@{}",
                                                 user_being_replied_to.github_login.clone()
                                             ))
-                                            .size(LabelSize::Small)
+                                            .size(LabelSize::Default)
                                             .weight(FontWeight::BOLD),
                                         )
                                         .when_some(channel_id, |this, channel_id| {
