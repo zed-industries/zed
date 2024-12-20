@@ -508,10 +508,6 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().window_bounds()
     }
 
-    fn inner_window_bounds(&self) -> WindowBounds {
-        self.window_bounds()
-    }
-
     /// get the logical size of the app's drawable area.
     ///
     /// Currently, GPUI uses the logical size of the app to handle mouse interactions (such as

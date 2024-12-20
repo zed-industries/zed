@@ -473,10 +473,6 @@ impl MacWindowState {
             WindowBounds::Windowed(self.bounds())
         }
     }
-
-    fn inner_window_bounds(&self) -> WindowBounds {
-        self.window_bounds()
-    }
 }
 
 unsafe impl Send for MacWindowState {}
@@ -776,10 +772,6 @@ impl PlatformWindow for MacWindow {
 
     fn window_bounds(&self) -> WindowBounds {
         self.0.as_ref().lock().window_bounds()
-    }
-
-    fn inner_window_bounds(&self) -> WindowBounds {
-        self.0.as_ref().lock().inner_window_bounds()
     }
 
     fn is_maximized(&self) -> bool {
