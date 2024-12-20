@@ -907,6 +907,7 @@ fn test_expand_diff_hunks(cx: &mut TestAppContext) {
             cx,
         )
     });
+    cx.run_until_parked();
 
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
@@ -931,8 +932,9 @@ fn test_expand_diff_hunks(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
     });
+
     assert_new_snapshot(
         &multibuffer,
         &mut snapshot,
@@ -970,161 +972,148 @@ fn test_expand_diff_hunks(cx: &mut TestAppContext) {
         ]
     );
 
-    // assert_chunks_in_ranges(&snapshot);
-    // assert_consistent_line_numbers(&snapshot);
+    assert_chunks_in_ranges(&snapshot);
+    assert_consistent_line_numbers(&snapshot);
+    assert_point_translation(&snapshot);
 
-    // for (point, offset) in &[
-    //     (
-    //         DiffPoint::new(0, 0),
-    //         DiffOffset(snapshot.text().find("ZERO").unwrap()),
-    //     ),
-    //     (
-    //         DiffPoint::new(2, 2),
-    //         DiffOffset(snapshot.text().find("two").unwrap() + 2),
-    //     ),
-    //     (
-    //         DiffPoint::new(4, 3),
-    //         DiffOffset(snapshot.text().find("three").unwrap() + 3),
-    //     ),
-    //     (DiffPoint::new(8, 0), DiffOffset(snapshot.text().len())),
-    // ] {
-    //     let actual = snapshot.point_to_offset(*point);
-    //     assert_eq!(actual, *offset, "for {:?}", point);
-    //     let actual = snapshot.offset_to_point(*offset);
-    //     assert_eq!(actual, *point, "for {:?}", offset);
-    // }
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+            ZERO
+            one
+            TWO
+            three
+            six
+            "
+        ),
+    );
 
-    // diff_map.update(cx, |diff_map, cx| {
-    //     diff_map.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
-    // });
-    // let sync = diff_map.update(cx, |diff_map, cx| {
-    //     diff_map.sync(deps.multibuffer_snapshot.clone(), vec![], cx)
-    // });
-    // assert_new_snapshot(
-    //     &mut snapshot,
-    //     sync,
-    //     indoc!(
-    //         "
-    //         ZERO
-    //         one
-    //         TWO
-    //         three
-    //         six
-    //         "
-    //     ),
-    // );
+    assert_chunks_in_ranges(&snapshot);
+    assert_consistent_line_numbers(&snapshot);
+    assert_point_translation(&snapshot);
 
-    // // Expand the first diff hunk
-    // diff_map.update(cx, |diff_map, cx| {
-    //     let position = deps.multibuffer_snapshot.anchor_before(Point::new(2, 0));
-    //     diff_map.expand_diff_hunks(vec![position..position], cx)
-    // });
-    // let sync = diff_map.update(cx, |diff_map, cx| {
-    //     diff_map.sync(deps.multibuffer_snapshot.clone(), vec![], cx)
-    // });
-    // assert_new_snapshot(
-    //     &mut snapshot,
-    //     sync,
-    //     indoc!(
-    //         "
-    //           ZERO
-    //           one
-    //         - two
-    //         + TWO
-    //           three
-    //           six
-    //         "
-    //     ),
-    // );
+    // Expand the first diff hunk
+    multibuffer.update(cx, |multibuffer, cx| {
+        let position = multibuffer.read(cx).anchor_before(Point::new(2, 0));
+        multibuffer.expand_diff_hunks(vec![position..position], cx)
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              ZERO
+              one
+            - two
+            + TWO
+              three
+              six
+            "
+        ),
+    );
 
-    // // Expand the second diff hunk
-    // diff_map.update(cx, |diff_map, cx| {
-    //     let position = deps.multibuffer_snapshot.anchor_before(Point::new(3, 0));
-    //     diff_map.expand_diff_hunks(vec![position..position], cx)
-    // });
-    // let sync = diff_map.update(cx, |diff_map, cx| {
-    //     diff_map.sync(deps.multibuffer_snapshot.clone(), vec![], cx)
-    // });
-    // assert_new_snapshot(
-    //     &mut snapshot,
-    //     sync,
-    //     indoc!(
-    //         "
-    //           ZERO
-    //           one
-    //         - two
-    //         + TWO
-    //           three
-    //         - four
-    //         - five
-    //           six
-    //         "
-    //     ),
-    // );
+    // Expand the second diff hunk
+    multibuffer.update(cx, |multibuffer, cx| {
+        let start = multibuffer.read(cx).anchor_before(Point::new(4, 0));
+        let end = multibuffer.read(cx).anchor_before(Point::new(5, 0));
+        multibuffer.expand_diff_hunks(vec![start..end], cx)
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              ZERO
+              one
+            - two
+            + TWO
+              three
+            - four
+            - five
+              six
+            "
+        ),
+    );
 
-    // // Edit the buffer before the first hunk
-    // let edits = deps.update_buffer(cx, |buffer, cx| {
-    //     buffer.edit_via_marked_text(
-    //         indoc!(
-    //             "
-    //             ZERO
-    //             one« hundred
-    //               thousand»
-    //             TWO
-    //             three
-    //             six
-    //             "
-    //         ),
-    //         None,
-    //         cx,
-    //     );
-    // });
+    assert_chunks_in_ranges(&snapshot);
+    assert_consistent_line_numbers(&snapshot);
+    assert_point_translation(&snapshot);
 
-    // let sync = diff_map.update(cx, |diff_map, cx| {
-    //     diff_map.sync(deps.multibuffer_snapshot.clone(), edits, cx)
-    // });
-    // assert_new_snapshot(
-    //     &mut snapshot,
-    //     sync,
-    //     indoc!(
-    //         "
-    //           ZERO
-    //           one hundred
-    //             thousand
-    //         - two
-    //         + TWO
-    //           three
-    //         - four
-    //         - five
-    //           six
-    //         "
-    //     ),
-    // );
+    // Edit the buffer before the first hunk
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit_via_marked_text(
+            indoc!(
+                "
+                ZERO
+                one« hundred
+                  thousand»
+                TWO
+                three
+                six
+                "
+            ),
+            None,
+            cx,
+        );
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              ZERO
+              one hundred
+                thousand
+            - two
+            + TWO
+              three
+            - four
+            - five
+              six
+            "
+        ),
+    );
 
-    // // Recalculate the diff, changing the first diff hunk.
-    // let _ = deps.change_set.update(cx, |change_set, cx| {
-    //     change_set.recalculate_diff(deps.buffer.read(cx).text_snapshot(), cx)
-    // });
-    // cx.run_until_parked();
-    // let sync = diff_map.update(cx, |diff_map, cx| {
-    //     diff_map.sync(deps.multibuffer_snapshot.clone(), Vec::new(), cx)
-    // });
-    // assert_new_snapshot(
-    //     &mut snapshot,
-    //     sync,
-    //     indoc!(
-    //         "
-    //           ZERO
-    //           one hundred
-    //             thousand
-    //           TWO
-    //           three
-    //         - four
-    //         - five
-    //           six
-    //         "
-    //     ),
-    // );
+    assert_chunks_in_ranges(&snapshot);
+    assert_consistent_line_numbers(&snapshot);
+    assert_point_translation(&snapshot);
+
+    // Recalculate the diff, changing the first diff hunk.
+    let _ = change_set.update(cx, |change_set, cx| {
+        change_set.recalculate_diff(buffer.read(cx).text_snapshot(), cx)
+    });
+    cx.run_until_parked();
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              ZERO
+              one hundred
+                thousand
+              TWO
+              three
+            - four
+            - five
+              six
+            "
+        ),
+    );
 }
 
 #[gpui::test(iterations = 100)]
@@ -2343,4 +2332,44 @@ fn check_edits(
     }
 
     pretty_assertions::assert_eq!(text, new_text, "invalid edits: {:?}", edits);
+}
+
+#[track_caller]
+fn assert_chunks_in_ranges(snapshot: &MultiBufferSnapshot) {
+    let full_text = snapshot.text();
+    for ix in 0..full_text.len() {
+        let mut chunks = snapshot.chunks(0..snapshot.len(), false);
+        chunks.seek(ix..snapshot.len());
+        let tail = chunks.map(|chunk| chunk.text).collect::<String>();
+        assert_eq!(tail, &full_text[ix..], "seek to range: {:?}", ix..);
+    }
+}
+
+#[track_caller]
+fn assert_consistent_line_numbers(snapshot: &MultiBufferSnapshot) {
+    let all_line_numbers = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+    for start_row in 1..all_line_numbers.len() {
+        let line_numbers = snapshot
+            .row_infos(MultiBufferRow(start_row as u32))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            line_numbers,
+            all_line_numbers[start_row..],
+            "start_row: {start_row}"
+        );
+    }
+}
+
+#[track_caller]
+fn assert_point_translation(snapshot: &MultiBufferSnapshot) {
+    let text = Rope::from(snapshot.text());
+    for ix in 0..=text.len() {
+        let point = text.offset_to_point(ix);
+        // assert_eq!(snapshot.offset_to_point(ix), point, "offset_to_point({ix})");
+        assert_eq!(
+            snapshot.point_to_offset(point),
+            ix,
+            "point_to_offset({point:?})"
+        );
+    }
 }

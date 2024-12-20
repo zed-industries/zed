@@ -3339,7 +3339,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn len(&self) -> usize {
-        self.excerpts.summary().text.len
+        self.diff_transforms.summary().output.len
     }
 
     pub fn is_empty(&self) -> bool {
@@ -3506,23 +3506,54 @@ impl MultiBufferSnapshot {
     }
 
     pub fn offset_to_point(&self, offset: usize) -> Point {
-        if let Some((_, _, buffer)) = self.as_singleton() {
-            return buffer.offset_to_point(offset);
-        }
+        let mut diff_transforms_cursor = self
+            .diff_transforms
+            .cursor::<((usize, Point), (ExcerptOffset, ExcerptPoint))>(&());
+        diff_transforms_cursor.seek(&offset, Bias::Right, &());
+        let offset_in_diff_transform = offset - diff_transforms_cursor.start().0 .0;
+        let diff_transform_start_point = diff_transforms_cursor.start().0 .1;
 
-        let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
-        cursor.seek(&offset, Bias::Right, &());
-        if let Some(excerpt) = cursor.item() {
-            let (start_offset, start_point) = cursor.start();
-            let overshoot = offset - start_offset;
-            let excerpt_start_offset = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let excerpt_start_point = excerpt.range.context.start.to_point(&excerpt.buffer);
-            let buffer_point = excerpt
-                .buffer
-                .offset_to_point(excerpt_start_offset + overshoot);
-            *start_point + (buffer_point - excerpt_start_point)
-        } else {
-            self.excerpts.summary().text.lines
+        match diff_transforms_cursor.item() {
+            Some(DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_byte_range,
+                summary,
+                ..
+            }) => {
+                let text_buffer = &self.diffs.get(buffer_id).unwrap().base_text;
+                let hunk_start_offset = base_text_byte_range.start;
+                let hunk_start_point = text_buffer.offset_to_point(hunk_start_offset);
+                let buffer_offset =
+                    text_buffer.offset_to_point(hunk_start_offset + offset_in_diff_transform);
+                let point_in_hunk = (buffer_offset - hunk_start_point).min(summary.lines);
+                return diff_transform_start_point + point_in_hunk;
+            }
+
+            Some(DiffTransform::BufferContent { summary, .. }) => {
+                let excerpt_offset = diff_transforms_cursor.start().1 .0
+                    + ExcerptOffset::new(offset_in_diff_transform);
+                let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
+                cursor.seek(&excerpt_offset.value, Bias::Right, &());
+                let offset_in_excerpt = excerpt_offset.value - cursor.start().0;
+                let Some(excerpt) = cursor.item() else {
+                    return self.max_point();
+                };
+
+                let text_buffer = &excerpt.buffer;
+                let excerpt_start_offset = excerpt.range.context.start.to_offset(&excerpt.buffer);
+                let excerpt_start_point = text_buffer.offset_to_point(excerpt_start_offset);
+                let buffer_point =
+                    text_buffer.offset_to_point(excerpt_start_offset + offset_in_excerpt);
+                let point_in_excerpt =
+                    (buffer_point - excerpt_start_point).min(excerpt.text_summary.lines);
+                let excerpt_point = ExcerptPoint::wrap(cursor.start().1 + point_in_excerpt);
+                let point_in_diff_transform = (excerpt_point - diff_transforms_cursor.start().1 .1)
+                    .value
+                    .min(summary.lines);
+                return diff_transform_start_point + point_in_diff_transform;
+            }
+
+            None => self.max_point(),
         }
     }
 
@@ -3570,23 +3601,55 @@ impl MultiBufferSnapshot {
     }
 
     pub fn point_to_offset(&self, point: Point) -> usize {
-        if let Some((_, _, buffer)) = self.as_singleton() {
-            return buffer.point_to_offset(point);
-        }
+        let mut diff_transforms_cursor = self
+            .diff_transforms
+            .cursor::<((Point, usize), (ExcerptPoint, ExcerptOffset))>(&());
+        diff_transforms_cursor.seek(&point, Bias::Right, &());
+        let point_in_diff_transform = point - diff_transforms_cursor.start().0 .0;
+        let diff_transform_start_offset = diff_transforms_cursor.start().0 .1;
 
-        let mut cursor = self.excerpts.cursor::<(Point, usize)>(&());
-        cursor.seek(&point, Bias::Right, &());
-        if let Some(excerpt) = cursor.item() {
-            let (start_point, start_offset) = cursor.start();
-            let overshoot = point - start_point;
-            let excerpt_start_offset = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let excerpt_start_point = excerpt.range.context.start.to_point(&excerpt.buffer);
-            let buffer_offset = excerpt
-                .buffer
-                .point_to_offset(excerpt_start_point + overshoot);
-            *start_offset + buffer_offset - excerpt_start_offset
-        } else {
-            self.excerpts.summary().text.len
+        match diff_transforms_cursor.item() {
+            Some(DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_byte_range,
+                summary,
+                ..
+            }) => {
+                let text_buffer = &self.diffs.get(buffer_id).unwrap().base_text;
+                let hunk_start_offset = base_text_byte_range.start;
+                let hunk_start_point = text_buffer.offset_to_point(hunk_start_offset);
+                let buffer_offset =
+                    text_buffer.point_to_offset(hunk_start_point + point_in_diff_transform);
+                let offset_in_hunk = (buffer_offset - hunk_start_offset).min(summary.len);
+                return diff_transform_start_offset + offset_in_hunk;
+            }
+
+            Some(DiffTransform::BufferContent { summary, .. }) => {
+                let excerpt_point = diff_transforms_cursor.start().1 .0
+                    + ExcerptPoint::wrap(point_in_diff_transform);
+                let mut cursor = self.excerpts.cursor::<(Point, usize)>(&());
+                cursor.seek(&excerpt_point.value, Bias::Right, &());
+                let point_in_excerpt = excerpt_point.value - cursor.start().0;
+                let Some(excerpt) = cursor.item() else {
+                    return self.len();
+                };
+
+                let text_buffer = &excerpt.buffer;
+                let excerpt_start_offset = excerpt.range.context.start.to_offset(&excerpt.buffer);
+                let excerpt_start_point = text_buffer.offset_to_point(excerpt_start_offset);
+                let buffer_offset =
+                    text_buffer.point_to_offset(excerpt_start_point + point_in_excerpt);
+                let offset_in_excerpt =
+                    (buffer_offset - excerpt_start_offset).min(excerpt.text_summary.len);
+                let excerpt_offset = ExcerptOffset::new(cursor.start().1 + offset_in_excerpt);
+                let offset_in_diff_transform = (excerpt_offset
+                    - diff_transforms_cursor.start().1 .1)
+                    .value
+                    .min(summary.len);
+                return diff_transform_start_offset + offset_in_diff_transform;
+            }
+
+            None => self.len(),
         }
     }
 
