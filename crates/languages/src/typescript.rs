@@ -117,14 +117,12 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn check_if_version_installed(
         &self,
-        version: &Box<dyn 'static + Send + Any>,
+        version: &(dyn 'static + Send + Any),
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let version = version
-            .as_ref()
-            .downcast_ref::<TypeScriptVersions>()
-            .unwrap();
+        println!("{:?}", version.type_id());
+        let version = version.downcast_ref::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
         let should_install_language_server = self

@@ -387,7 +387,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn check_if_version_installed(
         &self,
-        _version: &Box<dyn 'static + Send + Any>,
+        _version: &(dyn 'static + Send + Any),
         _container_dir: &PathBuf,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
@@ -526,7 +526,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .await?;
 
     if let Some(binary) = adapter
-        .check_if_version_installed(&latest_version, &container_dir, delegate.as_ref())
+        .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
         .await
     {
         log::info!("language server {:?} is already installed", name.0);

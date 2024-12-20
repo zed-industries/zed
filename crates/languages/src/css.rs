@@ -74,7 +74,7 @@ impl LspAdapter for CssLspAdapter {
 
     async fn check_if_version_installed(
         &self,
-        version: &Box<dyn 'static + Send + Any>,
+        version: &(dyn 'static + Send + Any),
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
