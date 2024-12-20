@@ -261,14 +261,12 @@ impl DapStore {
         cx.emit(DapStoreEvent::ActiveDebugLineChanged);
         cx.notify();
 
-        if let Some((client, project_id)) =
-            self.upstream_client().or(self.downstream_client.clone())
-        {
+        if let Some((client, project_id)) = self.downstream_client.clone() {
             client
                 .send(client::proto::SetActiveDebugLine {
                     row,
                     project_id,
-                    client_id: client_id.0 as u64,
+                    client_id: client_id.to_proto(),
                     project_path: Some(project_path.to_proto()),
                 })
                 .log_err();
@@ -286,9 +284,7 @@ impl DapStore {
                 cx.emit(DapStoreEvent::ActiveDebugLineChanged);
                 cx.notify();
 
-                if let Some((client, project_id)) =
-                    self.upstream_client().or(self.downstream_client.clone())
-                {
+                if let Some((client, project_id)) = self.downstream_client.clone() {
                     client
                         .send(client::proto::RemoveActiveDebugLine { project_id })
                         .log_err();
@@ -1512,10 +1508,11 @@ impl DapStore {
     ) -> Result<()> {
         this.update(&mut cx, |dap_store, cx| {
             if matches!(dap_store.mode, DapStoreMode::Remote(_)) {
-                dap_store.clients.remove(&DebugAdapterClientId::from_proto(
-                    envelope.payload.client_id,
-                ));
+                let client_id = DebugAdapterClientId::from_proto(envelope.payload.client_id);
 
+                dap_store.capabilities.remove(&client_id);
+
+                cx.emit(DapStoreEvent::DebugClientStopped(client_id));
                 cx.notify();
             }
         })

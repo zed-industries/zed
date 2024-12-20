@@ -9,14 +9,14 @@ use workspace::{
     Stop, ToggleIgnoreBreakpoints, Workspace,
 };
 
-mod attach_modal;
-mod console;
+pub mod attach_modal;
+pub mod console;
 pub mod debugger_panel;
-mod debugger_panel_item;
-mod loaded_source_list;
-mod module_list;
-mod stack_frame_list;
-mod variable_list;
+pub mod debugger_panel_item;
+pub mod loaded_source_list;
+pub mod module_list;
+pub mod stack_frame_list;
+pub mod variable_list;
 
 #[cfg(test)]
 mod tests;
@@ -24,9 +24,6 @@ mod tests;
 pub fn init(cx: &mut AppContext) {
     DebuggerSettings::register(cx);
     workspace::FollowableViewRegistry::register::<DebugPanelItem>(cx);
-
-    // let client: AnyProtoClient = client.clone().into();
-    // client.add_model_message_handler(DebugPanel::handle_set_debug_panel_item);
 
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
