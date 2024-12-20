@@ -121,7 +121,6 @@ impl LspAdapter for TypeScriptLspAdapter {
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        println!("{:?}", version.type_id());
         let version = version.downcast_ref::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
