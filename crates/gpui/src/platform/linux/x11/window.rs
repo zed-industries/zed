@@ -1108,13 +1108,11 @@ impl PlatformWindow for X11Window {
             let mut bounds = state.bounds;
             let [left, right, top, bottom] = state.last_insets;
 
-            let scale_factor_inv = 1.0 / state.scale_factor;
-
             let [left, right, top, bottom] = [
-                Pixels(left as f32 * scale_factor_inv),
-                Pixels(right as f32 * scale_factor_inv),
-                Pixels(top as f32 * scale_factor_inv),
-                Pixels(bottom as f32 * scale_factor_inv),
+                Pixels((left as f32) / state.scale_factor),
+                Pixels((right as f32) / state.scale_factor),
+                Pixels((top as f32) / state.scale_factor),
+                Pixels((bottom as f32) / state.scale_factor),
             ];
 
             bounds.origin.x += left;
