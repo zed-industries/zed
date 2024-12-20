@@ -12,8 +12,8 @@ use rope::Point;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, KeyBinding, PopoverMenu,
-    PopoverMenuHandle,
+    prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle,
+    SwitchWithLabel,
 };
 use workspace::Workspace;
 
@@ -256,7 +256,7 @@ impl Render for MessageEditor {
             .child(
                 h_flex()
                     .justify_between()
-                    .child(CheckboxWithLabel::new(
+                    .child(SwitchWithLabel::new(
                         "use-tools",
                         Label::new("Tools"),
                         self.use_tools.into(),
