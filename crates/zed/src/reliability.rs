@@ -154,7 +154,7 @@ fn get_main_module_base_address() -> *mut c_void {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn get_main_module_base_address() -> *mut c_void {
+fn get_main_module_base_address() -> *mut c_void {
     std::ptr::null_mut()
 }
 
