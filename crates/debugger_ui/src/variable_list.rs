@@ -56,7 +56,7 @@ impl ProtoConversion for VariableContainer {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetVariableState {
     name: String,
     scope: Scope,
@@ -127,7 +127,7 @@ impl SetVariableState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum OpenEntry {
+pub enum OpenEntry {
     Scope { name: String },
     Variable { name: String, depth: usize },
 }
@@ -164,7 +164,7 @@ impl OpenEntry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VariableListEntry {
     Scope(Scope),
     SetVariableEditor {
@@ -496,6 +496,11 @@ impl VariableList {
         &self.scopes
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn entries(&self) -> &HashMap<StackFrameId, Vec<VariableListEntry>> {
+        &self.entries
+    }
+
     pub fn variables_by_scope(
         &self,
         stack_frame_id: StackFrameId,
@@ -542,7 +547,7 @@ impl VariableList {
         }
     }
 
-    fn toggle_entry(&mut self, entry_id: &OpenEntry, cx: &mut ViewContext<Self>) {
+    pub fn toggle_entry(&mut self, entry_id: &OpenEntry, cx: &mut ViewContext<Self>) {
         match self.open_entries.binary_search(&entry_id) {
             Ok(ix) => {
                 self.open_entries.remove(ix);
@@ -996,20 +1001,15 @@ impl VariableList {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn on_toggle_variable(
+    pub fn on_toggle_variable(
         &mut self,
         scope_id: u64,
         entry_id: &OpenEntry,
         variable_reference: u64,
         depth: usize,
-        has_children: bool,
         disclosed: Option<bool>,
         cx: &mut ViewContext<Self>,
     ) {
-        if !has_children {
-            return;
-        }
-
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
 
         let Some(index) = self.variables_by_scope(stack_frame_id, scope_id) else {
@@ -1089,17 +1089,18 @@ impl VariableList {
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
                 .toggle(disclosed)
-                .on_toggle(cx.listener(move |this, _, cx| {
-                    this.on_toggle_variable(
-                        scope_id,
-                        &entry_id,
-                        variable_reference,
-                        depth,
-                        has_children,
-                        disclosed,
-                        cx,
-                    )
-                }))
+                .when(has_children, |list_item| {
+                    list_item.on_toggle(cx.listener(move |this, _, cx| {
+                        this.on_toggle_variable(
+                            scope_id,
+                            &entry_id,
+                            variable_reference,
+                            depth,
+                            disclosed,
+                            cx,
+                        )
+                    }))
+                })
                 .on_secondary_mouse_down(cx.listener({
                     let scope = scope.clone();
                     let variable = variable.clone();
