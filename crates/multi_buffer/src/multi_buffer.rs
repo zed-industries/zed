@@ -2561,10 +2561,15 @@ impl MultiBuffer {
                     let diff_state = snapshot.diffs.get(&buffer_id);
                     excerpts_cursor.next(&());
 
-                    let edit_buffer_start =
-                        excerpt_buffer_start + (edit.new.start - excerpt_start).value;
-                    let edit_buffer_end =
-                        excerpt_buffer_start + (edit.new.end - excerpt_start).value;
+                    let edit_buffer_start = excerpt_buffer_start
+                        + edit.new.start.value.saturating_sub(excerpt_start.value);
+                    let edit_buffer_end = excerpt_buffer_start
+                        + edit
+                            .new
+                            .end
+                            .value
+                            .saturating_sub(excerpt_start.value)
+                            .min(excerpt.text_summary.len);
                     let edit_anchor_range = buffer.anchor_before(edit_buffer_start)
                         ..buffer.anchor_after(edit_buffer_end);
                     if let Some(diff_state) = diff_state {
@@ -5993,7 +5998,7 @@ impl<'a> MultiBufferRows<'a> {
         let (diff_transform_start, excerpt_transform_start) = self.diff_transforms.start();
         let overshoot = if matches!(
             self.diff_transforms.item(),
-            Some(DiffTransform::BufferContent { .. })
+            Some(DiffTransform::BufferContent { .. }) | None
         ) {
             point.row - diff_transform_start.row
         } else {

@@ -162,13 +162,14 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(
         snapshot.text(),
-        concat!(
-            "bbbb\n",  // Preserve newlines
-            "ccccc\n", //
-            "ddd\n",   //
-            "eeee\n",  //
-            "jj"       //
-        )
+        indoc!(
+            "
+            bbbb
+            ccccc
+            ddd
+            eeee
+            jj"
+        ),
     );
     assert_eq!(
         snapshot
