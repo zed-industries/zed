@@ -1528,12 +1528,20 @@ impl MultiBuffer {
         buffer: &Model<Buffer>,
         cx: &AppContext,
     ) -> Vec<(ExcerptId, ExcerptRange<text::Anchor>)> {
+        self.excerpts_for_buffer_id(buffer.read(cx).remote_id(), cx)
+    }
+
+    pub fn excerpts_for_buffer_id(
+        &self,
+        buffer_id: BufferId,
+        cx: &AppContext,
+    ) -> Vec<(ExcerptId, ExcerptRange<text::Anchor>)> {
         let mut excerpts = Vec::new();
         let snapshot = self.read(cx);
         let buffers = self.buffers.borrow();
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>(&());
         for locator in buffers
-            .get(&buffer.read(cx).remote_id())
+            .get(&buffer_id)
             .map(|state| &state.excerpts)
             .into_iter()
             .flatten()

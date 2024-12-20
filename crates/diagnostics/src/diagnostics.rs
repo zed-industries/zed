@@ -12,7 +12,8 @@ use editor::{
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
     highlight_diagnostic_message,
     scroll::Autoscroll,
-    Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
+    Anchor, AnchorRangeExt, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
+    RangeToAnchorExt, ToOffset,
 };
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
@@ -21,7 +22,8 @@ use gpui::{
     WeakView, WindowContext,
 };
 use language::{
-    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+    Bias, Buffer, BufferId, Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, Point,
+    Selection, SelectionGoal,
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -38,7 +40,7 @@ use std::{
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
-use util::ResultExt;
+use util::{maybe, RangeExt, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     searchable::SearchableItemHandle,
@@ -256,26 +258,69 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
-            workspace.activate_item(&existing, true, true, cx);
-        } else {
-            let workspace_handle = cx.view().downgrade();
+        let diagnostic_to_select = maybe!({
+            let active_item = workspace.active_item(cx)?;
+            // Already on diagnostics, so don't update position / selection within.
+            if active_item.downcast::<ProjectDiagnosticsEditor>().is_some() {
+                None
+            } else {
+                let active_editor = active_item.act_as::<Editor>(cx)?.read(cx);
+                let snapshot = active_editor.buffer().read(cx).snapshot(cx);
+                let newest_selection = active_editor.selections.newest::<usize>(cx).range();
+                let mut diagnostics =
+                    snapshot.diagnostics_in_range(newest_selection.clone(), false);
+                let diagnostic_entry: DiagnosticEntry<usize> = dbg!(diagnostics.next())?;
+                let buffer_id = diagnostic_entry
+                    .range
+                    .to_anchors(&snapshot)
+                    .start
+                    .buffer_id?;
+                Some((buffer_id, diagnostic_entry.range, newest_selection))
+            }
+        });
 
-            let include_warnings = match cx.try_global::<IncludeWarnings>() {
-                Some(include_warnings) => include_warnings.0,
-                None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
+        let diagnostics =
+            if let Some(diagnostics) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
+                // todo! dedupe
+                if let Some((buffer_id, diagnostic_range, selection_range)) = diagnostic_to_select {
+                    diagnostics.update(cx, |diagnostics, cx| {
+                        diagnostics.set_selection_that_intersects_diagnostic(
+                            buffer_id,
+                            diagnostic_range,
+                            selection_range,
+                            cx,
+                        )
+                    });
+                }
+                workspace.activate_item(&diagnostics, true, true, cx);
+            } else {
+                let workspace_handle = cx.view().downgrade();
+
+                let include_warnings = match cx.try_global::<IncludeWarnings>() {
+                    Some(include_warnings) => include_warnings.0,
+                    None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
+                };
+
+                let diagnostics = cx.new_view(|cx| {
+                    ProjectDiagnosticsEditor::new(
+                        workspace.project().clone(),
+                        include_warnings,
+                        workspace_handle,
+                        cx,
+                    )
+                });
+                if let Some((buffer_id, diagnostic_range, selection_range)) = diagnostic_to_select {
+                    diagnostics.update(cx, |diagnostics, cx| {
+                        diagnostics.set_selection_that_intersects_diagnostic(
+                            buffer_id,
+                            diagnostic_range,
+                            selection_range,
+                            cx,
+                        )
+                    });
+                }
+                workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, cx);
             };
-
-            let diagnostics = cx.new_view(|cx| {
-                ProjectDiagnosticsEditor::new(
-                    workspace.project().clone(),
-                    include_warnings,
-                    workspace_handle,
-                    cx,
-                )
-            });
-            workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, cx);
-        }
     }
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
@@ -630,6 +675,30 @@ impl ProjectDiagnosticsEditor {
         self.check_invariants(cx);
 
         cx.notify();
+    }
+
+    fn set_selection_that_intersects_diagnostic(
+        &self,
+        buffer_id: BufferId,
+        diagnostic_range: Range<usize>,
+        selection_range: Range<usize>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx);
+            let snapshot = buffer.snapshot(cx);
+            snapshot.excerpts_for_range(range)
+            /*
+            let excerpts = buffer.excerpts_for_buffer_id(buffer_id, cx);
+            for (excerpt_id, excerpt_range) in excerpts {
+                let excerpt_range = excerpt_range.context.to_offset(snapshot.excerpt_containing(range));
+                if excerpt_range.contains_inclusive(&diagnostic_range.to_offset(&snapshot)) {}
+            }
+            */
+            // editor.change_selections(Some(Autoscroll::center()), cx, |selections| {
+            //     selections.select_ranges(vec![diagnostic_range]);
+            // })
+        });
     }
 
     #[cfg(test)]
