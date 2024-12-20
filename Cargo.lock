@@ -13085,7 +13085,6 @@ dependencies = [
  "feature_flags",
  "gpui",
  "http_client",
- "notifications",
  "pretty_assertions",
  "project",
  "remote",

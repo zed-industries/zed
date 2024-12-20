@@ -32,7 +32,6 @@ call.workspace = true
 client.workspace = true
 feature_flags.workspace = true
 gpui.workspace = true
-notifications.workspace = true
 project.workspace = true
 remote.workspace = true
 rpc.workspace = true
@@ -56,7 +55,6 @@ client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
-notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
