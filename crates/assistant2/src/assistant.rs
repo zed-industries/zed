@@ -1,13 +1,17 @@
 mod active_thread;
 mod assistant_panel;
 mod assistant_settings;
+mod buffer_codegen;
 mod context;
 mod context_picker;
+mod context_store;
 mod context_strip;
 mod inline_assistant;
+mod inline_prompt_editor;
 mod message_editor;
 mod prompts;
 mod streaming_diff;
+mod terminal_codegen;
 mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
@@ -16,7 +20,6 @@ mod ui;
 
 use std::sync::Arc;
 
-use assistant_settings::AssistantSettings;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
@@ -27,16 +30,18 @@ use settings::Settings as _;
 use util::ResultExt;
 
 pub use crate::assistant_panel::AssistantPanel;
+use crate::assistant_settings::AssistantSettings;
+pub use crate::inline_assistant::InlineAssistant;
 
 actions!(
     assistant2,
     [
         ToggleFocus,
         NewThread,
+        ToggleContextPicker,
         ToggleModelSelector,
         OpenHistory,
         Chat,
-        ToggleInlineAssist,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist
     ]
@@ -76,8 +81,6 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mu
 }
 
 fn feature_gate_assistant2_actions(cx: &mut AppContext) {
-    const ASSISTANT1_NAMESPACE: &str = "assistant";
-
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(NAMESPACE);
     });
@@ -86,12 +89,10 @@ fn feature_gate_assistant2_actions(cx: &mut AppContext) {
         if is_enabled {
             CommandPaletteFilter::update_global(cx, |filter, _cx| {
                 filter.show_namespace(NAMESPACE);
-                filter.hide_namespace(ASSISTANT1_NAMESPACE);
             });
         } else {
             CommandPaletteFilter::update_global(cx, |filter, _cx| {
                 filter.hide_namespace(NAMESPACE);
-                filter.show_namespace(ASSISTANT1_NAMESPACE);
             });
         }
     })

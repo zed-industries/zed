@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakView};
+use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use picker::{Picker, PickerDelegate};
@@ -12,8 +12,8 @@ use ui::{prelude::*, ListItem, ViewContext};
 use workspace::Workspace;
 
 use crate::context::ContextKind;
-use crate::context_picker::ContextPicker;
-use crate::context_strip::ContextStrip;
+use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_store::ContextStore;
 
 pub struct FetchContextPicker {
     picker: View<Picker<FetchContextPickerDelegate>>,
@@ -23,10 +23,16 @@ impl FetchContextPicker {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        context_strip: WeakView<ContextStrip>,
+        context_store: WeakModel<ContextStore>,
+        confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate = FetchContextPickerDelegate::new(context_picker, workspace, context_strip);
+        let delegate = FetchContextPickerDelegate::new(
+            context_picker,
+            workspace,
+            context_store,
+            confirm_behavior,
+        );
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
@@ -55,7 +61,8 @@ enum ContentType {
 pub struct FetchContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
-    context_strip: WeakView<ContextStrip>,
+    context_store: WeakModel<ContextStore>,
+    confirm_behavior: ConfirmBehavior,
     url: String,
 }
 
@@ -63,12 +70,14 @@ impl FetchContextPickerDelegate {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        context_strip: WeakView<ContextStrip>,
+        context_store: WeakModel<ContextStore>,
+        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         FetchContextPickerDelegate {
             context_picker,
             workspace,
-            context_strip,
+            context_store,
+            confirm_behavior,
             url: String::new(),
         }
     }
@@ -184,15 +193,23 @@ impl PickerDelegate for FetchContextPickerDelegate {
 
         let http_client = workspace.read(cx).client().http_client().clone();
         let url = self.url.clone();
+        let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
             let text = Self::build_message(http_client, &url).await?;
 
             this.update(&mut cx, |this, cx| {
                 this.delegate
-                    .context_strip
-                    .update(cx, |context_strip, _cx| {
-                        context_strip.insert_context(ContextKind::FetchedUrl, url, text);
-                    })
+                    .context_store
+                    .update(cx, |context_store, _cx| {
+                        context_store.insert_context(ContextKind::FetchedUrl, url, text);
+                    })?;
+
+                match confirm_behavior {
+                    ConfirmBehavior::KeepOpen => {}
+                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                }
+
+                anyhow::Ok(())
             })??;
 
             anyhow::Ok(())

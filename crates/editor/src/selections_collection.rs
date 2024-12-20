@@ -391,7 +391,7 @@ impl SelectionsCollection {
         }
     }
 
-    pub(crate) fn change_with<R>(
+    pub fn change_with<R>(
         &mut self,
         cx: &mut AppContext,
         change: impl FnOnce(&mut MutableSelectionsCollection) -> R,
@@ -764,7 +764,7 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub fn replace_cursors_with(
         &mut self,
-        mut find_replacement_cursors: impl FnMut(&DisplaySnapshot) -> Vec<DisplayPoint>,
+        find_replacement_cursors: impl FnOnce(&DisplaySnapshot) -> Vec<DisplayPoint>,
     ) {
         let display_map = self.display_map();
         let new_selections = find_replacement_cursors(&display_map)

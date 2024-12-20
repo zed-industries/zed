@@ -14,8 +14,8 @@ use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
+    actions, anchored, deferred, impl_actions, prelude::*, Action, AnyElement, AppContext,
+    AsyncWindowContext, ClickEvent, ClipboardItem, Corner, Div, DragMoveEvent, EntityId,
     EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
     MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
@@ -432,7 +432,7 @@ impl Pane {
                                     .icon_size(IconSize::Small)
                                     .tooltip(|cx| Tooltip::text("New...", cx)),
                             )
-                            .anchor(AnchorCorner::TopRight)
+                            .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
                             .menu(move |cx| {
                                 Some(ContextMenu::build(cx, |menu, _| {
@@ -465,7 +465,7 @@ impl Pane {
                                     .icon_size(IconSize::Small)
                                     .tooltip(|cx| Tooltip::text("Split Pane", cx)),
                             )
-                            .anchor(AnchorCorner::TopRight)
+                            .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |menu, _| {
@@ -2506,12 +2506,7 @@ impl Pane {
 
     pub fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
         div().absolute().bottom_0().right_0().size_0().child(
-            deferred(
-                anchored()
-                    .anchor(AnchorCorner::TopRight)
-                    .child(menu.clone()),
-            )
-            .with_priority(1),
+            deferred(anchored().anchor(Corner::TopRight).child(menu.clone())).with_priority(1),
         )
     }
 

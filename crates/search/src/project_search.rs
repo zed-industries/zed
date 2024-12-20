@@ -5,18 +5,16 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    actions::SelectAll,
-    items::active_match_index,
-    scroll::{Autoscroll, Axis},
-    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
-    MAX_TAB_TITLE_LEN,
+    actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor,
+    EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
 use gpui::{
-    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
-    FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
-    ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
+    actions, div, Action, AnyElement, AnyView, AppContext, Axis, Context as _, EntityId,
+    EventEmitter, FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement,
+    KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
+    WeakView, WindowContext,
 };
 use language::Buffer;
 use menu::Confirm;

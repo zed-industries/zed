@@ -10,7 +10,7 @@ use editor::actions::{
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
+    Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
@@ -168,7 +168,7 @@ impl Render for QuickActionBar {
                         }),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
-                .anchor(AnchorCorner::TopRight)
+                .anchor(Corner::TopRight)
                 .menu(move |cx| {
                     let focus = focus.clone();
                     let menu = ContextMenu::build(cx, move |menu, _| {
@@ -217,7 +217,7 @@ impl Render for QuickActionBar {
                             this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
                         }),
                 )
-                .anchor(AnchorCorner::TopRight)
+                .anchor(Corner::TopRight)
                 .with_handle(self.toggle_settings_handle.clone())
                 .menu(move |cx| {
                     let menu = ContextMenu::build(cx, |mut menu, _| {

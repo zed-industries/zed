@@ -1,4 +1,4 @@
-use crate::{collab_panel, ChatPanelSettings};
+use crate::{collab_panel, ChatPanelButton, ChatPanelSettings};
 use anyhow::Result;
 use call::{room, ActiveCall};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, ChannelStore};
@@ -1135,7 +1135,14 @@ impl Panel for ChatPanel {
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
-        Some(ui::IconName::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
+        match ChatPanelSettings::get_global(cx).button {
+            ChatPanelButton::Never => None,
+            ChatPanelButton::Always => Some(ui::IconName::MessageBubbles),
+            ChatPanelButton::WhenInCall => ActiveCall::global(cx)
+                .read(cx)
+                .room()
+                .map(|_| ui::IconName::MessageBubbles),
+        }
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

@@ -1,100 +1,105 @@
 use std::rc::Rc;
 
-use gpui::{View, WeakModel, WeakView};
-use ui::{prelude::*, IconButtonShape, PopoverMenu, PopoverMenuHandle, Tooltip};
+use gpui::{FocusHandle, Model, View, WeakModel, WeakView};
+use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
-use crate::context::{Context, ContextId, ContextKind};
-use crate::context_picker::ContextPicker;
+use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
+use crate::ToggleContextPicker;
 
 pub struct ContextStrip {
-    context: Vec<Context>,
-    next_context_id: ContextId,
+    context_store: Model<ContextStore>,
     context_picker: View<ContextPicker>,
-    pub(crate) context_picker_handle: PopoverMenuHandle<ContextPicker>,
+    context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
+    focus_handle: FocusHandle,
 }
 
 impl ContextStrip {
     pub fn new(
+        context_store: Model<ContextStore>,
         workspace: WeakView<Workspace>,
-        thread_store: WeakModel<ThreadStore>,
+        thread_store: Option<WeakModel<ThreadStore>>,
+        focus_handle: FocusHandle,
+        context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let weak_self = cx.view().downgrade();
-
         Self {
-            context: Vec::new(),
-            next_context_id: ContextId(0),
+            context_store: context_store.clone(),
             context_picker: cx.new_view(|cx| {
-                ContextPicker::new(workspace.clone(), thread_store.clone(), weak_self, cx)
+                ContextPicker::new(
+                    workspace.clone(),
+                    thread_store.clone(),
+                    context_store.downgrade(),
+                    ConfirmBehavior::KeepOpen,
+                    cx,
+                )
             }),
-            context_picker_handle: PopoverMenuHandle::default(),
+            context_picker_menu_handle,
+            focus_handle,
         }
-    }
-
-    pub fn drain(&mut self) -> Vec<Context> {
-        self.context.drain(..).collect()
-    }
-
-    pub fn insert_context(
-        &mut self,
-        kind: ContextKind,
-        name: impl Into<SharedString>,
-        text: impl Into<SharedString>,
-    ) {
-        self.context.push(Context {
-            id: self.next_context_id.post_inc(),
-            name: name.into(),
-            kind,
-            text: text.into(),
-        });
     }
 }
 
 impl Render for ContextStrip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let context = self.context_store.read(cx).context();
         let context_picker = self.context_picker.clone();
+        let focus_handle = self.focus_handle.clone();
 
         h_flex()
             .flex_wrap()
-            .gap_2()
+            .gap_1()
             .child(
                 PopoverMenu::new("context-picker")
                     .menu(move |_cx| Some(context_picker.clone()))
                     .trigger(
                         IconButton::new("add-context", IconName::Plus)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small),
+                            .icon_size(IconSize::Small)
+                            .style(ui::ButtonStyle::Filled)
+                            .tooltip(move |cx| {
+                                Tooltip::for_action_in(
+                                    "Add Context",
+                                    &ToggleContextPicker,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }),
                     )
-                    .attach(gpui::AnchorCorner::TopLeft)
-                    .anchor(gpui::AnchorCorner::BottomLeft)
+                    .attach(gpui::Corner::TopLeft)
+                    .anchor(gpui::Corner::BottomLeft)
                     .offset(gpui::Point {
                         x: px(0.0),
                         y: px(-16.0),
                     })
-                    .with_handle(self.context_picker_handle.clone()),
+                    .with_handle(self.context_picker_menu_handle.clone()),
             )
-            .children(self.context.iter().map(|context| {
+            .children(context.iter().map(|context| {
                 ContextPill::new(context.clone()).on_remove({
                     let context = context.clone();
-                    Rc::new(cx.listener(move |this, _event, cx| {
-                        this.context.retain(|other| other.id != context.id);
+                    let context_store = self.context_store.clone();
+                    Rc::new(cx.listener(move |_this, _event, cx| {
+                        context_store.update(cx, |this, _cx| {
+                            this.remove_context(&context.id);
+                        });
                         cx.notify();
                     }))
                 })
             }))
-            .when(!self.context.is_empty(), |parent| {
+            .when(!context.is_empty(), |parent| {
                 parent.child(
                     IconButton::new("remove-all-context", IconName::Eraser)
-                        .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
-                        .on_click(cx.listener(|this, _event, cx| {
-                            this.context.clear();
-                            cx.notify();
-                        })),
+                        .on_click({
+                            let context_store = self.context_store.clone();
+                            cx.listener(move |_this, _event, cx| {
+                                context_store.update(cx, |this, _cx| this.clear());
+                                cx.notify();
+                            })
+                        }),
                 )
             })
     }

@@ -413,11 +413,7 @@ fn main() {
             cx,
         );
         assistant_tools::init(cx);
-        repl::init(
-            app_state.fs.clone(),
-            app_state.client.telemetry().clone(),
-            cx,
-        );
+        repl::init(app_state.fs.clone(), cx);
         extension_host::init(
             extension_host_proxy,
             app_state.fs.clone(),
@@ -497,9 +493,16 @@ fn main() {
             }
         })
         .detach();
-        let telemetry = app_state.client.telemetry();
-        telemetry.report_setting_event("theme", cx.theme().name.to_string());
-        telemetry.report_setting_event("keymap", BaseKeymap::get_global(cx).to_string());
+        telemetry::event!(
+            "Settings Changed",
+            setting = "theme",
+            value = cx.theme().name.to_string()
+        );
+        telemetry::event!(
+            "Settings Changed",
+            setting = "keymap",
+            value = BaseKeymap::get_global(cx).to_string()
+        );
         telemetry.flush_events();
 
         let fs = app_state.fs.clone();

@@ -3,7 +3,7 @@ use copilot::Copilot;
 use editor::{actions::MoveToEnd, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions, div, AnchorCorner, AppContext, Context, EventEmitter, FocusHandle, FocusableView,
+    actions, div, AppContext, Context, Corner, EventEmitter, FocusHandle, FocusableView,
     IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
     ViewContext, VisualContext, WeakModel, WindowContext,
 };
@@ -1158,7 +1158,7 @@ impl Render for LspLogToolbarItemView {
             .collect();
         let log_toolbar_view = cx.view().clone();
         let lsp_menu = PopoverMenu::new("LspLogView")
-            .anchor(AnchorCorner::TopLeft)
+            .anchor(Corner::TopLeft)
             .trigger(Button::new(
                 "language_server_menu_header",
                 current_server
@@ -1214,7 +1214,7 @@ impl Render for LspLogToolbarItemView {
             let rpc_trace_enabled = server.rpc_trace_enabled;
             let log_view = log_view.clone();
             PopoverMenu::new("LspViewSelector")
-                .anchor(AnchorCorner::TopLeft)
+                .anchor(Corner::TopLeft)
                 .trigger(Button::new(
                     "language_server_menu_header",
                     server.selected_entry.label(),
@@ -1301,7 +1301,7 @@ impl Render for LspLogToolbarItemView {
                             let log_view = log_view.clone();
                             div().child(
                                 PopoverMenu::new("lsp-trace-level-menu")
-                                    .anchor(AnchorCorner::TopLeft)
+                                    .anchor(Corner::TopLeft)
                                     .trigger(Button::new(
                                         "language_server_trace_level_selector",
                                         "Trace level",
@@ -1359,7 +1359,7 @@ impl Render for LspLogToolbarItemView {
                             let log_view = log_view.clone();
                             div().child(
                                 PopoverMenu::new("lsp-log-level-menu")
-                                    .anchor(AnchorCorner::TopLeft)
+                                    .anchor(Corner::TopLeft)
                                     .trigger(Button::new(
                                         "language_server_log_level_selector",
                                         "Log level",

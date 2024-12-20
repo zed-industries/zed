@@ -253,7 +253,7 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
         PopoverMenu::new("kernel-switcher")
             .menu(move |_cx| Some(picker_view.clone()))
             .trigger(self.trigger)
-            .attach(gpui::AnchorCorner::BottomLeft)
+            .attach(gpui::Corner::BottomLeft)
             .when_some(self.handle, |menu, handle| menu.with_handle(handle))
     }
 }

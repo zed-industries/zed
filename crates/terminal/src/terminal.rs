@@ -1461,7 +1461,7 @@ impl Terminal {
     fn drag_line_delta(&self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
         let top = region.origin.y + (self.last_content.size.line_height * 2.);
-        let bottom = region.lower_left().y - (self.last_content.size.line_height * 2.);
+        let bottom = region.bottom_left().y - (self.last_content.size.line_height * 2.);
         let scroll_delta = if e.position.y < top {
             (top - e.position.y).pow(1.1)
         } else if e.position.y > bottom {
