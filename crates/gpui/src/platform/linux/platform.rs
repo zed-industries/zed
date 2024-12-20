@@ -651,7 +651,7 @@ impl CursorStyle {
         // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
         // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
         match self {
-            CursorStyle::Arrow => "arrow",
+            CursorStyle::Arrow => "left_ptr",
             CursorStyle::IBeam => "text",
             CursorStyle::Crosshair => "crosshair",
             CursorStyle::ClosedHand => "grabbing",
