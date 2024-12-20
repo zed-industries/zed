@@ -2229,11 +2229,10 @@ impl Snapshot {
             .map(|repo| repo.git_entries_by_path.iter().cloned().collect())
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn status_for_file(&self, path: impl Into<PathBuf>) -> Option<GitFileStatus> {
-        let path = path.into();
-        self.repository_for_path(&path).and_then(|repo| {
-            let repo_path = repo.relativize(self, &path).unwrap();
+    pub fn status_for_file(&self, path: impl AsRef<Path>) -> Option<GitFileStatus> {
+        let path = path.as_ref();
+        self.repository_for_path(path).and_then(|repo| {
+            let repo_path = repo.relativize(self, path).unwrap();
             repo.git_entries_by_path
                 .get(&PathKey(repo_path.0), &())
                 .map(|entry| entry.git_status)
@@ -2625,14 +2624,14 @@ impl Snapshot {
 }
 
 // TODO: Bad name -> Bad code structure, refactor to remove this type
-struct LocalRepositoryFields<'a> {
-    work_directory: RepositoryWorkDirectory,
-    repository_entry: RepositoryEntry,
-    local_entry: &'a LocalRepositoryEntry,
+pub struct LocalRepositoryFields<'a> {
+    pub work_directory: RepositoryWorkDirectory,
+    pub repository_entry: RepositoryEntry,
+    pub local_entry: &'a LocalRepositoryEntry,
 }
 
 impl LocalSnapshot {
-    pub(crate) fn repo_for_path(&self, path: &Path) -> Option<LocalRepositoryFields<'_>> {
+    pub fn repo_for_path(&self, path: &Path) -> Option<LocalRepositoryFields<'_>> {
         let (work_directory, repository_entry) =
             self.repository_and_work_directory_for_path(path)?;
         let work_directory_id = repository_entry.work_directory_id();
@@ -3546,7 +3545,7 @@ pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GitEntry {
     pub path: RepoPath,
-    git_status: GitFileStatus,
+    pub git_status: GitFileStatus,
 }
 
 #[derive(Clone, Debug)]
@@ -3706,15 +3705,29 @@ impl<'a> GitEntryTraversalTarget<'a> {
 
     fn cmp_path(&self, other: &Path) -> std::cmp::Ordering {
         self.cmp(
-            &(
-                TraversalProgress {
-                    max_path: other,
-                    ..Default::default()
-                },
-                Default::default(),
-            ),
+            &TraversalProgress {
+                max_path: other,
+                ..Default::default()
+            },
             &(),
         )
+    }
+}
+
+impl<'a, 'b> SeekTarget<'a, GitEntrySummary, TraversalProgress<'a>>
+    for GitEntryTraversalTarget<'b>
+{
+    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
+        match self {
+            GitEntryTraversalTarget::Path(path) => path.cmp(&cursor_location.max_path),
+            GitEntryTraversalTarget::PathSuccessor(path) => {
+                if cursor_location.max_path.starts_with(path) {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
+                }
+            }
+        }
     }
 }
 

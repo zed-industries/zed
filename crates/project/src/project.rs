@@ -243,6 +243,7 @@ pub enum Event {
     ActivateProjectPanel,
     WorktreeAdded(WorktreeId),
     WorktreeOrderChanged,
+    GitRepositoryUpdated,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories(WorktreeId),
@@ -2300,6 +2301,7 @@ impl Project {
             }
             WorktreeStoreEvent::WorktreeOrderChanged => cx.emit(Event::WorktreeOrderChanged),
             WorktreeStoreEvent::WorktreeUpdateSent(_) => {}
+            WorktreeStoreEvent::GitRepositoryUpdated => cx.emit(Event::GitRepositoryUpdated),
         }
     }
 
@@ -3548,17 +3550,6 @@ impl Project {
                 .abs_path()
                 .to_path_buf(),
         )
-    }
-
-    pub fn get_repo(
-        &self,
-        project_path: &ProjectPath,
-        cx: &AppContext,
-    ) -> Option<Arc<dyn GitRepository>> {
-        self.worktree_for_id(project_path.worktree_id, cx)?
-            .read(cx)
-            .as_local()?
-            .local_git_repo(&project_path.path)
     }
 
     pub fn get_first_worktree_root_repo(&self, cx: &AppContext) -> Option<Arc<dyn GitRepository>> {

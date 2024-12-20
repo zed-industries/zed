@@ -1,4 +1,3 @@
-use collections::HashMap;
 use std::{
     cell::OnceCell,
     collections::HashSet,
@@ -8,14 +7,15 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use worktree::GitEntry;
 
-use git::repository::GitFileStatus;
+use git::repository::{GitFileStatus, RepoPath};
 
 use util::{ResultExt, TryFutureExt};
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::*;
-use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
+use project::{EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use ui::{
@@ -81,13 +81,18 @@ pub struct GitPanel {
     project: Model<Project>,
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
-    selected_item: Option<usize>,
+    _selected_item: Option<usize>,
     show_scrollbar: bool,
-    expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
+    // todo!(): Reintroduce expanded directories, once we're deriving directories from paths
+    // expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
 
     // The entries that are currently shown in the panel, aka
     // not hidden by folding or such
-    visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
+    visible_entries: Vec<(
+        WorktreeId,
+        Vec<worktree::GitEntry>,
+        OnceCell<HashSet<RepoPath>>,
+    )>,
     width: Option<Pixels>,
 }
 
@@ -116,8 +121,11 @@ impl GitPanel {
             })
             .detach();
             cx.subscribe(&project, |this, _project, event, cx| match event {
-                project::Event::WorktreeRemoved(id) => {
-                    this.expanded_dir_ids.remove(id);
+                project::Event::GitRepositoryUpdated => {
+                    this.update_visible_entries(None, cx);
+                }
+                project::Event::WorktreeRemoved(_id) => {
+                    // this.expanded_dir_ids.remove(id);
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
@@ -141,12 +149,11 @@ impl GitPanel {
                 project,
                 visible_entries: Vec::new(),
                 current_modifiers: cx.modifiers(),
-                expanded_dir_ids: Default::default(),
-
+                // expanded_dir_ids: Default::default(),
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
                 scroll_handle,
-                selected_item: None,
+                _selected_item: None,
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
             };
@@ -225,8 +232,8 @@ impl GitPanel {
     }
 
     fn calculate_depth_and_difference(
-        entry: &Entry,
-        visible_worktree_entries: &HashSet<Arc<Path>>,
+        entry: &GitEntry,
+        visible_worktree_entries: &HashSet<RepoPath>,
     ) -> (usize, usize) {
         let (depth, difference) = entry
             .path
@@ -293,12 +300,7 @@ impl GitPanel {
     fn entry_count(&self) -> usize {
         self.visible_entries
             .iter()
-            .map(|(_, entries, _)| {
-                entries
-                    .iter()
-                    .filter(|entry| entry.git_status.is_some())
-                    .count()
-            })
+            .map(|(_, entries, _)| entries.len())
             .sum()
     }
 
@@ -306,7 +308,7 @@ impl GitPanel {
         &self,
         range: Range<usize>,
         cx: &mut ViewContext<Self>,
-        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<Self>),
+        mut callback: impl FnMut(usize, EntryDetails, &mut ViewContext<Self>),
     ) {
         let mut ix = 0;
         for (worktree_id, visible_worktree_entries, entries_paths) in &self.visible_entries {
@@ -324,23 +326,23 @@ impl GitPanel {
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
                 let root_name = OsStr::new(snapshot.root_name());
-                let expanded_entry_ids = self
-                    .expanded_dir_ids
-                    .get(&snapshot.id())
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]);
+                // let expanded_entry_ids = self
+                //     .expanded_dir_ids
+                //     .get(&snapshot.id())
+                //     .map(Vec::as_slice)
+                //     .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                let entries = entries_paths.get_or_init(|| {
+                let entries: &HashSet<RepoPath> = entries_paths.get_or_init(|| {
                     visible_worktree_entries
                         .iter()
                         .map(|e| (e.path.clone()))
                         .collect()
                 });
 
-                for entry in visible_worktree_entries[entry_range].iter() {
+                for (ix, entry) in visible_worktree_entries[entry_range].iter().enumerate() {
                     let status = entry.git_status;
-                    let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
+                    let is_expanded = true; //expanded_entry_ids.binary_search(&entry.id).is_ok();
 
                     let (depth, difference) = Self::calculate_depth_and_difference(entry, entries);
 
@@ -365,13 +367,13 @@ impl GitPanel {
                     let details = EntryDetails {
                         filename,
                         display_name,
-                        kind: entry.kind,
+                        kind: EntryKind::File,
                         is_expanded,
-                        path: entry.path.clone(),
-                        status,
+                        path: entry.path.0.clone(),
+                        status: Some(status),
                         depth,
                     };
-                    callback(entry.id, details, cx);
+                    callback(ix, details, cx);
                 }
             }
             ix = end_ix;
@@ -381,7 +383,7 @@ impl GitPanel {
     // todo!(): Update expanded directory state
     fn update_visible_entries(
         &mut self,
-        new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
+        _new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut ViewContext<Self>,
     ) {
         let project = self.project.read(cx);
@@ -391,17 +393,14 @@ impl GitPanel {
             let worktree_id = snapshot.id();
 
             let mut visible_worktree_entries = Vec::new();
-            let mut entry_iter = snapshot.entries(true, 0);
-            while let Some(entry) = entry_iter.entry() {
-                // Only include entries with a git status
-                if entry.git_status.is_some() {
-                    visible_worktree_entries.push(entry.clone());
-                }
-                entry_iter.advance();
+            let repositories = snapshot.repositories().take(1); // Only use the first for now
+            for (work_dir, _) in repositories {
+                visible_worktree_entries
+                    .extend(snapshot.git_status(&work_dir).unwrap_or(Vec::new()));
             }
 
-            snapshot.propagate_git_statuses(&mut visible_worktree_entries);
-            project::sort_worktree_entries(&mut visible_worktree_entries);
+            // let statuses = snapshot.propagate_git_statuses(&visible_worktree_entries);
+            // project::sort_worktree_entries(&mut visible_worktree_entries);
 
             if !visible_worktree_entries.is_empty() {
                 self.visible_entries
@@ -409,20 +408,21 @@ impl GitPanel {
             }
         }
 
-        if let Some((worktree_id, entry_id)) = new_selected_entry {
-            self.selected_item = self.visible_entries.iter().enumerate().find_map(
-                |(worktree_index, (id, entries, _))| {
-                    if *id == worktree_id {
-                        entries
-                            .iter()
-                            .position(|entry| entry.id == entry_id)
-                            .map(|entry_index| worktree_index * entries.len() + entry_index)
-                    } else {
-                        None
-                    }
-                },
-            );
-        }
+        // todo!(): re-implement this
+        // if let Some((worktree_id, entry_id)) = new_selected_entry {
+        //     self.selected_item = self.visible_entries.iter().enumerate().find_map(
+        //         |(worktree_index, (id, entries, _))| {
+        //             if *id == worktree_id {
+        //                 entries
+        //                     .iter()
+        //                     .position(|entry| entry.id == entry_id)
+        //                     .map(|entry_index| worktree_index * entries.len() + entry_index)
+        //             } else {
+        //                 None
+        //             }
+        //         },
+        //     );
+        // }
 
         cx.notify();
     }
@@ -635,8 +635,8 @@ impl GitPanel {
                 uniform_list(cx.view().clone(), "entries", item_count, {
                     |this, range, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
-                        this.for_each_visible_entry(range, cx, |id, details, cx| {
-                            items.push(this.render_entry(id, details, cx));
+                        this.for_each_visible_entry(range, cx, |ix, details, cx| {
+                            items.push(this.render_entry(ix, details, cx));
                         });
                         items
                     }
@@ -652,16 +652,15 @@ impl GitPanel {
 
     fn render_entry(
         &self,
-        id: ProjectEntryId,
+        ix: usize,
         details: EntryDetails,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
-        let id = id.to_proto() as usize;
-        let checkbox_id = ElementId::Name(format!("checkbox_{}", id).into());
+        let checkbox_id = ElementId::Name(format!("checkbox_{}", ix).into());
         let is_staged = ToggleState::Selected;
 
         h_flex()
-            .id(id)
+            .id(("git-panel-entry", ix))
             .h(px(28.))
             .w_full()
             .pl(px(12. + 12. * details.depth as f32))

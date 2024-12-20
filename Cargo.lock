@@ -5194,6 +5194,7 @@ dependencies = [
  "util",
  "windows 0.58.0",
  "workspace",
+ "worktree",
 ]
 
 [[package]]

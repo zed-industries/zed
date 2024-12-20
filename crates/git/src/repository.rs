@@ -7,6 +7,7 @@ use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
@@ -482,6 +483,12 @@ impl std::ops::Deref for RepoPath {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl Borrow<Path> for RepoPath {
+    fn borrow(&self) -> &Path {
+        self.0.as_ref()
     }
 }
 

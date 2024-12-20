@@ -3097,6 +3097,7 @@ impl LspStore {
             WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
                 worktree.update(cx, |worktree, _cx| self.send_diagnostic_summaries(worktree));
             }
+            WorktreeStoreEvent::GitRepositoryUpdated => {}
         }
     }
 

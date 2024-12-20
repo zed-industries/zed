@@ -19,7 +19,7 @@ use gpui::{
 };
 use language::{Buffer, BufferRow};
 use multi_buffer::{ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer};
-use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
+use project::{Entry, Project, ProjectEntryId, ProjectPath, WorktreeId};
 use text::{OffsetRangeExt, ToPoint};
 use theme::ActiveTheme;
 use ui::prelude::*;
