@@ -1,3 +1,6 @@
+// TODO: Remove this when we finish the implementation.
+#![allow(unused)]
+
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -190,6 +193,8 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         cx.spawn(|this, mut cx| async move {
             this.update(&mut cx, |this, cx| {
                 let mut text = String::new();
+
+                // TODO: Add the files from the selected directory.
 
                 this.delegate
                     .context_store
