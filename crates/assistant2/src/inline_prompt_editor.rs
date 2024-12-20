@@ -72,7 +72,10 @@ impl<T: 'static> Render for PromptEditor<T> {
 
                 gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0)
             }
-            PromptEditorMode::Terminal { .. } => Pixels::ZERO,
+            PromptEditorMode::Terminal { .. } => {
+                // Give the equivalent of the same left-padding that we're using on the right
+                Pixels::from(24.0)
+            }
         };
 
         buttons.extend(self.render_buttons(cx));
@@ -84,7 +87,8 @@ impl<T: 'static> Render for PromptEditor<T> {
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
-            .py(cx.line_height() / 2.5)
+            .pt_1()
+            .pb_2()
             .child(
                 h_flex()
                     .cursor(CursorStyle::Arrow)
@@ -153,14 +157,26 @@ impl<T: 'static> Render for PromptEditor<T> {
                                 }
                             }),
                     )
-                    .child(div().flex_1().child(self.render_editor(cx)))
-                    .child(h_flex().gap_2().pr_6().children(buttons)),
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .child(div().flex_1().child(self.render_editor(cx)))
+                            .child(h_flex().gap_2().pr_6().children(buttons)),
+                    ),
             )
             .child(
                 h_flex()
-                    .child(h_flex().w(spacing).justify_center().gap_2())
-                    .child(self.context_strip.clone())
-                    .child(self.model_selector.clone()),
+                    .child(h_flex().w(spacing).justify_between().gap_2())
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .pl_1()
+                            .pr_6()
+                            .justify_between()
+                            .child(div().pl_1().child(self.context_strip.clone()))
+                            .child(self.model_selector.clone()),
+                    ),
             )
     }
 }
@@ -388,6 +404,7 @@ impl<T: 'static> PromptEditor<T> {
             CodegenStatus::Idle => {
                 vec![Button::new("start", mode.start_label())
                     .icon(IconName::Return)
+                    .label_size(LabelSize::Small)
                     .icon_color(Color::Muted)
                     .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)))
                     .into_any_element()]
