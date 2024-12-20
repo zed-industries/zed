@@ -11,6 +11,7 @@ use gpui::{
 use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use menu::{SelectNext, SelectPrev};
 use std::{
     cell::OnceCell,
     collections::HashSet,
@@ -68,6 +69,7 @@ struct EntryDetails {
     is_expanded: bool,
     status: Option<GitFileStatus>,
     hunks: Rc<OnceCell<Vec<DiffHunk>>>,
+    index: usize,
 }
 
 impl EntryDetails {
@@ -307,6 +309,54 @@ impl GitPanel {
 
         (depth, difference)
     }
+
+    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+        if self.visible_entries.is_empty() {
+            return;
+        }
+        let selection = match self.selected_item {
+            Some(i) => {
+                if i < self.visible_entries.len() - 1 {
+                    self.selected_item = Some(i + 1);
+                    i + 1
+                } else {
+                    self.selected_item = Some(0);
+                    0
+                }
+            }
+            None => {
+                self.selected_item = Some(0);
+                0
+            }
+        };
+        self.scroll_handle
+            .scroll_to_item(selection, ScrollStrategy::Center);
+        cx.notify();
+    }
+
+    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+        if self.visible_entries.is_empty() {
+            return;
+        }
+        let selection = match self.selected_item {
+            Some(i) => {
+                if i > 0 {
+                    self.selected_item = Some(i - 1);
+                    i - 1
+                } else {
+                    self.selected_item = Some(self.visible_entries.len() - 1);
+                    self.visible_entries.len() - 1
+                }
+            }
+            None => {
+                self.selected_item = Some(0);
+                0
+            }
+        };
+        self.scroll_handle
+            .scroll_to_item(selection, ScrollStrategy::Center);
+        cx.notify();
+    }
 }
 
 impl GitPanel {
@@ -394,7 +444,12 @@ impl GitPanel {
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 let entries = worktree_entries.paths();
 
-                for entry in worktree_entries.visible_entries[entry_range].iter() {
+                let index_start = entry_range.start;
+                for (i, entry) in worktree_entries.visible_entries[entry_range]
+                    .iter()
+                    .enumerate()
+                {
+                    let index = index_start + i;
                     let status = entry.git_status;
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
@@ -425,6 +480,7 @@ impl GitPanel {
                         status,
                         hunks: entry.hunks.clone(),
                         depth,
+                        index,
                     };
                     callback(entry.id, details, cx);
                 }
@@ -434,7 +490,7 @@ impl GitPanel {
     }
 
     // TODO: Update expanded directory state
-    // TODO: update happens in the main loop, could be long for large workspaces
+    // TODO: Updates happen in the main loop, could be long for large workspaces
     fn update_visible_entries(
         &mut self,
         for_worktree: Option<WorktreeId>,
@@ -870,15 +926,21 @@ impl GitPanel {
             .iter()
             .map(|worktree_entries| worktree_entries.visible_entries.len())
             .sum();
+        let selected_entry = self.selected_item;
         h_flex()
             .size_full()
             .overflow_hidden()
             .child(
                 uniform_list(cx.view().clone(), "entries", item_count, {
-                    |this, range, cx| {
+                    move |git_panel, range, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
-                        this.for_each_visible_entry(range, cx, |id, details, cx| {
-                            items.push(this.render_entry(id, details, cx));
+                        git_panel.for_each_visible_entry(range, cx, |id, details, cx| {
+                            items.push(git_panel.render_entry(
+                                id,
+                                Some(details.index) == selected_entry,
+                                details,
+                                cx,
+                            ));
                         });
                         items
                     }
@@ -895,6 +957,7 @@ impl GitPanel {
     fn render_entry(
         &self,
         id: ProjectEntryId,
+        selected: bool,
         details: EntryDetails,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
@@ -919,82 +982,86 @@ impl GitPanel {
             .when_some(details.status, |this, status| {
                 this.child(git_status_icon(status))
             })
-            .child(h_flex().gap_1p5().child(details.display_name.clone()))
+            .child(
+                h_flex().gap_1p5().child(
+                    Label::new(&details.display_name)
+                        .when(selected, |entry_label| entry_label.color(Color::Selected)),
+                ),
+            )
             .on_click(move |_, cx| {
                 handle.update(cx, |git_panel, cx| {
-                    git_panel
-                        .workspace
-                        .update(cx, |workspace, cx| {
-                            let diff_editor = workspace
-                                .items_of_type::<Editor>(cx)
-                                .find(|editor| &git_panel.git_diff_editor == editor);
-                            let editor = match diff_editor {
-                                Some(existing_editor) => {
-                                    workspace.activate_item(&existing_editor, true, true, cx);
-                                    existing_editor
-                                }
-                                None => {
-                                    workspace.active_pane().update(cx, |pane, cx| {
-                                        pane.add_item(
-                                            git_panel.git_diff_editor.boxed_clone(),
-                                            true,
-                                            true,
-                                            None,
-                                            cx,
-                                        )
-                                    });
-                                    git_panel.git_diff_editor.clone()
-                                }
-                            };
-                            if let Some(first_hunk) =
-                                details.hunks.get().and_then(|hunks| hunks.first())
-                            {
-                                let hunk_buffer_range = &first_hunk.buffer_range;
-                                if let Some(buffer_id) = hunk_buffer_range
-                                    .start
-                                    .buffer_id
-                                    .or_else(|| first_hunk.buffer_range.end.buffer_id)
-                                {
-                                    editor.update(cx, |editor, cx| {
-                                        let multi_buffer = editor.buffer().read(cx);
-                                        let buffer = multi_buffer.buffer(buffer_id)?;
-                                        let buffer_snapshot = buffer.read(cx).snapshot();
-                                        let (excerpt_id, _) = multi_buffer
-                                            .excerpts_for_buffer(&buffer, cx)
-                                            .into_iter()
-                                            .find(|(_, excerpt)| {
-                                                hunk_buffer_range
-                                                    .start
-                                                    .cmp(&excerpt.context.start, &buffer_snapshot)
-                                                    .is_ge()
-                                                    && hunk_buffer_range
-                                                        .end
-                                                        .cmp(&excerpt.context.end, &buffer_snapshot)
-                                                        .is_le()
-                                            })?;
-                                        let multi_buffer_hunk_start =
-                                            multi_buffer.snapshot(cx).anchor_in_excerpt(
-                                                excerpt_id,
-                                                hunk_buffer_range.start,
-                                            )?;
-                                        editor.change_selections(
-                                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
-                                            cx,
-                                            |s| {
-                                                s.select_ranges(Some(
-                                                    multi_buffer_hunk_start
-                                                        ..multi_buffer_hunk_start,
-                                                ))
-                                            },
-                                        );
-                                        Some(())
-                                    });
-                                }
-                            }
-                        })
-                        .ok();
+                    git_panel.selected_item = Some(details.index);
+                    git_panel.reveal_entry_in_git_multi_buffer(&details, cx);
                 });
             })
+    }
+
+    fn reveal_entry_in_git_multi_buffer(
+        &mut self,
+        details: &EntryDetails,
+        cx: &mut ViewContext<'_, Self>,
+    ) {
+        let Some(editor) = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                let git_diff_editor = workspace
+                    .items_of_type::<Editor>(cx)
+                    .find(|editor| &self.git_diff_editor == editor);
+                match git_diff_editor {
+                    Some(existing_editor) => {
+                        workspace.activate_item(&existing_editor, true, true, cx);
+                        existing_editor
+                    }
+                    None => {
+                        workspace.active_pane().update(cx, |pane, cx| {
+                            pane.add_item(self.git_diff_editor.boxed_clone(), true, true, None, cx)
+                        });
+                        self.git_diff_editor.clone()
+                    }
+                }
+            })
+            .ok()
+        else {
+            return;
+        };
+
+        if let Some(first_hunk) = details.hunks.get().and_then(|hunks| hunks.first()) {
+            let hunk_buffer_range = &first_hunk.buffer_range;
+            if let Some(buffer_id) = hunk_buffer_range
+                .start
+                .buffer_id
+                .or_else(|| first_hunk.buffer_range.end.buffer_id)
+            {
+                editor.update(cx, |editor, cx| {
+                    let multi_buffer = editor.buffer().read(cx);
+                    let buffer = multi_buffer.buffer(buffer_id)?;
+                    let buffer_snapshot = buffer.read(cx).snapshot();
+                    let (excerpt_id, _) = multi_buffer
+                        .excerpts_for_buffer(&buffer, cx)
+                        .into_iter()
+                        .find(|(_, excerpt)| {
+                            hunk_buffer_range
+                                .start
+                                .cmp(&excerpt.context.start, &buffer_snapshot)
+                                .is_ge()
+                                && hunk_buffer_range
+                                    .end
+                                    .cmp(&excerpt.context.end, &buffer_snapshot)
+                                    .is_le()
+                        })?;
+                    let multi_buffer_hunk_start = multi_buffer
+                        .snapshot(cx)
+                        .anchor_in_excerpt(excerpt_id, hunk_buffer_range.start)?;
+                    editor.change_selections(
+                        Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
+                        cx,
+                        |s| s.select_ranges(Some(multi_buffer_hunk_start..multi_buffer_hunk_start)),
+                    );
+                    cx.notify();
+                    Some(())
+                });
+            }
+        }
     }
 }
 
@@ -1022,6 +1089,8 @@ impl Render for GitPanel {
                         this.commit_all_changes(&CommitAllChanges, cx)
                     }))
             })
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_prev))
             .on_hover(cx.listener(|this, hovered, cx| {
                 if *hovered {
                     this.show_scrollbar = true;

@@ -5175,6 +5175,7 @@ dependencies = [
  "git",
  "gpui",
  "language",
+ "menu",
  "project",
  "schemars",
  "serde",
