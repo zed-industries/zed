@@ -252,7 +252,7 @@ pub enum Event {
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
     DebugClientStarted(DebugAdapterClientId),
-    DebugClientStopped(DebugAdapterClientId),
+    DebugClientShutdown(DebugAdapterClientId),
     SetDebugClient(SetDebuggerPanelItem),
     ActiveDebugLineChanged,
     DebugClientEvent {
@@ -2499,8 +2499,8 @@ impl Project {
             DapStoreEvent::DebugClientStarted(client_id) => {
                 cx.emit(Event::DebugClientStarted(*client_id));
             }
-            DapStoreEvent::DebugClientStopped(client_id) => {
-                cx.emit(Event::DebugClientStopped(*client_id));
+            DapStoreEvent::DebugClientShutdown(client_id) => {
+                cx.emit(Event::DebugClientShutdown(*client_id));
             }
             DapStoreEvent::DebugClientEvent { client_id, message } => {
                 cx.emit(Event::DebugClientEvent {

@@ -141,8 +141,8 @@ impl DebugPanelItem {
                         DebugPanelEvent::LoadedSource((client_id, event)) => {
                             this.handle_loaded_source_event(client_id, event, cx)
                         }
-                        DebugPanelEvent::ClientStopped(client_id) => {
-                            this.handle_client_stopped_event(client_id, cx)
+                        DebugPanelEvent::ClientShutdown(client_id) => {
+                            this.handle_client_shutdown_event(client_id, cx)
                         }
                         DebugPanelEvent::Continued((client_id, event)) => {
                             this.handle_thread_continued_event(client_id, event, cx);
@@ -378,7 +378,7 @@ impl DebugPanelItem {
             });
     }
 
-    fn handle_client_stopped_event(
+    fn handle_client_shutdown_event(
         &mut self,
         client_id: &DebugAdapterClientId,
         cx: &mut ViewContext<Self>,

@@ -57,7 +57,7 @@ use util::{merge_json_value_into, ResultExt as _};
 
 pub enum DapStoreEvent {
     DebugClientStarted(DebugAdapterClientId),
-    DebugClientStopped(DebugAdapterClientId),
+    DebugClientShutdown(DebugAdapterClientId),
     DebugClientEvent {
         client_id: DebugAdapterClientId,
         message: Message,
@@ -1359,7 +1359,7 @@ impl DapStore {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
-        cx.emit(DapStoreEvent::DebugClientStopped(*client_id));
+        cx.emit(DapStoreEvent::DebugClientShutdown(*client_id));
 
         self.ignore_breakpoints.remove(client_id);
         let capabilities = self.capabilities.remove(client_id);
@@ -1512,7 +1512,7 @@ impl DapStore {
 
                 dap_store.capabilities.remove(&client_id);
 
-                cx.emit(DapStoreEvent::DebugClientStopped(client_id));
+                cx.emit(DapStoreEvent::DebugClientShutdown(client_id));
                 cx.notify();
             }
         })

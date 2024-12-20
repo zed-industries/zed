@@ -43,7 +43,7 @@ pub enum DebugPanelEvent {
     Output((DebugAdapterClientId, OutputEvent)),
     Module((DebugAdapterClientId, ModuleEvent)),
     LoadedSource((DebugAdapterClientId, LoadedSourceEvent)),
-    ClientStopped(DebugAdapterClientId),
+    ClientShutdown(DebugAdapterClientId),
     CapabilitiesChanged(DebugAdapterClientId),
 }
 
@@ -174,8 +174,8 @@ impl DebugPanel {
                             }
                             _ => unreachable!(),
                         },
-                        project::Event::DebugClientStopped(client_id) => {
-                            cx.emit(DebugPanelEvent::ClientStopped(*client_id));
+                        project::Event::DebugClientShutdown(client_id) => {
+                            cx.emit(DebugPanelEvent::ClientShutdown(*client_id));
 
                             this.message_queue.remove(client_id);
                             this.thread_states

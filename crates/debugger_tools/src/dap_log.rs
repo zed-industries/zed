@@ -173,7 +173,7 @@ impl LogStore {
                                 project.read(cx).debug_client_for_id(client_id, cx),
                             );
                         }
-                        project::Event::DebugClientStopped(id) => {
+                        project::Event::DebugClientShutdown(id) => {
                             this.remove_debug_client(*id, cx);
                         }
 
