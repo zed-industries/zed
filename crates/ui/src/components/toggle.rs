@@ -462,7 +462,7 @@ impl ComponentPreview for SwitchWithLabel {
     fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![example_group(vec![
             single_example(
-                "Unselected",
+                "Off",
                 SwitchWithLabel::new(
                     "switch_with_label_unselected",
                     Label::new("Always save on quit"),
@@ -471,7 +471,7 @@ impl ComponentPreview for SwitchWithLabel {
                 ),
             ),
             single_example(
-                "Selected",
+                "On",
                 SwitchWithLabel::new(
                     "switch_with_label_selected",
                     Label::new("Always save on quit"),
