@@ -429,13 +429,16 @@ impl ProjectDiagnosticsEditor {
                     let mut is_first_excerpt_for_group = true;
                     for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
                         let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
+                        let expanded_range = resolved_entry.as_ref().map(|entry| {
+                            context_range_for_entry(entry, self.context, &snapshot, cx)
+                        });
                         if let Some((range, context_range, start_ix)) = &mut pending_range {
-                            if let Some(entry) = resolved_entry.as_ref() {
-                                let expanded_range =
-                                    context_range_for_entry(entry, self.context, &snapshot, cx);
-                                context_range.start = context_range.start.min(expanded_range.start);
-                                context_range.end = context_range.end.max(expanded_range.end);
-                                continue;
+                            if let Some(expanded_range) = expanded_range.clone() {
+                                // If the entries are overlapping or next to each-other, merge them into one excerpt.
+                                if context_range.end.row + 1 >= expanded_range.start.row {
+                                    context_range.end = context_range.end.max(expanded_range.end);
+                                    continue;
+                                }
                             }
 
                             let excerpt_id = excerpts
@@ -502,9 +505,7 @@ impl ProjectDiagnosticsEditor {
 
                         if let Some(entry) = resolved_entry.as_ref() {
                             let range = entry.range.clone();
-                            let expanded_range =
-                                context_range_for_entry(entry, self.context, &snapshot, cx);
-                            pending_range = Some((range, expanded_range, ix));
+                            pending_range = Some((range, expanded_range.unwrap(), ix));
                         }
                     }
 
