@@ -83,8 +83,9 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.24.1-dev"
-source = "git+https://github.com/alacritty/alacritty?rev=91d034ff8b53867143c005acfaa14609147c9a2c#91d034ff8b53867143c005acfaa14609147c9a2c"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52b9241459831fee2f22fcda52ddaf9e449b6627334a0f40f13a1b3344018060"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.6.0",
@@ -6983,7 +6984,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -14980,7 +14981,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
