@@ -78,15 +78,15 @@ impl<T: 'static> Render for PromptEditor<T> {
         buttons.extend(self.render_buttons(cx));
 
         v_flex()
+            .key_context("PromptEditor")
+            .bg(cx.theme().colors().editor_background)
+            .block_mouse_down()
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
             .py(cx.line_height() / 2.5)
             .child(
                 h_flex()
-                    .key_context("PromptEditor")
-                    .bg(cx.theme().colors().editor_background)
-                    .block_mouse_down()
                     .cursor(CursorStyle::Arrow)
                     .on_action(cx.listener(Self::toggle_context_picker))
                     .on_action(cx.listener(Self::toggle_model_selector))
