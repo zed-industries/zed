@@ -318,21 +318,24 @@ impl TitleBar {
         Some(
             ButtonLike::new("ssh-server-icon")
                 .child(
-                    IconWithIndicator::new(
-                        Icon::new(IconName::Server)
-                            .size(IconSize::XSmall)
-                            .color(icon_color),
-                        Some(Indicator::dot().color(indicator_color)),
-                    )
-                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                    .into_any_element(),
-                )
-                .child(
-                    div()
+                    h_flex()
+                        .gap_2()
                         .max_w_32()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .child(Label::new(nickname.clone()).size(LabelSize::Small)),
+                        .child(
+                            IconWithIndicator::new(
+                                Icon::new(IconName::Server)
+                                    .size(IconSize::XSmall)
+                                    .color(icon_color),
+                                Some(Indicator::dot().color(indicator_color)),
+                            )
+                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                            .into_any_element(),
+                        )
+                        .child(
+                            Label::new(nickname.clone())
+                                .size(LabelSize::Small)
+                                .text_ellipsis(),
+                        ),
                 )
                 .tooltip(move |cx| {
                     Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)
