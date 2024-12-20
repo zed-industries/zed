@@ -1611,6 +1611,101 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn layout_inline_diagnostics(
+        &self,
+        line_layouts: &[LineWithInvisibles],
+        crease_trailers: &[Option<CreaseTrailerLayout>],
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        line_height: Pixels,
+        em_width: Pixels,
+        style: &EditorStyle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> HashMap<DisplayRow, AnyElement> {
+        let diagnostics = self.editor.update(cx, |editor, _| {
+            if !editor.show_inline_diagnostics() {
+                return Default::default();
+            }
+            editor
+                .inline_diagnostics
+                .range(start_row..=end_row)
+                .map(|(point, diag)| (*point, diag.clone()))
+                .collect::<Vec<_>>()
+        });
+
+        if diagnostics.is_empty() {
+            return Default::default();
+        }
+
+        let sev_to_color = |sev: &DiagnosticSeverity| match sev {
+            &DiagnosticSeverity::ERROR => Color::Error,
+            &DiagnosticSeverity::WARNING => Color::Warning,
+            &DiagnosticSeverity::INFORMATION => Color::Info,
+            &DiagnosticSeverity::HINT => Color::Hint,
+            _ => Color::Error,
+        };
+
+        let padding = ProjectSettings::get_global(cx)
+            .diagnostics
+            .inline()
+            .padding() as f32
+            * em_width;
+
+        let min_x = ProjectSettings::get_global(cx)
+            .diagnostics
+            .inline()
+            .min_column() as f32
+            * em_width;
+
+        let mut elements = HashMap::default();
+        for (row, diagnostic) in diagnostics {
+            if !(start_row..end_row).contains(&row) {
+                continue;
+            }
+
+            let pos_y = content_origin.y
+                + line_height * (row.0 as f32 - scroll_pixel_position.y / line_height);
+
+            let window_ix = (row - start_row).0 as usize;
+            let pos_x = {
+                let crease_trailer_layout = crease_trailers[window_ix].as_ref();
+                let line_layout = &line_layouts[window_ix];
+
+                let line_end = if let Some(crease_trailer) = crease_trailer_layout {
+                    crease_trailer.bounds.right()
+                } else {
+                    content_origin.x - scroll_pixel_position.x + line_layout.width
+                };
+
+                let padded_line = line_end + padding;
+                let min_start = content_origin.x - scroll_pixel_position.x + min_x;
+
+                cmp::max(padded_line, min_start)
+            };
+
+            let mut element = h_flex()
+                .id(SharedString::from(format!("diagnostic-{}", row.0)))
+                .h(line_height)
+                .w_full()
+                .bg(sev_to_color(&diagnostic.severity).color(cx).opacity(0.07))
+                .text_color(sev_to_color(&diagnostic.severity).color(cx))
+                .text_sm()
+                .font_family(style.text.font().family)
+                .child(diagnostic.message.clone())
+                .into_any();
+
+            element.prepaint_as_root(point(pos_x, pos_y), AvailableSpace::min_size(), window, cx);
+
+            elements.insert(row, element);
+        }
+
+        elements
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn layout_inline_blame(
         &self,
         display_row: DisplayRow,
@@ -4832,6 +4927,7 @@ impl EditorElement {
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
                 self.paint_cursors(layout, window, cx);
+                self.paint_inline_diagnostics(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
                 self.paint_diff_hunk_controls(layout, window, cx);
                 window.with_element_namespace("crease_trailers", |window| {
@@ -5504,6 +5600,17 @@ impl EditorElement {
             };
 
             highlighted_range.paint(layout.position_map.text_hitbox.bounds, window);
+        }
+    }
+
+    fn paint_inline_diagnostics(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for mut inline_diagnostic in layout.inline_diagnostics.drain() {
+            inline_diagnostic.1.paint(window, cx);
         }
     }
 
@@ -7221,26 +7328,42 @@ impl Element for EditorElement {
                             )
                         });
 
+                    let inline_diagnostics = self.layout_inline_diagnostics(
+                        &line_layouts[..],
+                        &crease_trailers[..],
+                        content_origin,
+                        scroll_pixel_position,
+                        start_row,
+                        end_row,
+                        line_height,
+                        em_width,
+                        &style,
+                        window,
+                        cx,
+                    );
+
                     let mut inline_blame = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
-                        if (start_row..end_row).contains(&display_row) {
-                            let line_ix = display_row.minus(start_row) as usize;
-                            let row_info = &row_infos[line_ix];
-                            let line_layout = &line_layouts[line_ix];
-                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
-                            inline_blame = self.layout_inline_blame(
-                                display_row,
-                                row_info,
-                                line_layout,
-                                crease_trailer_layout,
-                                em_width,
-                                content_origin,
-                                scroll_pixel_position,
-                                line_height,
-                                window,
-                                cx,
-                            );
+                        if !inline_diagnostics.contains_key(&display_row) {
+                            if (start_row..end_row).contains(&display_row) {
+                                let line_ix = display_row.minus(start_row) as usize;
+                                let row_info = &row_infos[line_ix];
+                                let line_layout = &line_layouts[line_ix];
+                                let crease_trailer_layout = crease_trailers[line_ix].as_ref();
+                                inline_blame = self.layout_inline_blame(
+                                    display_row,
+                                    row_info,
+                                    line_layout,
+                                    crease_trailer_layout,
+                                    em_width,
+                                    content_origin,
+                                    scroll_pixel_position,
+                                    line_height,
+                                    window,
+                                    cx,
+                                );
+                            }
                         }
                     }
 
@@ -7600,6 +7723,7 @@ impl Element for EditorElement {
                         line_elements,
                         line_numbers,
                         blamed_display_rows,
+                        inline_diagnostics,
                         inline_blame,
                         blocks,
                         cursors,
@@ -7777,6 +7901,7 @@ pub struct EditorLayout {
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
+    inline_diagnostics: HashMap<DisplayRow, AnyElement>,
     inline_blame: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

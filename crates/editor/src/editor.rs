@@ -464,6 +464,12 @@ enum EditPredictionSettings {
 
 enum InlineCompletionHighlight {}
 
+#[derive(Clone)]
+struct InlineDiagnostic {
+    message: String,
+    severity: DiagnosticSeverity,
+}
+
 pub enum MenuInlineCompletionsPolicy {
     Never,
     ByProvider,
@@ -594,6 +600,9 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
+    show_inline_diagnostics: bool,
+    show_inline_diagnostics_delay_task: Option<Task<()>>,
+    inline_diagnostics: BTreeMap<DisplayRow, InlineDiagnostic>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
 
     // TODO: make this a access method
@@ -1304,6 +1313,9 @@ impl Editor {
             select_larger_syntax_node_stack: Vec::new(),
             ime_transaction: Default::default(),
             active_diagnostics: None,
+            show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline().enabled,
+            show_inline_diagnostics_delay_task: None,
+            inline_diagnostics: Default::default(),
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
             semantics_provider: project.clone().map(|project| Rc::new(project) as _),
@@ -1404,6 +1416,7 @@ impl Editor {
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe_in(&buffer, window, Self::on_buffer_event),
+                cx.subscribe_in(&buffer, window, Self::on_diagnostics_updated),
                 cx.observe_in(&display_map, window, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
@@ -11868,6 +11881,116 @@ impl Editor {
         }
     }
 
+    pub fn show_inline_diagnostics(&mut self) -> bool {
+        self.show_inline_diagnostics
+    }
+
+    /// Used to disable the inline diagnostics rendering in the ProjectDiagnostics
+    /// multi-buffer.
+    pub fn set_show_inline_diagnostics(&mut self, enabled: bool) {
+        self.show_inline_diagnostics = enabled;
+    }
+
+    pub fn toggle_show_inline_diagnostics(&mut self, _cx: &mut Context<Self>) {
+        self.show_inline_diagnostics = !self.show_inline_diagnostics;
+
+        // ToDo: if !show, clear preprocessed diagnostics, else, kick off timer
+        // to collect new diagnostics.
+    }
+
+    fn on_diagnostics_updated(
+        &mut self,
+        _: &Entity<MultiBuffer>,
+        event: &multi_buffer::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(event, multi_buffer::Event::DiagnosticsUpdated) {
+            return;
+        }
+
+        let settings = ProjectSettings::get_global(cx);
+        if !settings.diagnostics.inline().enabled() {
+            return;
+        }
+
+        if let Some(delay) = settings.diagnostics.inline().update_debounce_ms() {
+            self.show_inline_diagnostics_delay_task =
+                Some(cx.spawn_in(window, |this, mut cx| async move {
+                    cx.background_executor().timer(delay).await;
+                    this.update(&mut cx, |this, cx| {
+                        this.update_inline_diagnostics(cx);
+                        cx.notify();
+                    })
+                    .log_err();
+                }));
+        }
+    }
+
+    fn update_inline_diagnostics(&mut self, cx: &mut Context<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let diagnostics = buffer
+            .diagnostics_in_range::<_, Point>(0..buffer.len())
+            .sorted_by_key(|diagnostic| {
+                (
+                    diagnostic.diagnostic.severity,
+                    std::cmp::Reverse(diagnostic.diagnostic.is_primary),
+                    diagnostic.range.start.row,
+                    diagnostic.range.start.column,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        self.inline_diagnostics.clear();
+        let mut prev_diagnostic_line = None;
+        for diagnostic in diagnostics {
+            let curr_line = diagnostic.range.start.row;
+
+            // We only show one inline diagnostic per line, so continue on
+            // if we've already seen one for the current line.
+            if prev_diagnostic_line.map_or(false, |l| l >= curr_line) {
+                continue;
+            } else {
+                prev_diagnostic_line = Some(curr_line);
+            }
+
+            let message = diagnostic
+                .diagnostic
+                .message
+                .split_once('\n')
+                .map(|(line, _)| line.to_string())
+                .unwrap_or(diagnostic.diagnostic.message.to_string());
+
+            let mut disp_point =
+                display_map.point_to_display_point(diagnostic.range.start, Bias::Right);
+
+            // Show the inline diagnostic after the last wrapped line, if any.
+            let mut wrapped_lines = 0u32;
+            display_map
+                .row_infos(disp_point.row())
+                .skip(1)
+                .try_fold((), |_, next| {
+                    if next.buffer_row.is_none() {
+                        wrapped_lines += 1;
+                        Some(())
+                    } else {
+                        None
+                    }
+                });
+
+            *disp_point.row_mut() += wrapped_lines;
+
+            self.inline_diagnostics.insert(
+                disp_point.row(),
+                InlineDiagnostic {
+                    message,
+                    severity: diagnostic.diagnostic.severity,
+                },
+            );
+        }
+    }
+
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
@@ -14383,7 +14506,13 @@ impl Editor {
         self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
 
         if self.mode == EditorMode::Full {
+            let show_inline_diagnostics = project_settings.diagnostics.inline().enabled();
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
+
+            if self.show_inline_diagnostics != show_inline_diagnostics {
+                self.toggle_show_inline_diagnostics(cx);
+            }
+
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, window, cx);
             }

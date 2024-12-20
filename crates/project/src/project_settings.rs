@@ -40,6 +40,10 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub lsp: HashMap<LanguageServerName, LspSettings>,
 
+    /// Configuration for Diagnostics-related features.
+    #[serde(default)]
+    pub diagnostics: DiagnosticsSettings,
+
     /// Configuration for Git-related features
     #[serde(default)]
     pub git: GitSettings,
@@ -76,6 +80,70 @@ pub enum DirenvSettings {
     /// Load direnv configuration directly using `direnv export json`
     #[default]
     Direct,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct DiagnosticsSettings {
+    /// Whether or not to include warning diagnostics
+    #[serde(default = "true_value")]
+    pub include_warnings: bool,
+
+    /// Settings for showing inline diagnostics
+    pub inline: Option<InlineDiagnosticsSettings>,
+}
+
+impl DiagnosticsSettings {
+    pub fn inline(&self) -> InlineDiagnosticsSettings {
+        self.inline.unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct InlineDiagnosticsSettings {
+    /// Whether or not to show inline diagnostics
+    ///
+    /// Default: false
+    #[serde(default = "false_value")]
+    pub enabled: bool,
+    /// Whether to only show the inline diaganostics after a delay after the
+    /// last editor event.
+    ///
+    /// Default: 150
+    pub update_debounce_ms: Option<u64>,
+    /// The amount of padding between the end of the source line and the start
+    /// of the inline diagnostic in units of columns.
+    ///
+    /// Default: 4
+    pub padding: Option<u32>,
+    /// The minimum column to display inline diagnostics. This setting can be
+    /// used to horizontally align inline diagnostics at some position. Lines
+    /// longer than this value will still push diagnostics further to the right.
+    ///
+    /// Default: 0
+    pub min_column: Option<u32>,
+}
+
+impl InlineDiagnosticsSettings {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn update_debounce_ms(&self) -> Option<Duration> {
+        let delay = self.update_debounce_ms.unwrap_or(150);
+        if delay > 0 {
+            Some(Duration::from_millis(delay))
+        } else {
+            None
+        }
+    }
+
+    pub fn padding(&self) -> u32 {
+        self.padding.unwrap_or(4)
+    }
+
+    pub fn min_column(&self) -> u32 {
+        self.min_column.unwrap_or(0)
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
