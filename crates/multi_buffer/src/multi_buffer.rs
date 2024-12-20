@@ -3920,10 +3920,10 @@ impl MultiBufferSnapshot {
             })
     }
 
-    pub fn syntax_ancestor<'a, T: ToOffset>(
-        &'a self,
+    pub fn syntax_ancestor<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> Option<(tree_sitter::Node<'a>, Range<usize>)> {
+    ) -> Option<(tree_sitter::Node, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let excerpt = self.excerpt_containing(range.clone())?;
         let node = excerpt

@@ -23,20 +23,19 @@ use gpui::{
 };
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
-    OffsetRangeExt, Point, Selection, SelectionGoal, ToTreeSitterPoint,
+    Point, Selection, SelectionGoal, ToTreeSitterPoint,
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
 use project_diagnostics_settings::ProjectDiagnosticsSettings;
-use regex::Regex;
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
     cmp,
     cmp::Ordering,
     mem,
-    ops::{Range, RangeBounds, RangeInclusive},
-    sync::{Arc, LazyLock},
+    ops::{Range, RangeInclusive},
+    sync::Arc,
     time::Duration,
 };
 use theme::ActiveTheme;
@@ -432,16 +431,10 @@ impl ProjectDiagnosticsEditor {
                         let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
                         if let Some((range, context_range, start_ix)) = &mut pending_range {
                             if let Some(entry) = resolved_entry.as_ref() {
-                                let expanded_range = dbg!(context_range_for_entry(
-                                    entry,
-                                    self.context,
-                                    &snapshot,
-                                    cx
-                                ));
-                                dbg!(&context_range);
+                                let expanded_range =
+                                    context_range_for_entry(entry, self.context, &snapshot, cx);
                                 context_range.start = context_range.start.min(expanded_range.start);
                                 context_range.end = context_range.end.max(expanded_range.end);
-                                dbg!(&context_range);
                                 continue;
                             }
 
@@ -450,7 +443,7 @@ impl ProjectDiagnosticsEditor {
                                     prev_excerpt_id,
                                     buffer.clone(),
                                     [ExcerptRange {
-                                        context: dbg!(context_range.clone()),
+                                        context: context_range.clone(),
                                         primary: Some(range.clone()),
                                     }],
                                     cx,
@@ -933,11 +926,11 @@ fn compare_diagnostics(
 
 const DIAGNOSTIC_EXPANSION_ROW_LIMIT: u32 = 32;
 
-fn context_range_for_entry<'a>(
+fn context_range_for_entry(
     entry: &DiagnosticEntry<Point>,
     context: u32,
     snapshot: &BufferSnapshot,
-    cx: &'a AppContext,
+    cx: &AppContext,
 ) -> Range<Point> {
     if cx.is_staff() {
         if let Some(rows) = heuristic_syntactic_expand(
@@ -982,12 +975,10 @@ fn heuristic_syntactic_expand<'a>(
     if let Some(outline_range) = outline_range.clone() {
         // Remove blank lines from start and end
         if let Some(start_row) = (outline_range.start.row..outline_range.end.row)
-            .into_iter()
             .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
         {
             if let Some(end_row) = (outline_range.start.row..outline_range.end.row + 1)
                 .rev()
-                .into_iter()
                 .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
             {
                 let row_count = end_row.saturating_sub(start_row);
