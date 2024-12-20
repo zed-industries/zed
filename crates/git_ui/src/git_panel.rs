@@ -312,12 +312,17 @@ impl GitPanel {
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
-        if self.visible_entries.is_empty() {
+        let item_count = self
+            .visible_entries
+            .iter()
+            .map(|worktree_entries| worktree_entries.visible_entries.len())
+            .sum::<usize>();
+        if item_count == 0 {
             return;
         }
         let selection = match self.selected_item {
             Some(i) => {
-                if i < self.visible_entries.len() - 1 {
+                if i < item_count - 1 {
                     self.selected_item = Some(i + 1);
                     i + 1
                 } else {
@@ -331,12 +336,17 @@ impl GitPanel {
             }
         };
         self.scroll_handle
-            .scroll_to_item(selection, ScrollStrategy::Center);
+            .scroll_to_item(dbg!(selection), ScrollStrategy::Center);
         cx.notify();
     }
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
-        if self.visible_entries.is_empty() {
+        let item_count = self
+            .visible_entries
+            .iter()
+            .map(|worktree_entries| worktree_entries.visible_entries.len())
+            .sum::<usize>();
+        if item_count == 0 {
             return;
         }
         let selection = match self.selected_item {
@@ -345,8 +355,8 @@ impl GitPanel {
                     self.selected_item = Some(i - 1);
                     i - 1
                 } else {
-                    self.selected_item = Some(self.visible_entries.len() - 1);
-                    self.visible_entries.len() - 1
+                    self.selected_item = Some(item_count - 1);
+                    item_count - 1
                 }
             }
             None => {
@@ -987,18 +997,21 @@ impl GitPanel {
                 ListItem::new(("label", id))
                     .toggle_state(selected)
                     .child(h_flex().gap_1p5().child(details.display_name.clone()))
-                    .on_click(move |_, cx| {
+                    .on_click(move |e, cx| {
                         handle.update(cx, |git_panel, cx| {
                             git_panel.selected_item = Some(details.index);
-                            git_panel.reveal_entry_in_git_multi_buffer(&details, cx);
+                            let change_focus = e.down.click_count > 1;
+                            git_panel.reveal_entry_in_git_editor(&details.hunks, change_focus, cx);
                         });
                     }),
             )
     }
 
-    fn reveal_entry_in_git_multi_buffer(
+    // TODO kb timeouts and tasks
+    fn reveal_entry_in_git_editor(
         &mut self,
-        details: &EntryDetails,
+        hunks: &OnceCell<Vec<DiffHunk>>,
+        change_focus: bool,
         cx: &mut ViewContext<'_, Self>,
     ) {
         let Some(editor) = self
@@ -1009,12 +1022,18 @@ impl GitPanel {
                     .find(|editor| &self.git_diff_editor == editor);
                 match git_diff_editor {
                     Some(existing_editor) => {
-                        workspace.activate_item(&existing_editor, true, true, cx);
+                        workspace.activate_item(&existing_editor, true, change_focus, cx);
                         existing_editor
                     }
                     None => {
                         workspace.active_pane().update(cx, |pane, cx| {
-                            pane.add_item(self.git_diff_editor.boxed_clone(), true, true, None, cx)
+                            pane.add_item(
+                                self.git_diff_editor.boxed_clone(),
+                                true,
+                                change_focus,
+                                None,
+                                cx,
+                            )
                         });
                         self.git_diff_editor.clone()
                     }
@@ -1025,7 +1044,7 @@ impl GitPanel {
             return;
         };
 
-        if let Some(first_hunk) = details.hunks.get().and_then(|hunks| hunks.first()) {
+        if let Some(first_hunk) = hunks.get().and_then(|hunks| hunks.first()) {
             let hunk_buffer_range = &first_hunk.buffer_range;
             if let Some(buffer_id) = hunk_buffer_range
                 .start
