@@ -4215,6 +4215,7 @@ impl EditorElement {
                 self.paint_redactions(layout, cx);
                 self.paint_cursors(layout, cx);
                 self.paint_inline_blame(layout, cx);
+                self.paint_inline_diagnostics(layout, cx);
                 cx.with_element_namespace("crease_trailers", |cx| {
                     for trailer in layout.crease_trailers.iter_mut().flatten() {
                         trailer.element.paint(cx);
@@ -4894,6 +4895,12 @@ impl EditorElement {
             cx.paint_layer(layout.text_hitbox.bounds, |cx| {
                 inline_blame.paint(cx);
             })
+        }
+    }
+
+    fn paint_inline_diagnostics(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
+        for mut inline_diagnostic in layout.inline_diagnostics.drain(..) {
+            inline_diagnostic.paint(cx);
         }
     }
 
@@ -6441,6 +6448,101 @@ impl Element for EditorElement {
                         )
                     });
 
+                    // ----------------------------------------------------------------------------------------------------------------
+                    // THIS PART IS JUST WAS JUST THE MOST QUICK AND DIRTY WAY TO TEST THE DESIGN, THIS IS NOT HOW YOU SHOULD DO IT
+                    // A few things that come to mind:
+                    //  - do the rendering similiar to what inline blame is doing; this here is not performant (it even crashes sometimes)
+                    //  - this must somehow work together with inline (i think not showing the inline blame if we also have a diagnostic
+                    //    in the same line would be a good idea ??)
+                    //  - we must aggreate multiple inline diagnostics in the same line; we should dig into neovims implementation to see how they do it
+                    //  - I think in the V1 we can just use the Color::Error, Color::Warning, Color::Info for the diagnostics and not introduce new colors in the theme
+                    //  - it would be nice to also have a modal that shows the full diagnostic message and all aggregated diagnostics for the line
+                    //      - this is very similiar to the inline blame part
+                    //      - neovim does this as well, we could create keybindings to open/close the modal
+                    //      - I think we should not include this in the first version, since this will be a community PR and we should try to keep the scope small
+                    //        and do a follow up PR if we can agree on the design
+                    let mut inline_diagnostics = vec![];
+                    let mut seen_lines: HashSet<usize> = Default::default();
+                    let buffer_snapshot = snapshot.display_snapshot.buffer_snapshot.clone();
+                    let max_point = buffer_snapshot.max_point();
+                    let diagnostics = buffer_snapshot
+                        .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
+                        .sorted_by_key(|diagnostic| {
+                            std::cmp::Reverse(diagnostic.diagnostic.severity)
+                        });
+
+                    for (idx, diagnostic) in diagnostics.enumerate() {
+                        let line_ix = diagnostic.range.start.row as usize;
+                        if seen_lines.contains(&line_ix) {
+                            continue;
+                        }
+                        seen_lines.insert(line_ix);
+
+                        let message = diagnostic.diagnostic.message.replace("\n", " ");
+                        let color = match diagnostic.diagnostic.severity {
+                            DiagnosticSeverity::ERROR => Color::Error,
+                            DiagnosticSeverity::WARNING => Color::Warning,
+                            _ => Color::Info,
+                        };
+
+                        let mut element = h_flex()
+                            .id(format!("diagnostic-{}", idx))
+                            .size(line_height)
+                            .w_full()
+                            .px_2()
+                            .bg(color.color(cx).opacity(0.07))
+                            .text_color(color.color(cx))
+                            .child(
+                                Icon::new(IconName::Square)
+                                    .color(color)
+                                    .size(IconSize::Indicator),
+                            )
+                            .text_sm()
+                            .font_family(style.text.font().family)
+                            .gap_2()
+                            .child(message)
+                            .into_any();
+
+                        let start_y = content_origin.y
+                            + line_height
+                                * (diagnostic.range.start.row as f32
+                                    - scroll_pixel_position.y / line_height);
+
+                        let start_x = {
+                            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
+
+                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
+                            let line_layout = &line_layouts[line_ix];
+
+                            let line_end = if let Some(crease_trailer) = crease_trailer_layout {
+                                crease_trailer.bounds.right()
+                            } else {
+                                content_origin.x - scroll_pixel_position.x + line_layout.width
+                            };
+                            let padded_line_end =
+                                line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
+
+                            let min_column_in_pixels = ProjectSettings::get_global(cx)
+                                .git
+                                .inline_blame
+                                .and_then(|settings| settings.min_column)
+                                .map(|col| self.column_pixels(col as usize, cx))
+                                .unwrap_or(px(0.));
+                            let min_start =
+                                content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
+
+                            cmp::max(padded_line_end, min_start)
+                        };
+
+                        let absolute_offset = point(start_x, start_y);
+                        element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), cx);
+
+                        // element.prepaint_at(cx);
+                        inline_diagnostics.push(element);
+                    }
+                    // END OF THE VERY HACKY PART THAT MUST BE REFACTORED
+                    // ----------------------------------------------------------------------------------------------------------------
+
                     let mut inline_blame = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
@@ -6788,6 +6890,7 @@ impl Element for EditorElement {
                         line_numbers,
                         blamed_display_rows,
                         inline_blame,
+                        inline_diagnostics,
                         blocks,
                         cursors,
                         visible_cursors,
@@ -6980,6 +7083,7 @@ pub struct EditorLayout {
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
+    inline_diagnostics: Vec<AnyElement>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     highlighted_gutter_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

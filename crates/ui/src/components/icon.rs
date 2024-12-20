@@ -271,6 +271,7 @@ pub enum IconName {
     SparkleFilled,
     Spinner,
     Split,
+    Square,
     SquareDot,
     SquareMinus,
     SquarePlus,
