@@ -216,7 +216,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(thread.summary.clone()),
+                .child(Label::new(thread.summary.clone())),
         )
     }
 }
