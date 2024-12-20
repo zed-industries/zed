@@ -41,6 +41,10 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub lsp: HashMap<LanguageServerName, LspSettings>,
 
+    /// Configuration for Diagnostics-related features.
+    #[serde(default)]
+    pub diagnostics: DiagnosticsSettings,
+
     /// Configuration for Git-related features
     #[serde(default)]
     pub git: GitSettings,
@@ -77,6 +81,74 @@ pub enum DirenvSettings {
     /// Load direnv configuration directly using `direnv export json`
     #[default]
     Direct,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct DiagnosticsSettings {
+    /// Whether or not to include warning diagnostics
+    pub include_warnings: bool,
+
+    /// Settings for showing inline diagnostics
+    pub inline: Option<InlineDiagnosticsSettings>,
+}
+
+impl DiagnosticsSettings {
+    pub fn inline(&self) -> InlineDiagnosticsSettings {
+        self.inline.unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct InlineDiagnosticsSettings {
+    /// Whether or not to show inline diagnostics
+    ///
+    /// Default: false
+    #[serde(default = "false_value")]
+    pub enabled: bool,
+    /// Whether to only show the inline diaganostics after a delay after the
+    /// last editor event.
+    ///
+    /// Default: 0
+    pub delay_ms: Option<u64>,
+    /// The minimum column number to show the inline blame information at
+    ///
+    /// Default: 0
+    pub min_column: Option<u32>,
+    /// The behavior when hovering over an inline diagnostic tooltip.
+    ///
+    /// Default: tooltip
+    pub hover: Option<InlineDiagnosticHoverAction>,
+}
+
+impl InlineDiagnosticsSettings {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn delay(&self) -> u64 {
+        self.delay_ms.unwrap_or(0)
+    }
+
+    pub fn min_column(&self) -> u32 {
+        self.min_column.unwrap_or(0)
+    }
+
+    pub fn hover(&self) -> InlineDiagnosticHoverAction {
+        self.hover.unwrap_or(InlineDiagnosticHoverAction::Tooltip)
+    }
+}
+
+/// Hover action for inline diagnostic indicators
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineDiagnosticHoverAction {
+    /// Show a tooltip when hovering over inline diagnostic indicators.
+    #[default]
+    Tooltip,
+    /// Activate the diagnostic group when hovering.
+    Inline,
+    /// Don't react to hover events
+    None,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

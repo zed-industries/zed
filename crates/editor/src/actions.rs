@@ -365,6 +365,7 @@ gpui::actions!(
         Tab,
         TabPrev,
         ToggleAutoSignatureHelp,
+        ToggleShowDiagnosticsInline,
         ToggleGitBlame,
         ToggleGitBlameInline,
         ToggleHunkDiff,

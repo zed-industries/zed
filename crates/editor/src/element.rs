@@ -1,6 +1,7 @@
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
+    diagnostic_tooltip::DiagnosticTooltip,
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -52,7 +53,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint,
     MultiBufferRow, MultiBufferSnapshot, ToOffset,
 };
-use project::project_settings::{GitGutterSetting, ProjectSettings};
+use project::project_settings::{GitGutterSetting, InlineDiagnosticHoverAction, ProjectSettings};
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -142,6 +143,35 @@ impl SelectionLayout {
             user_name,
         }
     }
+}
+
+struct DiagnosticDisplay {
+    severity: DiagnosticSeverity,
+    group_id: usize,
+    tooltip: View<DiagnosticTooltip>,
+}
+
+impl DiagnosticDisplay {
+    pub fn new(
+        severity: DiagnosticSeverity,
+        group_id: usize,
+        tooltip: View<DiagnosticTooltip>,
+    ) -> Self {
+        Self {
+            severity,
+            group_id,
+            tooltip,
+        }
+    }
+}
+
+struct DiagnosticElement {
+    x: Pixels,
+    y: Pixels,
+    message: String,
+    severity: DiagnosticSeverity,
+    entries: Vec<DiagnosticDisplay>,
+    exceeded_max: bool,
 }
 
 pub struct EditorElement {
@@ -382,6 +412,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
         register_action(view, cx, Editor::copy_file_location);
+        register_action(view, cx, Editor::toggle_show_diagnostics_inline);
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
         register_action(view, cx, Editor::toggle_hunk_diff);
@@ -1562,6 +1593,258 @@ impl EditorElement {
 
             display_hunks
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_inline_diagnostics(
+        &self,
+        snapshot: &EditorSnapshot,
+        hitbox: &Hitbox,
+        line_layouts: &[LineWithInvisibles],
+        crease_trailers: &[Option<CreaseTrailerLayout>],
+        content_origin: gpui::Point<Pixels>,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        em_width: Pixels,
+        style: &EditorStyle,
+        cx: &mut WindowContext,
+    ) -> HashMap<DisplayRow, AnyElement> {
+        if !self
+            .editor
+            .update(cx, |editor, cx| editor.render_diagnostics_inline(cx))
+        {
+            return Default::default();
+        }
+
+        let diagnostics = self.gather_inline_diagnostics(
+            snapshot,
+            hitbox,
+            line_layouts,
+            crease_trailers,
+            content_origin,
+            scroll_pixel_position,
+            line_height,
+            em_width,
+            start_row,
+            end_row,
+            cx,
+        );
+
+        let sev_to_color = |sev: &DiagnosticSeverity| match sev {
+            &DiagnosticSeverity::ERROR => Color::Error,
+            &DiagnosticSeverity::WARNING => Color::Warning,
+            &DiagnosticSeverity::INFORMATION => Color::Info,
+            &DiagnosticSeverity::HINT => Color::Hint,
+            _ => Color::Error,
+        };
+
+        let hover_action = ProjectSettings::get_global(cx).diagnostics.inline().hover();
+
+        let mut elements = HashMap::default();
+        for (line_ix, elem) in diagnostics.into_iter() {
+            let mut boxes = h_flex().size(line_height).w_full().h_full().gap_1();
+            for (idx, disp) in elem.entries.iter().enumerate() {
+                let indicator = Icon::new(IconName::Square)
+                    .color(sev_to_color(&disp.severity))
+                    .size(IconSize::Medium);
+
+                let tooltip = disp.tooltip.clone();
+
+                let div = h_flex()
+                    .id(SharedString::from(format!(
+                        "diagnostic-entry-{}-{}",
+                        line_ix.0, idx
+                    )))
+                    .size(line_height)
+                    .h_full()
+                    .w_full()
+                    .child(indicator);
+
+                let div = if matches!(hover_action, InlineDiagnosticHoverAction::Tooltip) {
+                    div.hoverable_tooltip(move |_| tooltip.clone().into())
+                } else if matches!(hover_action, InlineDiagnosticHoverAction::Inline) {
+                    div.hover(|style| style.bg(cx.theme().colors().element_hover))
+                        .on_hover({
+                            let editor = self.editor.clone();
+                            let group_id = disp.group_id;
+                            move |hovered, cx| {
+                                editor.update(cx, |editor, cx| {
+                                    let current_group = editor
+                                        .active_diagnostics
+                                        .as_ref()
+                                        .map(|group| group.group_id);
+                                    if *hovered && Some(group_id) != current_group {
+                                        editor.activate_diagnostics(group_id, cx);
+                                    }
+                                });
+                            }
+                        })
+                } else {
+                    div
+                };
+
+                boxes = boxes.child(div);
+            }
+
+            let boxes = if elem.exceeded_max {
+                boxes.child(
+                    h_flex()
+                        .size(line_height)
+                        .h_full()
+                        .w_full()
+                        .bg(Color::Info.color(cx).opacity(0.25))
+                        .child(
+                            Icon::new(IconName::Plus)
+                                .color(Color::Info)
+                                .size(IconSize::Medium),
+                        ),
+                )
+            } else {
+                boxes
+            };
+
+            let mut element = h_flex()
+                .id(SharedString::from(format!("diagnostic-{}", line_ix.0)))
+                .h(line_height)
+                .w_full()
+                .bg(sev_to_color(&elem.severity).color(cx).opacity(0.07))
+                .text_color(sev_to_color(&elem.severity).color(cx))
+                .text_sm()
+                .font_family(style.text.font().family)
+                .child(
+                    h_flex()
+                        .h(line_height)
+                        .gap_2()
+                        .child(boxes)
+                        .child(elem.message),
+                )
+                .into_any();
+
+            element.prepaint_as_root(point(elem.x, elem.y), AvailableSpace::min_size(), cx);
+            elements.insert(line_ix, element);
+        }
+
+        elements
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn gather_inline_diagnostics(
+        &self,
+        snapshot: &EditorSnapshot,
+        hitbox: &Hitbox,
+        line_layouts: &[LineWithInvisibles],
+        crease_trailers: &[Option<CreaseTrailerLayout>],
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        em_width: Pixels,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        cx: &mut WindowContext,
+    ) -> HashMap<DisplayRow, DiagnosticElement> {
+        let mut inline_diagnostics: HashMap<DisplayRow, DiagnosticElement> = HashMap::default();
+        let buffer_snapshot = snapshot.display_snapshot.buffer_snapshot.clone();
+
+        let start_point =
+            snapshot.display_point_to_point(DisplayPoint::new(start_row, 0), Bias::Left);
+        let end_point = snapshot.display_point_to_point(DisplayPoint::new(end_row, 0), Bias::Right);
+        let diagnostics = buffer_snapshot
+            .diagnostics_in_range(start_point..end_point, false)
+            .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                diagnostic,
+                range: range.to_point(&buffer_snapshot),
+            })
+            .sorted_by_key(|diagnostic| {
+                (
+                    diagnostic.diagnostic.severity,
+                    std::cmp::Reverse(diagnostic.diagnostic.is_primary),
+                    diagnostic.range.start.row,
+                    diagnostic.range.start.column,
+                )
+            });
+
+        let max_entries = 5; // ToDo: Configuration
+        for diagnostic in diagnostics {
+            let diag_point = MultiBufferPoint::new(diagnostic.range.start.row, 0);
+            let display_point = snapshot.point_to_display_point(diag_point, Bias::Right);
+
+            if !(start_row..end_row).contains(&display_point.row()) {
+                continue;
+            }
+            let line_ix = DisplayRow(display_point.row().minus(start_row));
+
+            if let Some(ref mut elem) = inline_diagnostics.get_mut(&line_ix) {
+                if elem.entries.len() >= max_entries {
+                    elem.exceeded_max = true;
+                    continue;
+                }
+
+                let entry = DiagnosticDisplay::new(
+                    diagnostic.diagnostic.severity,
+                    diagnostic.diagnostic.group_id,
+                    cx.new_view(|cx| {
+                        DiagnosticTooltip::new(diagnostic, hitbox, line_height, em_width, cx)
+                    }),
+                );
+                elem.entries.push(entry);
+                continue;
+            }
+
+            let start_y = content_origin.y
+                + line_height
+                    * (display_point.row().0 as f32 - scroll_pixel_position.y / line_height);
+
+            let start_x = {
+                const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
+
+                let crease_trailer_layout = crease_trailers[line_ix.0 as usize].as_ref();
+                let line_layout = &line_layouts[line_ix.0 as usize];
+
+                let line_end = if let Some(crease_trailer) = crease_trailer_layout {
+                    crease_trailer.bounds.right()
+                } else {
+                    content_origin.x - scroll_pixel_position.x + line_layout.width
+                };
+                let padded_line_end = line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
+
+                let min_column = ProjectSettings::get_global(cx)
+                    .diagnostics
+                    .inline()
+                    .min_column();
+                let min_column_in_pixels = self.column_pixels(min_column as usize, cx);
+                let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
+
+                cmp::max(padded_line_end, min_start)
+            };
+
+            let entry = DiagnosticDisplay::new(
+                diagnostic.diagnostic.severity,
+                diagnostic.diagnostic.group_id,
+                cx.new_view(|cx| {
+                    DiagnosticTooltip::new(diagnostic.clone(), hitbox, line_height, em_width, cx)
+                }),
+            );
+            let elem = DiagnosticElement {
+                x: start_x,
+                y: start_y,
+                message: diagnostic
+                    .diagnostic
+                    .message
+                    .split('\n')
+                    .take(1)
+                    .collect::<Vec<_>>()[0]
+                    .to_string(),
+                severity: diagnostic.diagnostic.severity,
+                entries: vec![entry],
+                exceeded_max: false,
+            };
+
+            inline_diagnostics.insert(line_ix, elem);
+        }
+
+        inline_diagnostics
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4899,8 +5182,8 @@ impl EditorElement {
     }
 
     fn paint_inline_diagnostics(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
-        for mut inline_diagnostic in layout.inline_diagnostics.drain(..) {
-            inline_diagnostic.paint(cx);
+        for mut inline_diagnostic in layout.inline_diagnostics.drain() {
+            inline_diagnostic.1.paint(cx);
         }
     }
 
@@ -6448,119 +6731,42 @@ impl Element for EditorElement {
                         )
                     });
 
-                    // ----------------------------------------------------------------------------------------------------------------
-                    // THIS PART IS JUST WAS JUST THE MOST QUICK AND DIRTY WAY TO TEST THE DESIGN, THIS IS NOT HOW YOU SHOULD DO IT
-                    // A few things that come to mind:
-                    //  - do the rendering similiar to what inline blame is doing; this here is not performant (it even crashes sometimes)
-                    //  - this must somehow work together with inline (i think not showing the inline blame if we also have a diagnostic
-                    //    in the same line would be a good idea ??)
-                    //  - we must aggreate multiple inline diagnostics in the same line; we should dig into neovims implementation to see how they do it
-                    //  - I think in the V1 we can just use the Color::Error, Color::Warning, Color::Info for the diagnostics and not introduce new colors in the theme
-                    //  - it would be nice to also have a modal that shows the full diagnostic message and all aggregated diagnostics for the line
-                    //      - this is very similiar to the inline blame part
-                    //      - neovim does this as well, we could create keybindings to open/close the modal
-                    //      - I think we should not include this in the first version, since this will be a community PR and we should try to keep the scope small
-                    //        and do a follow up PR if we can agree on the design
-                    let mut inline_diagnostics = vec![];
-                    let mut seen_lines: HashSet<usize> = Default::default();
-                    let buffer_snapshot = snapshot.display_snapshot.buffer_snapshot.clone();
-                    let max_point = buffer_snapshot.max_point();
-                    let diagnostics = buffer_snapshot
-                        .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
-                        .sorted_by_key(|diagnostic| {
-                            std::cmp::Reverse(diagnostic.diagnostic.severity)
-                        });
-
-                    for (idx, diagnostic) in diagnostics.enumerate() {
-                        let line_ix = diagnostic.range.start.row as usize;
-                        if seen_lines.contains(&line_ix) {
-                            continue;
-                        }
-                        seen_lines.insert(line_ix);
-
-                        let message = diagnostic.diagnostic.message.replace("\n", " ");
-                        let color = match diagnostic.diagnostic.severity {
-                            DiagnosticSeverity::ERROR => Color::Error,
-                            DiagnosticSeverity::WARNING => Color::Warning,
-                            _ => Color::Info,
-                        };
-
-                        let mut element = h_flex()
-                            .id(format!("diagnostic-{}", idx))
-                            .size(line_height)
-                            .w_full()
-                            .px_2()
-                            .bg(color.color(cx).opacity(0.07))
-                            .text_color(color.color(cx))
-                            .child(
-                                Icon::new(IconName::Square)
-                                    .color(color)
-                                    .size(IconSize::Indicator),
-                            )
-                            .text_sm()
-                            .font_family(style.text.font().family)
-                            .gap_2()
-                            .child(message)
-                            .into_any();
-
-                        let start_y = content_origin.y
-                            + line_height
-                                * (diagnostic.range.start.row as f32
-                                    - scroll_pixel_position.y / line_height);
-
-                        let start_x = {
-                            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
-
-                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
-                            let line_layout = &line_layouts[line_ix];
-
-                            let line_end = if let Some(crease_trailer) = crease_trailer_layout {
-                                crease_trailer.bounds.right()
-                            } else {
-                                content_origin.x - scroll_pixel_position.x + line_layout.width
-                            };
-                            let padded_line_end =
-                                line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
-
-                            let min_column_in_pixels = ProjectSettings::get_global(cx)
-                                .git
-                                .inline_blame
-                                .and_then(|settings| settings.min_column)
-                                .map(|col| self.column_pixels(col as usize, cx))
-                                .unwrap_or(px(0.));
-                            let min_start =
-                                content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
-
-                            cmp::max(padded_line_end, min_start)
-                        };
-
-                        let absolute_offset = point(start_x, start_y);
-                        element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), cx);
-
-                        // element.prepaint_at(cx);
-                        inline_diagnostics.push(element);
-                    }
-                    // END OF THE VERY HACKY PART THAT MUST BE REFACTORED
-                    // ----------------------------------------------------------------------------------------------------------------
+                    let inline_diagnostics = self.layout_inline_diagnostics(
+                        &snapshot,
+                        &hitbox,
+                        &line_layouts[..],
+                        &crease_trailers[..],
+                        content_origin,
+                        start_row,
+                        end_row,
+                        scroll_pixel_position,
+                        line_height,
+                        em_width,
+                        &style,
+                        cx,
+                    );
 
                     let mut inline_blame = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
                         if (start_row..end_row).contains(&display_row) {
-                            let line_ix = display_row.minus(start_row) as usize;
-                            let line_layout = &line_layouts[line_ix];
-                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
-                            inline_blame = self.layout_inline_blame(
-                                display_row,
-                                &snapshot.display_snapshot,
-                                line_layout,
-                                crease_trailer_layout,
-                                em_width,
-                                content_origin,
-                                scroll_pixel_position,
-                                line_height,
-                                cx,
-                            );
+                            let line_ix = display_row.minus(start_row);
+                            if !inline_diagnostics.contains_key(&DisplayRow(line_ix)) {
+                                let line_ix = line_ix as usize;
+                                let line_layout = &line_layouts[line_ix];
+                                let crease_trailer_layout = crease_trailers[line_ix].as_ref();
+                                inline_blame = self.layout_inline_blame(
+                                    display_row,
+                                    &snapshot.display_snapshot,
+                                    line_layout,
+                                    crease_trailer_layout,
+                                    em_width,
+                                    content_origin,
+                                    scroll_pixel_position,
+                                    line_height,
+                                    cx,
+                                );
+                            }
                         }
                     }
 
@@ -7081,9 +7287,9 @@ pub struct EditorLayout {
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Arc<HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
+    inline_diagnostics: HashMap<DisplayRow, AnyElement>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
-    inline_diagnostics: Vec<AnyElement>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     highlighted_gutter_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

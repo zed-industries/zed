@@ -17,6 +17,7 @@ mod blame_entry_tooltip;
 mod blink_manager;
 mod clangd_ext;
 mod code_context_menus;
+mod diagnostic_tooltip;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -670,6 +671,9 @@ pub struct Editor {
     use_autoclose: bool,
     use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
+    show_diagnostics_inline: bool,
+    show_diagnostics_inline_enabled: bool,
+    show_diagnostics_inline_delay_task: Option<Task<()>>,
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
@@ -1315,6 +1319,12 @@ impl Editor {
             show_inline_completions_override: None,
             enable_inline_completions: true,
             custom_context_menu: None,
+            show_diagnostics_inline: false,
+            show_diagnostics_inline_enabled: ProjectSettings::get_global(cx)
+                .diagnostics
+                .inline()
+                .enabled,
+            show_diagnostics_inline_delay_task: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
             show_selection_menu: None,
@@ -1365,6 +1375,10 @@ impl Editor {
         if mode == EditorMode::Full {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
+
+            if this.show_diagnostics_inline_enabled {
+                this.start_show_diagnostics_inline(cx);
+            }
 
             if this.git_blame_inline_enabled {
                 this.git_blame_inline_enabled = true;
@@ -4363,6 +4377,47 @@ impl Editor {
             })
         }));
         None
+    }
+
+    pub fn render_diagnostics_inline(&mut self, cx: &mut WindowContext) -> bool {
+        self.show_diagnostics_inline && self.focus_handle.is_focused(cx)
+    }
+
+    pub fn toggle_show_diagnostics_inline(
+        &mut self,
+        _: &ToggleShowDiagnosticsInline,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.show_diagnostics_inline_enabled {
+            self.show_diagnostics_inline = false;
+            self.show_diagnostics_inline_enabled = false;
+            self.show_diagnostics_inline_delay_task.take();
+        } else {
+            self.show_diagnostics_inline = true;
+            self.show_diagnostics_inline_enabled = true;
+        }
+
+        cx.notify();
+    }
+
+    fn start_show_diagnostics_inline(&mut self, cx: &mut ViewContext<Self>) {
+        let delay = ProjectSettings::get_global(cx).diagnostics.inline().delay();
+        if delay > 0 {
+            self.show_diagnostics_inline = false;
+            self.show_diagnostics_inline_delay_task = Some(cx.spawn(|this, mut cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(delay))
+                    .await;
+
+                this.update(&mut cx, |this, cx| {
+                    this.show_diagnostics_inline = true;
+                    cx.notify();
+                })
+                .log_err();
+            }));
+        } else {
+            self.show_diagnostics_inline = true;
+        }
     }
 
     fn start_inline_blame_timer(&mut self, cx: &mut ViewContext<Self>) {
@@ -12304,6 +12359,9 @@ impl Editor {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
+                if self.show_diagnostics_inline_enabled {
+                    self.start_show_diagnostics_inline(cx);
+                }
                 self.refresh_code_actions(cx);
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(cx);

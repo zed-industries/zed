@@ -4948,12 +4948,6 @@ impl From<&'static str> for ElementId {
     }
 }
 
-impl From<String> for ElementId {
-    fn from(name: String) -> Self {
-        ElementId::Name(name.into())
-    }
-}
-
 impl<'a> From<&'a FocusHandle> for ElementId {
     fn from(handle: &'a FocusHandle) -> Self {
         ElementId::FocusHandle(handle.id)

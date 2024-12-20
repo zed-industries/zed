@@ -1150,6 +1150,108 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
+## Diagnostics
+
+- Descrition: Configuration for diagnostics-related features.
+- Setting: `diagnostics`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "include_warnings": true,
+    "inline": {
+      "enabled": false
+    }
+  }
+}
+```
+
+### Inline Diagnostics
+
+- Description: Whether or not to show diagnostics information inline.
+- Setting: `inline`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": false,
+      "delay_ms": 0,
+      "min_column": 0,
+      "hover": "tooltip"
+    }
+  }
+}
+```
+
+**Options**
+
+1. Enable inline diagnostics:
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true
+    }
+  }
+}
+```
+
+2. Only show inline diagnostics after a delay (that starts after the last editor event):
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "delay_ms": 250
+    }
+  }
+}
+```
+
+3. Use this as the minimum column at which to display inline diagnostics:
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "min_column": 80
+    }
+  }
+}
+```
+
+4. Activate the diagnostic group instead of showing a tooltip when hovering over inline diagnostic indicators.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "hover": "inline"
+    }
+  }
+}
+```
+
+5. Do not react to hover events on the inline diagnostic indicators.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "hover": "inline"
+    }
+  }
+}
+```
+
 ## Git
 
 - Description: Configuration for git-related features.

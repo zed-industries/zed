@@ -711,7 +711,19 @@
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show warnings or not by default.
-    "include_warnings": true
+    "include_warnings": true,
+    // Settings for inline diagnostics
+    "inline": {
+      // Wether to show diagnostics inline or not
+      "enabled": false
+      // The delay in milliseconds to show inline diagnostics after the
+      // last buffer update.
+      // "delay_ms": 0,
+      // The minimum column to show inline diagnostic information.
+      // "min_column": 0
+      // Which action to take when hovering inline diagnostic indicators
+      // "hover": "tooltip",
+    }
   },
   // Add files or globs of files that will be excluded by Zed entirely:
   // they will be skipped during FS scan(s), file tree and file search
