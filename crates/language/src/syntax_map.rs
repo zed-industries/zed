@@ -1118,9 +1118,7 @@ impl<'a> SyntaxMapMatches<'a> {
     }
 
     pub fn advance(&mut self) -> bool {
-        let layer = if let Some(layer) = self.layers.first_mut() {
-            layer
-        } else {
+        let Some(layer) = self.layers.first_mut() else {
             return false;
         };
 
@@ -1138,6 +1136,23 @@ impl<'a> SyntaxMapMatches<'a> {
         }
 
         true
+    }
+    pub fn set_byte_range(&mut self, range: Range<usize>) {
+        // for layer in &mut self.layers {
+        //     layer.matches.set_byte_range(range.clone());
+        //     if let Some(capture) = &layer.next {
+        //         if capture.node.end_byte() > range.start {
+        //             continue;
+        //         }
+        //     }
+        //     layer.advance();
+        // }
+        // self.layers.sort_unstable_by_key(|layer| layer.sort_key());
+        // self.active_layer_count = self
+        //     .layers
+        //     .iter()
+        //     .position(|layer| layer.next_capture.is_none())
+        //     .unwrap_or(self.layers.len());
     }
 }
 
