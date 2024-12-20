@@ -1411,6 +1411,32 @@ impl BlockSnapshot {
         })
     }
 
+    pub fn top_excerpt(&self, top_row: u32) -> Option<(u32, &ExcerptInfo)> {
+        let mut cursor = self.transforms.cursor::<BlockRow>(&());
+        cursor.seek(&BlockRow(top_row), Bias::Left, &());
+
+        cursor.next(&());
+
+        while let Some(transform) = cursor.item() {
+            match &transform.block {
+                Some(Block::FoldedBuffer { .. }) => return None,
+                Some(Block::ExcerptBoundary {
+                    prev_excerpt: Some(prev),
+                    ..
+                }) => return Some((cursor.end(&()).0, prev)),
+                Some(Block::ExcerptBoundary {
+                    prev_excerpt: None, ..
+                })
+                | Some(Block::Custom { .. })
+                | None => {}
+            }
+
+            cursor.next(&());
+        }
+
+        None
+    }
+
     pub fn block_for_id(&self, block_id: BlockId) -> Option<Block> {
         let buffer = self.wrap_snapshot.buffer_snapshot();
         let wrap_point = match block_id {

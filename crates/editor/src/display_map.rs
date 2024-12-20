@@ -51,8 +51,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptInfo, MultiBuffer, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use serde::Deserialize;
 use std::{
@@ -1103,6 +1103,12 @@ impl DisplaySnapshot {
         self.block_snapshot
             .blocks_in_range(rows.start.0..rows.end.0)
             .map(|(row, block)| (DisplayRow(row), block))
+    }
+
+    pub fn top_excerpt(&self, row: DisplayRow) -> Option<(DisplayRow, &ExcerptInfo)> {
+        self.block_snapshot
+            .top_excerpt(row.0)
+            .map(|(row, info)| (DisplayRow(row), info))
     }
 
     pub fn block_for_id(&self, id: BlockId) -> Option<Block> {
