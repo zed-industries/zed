@@ -3,17 +3,21 @@ use std::{
     ops::{Deref, Range},
     str::Chars,
     sync::OnceLock,
+    time::Instant,
 };
 
 use anyhow::{anyhow, Result};
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
-    Editor, ToPoint,
+    display_map::ToDisplayPoint,
+    Bias, Editor, ToPoint,
 };
 use gpui::{actions, impl_actions, Action, AppContext, Global, ViewContext};
 use language::Point;
 use multi_buffer::MultiBufferRow;
+use regex::Regex;
+use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
 use ui::WindowContext;
 use util::ResultExt;
@@ -57,7 +61,10 @@ pub struct WithCount {
 struct WrappedAction(Box<dyn Action>);
 
 actions!(vim, [VisualCommand, CountCommand]);
-impl_actions!(vim, [GoToLine, YankCommand, WithRange, WithCount]);
+impl_actions!(
+    vim,
+    [GoToLine, YankCommand, WithRange, WithCount, OnMatchingLines]
+);
 
 impl<'de> Deserialize<'de> for WrappedAction {
     fn deserialize<D>(_: D) -> Result<Self, D::Error>
@@ -204,6 +211,10 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             });
         });
     });
+
+    Vim::action(editor, cx, |vim, action: &OnMatchingLines, cx| {
+        action.run(vim, cx)
+    })
 }
 
 #[derive(Default)]
@@ -786,6 +797,31 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
         } else {
             None
         }
+    } else if query.starts_with('g') || query.starts_with('v') {
+        let mut global = "global".chars().peekable();
+        let mut query = query.chars().peekable();
+        let mut invert = false;
+        if query.peek() == Some(&'v') {
+            invert = true;
+            query.next();
+        }
+        while global.peek().is_some_and(|char| Some(char) == query.peek()) {
+            global.next();
+            query.next();
+        }
+        if !invert && query.peek() == Some(&'!') {
+            invert = true;
+            query.next();
+        }
+        let range = range.clone().unwrap_or(CommandRange {
+            start: Position::Line { row: 0, offset: 0 },
+            end: Some(Position::LastLine { offset: 0 }),
+        });
+        if let Some(action) = OnMatchingLines::parse(query, invert, range, cx) {
+            Some(action.boxed_clone())
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -837,6 +873,193 @@ fn generate_positions(string: &str, query: &str) -> Vec<usize> {
     }
 
     positions
+}
+
+#[derive(Debug, PartialEq, Deserialize, Clone)]
+pub(crate) struct OnMatchingLines {
+    range: CommandRange,
+    search: String,
+    action: WrappedAction,
+    invert: bool,
+}
+
+impl OnMatchingLines {
+    // convert a vim query into something more usable by zed.
+    // we don't attempt to fully convert between the two regex syntaxes,
+    // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
+    // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
+    pub(crate) fn parse(
+        mut chars: Peekable<Chars>,
+        invert: bool,
+        range: CommandRange,
+        cx: &AppContext,
+    ) -> Option<Self> {
+        let delimiter = chars.next().filter(|c| {
+            !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'' && *c != '!'
+        })?;
+
+        let mut search = String::new();
+        let mut escaped = false;
+
+        while let Some(c) = chars.next() {
+            if escaped {
+                escaped = false;
+                // unescape escaped parens
+                if c != '(' && c != ')' && c != delimiter {
+                    search.push('\\')
+                }
+                search.push(c)
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == delimiter {
+                break;
+            } else {
+                // escape unescaped parens
+                if c == '(' || c == ')' {
+                    search.push('\\')
+                }
+                search.push(c)
+            }
+        }
+
+        let command: String = chars.collect();
+
+        let action = WrappedAction(command_interceptor(&command, cx)?.action);
+
+        Some(Self {
+            range,
+            search,
+            invert,
+            action,
+        })
+    }
+
+    pub fn run(&self, vim: &mut Vim, cx: &mut ViewContext<Vim>) {
+        let result = vim.update_editor(cx, |vim, editor, cx| {
+            self.range.buffer_range(vim, editor, cx)
+        });
+
+        let range = match result {
+            None => return,
+            Some(e @ Err(_)) => {
+                let Some(workspace) = vim.workspace(cx) else {
+                    return;
+                };
+                workspace.update(cx, |workspace, cx| {
+                    e.notify_err(workspace, cx);
+                });
+                return;
+            }
+            Some(Ok(result)) => result,
+        };
+
+        let mut action = self.action.boxed_clone();
+        let mut last_pattern = self.search.clone();
+
+        let mut regexes = match Regex::new(&self.search) {
+            Ok(regex) => vec![(regex, !self.invert)],
+            e @ Err(_) => {
+                let Some(workspace) = vim.workspace(cx) else {
+                    return;
+                };
+                workspace.update(cx, |workspace, cx| {
+                    e.notify_err(workspace, cx);
+                });
+                return;
+            }
+        };
+        while let Some(inner) = action
+            .boxed_clone()
+            .as_any()
+            .downcast_ref::<OnMatchingLines>()
+        {
+            let Some(regex) = Regex::new(&inner.search).ok() else {
+                break;
+            };
+            last_pattern = inner.search.clone();
+            action = inner.action.boxed_clone();
+            regexes.push((regex, !inner.invert))
+        }
+
+        if let Some(pane) = vim.pane(cx) {
+            pane.update(cx, |pane, cx| {
+                if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
+                {
+                    search_bar.update(cx, |search_bar, cx| {
+                        if search_bar.show(cx) {
+                            let _ = search_bar.search(
+                                &last_pattern,
+                                Some(SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE),
+                                cx,
+                            );
+                        }
+                    });
+                }
+            });
+        };
+
+        vim.update_editor(cx, |_, editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let mut row = range.start.0;
+
+            let point_range = Point::new(range.start.0, 0)
+                ..snapshot
+                    .buffer_snapshot
+                    .clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
+            cx.spawn(|editor, mut cx| async move {
+                let new_selections = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let mut line = String::new();
+                        let mut new_selections = Vec::new();
+                        let chunks = snapshot
+                            .buffer_snapshot
+                            .text_for_range(point_range)
+                            .chain(["\n"]);
+
+                        for chunk in chunks {
+                            for (newline_ix, text) in chunk.split('\n').enumerate() {
+                                if newline_ix > 0 {
+                                    if regexes.iter().all(|(regex, should_match)| {
+                                        regex.is_match(&line) == *should_match
+                                    }) {
+                                        new_selections
+                                            .push(Point::new(row, 0).to_display_point(&snapshot))
+                                    }
+                                    row += 1;
+                                    line.clear();
+                                }
+                                line.push_str(text)
+                            }
+                        }
+
+                        new_selections
+                    })
+                    .await;
+
+                if new_selections.is_empty() {
+                    return;
+                }
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        editor.start_transaction_at(Instant::now(), cx);
+                        editor.change_selections(None, cx, |s| {
+                            s.replace_cursors_with(|_| new_selections);
+                        });
+                        cx.dispatch_action(action);
+                        cx.defer(move |editor, cx| {
+                            let newest = editor.selections.newest::<Point>(cx).clone();
+                            editor.change_selections(None, cx, |s| {
+                                s.select(vec![newest]);
+                            });
+                            editor.end_transaction_at(Instant::now(), cx);
+                        })
+                    })
+                    .ok();
+            })
+            .detach();
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1108,5 +1331,47 @@ mod test {
         cx.workspace(|workspace, cx| {
             assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_command_matching_lines(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇa
+            b
+            a
+            b
+            a
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(":").await;
+        cx.simulate_shared_keystrokes("g / a / d").await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            b
+            b
+            ˇ"});
+
+        cx.simulate_shared_keystrokes("u").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇa
+            b
+            a
+            b
+            a
+        "});
+
+        cx.simulate_shared_keystrokes(":").await;
+        cx.simulate_shared_keystrokes("v / a / d").await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            a
+            a
+            ˇa"});
     }
 }

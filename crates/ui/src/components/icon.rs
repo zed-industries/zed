@@ -303,6 +303,7 @@ pub enum IconName {
     X,
     XCircle,
     ZedAssistant,
+    ZedAssistant2,
     ZedAssistantFilled,
     ZedPredict,
     ZedXCopilot,
