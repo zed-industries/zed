@@ -2223,6 +2223,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "button": true,
     "default_width": 240,
     "dock": "left",
+    "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_icons": true,
     "git_status": true,
@@ -2261,6 +2262,30 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ```json
 {
   "dock": "right"
+}
+```
+
+### Entry Spacing
+
+- Description: Spacing between worktree entries
+- Setting: `entry_spacing`
+- Default: `comfortable`
+
+**Options**
+
+1. Comfortable entry spacing
+
+```json
+{
+  "entry_spacing": "comfortable"
+}
+```
+
+2. Compact entry spacing
+
+```json
+{
+  "entry_spacing": "compact"
 }
 ```
 
