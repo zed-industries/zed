@@ -995,7 +995,12 @@ impl Workspace {
                     this.update(&mut cx, |this, cx| {
                         if let Some(display) = cx.display() {
                             if let Ok(display_uuid) = display.uuid() {
-                                let window_bounds = cx.window_bounds();
+                                let window_bounds = cx.inner_window_bounds();
+                                println!(
+                                    "saving window bounds with width: {}, height: {}",
+                                    window_bounds.get_bounds().size.width.0,
+                                    window_bounds.get_bounds().size.height.0
+                                );
                                 if let Some(database_id) = workspace_id {
                                     cx.background_executor()
                                         .spawn(DB.set_window_open_status(

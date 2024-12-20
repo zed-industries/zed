@@ -118,6 +118,10 @@ impl PlatformWindow for TestWindow {
         WindowBounds::Windowed(self.bounds())
     }
 
+    fn inner_window_bounds(&self) -> WindowBounds {
+        self.window_bounds()
+    }
+
     fn is_maximized(&self) -> bool {
         false
     }
