@@ -3742,7 +3742,7 @@ impl Editor {
 
                     if editor.focus_handle.is_focused(cx) && menu.is_some() {
                         let mut menu = menu.unwrap();
-                        menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
+                        menu.resolve_visible_completions(editor.completion_provider.as_deref(), cx);
 
                         if editor.show_inline_completions_in_menu(cx) {
                             if let Some(hint) = editor.inline_completion_menu_hint(cx) {
