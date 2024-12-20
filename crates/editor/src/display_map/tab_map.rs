@@ -2,7 +2,7 @@ use super::{
     fold_map::{self, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
     Highlights,
 };
-use language::{Chunk, Point};
+use language::{Chunk, ChunkKind, Point};
 use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
@@ -265,7 +265,7 @@ impl TabSnapshot {
             tab_size: self.tab_size,
             chunk: Chunk {
                 text: &SPACES[0..(to_next_stop as usize)],
-                is_tab: true,
+                kind: ChunkKind::Tab,
                 ..Default::default()
             },
             inside_leading_tab: to_next_stop > 0,
@@ -522,7 +522,7 @@ impl<'a> TabChunks<'a> {
         self.max_output_position = range.end.0;
         self.chunk = Chunk {
             text: &SPACES[0..(to_next_stop as usize)],
-            is_tab: true,
+            kind: ChunkKind::Tab,
             ..Default::default()
         };
         self.inside_leading_tab = to_next_stop > 0;
@@ -574,7 +574,7 @@ impl<'a> Iterator for TabChunks<'a> {
                         self.output_position = next_output_position;
                         return Some(Chunk {
                             text: &SPACES[..len as usize],
-                            is_tab: true,
+                            kind: ChunkKind::Tab,
                             ..self.chunk.clone()
                         });
                     }
@@ -718,11 +718,11 @@ mod tests {
             let mut text = String::new();
             for chunk in snapshot.chunks(start..snapshot.max_point(), false, Highlights::default())
             {
-                if chunk.is_tab != was_tab {
+                if chunk.kind.is_tab() != was_tab {
                     if !text.is_empty() {
                         chunks.push((mem::take(&mut text), was_tab));
                     }
-                    was_tab = chunk.is_tab;
+                    was_tab = chunk.kind.is_tab();
                 }
                 text.push_str(chunk.text);
             }
