@@ -94,6 +94,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
+      # To support writing comments that they will certainly be revisited.
+      - name: Check for todo​! and FIX​ME comments
+        run: script/check-todos
+
       - name: Run style checks
         uses: ./.github/actions/check_style
 

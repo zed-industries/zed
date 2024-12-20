@@ -386,7 +386,7 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             indicator: None,
             kernel_name: kernel_name.clone(),
             kernel_language: kernel_language.clone(),
-            // todo!(): Technically not shutdown, but indeterminate
+            // TODO: Technically not shutdown, but indeterminate
             status: KernelStatus::Shutdown,
             // current_delta: Duration::default(),
         }
