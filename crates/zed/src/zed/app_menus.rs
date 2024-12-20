@@ -38,8 +38,11 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Extensions", zed_actions::Extensions),
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
+                #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Zed", super::Hide),
+                #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Others", super::HideOthers),
+                #[cfg(target_os = "macos")]
                 MenuItem::action("Show All", super::ShowAll),
                 MenuItem::action("Quit", Quit),
             ],

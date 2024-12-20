@@ -325,7 +325,9 @@ impl CompletionsMenu {
             }
         }
         .into();
-        self.selected_item = 0;
+        if self.selected_item != 0 && self.selected_item + 1 < self.entries.len() {
+            self.selected_item += 1;
+        }
     }
 
     pub fn resolve_selected_completion(
@@ -575,7 +577,7 @@ impl CompletionsMenu {
             }
             CompletionEntry::InlineCompletionHint(hint) => match &hint.text {
                 InlineCompletionText::Edit { text, highlights } => div()
-                    .my_1()
+                    .mx_1()
                     .rounded(px(6.))
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
@@ -594,7 +596,7 @@ impl CompletionsMenu {
                     multiline_docs
                         .id("multiline_docs")
                         .max_h(max_height)
-                        .px_0p5()
+                        .px_2()
                         .min_w(px(260.))
                         .max_w(MAX_COMPLETIONS_ASIDE_WIDTH)
                         .overflow_y_scroll()

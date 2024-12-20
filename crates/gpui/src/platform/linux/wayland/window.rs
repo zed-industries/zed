@@ -1,8 +1,10 @@
-use std::cell::{Ref, RefCell, RefMut};
-use std::ffi::c_void;
-use std::ptr::NonNull;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    ffi::c_void,
+    ptr::NonNull,
+    rc::Rc,
+    sync::Arc,
+};
 
 use blade_graphics as gpu;
 use collections::HashMap;
@@ -19,10 +21,11 @@ use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
-use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
-use crate::platform::linux::wayland::display::WaylandDisplay;
-use crate::platform::linux::wayland::serial::SerialKind;
-use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
+use crate::platform::{
+    blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
+    linux::wayland::{display::WaylandDisplay, serial::SerialKind},
+    PlatformAtlas, PlatformInputHandler, PlatformWindow,
+};
 use crate::scene::Scene;
 use crate::{
     px, size, AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
@@ -123,37 +126,28 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
+        gpu_context: &BladeContext,
         options: WindowParams,
     ) -> anyhow::Result<Self> {
-        let raw = RawWindow {
-            window: surface.id().as_ptr().cast::<c_void>(),
-            display: surface
-                .backend()
-                .upgrade()
-                .unwrap()
-                .display_ptr()
-                .cast::<c_void>(),
-        };
-        let gpu = Arc::new(
-            unsafe {
-                gpu::Context::init_windowed(
-                    &raw,
-                    gpu::ContextDesc {
-                        validation: false,
-                        capture: false,
-                        overlay: false,
-                    },
-                )
-            }
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
-        );
-        let config = BladeSurfaceConfig {
-            size: gpu::Extent {
-                width: options.bounds.size.width.0 as u32,
-                height: options.bounds.size.height.0 as u32,
-                depth: 1,
-            },
-            transparent: true,
+        let renderer = {
+            let raw_window = RawWindow {
+                window: surface.id().as_ptr().cast::<c_void>(),
+                display: surface
+                    .backend()
+                    .upgrade()
+                    .unwrap()
+                    .display_ptr()
+                    .cast::<c_void>(),
+            };
+            let config = BladeSurfaceConfig {
+                size: gpu::Extent {
+                    width: options.bounds.size.width.0 as u32,
+                    height: options.bounds.size.height.0 as u32,
+                    depth: 1,
+                },
+                transparent: true,
+            };
+            BladeRenderer::new(gpu_context, &raw_window, config)?
         };
 
         Ok(Self {
@@ -168,7 +162,7 @@ impl WaylandWindowState {
             globals,
             outputs: HashMap::default(),
             display: None,
-            renderer: BladeRenderer::new(gpu, config),
+            renderer,
             bounds: options.bounds,
             scale: 1.0,
             input_handler: None,
@@ -266,6 +260,7 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
+        gpu_context: &BladeContext,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
@@ -308,6 +303,7 @@ impl WaylandWindow {
                 viewport,
                 client,
                 globals,
+                gpu_context,
                 params,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),

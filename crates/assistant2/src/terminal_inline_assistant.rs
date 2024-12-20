@@ -1,38 +1,29 @@
 use crate::context::attach_context_to_message;
-use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
-use crate::context_strip::ContextStrip;
-use crate::inline_prompt_editor::{CodegenStatus, PromptEditorEvent, PromptMode};
+use crate::inline_prompt_editor::{
+    CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
+};
 use crate::prompts::PromptBuilder;
+use crate::terminal_codegen::{CodegenEvent, TerminalCodegen, CLEAR_INPUT};
 use crate::thread_store::ThreadStore;
-use crate::ToggleContextPicker;
-use crate::{assistant_settings::AssistantSettings, inline_prompt_editor::render_cancel_button};
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
-use editor::{
-    actions::{MoveDown, MoveUp, SelectAll},
-    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
-};
+use editor::{actions::SelectAll, MultiBuffer};
 use fs::Fs;
-use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
-    AppContext, Context, EventEmitter, FocusHandle, FocusableView, Global, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, View, WeakModel, WeakView,
+    AppContext, Context, FocusableView, Global, Model, Subscription, UpdateGlobal, View, WeakModel,
+    WeakView,
 };
 use language::Buffer;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use language_models::report_assistant_event;
-use settings::{update_settings_file, Settings};
-use std::{cmp, sync::Arc, time::Instant};
+use std::sync::Arc;
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
-use terminal::Terminal;
 use terminal_view::TerminalView;
-use theme::ThemeSettings;
-use ui::{prelude::*, text_for_action, IconButtonShape, PopoverMenuHandle, Tooltip};
+use ui::prelude::*;
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -47,17 +38,6 @@ pub fn init(
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
-
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
-struct TerminalInlineAssistId(usize);
-
-impl TerminalInlineAssistId {
-    fn post_inc(&mut self) -> TerminalInlineAssistId {
-        let id = *self;
-        self.0 += 1;
-        id
-    }
-}
 
 pub struct TerminalInlineAssistant {
     next_assist_id: TerminalInlineAssistId,
@@ -99,10 +79,10 @@ impl TerminalInlineAssistant {
             MultiBuffer::singleton(cx.new_model(|cx| Buffer::local(String::new(), cx)), cx)
         });
         let context_store = cx.new_model(|_cx| ContextStore::new());
-        let codegen = cx.new_model(|_| Codegen::new(terminal, self.telemetry.clone()));
+        let codegen = cx.new_model(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new_view(|cx| {
-            PromptEditor::new(
+            PromptEditor::new_terminal(
                 assist_id,
                 self.prompt_history.clone(),
                 prompt_buffer.clone(),
@@ -151,11 +131,11 @@ impl TerminalInlineAssistant {
 
     fn handle_prompt_editor_event(
         &mut self,
-        prompt_editor: View<PromptEditor>,
+        prompt_editor: View<PromptEditor<TerminalCodegen>>,
         event: &PromptEditorEvent,
         cx: &mut WindowContext,
     ) {
-        let assist_id = prompt_editor.read(cx).id;
+        let assist_id = prompt_editor.read(cx).id();
         match event {
             PromptEditorEvent::StartRequested => {
                 self.start_assist(assist_id, cx);
@@ -381,8 +361,8 @@ impl TerminalInlineAssistant {
 
 struct TerminalInlineAssist {
     terminal: WeakView<TerminalView>,
-    prompt_editor: Option<View<PromptEditor>>,
-    codegen: Model<Codegen>,
+    prompt_editor: Option<View<PromptEditor<TerminalCodegen>>>,
+    codegen: Model<TerminalCodegen>,
     workspace: WeakView<Workspace>,
     context_store: Model<ContextStore>,
     _subscriptions: Vec<Subscription>,
@@ -392,12 +372,12 @@ impl TerminalInlineAssist {
     pub fn new(
         assist_id: TerminalInlineAssistId,
         terminal: &View<TerminalView>,
-        prompt_editor: View<PromptEditor>,
+        prompt_editor: View<PromptEditor<TerminalCodegen>>,
         workspace: WeakView<Workspace>,
         context_store: Model<ContextStore>,
         cx: &mut WindowContext,
     ) -> Self {
-        let codegen = prompt_editor.read(cx).codegen.clone();
+        let codegen = prompt_editor.read(cx).codegen().clone();
         Self {
             terminal: terminal.downgrade(),
             prompt_editor: Some(prompt_editor.clone()),
@@ -445,559 +425,6 @@ impl TerminalInlineAssist {
                     })
                 }),
             ],
-        }
-    }
-}
-
-struct PromptEditor {
-    id: TerminalInlineAssistId,
-    height_in_lines: u8,
-    editor: View<Editor>,
-    context_strip: View<ContextStrip>,
-    context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    language_model_selector: View<LanguageModelSelector>,
-    edited_since_done: bool,
-    prompt_history: VecDeque<String>,
-    prompt_history_ix: Option<usize>,
-    pending_prompt: String,
-    codegen: Model<Codegen>,
-    _codegen_subscription: Subscription,
-    editor_subscriptions: Vec<Subscription>,
-}
-
-impl EventEmitter<PromptEditorEvent> for PromptEditor {}
-
-impl Render for PromptEditor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut buttons = Vec::new();
-
-        buttons.extend(render_cancel_button(
-            (&self.codegen.read(cx).status).into(),
-            self.edited_since_done,
-            PromptMode::Generate {
-                supports_execute: true,
-            },
-            cx,
-        ));
-
-        v_flex()
-            .border_y_1()
-            .border_color(cx.theme().status().info_border)
-            .py_2()
-            .size_full()
-            .child(
-                h_flex()
-                    .key_context("PromptEditor")
-                    .bg(cx.theme().colors().editor_background)
-                    .on_action(cx.listener(Self::toggle_context_picker))
-                    .on_action(cx.listener(Self::confirm))
-                    .on_action(cx.listener(Self::secondary_confirm))
-                    .on_action(cx.listener(Self::cancel))
-                    .on_action(cx.listener(Self::move_up))
-                    .on_action(cx.listener(Self::move_down))
-                    .child(
-                        h_flex()
-                            .w_12()
-                            .justify_center()
-                            .gap_2()
-                            .child(LanguageModelSelectorPopoverMenu::new(
-                                self.language_model_selector.clone(),
-                                IconButton::new("context", IconName::SettingsAlt)
-                                    .shape(IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .tooltip(move |cx| {
-                                        Tooltip::with_meta(
-                                            format!(
-                                                "Using {}",
-                                                LanguageModelRegistry::read_global(cx)
-                                                    .active_model()
-                                                    .map(|model| model.name().0)
-                                                    .unwrap_or_else(|| "No model selected".into()),
-                                            ),
-                                            None,
-                                            "Change Model",
-                                            cx,
-                                        )
-                                    }),
-                            ))
-                            .children(
-                                if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
-                                    let error_message = SharedString::from(error.to_string());
-                                    Some(
-                                        div()
-                                            .id("error")
-                                            .tooltip(move |cx| {
-                                                Tooltip::text(error_message.clone(), cx)
-                                            })
-                                            .child(
-                                                Icon::new(IconName::XCircle)
-                                                    .size(IconSize::Small)
-                                                    .color(Color::Error),
-                                            ),
-                                    )
-                                } else {
-                                    None
-                                },
-                            ),
-                    )
-                    .child(div().flex_1().child(self.render_prompt_editor(cx)))
-                    .child(h_flex().gap_1().pr_4().children(buttons)),
-            )
-            .child(h_flex().child(self.context_strip.clone()))
-    }
-}
-
-impl FocusableView for PromptEditor {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.editor.focus_handle(cx)
-    }
-}
-
-impl PromptEditor {
-    const MAX_LINES: u8 = 8;
-
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        id: TerminalInlineAssistId,
-        prompt_history: VecDeque<String>,
-        prompt_buffer: Model<MultiBuffer>,
-        codegen: Model<Codegen>,
-        fs: Arc<dyn Fs>,
-        context_store: Model<ContextStore>,
-        workspace: WeakView<Workspace>,
-        thread_store: Option<WeakModel<ThreadStore>>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        let prompt_editor = cx.new_view(|cx| {
-            let mut editor = Editor::new(
-                EditorMode::AutoHeight {
-                    max_lines: Self::MAX_LINES as usize,
-                },
-                prompt_buffer,
-                None,
-                false,
-                cx,
-            );
-            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(cx), cx);
-            editor
-        });
-        let context_picker_menu_handle = PopoverMenuHandle::default();
-
-        let mut this = Self {
-            id,
-            height_in_lines: 1,
-            editor: prompt_editor.clone(),
-            context_strip: cx.new_view(|cx| {
-                ContextStrip::new(
-                    context_store,
-                    workspace.clone(),
-                    thread_store.clone(),
-                    prompt_editor.focus_handle(cx),
-                    context_picker_menu_handle.clone(),
-                    cx,
-                )
-            }),
-            context_picker_menu_handle,
-            language_model_selector: cx.new_view(|cx| {
-                let fs = fs.clone();
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    },
-                    cx,
-                )
-            }),
-            edited_since_done: false,
-            prompt_history,
-            prompt_history_ix: None,
-            pending_prompt: String::new(),
-            _codegen_subscription: cx.observe(&codegen, Self::handle_codegen_changed),
-            editor_subscriptions: Vec::new(),
-            codegen,
-        };
-        this.count_lines(cx);
-        this.subscribe_to_editor(cx);
-        this
-    }
-
-    fn placeholder_text(cx: &WindowContext) -> String {
-        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
-            .map(|keybinding| format!(" • {keybinding} for context"))
-            .unwrap_or_default();
-
-        format!("Generate…{context_keybinding} ↓↑ for history")
-    }
-
-    fn subscribe_to_editor(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor_subscriptions.clear();
-        self.editor_subscriptions
-            .push(cx.observe(&self.editor, Self::handle_prompt_editor_changed));
-        self.editor_subscriptions
-            .push(cx.subscribe(&self.editor, Self::handle_prompt_editor_events));
-    }
-
-    fn prompt(&self, cx: &AppContext) -> String {
-        self.editor.read(cx).text(cx)
-    }
-
-    fn count_lines(&mut self, cx: &mut ViewContext<Self>) {
-        let height_in_lines = cmp::max(
-            2, // Make the editor at least two lines tall, to account for padding and buttons.
-            cmp::min(
-                self.editor
-                    .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1),
-                Self::MAX_LINES as u32,
-            ),
-        ) as u8;
-
-        if height_in_lines != self.height_in_lines {
-            self.height_in_lines = height_in_lines;
-            cx.emit(PromptEditorEvent::Resized { height_in_lines });
-        }
-    }
-
-    fn handle_prompt_editor_changed(&mut self, _: View<Editor>, cx: &mut ViewContext<Self>) {
-        self.count_lines(cx);
-    }
-
-    fn handle_prompt_editor_events(
-        &mut self,
-        _: View<Editor>,
-        event: &EditorEvent,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            EditorEvent::Edited { .. } => {
-                let prompt = self.editor.read(cx).text(cx);
-                if self
-                    .prompt_history_ix
-                    .map_or(true, |ix| self.prompt_history[ix] != prompt)
-                {
-                    self.prompt_history_ix.take();
-                    self.pending_prompt = prompt;
-                }
-
-                self.edited_since_done = true;
-                cx.notify();
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
-        match &self.codegen.read(cx).status {
-            CodegenStatus::Idle => {
-                self.editor
-                    .update(cx, |editor, _| editor.set_read_only(false));
-            }
-            CodegenStatus::Pending => {
-                self.editor
-                    .update(cx, |editor, _| editor.set_read_only(true));
-            }
-            CodegenStatus::Done | CodegenStatus::Error(_) => {
-                self.edited_since_done = false;
-                self.editor
-                    .update(cx, |editor, _| editor.set_read_only(false));
-            }
-        }
-    }
-
-    fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
-        self.context_picker_menu_handle.toggle(cx);
-    }
-
-    fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
-        match &self.codegen.read(cx).status {
-            CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
-                cx.emit(PromptEditorEvent::CancelRequested);
-            }
-            CodegenStatus::Pending => {
-                cx.emit(PromptEditorEvent::StopRequested);
-            }
-        }
-    }
-
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        match &self.codegen.read(cx).status {
-            CodegenStatus::Idle => {
-                if !self.editor.read(cx).text(cx).trim().is_empty() {
-                    cx.emit(PromptEditorEvent::StartRequested);
-                }
-            }
-            CodegenStatus::Pending => {
-                cx.emit(PromptEditorEvent::DismissRequested);
-            }
-            CodegenStatus::Done => {
-                if self.edited_since_done {
-                    cx.emit(PromptEditorEvent::StartRequested);
-                } else {
-                    cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
-                }
-            }
-            CodegenStatus::Error(_) => {
-                cx.emit(PromptEditorEvent::StartRequested);
-            }
-        }
-    }
-
-    fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
-        if matches!(self.codegen.read(cx).status, CodegenStatus::Done) {
-            cx.emit(PromptEditorEvent::ConfirmRequested { execute: true });
-        }
-    }
-
-    fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
-        if let Some(ix) = self.prompt_history_ix {
-            if ix > 0 {
-                self.prompt_history_ix = Some(ix - 1);
-                let prompt = self.prompt_history[ix - 1].as_str();
-                self.editor.update(cx, |editor, cx| {
-                    editor.set_text(prompt, cx);
-                    editor.move_to_beginning(&Default::default(), cx);
-                });
-            }
-        } else if !self.prompt_history.is_empty() {
-            self.prompt_history_ix = Some(self.prompt_history.len() - 1);
-            let prompt = self.prompt_history[self.prompt_history.len() - 1].as_str();
-            self.editor.update(cx, |editor, cx| {
-                editor.set_text(prompt, cx);
-                editor.move_to_beginning(&Default::default(), cx);
-            });
-        }
-    }
-
-    fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
-        if let Some(ix) = self.prompt_history_ix {
-            if ix < self.prompt_history.len() - 1 {
-                self.prompt_history_ix = Some(ix + 1);
-                let prompt = self.prompt_history[ix + 1].as_str();
-                self.editor.update(cx, |editor, cx| {
-                    editor.set_text(prompt, cx);
-                    editor.move_to_end(&Default::default(), cx)
-                });
-            } else {
-                self.prompt_history_ix = None;
-                let prompt = self.pending_prompt.as_str();
-                self.editor.update(cx, |editor, cx| {
-                    editor.set_text(prompt, cx);
-                    editor.move_to_end(&Default::default(), cx)
-                });
-            }
-        }
-    }
-
-    fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: if self.editor.read(cx).read_only(cx) {
-                cx.theme().colors().text_disabled
-            } else {
-                cx.theme().colors().text
-            },
-            font_family: settings.buffer_font.family.clone(),
-            font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_size: settings.buffer_font_size.into(),
-            font_weight: settings.buffer_font.weight,
-            line_height: relative(settings.buffer_line_height.value()),
-            ..Default::default()
-        };
-        EditorElement::new(
-            &self.editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-}
-
-#[derive(Debug)]
-pub enum CodegenEvent {
-    Finished,
-}
-
-impl EventEmitter<CodegenEvent> for Codegen {}
-
-const CLEAR_INPUT: &str = "\x15";
-const CARRIAGE_RETURN: &str = "\x0d";
-
-struct TerminalTransaction {
-    terminal: Model<Terminal>,
-}
-
-impl TerminalTransaction {
-    pub fn start(terminal: Model<Terminal>) -> Self {
-        Self { terminal }
-    }
-
-    pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
-        // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
-        let input = Self::sanitize_input(hunk);
-        self.terminal
-            .update(cx, |terminal, _| terminal.input(input));
-    }
-
-    pub fn undo(&self, cx: &mut AppContext) {
-        self.terminal
-            .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
-    }
-
-    pub fn complete(&self, cx: &mut AppContext) {
-        self.terminal.update(cx, |terminal, _| {
-            terminal.input(CARRIAGE_RETURN.to_string())
-        });
-    }
-
-    fn sanitize_input(input: String) -> String {
-        input.replace(['\r', '\n'], "")
-    }
-}
-
-pub struct Codegen {
-    status: CodegenStatus,
-    telemetry: Option<Arc<Telemetry>>,
-    terminal: Model<Terminal>,
-    generation: Task<()>,
-    message_id: Option<String>,
-    transaction: Option<TerminalTransaction>,
-}
-
-impl Codegen {
-    pub fn new(terminal: Model<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
-        Self {
-            terminal,
-            telemetry,
-            status: CodegenStatus::Idle,
-            generation: Task::ready(()),
-            message_id: None,
-            transaction: None,
-        }
-    }
-
-    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
-            return;
-        };
-
-        let model_api_key = model.api_key(cx);
-        let http_client = cx.http_client();
-        let telemetry = self.telemetry.clone();
-        self.status = CodegenStatus::Pending;
-        self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
-        self.generation = cx.spawn(|this, mut cx| async move {
-            let model_telemetry_id = model.telemetry_id();
-            let model_provider_id = model.provider_id();
-            let response = model.stream_completion_text(prompt, &cx).await;
-            let generate = async {
-                let message_id = response
-                    .as_ref()
-                    .ok()
-                    .and_then(|response| response.message_id.clone());
-
-                let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
-
-                let task = cx.background_executor().spawn({
-                    let message_id = message_id.clone();
-                    let executor = cx.background_executor().clone();
-                    async move {
-                        let mut response_latency = None;
-                        let request_start = Instant::now();
-                        let task = async {
-                            let mut chunks = response?.stream;
-                            while let Some(chunk) = chunks.next().await {
-                                if response_latency.is_none() {
-                                    response_latency = Some(request_start.elapsed());
-                                }
-                                let chunk = chunk?;
-                                hunks_tx.send(chunk).await?;
-                            }
-
-                            anyhow::Ok(())
-                        };
-
-                        let result = task.await;
-
-                        let error_message = result.as_ref().err().map(|error| error.to_string());
-                        report_assistant_event(
-                            AssistantEvent {
-                                conversation_id: None,
-                                kind: AssistantKind::InlineTerminal,
-                                message_id,
-                                phase: AssistantPhase::Response,
-                                model: model_telemetry_id,
-                                model_provider: model_provider_id.to_string(),
-                                response_latency,
-                                error_message,
-                                language_name: None,
-                            },
-                            telemetry,
-                            http_client,
-                            model_api_key,
-                            &executor,
-                        );
-
-                        result?;
-                        anyhow::Ok(())
-                    }
-                });
-
-                this.update(&mut cx, |this, _| {
-                    this.message_id = message_id;
-                })?;
-
-                while let Some(hunk) = hunks_rx.next().await {
-                    this.update(&mut cx, |this, cx| {
-                        if let Some(transaction) = &mut this.transaction {
-                            transaction.push(hunk, cx);
-                            cx.notify();
-                        }
-                    })?;
-                }
-
-                task.await?;
-                anyhow::Ok(())
-            };
-
-            let result = generate.await;
-
-            this.update(&mut cx, |this, cx| {
-                if let Err(error) = result {
-                    this.status = CodegenStatus::Error(error);
-                } else {
-                    this.status = CodegenStatus::Done;
-                }
-                cx.emit(CodegenEvent::Finished);
-                cx.notify();
-            })
-            .ok();
-        });
-        cx.notify();
-    }
-
-    pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
-        self.status = CodegenStatus::Done;
-        self.generation = Task::ready(());
-        cx.emit(CodegenEvent::Finished);
-        cx.notify();
-    }
-
-    pub fn complete(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(transaction) = self.transaction.take() {
-            transaction.complete(cx);
-        }
-    }
-
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(transaction) = self.transaction.take() {
-            transaction.undo(cx);
         }
     }
 }

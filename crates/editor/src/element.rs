@@ -1032,6 +1032,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         em_width: Pixels,
+        em_advance: Pixels,
         autoscroll_containing_element: bool,
         cx: &mut WindowContext,
     ) -> Vec<CursorLayout> {
@@ -1058,7 +1059,7 @@ impl EditorElement {
                     let mut block_width =
                         cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
                     if block_width == Pixels::ZERO {
-                        block_width = em_width;
+                        block_width = em_advance;
                     }
                     let block_text = if let CursorShape::Block = selection.cursor_shape {
                         snapshot
@@ -6246,6 +6247,7 @@ impl Element for EditorElement {
                         scroll_pixel_position,
                         line_height,
                         em_width,
+                        em_advance,
                         autoscroll_containing_element,
                         cx,
                     );
@@ -7023,7 +7025,16 @@ impl CursorLayout {
             let name_origin = if cursor_name.is_top_row {
                 point(bounds.right() - px(1.), bounds.top())
             } else {
-                point(bounds.left(), bounds.top() - text_size / 2. - px(1.))
+                match self.shape {
+                    CursorShape::Bar => point(
+                        bounds.right() - px(2.),
+                        bounds.top() - text_size / 2. - px(1.),
+                    ),
+                    _ => point(
+                        bounds.right() - px(1.),
+                        bounds.top() - text_size / 2. - px(1.),
+                    ),
+                }
             };
             let mut name_element = div()
                 .bg(self.color)

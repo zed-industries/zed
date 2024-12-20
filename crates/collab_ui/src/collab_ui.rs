@@ -14,7 +14,7 @@ use gpui::{
 };
 use panel_settings::MessageEditorSettings;
 pub use panel_settings::{
-    ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
+    ChatPanelButton, ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
 };
 use release_channel::ReleaseChannel;
 use settings::Settings;

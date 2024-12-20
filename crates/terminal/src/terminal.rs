@@ -1183,10 +1183,10 @@ impl Terminal {
         }
 
         let motion: Option<ViMotion> = match key.as_str() {
-            "h" => Some(ViMotion::Left),
-            "j" => Some(ViMotion::Down),
-            "k" => Some(ViMotion::Up),
-            "l" => Some(ViMotion::Right),
+            "h" | "left" => Some(ViMotion::Left),
+            "j" | "down" => Some(ViMotion::Down),
+            "k" | "up" => Some(ViMotion::Up),
+            "l" | "right" => Some(ViMotion::Right),
             "w" => Some(ViMotion::WordRight),
             "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
             "e" => Some(ViMotion::WordRightEnd),

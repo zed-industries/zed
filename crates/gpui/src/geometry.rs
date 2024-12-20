@@ -815,14 +815,8 @@ where
         Bounds { origin, size }
     }
 
-    /// Constructs a `Bounds` from a corner point and size.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use zed::{Bounds, Corner, Point};
-    /// todo!
-    /// ```
+    /// Constructs a `Bounds` from a corner point and size. The specified corner will be placed at
+    /// the specified origin.
     pub fn from_corner_and_size(corner: Corner, origin: Point<T>, size: Size<T>) -> Bounds<T> {
         let origin = match corner {
             Corner::TopLeft => origin,

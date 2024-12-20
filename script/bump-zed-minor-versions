@@ -28,6 +28,7 @@ minor_branch_name="v${major}.${minor}.x"
 prev_minor_branch_name="v${major}.${prev_minor}.x"
 next_minor_branch_name="v${major}.${next_minor}.x"
 preview_tag_name="v${major}.${minor}.${patch}-pre"
+bump_main_branch_name="set-minor-version-to-${major}.${next_minor}"
 
 git fetch origin ${prev_minor_branch_name}:${prev_minor_branch_name}
 git fetch origin --tags
@@ -83,29 +84,39 @@ git tag ${preview_tag_name}
 echo "Preparing main for version ${next_minor_branch_name}..."
 git checkout -q main
 git clean -q -dff
-old_main_sha=$(git rev-parse HEAD)
+git checkout -q -b ${bump_main_branch_name}
 cargo set-version --package zed --bump minor
 cargo check -q
-git commit -q --all --message "${next_minor_branch_name} dev"
+message="${next_minor_branch_name} dev
+
+Release Notes:
+
+- N/A"
+git commit -q --all --message "$message"
+
+git checkout -q main
 
 cat <<MESSAGE
-Prepared new Zed versions locally.
+Prepared new Zed versions locally. You will need to push the branches and open a PR for the change to main.
 
-To push this:
+# To push and open a PR to update main:
 
     git push origin \\
       ${preview_tag_name} \\
       ${stable_tag_name} \\
       ${minor_branch_name} \\
       ${prev_minor_branch_name} \\
-      main
+      ${bump_main_branch_name}
 
-To undo this:
+    gh pr create --base main --head ${bump_main_branch_name}
 
-    git reset --hard ${old_main_sha} && git push -f . \\
+# To undo this push:
+
+    git push -f . \\
       :${preview_tag_name} \\
       :${stable_tag_name} \\
       :${minor_branch_name} \\
+      :${bump_main_branch_name} \\
       ${old_prev_minor_sha}:${prev_minor_branch_name}
 
 MESSAGE
