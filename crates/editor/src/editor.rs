@@ -4427,10 +4427,12 @@ impl Editor {
                                 buffer_id,
                                 excerpt_id,
                                 text_anchor: start,
+                                diff_base_anchor: None,
                             }..Anchor {
                                 buffer_id,
                                 excerpt_id,
                                 text_anchor: end,
+                                diff_base_anchor: None,
                             };
                             if highlight.kind == lsp::DocumentHighlightKind::WRITE {
                                 write_ranges.push(range);

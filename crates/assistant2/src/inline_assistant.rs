@@ -303,11 +303,13 @@ impl InlineAssistant {
                 buffer_id: Some(buffer.remote_id()),
                 excerpt_id,
                 text_anchor: buffer.anchor_before(buffer_range.start),
+                diff_base_anchor: None,
             };
             let end = Anchor {
                 buffer_id: Some(buffer.remote_id()),
                 excerpt_id,
                 text_anchor: buffer.anchor_after(buffer_range.end),
+                diff_base_anchor: None,
             };
             codegen_ranges.push(start..end);
 

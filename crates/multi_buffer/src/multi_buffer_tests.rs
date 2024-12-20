@@ -2144,121 +2144,6 @@ fn test_excerpts_in_ranges_range_ends_at_excerpt_end(cx: &mut AppContext) {
     validate_excerpts(&excerpts, &expected_excerpts);
 }
 
-#[gpui::test]
-fn test_split_ranges(cx: &mut AppContext) {
-    let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
-    let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
-    let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
-    multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.push_excerpts(
-            buffer_1.clone(),
-            [ExcerptRange {
-                context: 0..buffer_1.read(cx).len(),
-                primary: None,
-            }],
-            cx,
-        );
-        multibuffer.push_excerpts(
-            buffer_2.clone(),
-            [ExcerptRange {
-                context: 0..buffer_2.read(cx).len(),
-                primary: None,
-            }],
-            cx,
-        );
-    });
-
-    let snapshot = multibuffer.read(cx).snapshot(cx);
-
-    let buffer_1_len = buffer_1.read(cx).len();
-    let buffer_2_len = buffer_2.read(cx).len();
-    let buffer_1_midpoint = buffer_1_len / 2;
-    let buffer_2_start = buffer_1_len + '\n'.len_utf8();
-    let buffer_2_midpoint = buffer_2_start + buffer_2_len / 2;
-    let total_len = buffer_2_start + buffer_2_len;
-
-    let input_ranges = [
-        0..buffer_1_midpoint,
-        buffer_1_midpoint..buffer_2_midpoint,
-        buffer_2_midpoint..total_len,
-    ]
-    .map(|range| snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end));
-
-    let actual_ranges = snapshot
-        .split_ranges(input_ranges.into_iter())
-        .map(|range| range.to_offset(&snapshot))
-        .collect::<Vec<_>>();
-
-    let expected_ranges = vec![
-        0..buffer_1_midpoint,
-        buffer_1_midpoint..buffer_1_len,
-        buffer_2_start..buffer_2_midpoint,
-        buffer_2_midpoint..total_len,
-    ];
-
-    assert_eq!(actual_ranges, expected_ranges);
-}
-
-#[gpui::test]
-fn test_split_ranges_single_range_spanning_three_excerpts(cx: &mut AppContext) {
-    let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
-    let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
-    let buffer_3 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'm'), cx));
-    let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
-    multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.push_excerpts(
-            buffer_1.clone(),
-            [ExcerptRange {
-                context: 0..buffer_1.read(cx).len(),
-                primary: None,
-            }],
-            cx,
-        );
-        multibuffer.push_excerpts(
-            buffer_2.clone(),
-            [ExcerptRange {
-                context: 0..buffer_2.read(cx).len(),
-                primary: None,
-            }],
-            cx,
-        );
-        multibuffer.push_excerpts(
-            buffer_3.clone(),
-            [ExcerptRange {
-                context: 0..buffer_3.read(cx).len(),
-                primary: None,
-            }],
-            cx,
-        );
-    });
-
-    let snapshot = multibuffer.read(cx).snapshot(cx);
-
-    let buffer_1_len = buffer_1.read(cx).len();
-    let buffer_2_len = buffer_2.read(cx).len();
-    let buffer_3_len = buffer_3.read(cx).len();
-    let buffer_2_start = buffer_1_len + '\n'.len_utf8();
-    let buffer_3_start = buffer_2_start + buffer_2_len + '\n'.len_utf8();
-    let buffer_1_midpoint = buffer_1_len / 2;
-    let buffer_3_midpoint = buffer_3_start + buffer_3_len / 2;
-
-    let input_range =
-        snapshot.anchor_before(buffer_1_midpoint)..snapshot.anchor_after(buffer_3_midpoint);
-
-    let actual_ranges = snapshot
-        .split_ranges(std::iter::once(input_range))
-        .map(|range| range.to_offset(&snapshot))
-        .collect::<Vec<_>>();
-
-    let expected_ranges = vec![
-        buffer_1_midpoint..buffer_1_len,
-        buffer_2_start..buffer_2_start + buffer_2_len,
-        buffer_3_start..buffer_3_midpoint,
-    ];
-
-    assert_eq!(actual_ranges, expected_ranges);
-}
-
 #[track_caller]
 fn assert_new_snapshot(
     multibuffer: &Model<MultiBuffer>,
@@ -2366,11 +2251,22 @@ fn assert_point_translation(snapshot: &MultiBufferSnapshot) {
     let text = Rope::from(snapshot.text());
     for ix in 0..=text.len() {
         let point = text.offset_to_point(ix);
-        // assert_eq!(snapshot.offset_to_point(ix), point, "offset_to_point({ix})");
+        let anchor = snapshot.anchor_after(ix);
+        assert_eq!(snapshot.offset_to_point(ix), point, "offset_to_point({ix})");
         assert_eq!(
             snapshot.point_to_offset(point),
             ix,
             "point_to_offset({point:?})"
+        );
+        assert_eq!(
+            snapshot.summary_for_anchor::<usize>(&anchor),
+            ix,
+            "summary_for_anchor({anchor:?}). text:\n{text}"
+        );
+        assert_eq!(
+            snapshot.summary_for_anchor::<Point>(&anchor),
+            point,
+            "summary_for_anchor({anchor:?}). text:\n{text}"
         );
     }
 }

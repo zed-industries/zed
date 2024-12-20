@@ -530,6 +530,7 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
         excerpt_id,
         text_anchor: language::proto::deserialize_anchor(anchor.anchor?)?,
         buffer_id: buffer.buffer_id_for_excerpt(excerpt_id),
+        diff_base_anchor: None,
     })
 }
 
