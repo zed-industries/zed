@@ -321,6 +321,10 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
         "Fake Completion Provider"
     }
 
+    fn show_completions_in_menu() -> bool {
+        false
+    }
+
     fn is_enabled(
         &self,
         _buffer: &gpui::Model<language::Buffer>,

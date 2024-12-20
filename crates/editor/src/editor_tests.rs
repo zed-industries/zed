@@ -14367,7 +14367,7 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
 fn test_inline_completion_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    // Test case 1: Simple insertion
+    // Simple insertion
     {
         let window = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_simple("Hello, world!", cx);
@@ -14383,7 +14383,7 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
                 let edits = vec![(edit_range, " beautiful".to_string())];
 
                 let InlineCompletionText::Edit { text, highlights } =
-                    inline_completion_edit_text(&snapshot, &edits, cx)
+                    inline_completion_edit_text(&snapshot, &edits, false, cx)
                 else {
                     panic!("Failed to generate inline completion text");
                 };
@@ -14399,7 +14399,7 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
             .unwrap();
     }
 
-    // Test case 2: Replacement
+    // Replacement
     {
         let window = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_simple("This is a test.", cx);
@@ -14417,7 +14417,7 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
                 )];
 
                 let InlineCompletionText::Edit { text, highlights } =
-                    inline_completion_edit_text(&snapshot, &edits, cx)
+                    inline_completion_edit_text(&snapshot, &edits, false, cx)
                 else {
                     panic!("Failed to generate inline completion text");
                 };
@@ -14433,7 +14433,7 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
             .unwrap();
     }
 
-    // Test case 3: Multiple edits
+    // Multiple edits
     {
         let window = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_simple("Hello, world!", cx);
@@ -14458,7 +14458,7 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
                 ];
 
                 let InlineCompletionText::Edit { text, highlights } =
-                    inline_completion_edit_text(&snapshot, &edits, cx)
+                    inline_completion_edit_text(&snapshot, &edits, false, cx)
                 else {
                     panic!("Failed to generate inline completion text");
                 };
@@ -14479,7 +14479,7 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
             .unwrap();
     }
 
-    // Test case 4: Multiple lines with edits
+    // Multiple lines with edits
     {
         let window = cx.add_window(|cx| {
             let buffer =
@@ -14510,7 +14510,7 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
                 ];
 
                 let InlineCompletionText::Edit { text, highlights } =
-                    inline_completion_edit_text(&snapshot, &edits, cx)
+                    inline_completion_edit_text(&snapshot, &edits, false, cx)
                 else {
                     panic!("Failed to generate inline completion text");
                 };
@@ -14527,6 +14527,75 @@ fn test_inline_completion_text(cx: &mut TestAppContext) {
                         Some(cx.theme().status().created_background)
                     );
                 }
+            })
+            .unwrap();
+    }
+}
+
+#[gpui::test]
+fn test_inline_completion_text_with_deletions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Deletion
+    {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 5))
+                    ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 11));
+                let edits = vec![(edit_range, "".to_string())];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, true, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "Hello, world!");
+                assert_eq!(highlights.len(), 1);
+                assert_eq!(highlights[0].0, 5..11);
+                assert_eq!(
+                    highlights[0].1.background_color,
+                    Some(cx.theme().status().deleted_background)
+                );
+            })
+            .unwrap();
+    }
+
+    // Insertion
+    {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 6))
+                    ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
+                let edits = vec![(edit_range, " digital".to_string())];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, true, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "Hello, digital world!");
+                assert_eq!(highlights.len(), 1);
+                assert_eq!(highlights[0].0, 6..14);
+                assert_eq!(
+                    highlights[0].1.background_color,
+                    Some(cx.theme().status().created_background)
+                );
             })
             .unwrap();
     }

@@ -19,7 +19,7 @@ use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{
     AppEvent, AssistantEvent, CallEvent, EditEvent, Event, EventRequestBody, EventWrapper,
-    InlineCompletionEvent, InlineCompletionRating, InlineCompletionRatingEvent, SettingEvent,
+    InlineCompletionEvent,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -349,24 +349,6 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_inline_completion_rating_event(
-        self: &Arc<Self>,
-        rating: InlineCompletionRating,
-        input_events: Arc<str>,
-        input_excerpt: Arc<str>,
-        output_excerpt: Arc<str>,
-        feedback: String,
-    ) {
-        let event = Event::InlineCompletionRating(InlineCompletionRatingEvent {
-            rating,
-            input_events,
-            input_excerpt,
-            output_excerpt,
-            feedback,
-        });
-        self.report_event(event);
-    }
-
     pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
         self.report_event(Event::Assistant(event));
     }
@@ -392,15 +374,6 @@ impl Telemetry {
         self.report_event(event.clone());
 
         event
-    }
-
-    pub fn report_setting_event(self: &Arc<Self>, setting: &'static str, value: String) {
-        let event = Event::Setting(SettingEvent {
-            setting: setting.to_string(),
-            value,
-        });
-
-        self.report_event(event)
     }
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
