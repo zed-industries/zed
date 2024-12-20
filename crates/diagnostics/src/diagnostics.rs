@@ -41,6 +41,7 @@ use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::ResultExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    searchable::SearchableItemHandle,
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
@@ -808,6 +809,10 @@ impl Item for ProjectDiagnosticsEditor {
         } else {
             None
         }
+    }
+
+    fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
     }
 
     fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {

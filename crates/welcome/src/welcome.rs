@@ -307,15 +307,10 @@ impl Render for WelcomePage {
                                         "welcome page: toggle diagnostic telemetry".to_string(),
                                     );
                                     this.update_settings::<TelemetrySettings>(selection, cx, {
-                                        let telemetry = this.telemetry.clone();
-
                                         move |settings, value| {
                                             settings.diagnostics = Some(value);
 
-                                            telemetry.report_setting_event(
-                                                "diagnostic telemetry",
-                                                value.to_string(),
-                                            );
+                                            telemetry::event!("Settings Changed", setting = "diagnostic telemetry", value);
                                         }
                                     });
                                 }),
@@ -333,15 +328,9 @@ impl Render for WelcomePage {
                                         "welcome page: toggle metric telemetry".to_string(),
                                     );
                                     this.update_settings::<TelemetrySettings>(selection, cx, {
-                                        let telemetry = this.telemetry.clone();
-
                                         move |settings, value| {
                                             settings.metrics = Some(value);
-
-                                            telemetry.report_setting_event(
-                                                "metric telemetry",
-                                                value.to_string(),
-                                            );
+                                            telemetry::event!("Settings Changed", setting = "metric telemetry", value);
                                         }
                                     });
                                 }),

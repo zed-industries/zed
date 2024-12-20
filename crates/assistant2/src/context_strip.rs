@@ -4,7 +4,7 @@ use gpui::{FocusHandle, Model, View, WeakModel, WeakView};
 use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
-use crate::context_picker::ContextPicker;
+use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
@@ -33,6 +33,7 @@ impl ContextStrip {
                     workspace.clone(),
                     thread_store.clone(),
                     context_store.downgrade(),
+                    ConfirmBehavior::KeepOpen,
                     cx,
                 )
             }),

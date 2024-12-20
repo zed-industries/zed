@@ -385,6 +385,15 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
+    async fn check_if_version_installed(
+        &self,
+        _version: &(dyn 'static + Send + Any),
+        _container_dir: &PathBuf,
+        _delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        None
+    }
+
     async fn fetch_server_binary(
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
@@ -516,14 +525,23 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .fetch_latest_server_version(delegate.as_ref())
         .await?;
 
-    log::info!("downloading language server {:?}", name.0);
-    delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
-    let binary = adapter
-        .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
-        .await;
+    if let Some(binary) = adapter
+        .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
+        .await
+    {
+        log::info!("language server {:?} is already installed", name.0);
+        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        Ok(binary)
+    } else {
+        log::info!("downloading language server {:?}", name.0);
+        delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
+        let binary = adapter
+            .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+            .await;
 
-    delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
-    binary
+        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        binary
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
