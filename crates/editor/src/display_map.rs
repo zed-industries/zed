@@ -20,7 +20,6 @@
 mod block_map;
 mod crease_map;
 mod custom_highlights;
-mod diff_map;
 mod fold_map;
 mod inlay_map;
 pub(crate) mod invisibles;
@@ -37,13 +36,10 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-use diff_map::{DiffMap, DiffMapSnapshot, DiffOffset, DiffPoint};
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
-use git::diff::DiffHunkStatus;
 use gpui::{
-    AnyElement, AppContext, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels,
-    UnderlineStyle,
+    AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
 pub(crate) use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
@@ -55,10 +51,9 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
+    RowInfo, ToOffset, ToPoint,
 };
-use project::buffer_store::BufferChangeSet;
 use serde::Deserialize;
 use std::{
     any::TypeId,
@@ -71,7 +66,7 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
-use text::{BufferId, LineIndent};
+use text::LineIndent;
 use ui::{px, SharedString, WindowContext};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -80,12 +75,6 @@ use wrap_map::{WrapMap, WrapSnapshot};
 pub enum FoldStatus {
     Folded,
     Foldable,
-}
-
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct RowInfo {
-    pub buffer_row: Option<u32>,
-    pub diff_status: Option<DiffHunkStatus>,
 }
 
 pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
@@ -107,8 +96,6 @@ pub struct DisplayMap {
     buffer_subscription: BufferSubscription,
     /// Decides where the [`Inlay`]s should be displayed.
     inlay_map: InlayMap,
-    /// Decides where diff hunks should be.
-    diff_map: Model<DiffMap>,
     /// Decides where the fold indicators should be and tracks parts of a source file that are currently folded.
     fold_map: FoldMap,
     /// Keeps track of hard tabs in a buffer.
@@ -147,8 +134,7 @@ impl DisplayMap {
         let tab_size = Self::tab_size(&buffer, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let crease_map = CreaseMap::new(&buffer_snapshot);
-        let (diff_map, snapshot) = DiffMap::new(buffer.clone(), cx);
-        let (inlay_map, snapshot) = InlayMap::new(snapshot);
+        let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
@@ -167,7 +153,6 @@ impl DisplayMap {
             buffer_subscription,
             fold_map,
             inlay_map,
-            diff_map,
             tab_map,
             wrap_map,
             block_map,
@@ -183,10 +168,7 @@ impl DisplayMap {
     pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> DisplaySnapshot {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
-        let (diff_snapshot, edits) = self.diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(buffer_snapshot.clone(), edits, cx)
-        });
-        let (inlay_snapshot, edits) = self.inlay_map.sync(diff_snapshot, edits);
+        let (inlay_snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (fold_snapshot, edits) = self.fold_map.read(inlay_snapshot.clone(), edits);
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (tab_snapshot, edits) = self.tab_map.sync(fold_snapshot.clone(), edits, tab_size);
@@ -235,10 +217,7 @@ impl DisplayMap {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(buffer_snapshot.clone(), edits, cx)
-        });
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot.clone(), edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
@@ -311,9 +290,6 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self
-            .diff_map
-            .update(cx, |diff_map, cx| diff_map.sync(snapshot, edits, cx));
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -343,9 +319,6 @@ impl DisplayMap {
             .collect::<Vec<_>>();
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self
-            .diff_map
-            .update(cx, |diff_map, cx| diff_map.sync(snapshot, edits, cx));
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -368,9 +341,6 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self
-            .diff_map
-            .update(cx, |diff_map, cx| diff_map.sync(snapshot, edits, cx));
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -385,9 +355,6 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self
-            .diff_map
-            .update(cx, |diff_map, cx| diff_map.sync(snapshot, edits, cx));
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -420,71 +387,6 @@ impl DisplayMap {
         self.crease_map.remove(crease_ids, &snapshot)
     }
 
-    pub fn add_change_set(
-        &mut self,
-        change_set: Model<BufferChangeSet>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.diff_map.update(cx, |diff_map, cx| {
-            diff_map.add_change_set(change_set, cx);
-        });
-    }
-
-    pub fn has_multiple_hunks(&self, cx: &AppContext) -> bool {
-        self.diff_map.read(cx).has_multiple_hunks()
-    }
-
-    pub fn has_expanded_diff_hunks_in_ranges(
-        &mut self,
-        ranges: &[Range<multi_buffer::Anchor>],
-        cx: &mut ModelContext<Self>,
-    ) -> bool {
-        self.diff_map
-            .read(cx)
-            .has_expanded_diff_hunks_in_ranges(ranges)
-    }
-
-    pub fn set_all_hunks_expanded(&mut self, cx: &mut ModelContext<Self>) {
-        self.update_diff_map(cx, |diff_map, cx| diff_map.set_all_hunks_expanded(cx))
-    }
-
-    pub fn expand_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut ModelContext<Self>) {
-        self.update_diff_map(cx, |diff_map, cx| diff_map.expand_diff_hunks(ranges, cx))
-    }
-
-    pub fn collapse_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut ModelContext<Self>) {
-        self.update_diff_map(cx, |diff_map, cx| diff_map.collapse_diff_hunks(ranges, cx))
-    }
-
-    pub fn diff_base_for<'a>(
-        &'a self,
-        buffer_id: BufferId,
-        cx: &'a AppContext,
-    ) -> Option<&'a Model<BufferChangeSet>> {
-        self.diff_map.read(cx).diff_base_for(buffer_id)
-    }
-
-    fn update_diff_map(
-        &mut self,
-        cx: &mut ModelContext<Self>,
-        f: impl FnOnce(&mut DiffMap, &mut ModelContext<DiffMap>),
-    ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let (snapshot, edits) = self.diff_map.update(cx, |diff_map, cx| {
-            f(diff_map, cx);
-            diff_map.sync(snapshot, edits, cx)
-        });
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.write(snapshot, edits);
-    }
-
     pub fn insert_blocks(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
@@ -493,9 +395,6 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self
-            .diff_map
-            .update(cx, |diff_map, cx| diff_map.sync(snapshot, edits, cx));
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -514,9 +413,6 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self
-            .diff_map
-            .update(cx, |diff_map, cx| diff_map.sync(snapshot, edits, cx));
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -535,9 +431,6 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self
-            .diff_map
-            .update(cx, |diff_map, cx| diff_map.sync(snapshot, edits, cx));
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -556,9 +449,6 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self
-            .diff_map
-            .update(cx, |diff_map, cx| diff_map.sync(snapshot, edits, cx));
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -634,10 +524,7 @@ impl DisplayMap {
         }
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
-        let (snapshot, edits) = self.diff_map.update(cx, |diff_map, cx| {
-            diff_map.sync(buffer_snapshot.clone(), edits, cx)
-        });
-        let (snapshot, edits) = self.inlay_map.sync(snapshot.clone(), edits);
+        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -823,29 +710,6 @@ impl DisplaySnapshot {
         self.fold_snapshot.fold_count()
     }
 
-    pub fn diff_hunks<'a>(&'a self) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
-        self.diff_snapshot()
-            .diff_hunks_in_range(0..self.buffer_snapshot.len())
-    }
-
-    pub fn diff_hunks_in_range<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
-        self.diff_snapshot().diff_hunks_in_range(range)
-    }
-
-    pub fn diff_hunks_in_range_rev<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
-        self.diff_snapshot().diff_hunks_in_range_rev(range)
-    }
-
-    pub fn has_diff_hunks(&self) -> bool {
-        self.diff_snapshot().has_diff_hunks()
-    }
-
     pub fn is_empty(&self) -> bool {
         self.buffer_snapshot.len() == 0
     }
@@ -860,7 +724,7 @@ impl DisplaySnapshot {
 
     pub fn prev_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
         loop {
-            let mut inlay_point = self.inlay_snapshot.make_inlay_point(point);
+            let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
             let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Left);
             fold_point.0.column = 0;
             inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
@@ -882,7 +746,7 @@ impl DisplaySnapshot {
     ) -> (MultiBufferPoint, DisplayPoint) {
         let original_point = point;
         loop {
-            let mut inlay_point = self.inlay_snapshot.make_inlay_point(point);
+            let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
             let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Right);
             fold_point.0.column = self.fold_snapshot.line_len(fold_point.row());
             inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
@@ -926,7 +790,7 @@ impl DisplaySnapshot {
     }
 
     pub fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
-        let inlay_point = self.inlay_snapshot.make_inlay_point(point);
+        let inlay_point = self.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         let tab_point = self.tab_snapshot.to_tab_point(fold_point);
         let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
@@ -944,15 +808,9 @@ impl DisplaySnapshot {
             .to_offset(self.display_point_to_inlay_point(point, bias))
     }
 
-    pub fn display_point_to_diff_offset(&self, point: DisplayPoint, bias: Bias) -> DiffOffset {
-        self.diff_snapshot()
-            .point_to_offset(self.display_point_to_diff_point(point, bias))
-    }
-
     pub fn anchor_to_inlay_offset(&self, anchor: Anchor) -> InlayOffset {
-        let multibuffer_offset = anchor.to_offset(&self.buffer_snapshot);
-        let diff_offset = self.diff_snapshot().to_diff_offset(multibuffer_offset);
-        self.inlay_snapshot.to_inlay_offset(diff_offset)
+        self.inlay_snapshot
+            .to_inlay_offset(anchor.to_offset(&self.buffer_snapshot))
     }
 
     pub fn display_point_to_anchor(&self, point: DisplayPoint, bias: Bias) -> Anchor {
@@ -966,17 +824,6 @@ impl DisplaySnapshot {
         let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
         fold_point.to_inlay_point(&self.fold_snapshot)
-    }
-
-    fn diff_point_to_display_point(&self, diff_point: DiffPoint, bias: Bias) -> DisplayPoint {
-        let inlay_point = self.inlay_snapshot.to_inlay_point(diff_point);
-        let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
-        self.fold_point_to_display_point(fold_point)
-    }
-
-    fn display_point_to_diff_point(&self, point: DisplayPoint, bias: Bias) -> DiffPoint {
-        self.inlay_snapshot
-            .to_diff_point(self.display_point_to_inlay_point(point, bias))
     }
 
     pub fn display_point_to_fold_point(&self, point: DisplayPoint, bias: Bias) -> FoldPoint {
@@ -1214,22 +1061,6 @@ impl DisplaySnapshot {
                 offset -= ch.len_utf8();
                 (ch, offset)
             })
-    }
-
-    pub fn anchor_before(&self, point: DisplayPoint) -> DisplayAnchor {
-        let diff_point = self.display_point_to_diff_point(point, Bias::Left);
-        self.diff_snapshot().point_to_anchor(diff_point, Bias::Left)
-    }
-
-    pub fn anchor_after(&self, point: DisplayPoint) -> DisplayAnchor {
-        let diff_point = self.display_point_to_diff_point(point, Bias::Left);
-        self.diff_snapshot()
-            .point_to_anchor(diff_point, Bias::Right)
-    }
-
-    pub fn anchor_to_point(&self, anchor: DisplayAnchor) -> DisplayPoint {
-        let diff_point = self.diff_snapshot().anchor_to_point(anchor);
-        self.diff_point_to_display_point(diff_point, Bias::Left)
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
@@ -1470,51 +1301,6 @@ impl DisplaySnapshot {
 
     pub fn excerpt_header_height(&self) -> u32 {
         self.block_snapshot.excerpt_header_height
-    }
-
-    pub(crate) fn diff_snapshot(&self) -> &DiffMapSnapshot {
-        &self.inlay_snapshot.diff_map_snapshot
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
-pub struct DisplayAnchor {
-    pub anchor: multi_buffer::Anchor,
-    pub diff_base_anchor: Option<text::Anchor>,
-}
-
-impl DisplayAnchor {
-    pub fn min() -> Self {
-        Self {
-            anchor: multi_buffer::Anchor::min(),
-            diff_base_anchor: None,
-        }
-    }
-
-    pub fn max() -> Self {
-        Self {
-            anchor: multi_buffer::Anchor::max(),
-            diff_base_anchor: None,
-        }
-    }
-
-    pub fn cmp(&self, other: &DisplayAnchor, map: &DisplaySnapshot) -> std::cmp::Ordering {
-        map.diff_snapshot().compare_anchors(self, other)
-    }
-}
-
-pub trait DisplayCoordinate {
-    fn to_display_anchor(self, map: &DisplaySnapshot) -> DisplayAnchor;
-}
-
-impl DisplayCoordinate for DisplayAnchor {
-    fn to_display_anchor(self, _: &DisplaySnapshot) -> DisplayAnchor {
-        self
-    }
-}
-impl DisplayCoordinate for DisplayPoint {
-    fn to_display_anchor(self, map: &DisplaySnapshot) -> DisplayAnchor {
-        map.anchor_before(self)
     }
 }
 

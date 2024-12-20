@@ -311,9 +311,9 @@ impl ProjectDiffEditor {
                     .update(&mut cx, |project_diff_editor, cx| {
                         project_diff_editor.update_excerpts(id, new_changes, new_entry_order, cx);
                         project_diff_editor.editor.update(cx, |editor, cx| {
-                            editor.display_map.update(cx, |display_map, cx| {
+                            editor.buffer.update(cx, |buffer, cx| {
                                 for change_set in change_sets {
-                                    display_map.add_change_set(change_set, cx)
+                                    buffer.add_change_set(change_set, cx)
                                 }
                             });
                         });
@@ -1195,8 +1195,8 @@ mod tests {
                     cx,
                 )
             });
-            file_a_editor.display_map.update(cx, |display_map, cx| {
-                display_map.add_change_set(change_set.clone(), cx)
+            file_a_editor.buffer.update(cx, |buffer, cx| {
+                buffer.add_change_set(change_set.clone(), cx)
             });
             project.update(cx, |project, cx| {
                 project.buffer_store().update(cx, |buffer_store, cx| {

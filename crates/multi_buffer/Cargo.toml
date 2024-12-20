@@ -46,7 +46,10 @@ util.workspace = true
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+indoc.workspace = true

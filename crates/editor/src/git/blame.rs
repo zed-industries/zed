@@ -1,5 +1,3 @@
-use std::{sync::Arc, time::Duration};
-
 use anyhow::Result;
 use collections::HashMap;
 use git::{
@@ -9,12 +7,12 @@ use git::{
 use gpui::{Model, ModelContext, Subscription, Task};
 use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
+use multi_buffer::RowInfo;
 use project::{Project, ProjectItem};
 use smallvec::SmallVec;
+use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
 use url::Url;
-
-use crate::RowInfo;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {

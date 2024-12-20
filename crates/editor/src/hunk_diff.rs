@@ -351,7 +351,7 @@ impl Editor {
     }
 
     fn has_multiple_hunks(&self, cx: &mut WindowContext) -> bool {
-        self.display_map.read(cx).has_multiple_hunks(cx)
+        self.buffer.read(cx).has_multiple_hunks(cx)
     }
 
     fn hunk_header_block(
@@ -692,10 +692,10 @@ impl Editor {
     }
 
     pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) -> bool {
-        self.display_map.update(cx, |diff_map, cx| {
+        self.buffer.update(cx, |buffer, cx| {
             let ranges = vec![Anchor::min()..Anchor::max()];
-            if diff_map.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
-                diff_map.collapse_diff_hunks(ranges, cx);
+            if buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
+                buffer.collapse_diff_hunks(ranges, cx);
                 true
             } else {
                 false
@@ -728,6 +728,7 @@ impl Editor {
                 .update(&mut cx, |editor, cx| {
                     let snapshot = editor.snapshot(cx);
                     let mut recalculated_hunks = snapshot
+                        .buffer_snapshot
                         .diff_hunks()
                         .filter(|hunk| hunk.buffer_id == buffer_id)
                         .fuse()
@@ -1236,9 +1237,9 @@ mod tests {
                             cx,
                         )
                     });
-                    editor.display_map.update(cx, |display_map, cx| {
-                        display_map.add_change_set(change_set, cx)
-                    });
+                    editor
+                        .buffer
+                        .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
                 }
             })
             .unwrap();
@@ -1290,6 +1291,7 @@ mod tests {
 
         assert_eq!(
             snapshot
+                .buffer_snapshot
                 .diff_hunks_in_range(Point::zero()..Point::new(12, 0))
                 .map(|hunk| (hunk_status(&hunk), hunk.row_range))
                 .collect::<Vec<_>>(),
@@ -1298,6 +1300,7 @@ mod tests {
 
         assert_eq!(
             snapshot
+                .buffer_snapshot
                 .diff_hunks_in_range_rev(Point::zero()..Point::new(12, 0))
                 .map(|hunk| (hunk_status(&hunk), hunk.row_range))
                 .collect::<Vec<_>>(),

@@ -121,8 +121,8 @@ use lsp::{
 
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
-    ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, RowInfo,
+    ToOffset, ToPoint,
 };
 use multi_buffer::{
     ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, ToOffsetUtf16,
@@ -1207,7 +1207,7 @@ impl Editor {
             get_unstaged_changes_for_buffers(
                 &project,
                 buffer.read(cx).all_buffers(),
-                display_map.clone(),
+                buffer.clone(),
                 cx,
             );
             code_action_providers.push(Rc::new(project) as Rc<_>);
@@ -5989,11 +5989,9 @@ impl Editor {
         hunk: &MultiBufferDiffHunk,
         cx: &mut WindowContext,
     ) -> Option<()> {
-        let change_set = self
-            .display_map
-            .read(cx)
-            .diff_base_for(hunk.buffer_id, cx)?;
-        let buffer = self.buffer.read(cx).buffer(hunk.buffer_id)?;
+        let buffer = self.buffer.read(cx);
+        let change_set = buffer.diff_base_for(hunk.buffer_id)?;
+        let buffer = buffer.buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
         let original_text = change_set
             .read(cx)
@@ -9210,7 +9208,7 @@ impl Editor {
                 snapshot,
                 position,
                 ix > 0,
-                snapshot.diff_hunks_in_range(
+                snapshot.buffer_snapshot.diff_hunks_in_range(
                     position + Point::new(1, 0)..snapshot.buffer_snapshot.max_point(),
                 ),
                 cx,
@@ -9241,7 +9239,9 @@ impl Editor {
                 snapshot,
                 position,
                 ix > 0,
-                snapshot.diff_hunks_in_range_rev(Point::zero()..position),
+                snapshot
+                    .buffer_snapshot
+                    .diff_hunks_in_range_rev(Point::zero()..position),
                 cx,
             ) {
                 return Some(hunk);
@@ -10925,24 +10925,24 @@ impl Editor {
     }
 
     pub fn set_expand_all_diff_hunks(&mut self, cx: &mut AppContext) {
-        self.display_map.update(cx, |display_map, cx| {
-            display_map.set_all_hunks_expanded(cx);
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.set_all_hunks_expanded(cx);
         });
     }
 
     pub fn expand_all_diff_hunks(&mut self, _: &ExpandAllHunkDiffs, cx: &mut ViewContext<Self>) {
-        self.display_map.update(cx, |display_map, cx| {
-            display_map.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
         });
     }
 
     pub fn toggle_hunk_diff(&mut self, _: &ToggleHunkDiff, cx: &mut ViewContext<Self>) {
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
-        self.display_map.update(cx, |display_map, cx| {
-            if display_map.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
-                display_map.collapse_diff_hunks(ranges, cx)
+        self.buffer.update(cx, |buffer, cx| {
+            if buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
+                buffer.collapse_diff_hunks(ranges, cx)
             } else {
-                display_map.expand_diff_hunks(ranges, cx)
+                buffer.expand_diff_hunks(ranges, cx)
             }
         })
     }
@@ -12253,7 +12253,7 @@ impl Editor {
                         get_unstaged_changes_for_buffers(
                             project,
                             [buffer.clone()],
-                            self.display_map.clone(),
+                            self.buffer.clone(),
                             cx,
                         );
                     }
@@ -12959,7 +12959,7 @@ impl Editor {
 fn get_unstaged_changes_for_buffers(
     project: &Model<Project>,
     buffers: impl IntoIterator<Item = Model<Buffer>>,
-    display_map: Model<DisplayMap>,
+    buffer: Model<MultiBuffer>,
     cx: &mut AppContext,
 ) {
     let mut tasks = Vec::new();
@@ -12970,11 +12970,11 @@ fn get_unstaged_changes_for_buffers(
     });
     cx.spawn(|mut cx| async move {
         let change_sets = futures::future::join_all(tasks).await;
-        display_map
-            .update(&mut cx, |display_map, cx| {
+        buffer
+            .update(&mut cx, |buffer, cx| {
                 for change_set in change_sets {
                     if let Some(change_set) = change_set.log_err() {
-                        display_map.add_change_set(change_set, cx);
+                        buffer.add_change_set(change_set, cx);
                     }
                 }
             })
@@ -13824,7 +13824,7 @@ impl EditorSnapshot {
         for query_range in ranges {
             let query_rows =
                 MultiBufferRow(query_range.start.row)..MultiBufferRow(query_range.end.row + 1);
-            for hunk in self.diff_snapshot().diff_hunks_in_range(
+            for hunk in self.buffer_snapshot.diff_hunks_in_range(
                 Point::new(query_rows.start.0, 0)..Point::new(query_rows.end.0, 0),
             ) {
                 // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it

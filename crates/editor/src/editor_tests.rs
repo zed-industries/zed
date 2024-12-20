@@ -3359,6 +3359,7 @@ async fn test_custom_newlines_cause_no_false_positive_diffs(
         let snapshot = editor.snapshot(cx);
         assert_eq!(
             snapshot
+                .buffer_snapshot
                 .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
                 .collect::<Vec<_>>(),
             Vec::new(),
@@ -11654,9 +11655,9 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
                     cx,
                 )
             });
-            editor.display_map.update(cx, |display_map, cx| {
-                display_map.add_change_set(change_set, cx)
-            });
+            editor
+                .buffer
+                .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
         }
     });
     cx.executor().run_until_parked();
@@ -12508,9 +12509,9 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                         cx,
                     )
                 });
-                editor.display_map.update(cx, |display_map, cx| {
-                    display_map.add_change_set(change_set, cx)
-                });
+                editor
+                    .buffer
+                    .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
             }
         })
         .unwrap();
@@ -12620,9 +12621,9 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
             let buffer = buffer.read(cx).text_snapshot();
             let change_set = cx
                 .new_model(|cx| BufferChangeSet::new_with_base_text(base.to_string(), buffer, cx));
-            editor.display_map.update(cx, |display_map, cx| {
-                display_map.add_change_set(change_set, cx)
-            })
+            editor
+                .buffer
+                .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx))
         })
         .unwrap();
 
@@ -14726,6 +14727,7 @@ fn assert_hunk_revert(
     let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let reverted_hunk_statuses = snapshot
+            .buffer_snapshot
             .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
             .map(|hunk| hunk_status(&hunk))
             .collect::<Vec<_>>();

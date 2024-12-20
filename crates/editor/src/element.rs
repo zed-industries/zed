@@ -21,8 +21,8 @@ use crate::{
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
-    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowInfo, RowRangeExt, SelectPhase,
-    Selection, SoftWrap, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
+    SoftWrap, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -50,7 +50,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint,
-    MultiBufferRow, MultiBufferSnapshot, ToOffset,
+    MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
 };
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -1196,7 +1196,7 @@ impl EditorElement {
                 let editor = self.editor.read(cx);
                 let is_singleton = editor.is_singleton(cx);
                 // Git
-                (is_singleton && scrollbar_settings.git_diff && snapshot.has_diff_hunks())
+                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_diff_hunks())
                     ||
                     // Buffer Search Results
                     (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
@@ -1462,8 +1462,7 @@ impl EditorElement {
             let mut expanded_hunks = expanded_hunks[expanded_hunks_start_ix..].iter().peekable();
 
             let mut display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)> = snapshot
-                .display_snapshot
-                .diff_snapshot()
+                .buffer_snapshot
                 .diff_hunks_in_range(buffer_start..buffer_end)
                 .filter_map(|hunk| {
                     let display_hunk = diff_hunk_to_display(&hunk, snapshot);
@@ -4372,29 +4371,30 @@ impl EditorElement {
                             let max_point = snapshot.display_snapshot.buffer_snapshot.max_point();
                             let mut marker_quads = Vec::new();
                             if scrollbar_settings.git_diff {
-                                let marker_row_ranges = snapshot.diff_hunks().map(|hunk| {
-                                    let start_display_row =
-                                        MultiBufferPoint::new(hunk.row_range.start.0, 0)
-                                            .to_display_point(&snapshot.display_snapshot)
-                                            .row();
-                                    let mut end_display_row =
-                                        MultiBufferPoint::new(hunk.row_range.end.0, 0)
-                                            .to_display_point(&snapshot.display_snapshot)
-                                            .row();
-                                    if end_display_row != start_display_row {
-                                        end_display_row.0 -= 1;
-                                    }
-                                    let color = match hunk_status(&hunk) {
-                                        DiffHunkStatus::Added => theme.status().created,
-                                        DiffHunkStatus::Modified => theme.status().modified,
-                                        DiffHunkStatus::Removed => theme.status().deleted,
-                                    };
-                                    ColoredRange {
-                                        start: start_display_row,
-                                        end: end_display_row,
-                                        color,
-                                    }
-                                });
+                                let marker_row_ranges =
+                                    snapshot.buffer_snapshot.diff_hunks().map(|hunk| {
+                                        let start_display_row =
+                                            MultiBufferPoint::new(hunk.row_range.start.0, 0)
+                                                .to_display_point(&snapshot.display_snapshot)
+                                                .row();
+                                        let mut end_display_row =
+                                            MultiBufferPoint::new(hunk.row_range.end.0, 0)
+                                                .to_display_point(&snapshot.display_snapshot)
+                                                .row();
+                                        if end_display_row != start_display_row {
+                                            end_display_row.0 -= 1;
+                                        }
+                                        let color = match hunk_status(&hunk) {
+                                            DiffHunkStatus::Added => theme.status().created,
+                                            DiffHunkStatus::Modified => theme.status().modified,
+                                            DiffHunkStatus::Removed => theme.status().deleted,
+                                        };
+                                        ColoredRange {
+                                            start: start_display_row,
+                                            end: end_display_row,
+                                            color,
+                                        }
+                                    });
 
                                 marker_quads.extend(
                                     scrollbar_layout

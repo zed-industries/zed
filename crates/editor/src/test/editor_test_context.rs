@@ -11,12 +11,11 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
-use multi_buffer::ExcerptRange;
+use multi_buffer::{ExcerptRange, MultiBufferRow};
 use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{
     any::TypeId,
-    cmp,
     ops::{Deref, DerefMut, Range},
     path::Path,
     sync::{
@@ -24,7 +23,6 @@ use std::{
         Arc,
     },
 };
-use text::Bias;
 use util::{
     assert_set_eq,
     test::{generate_marked_text, marked_text_ranges},
@@ -335,27 +333,18 @@ impl EditorTestContext {
     /// Diff hunks are indicated by lines starting with `+` and `-`.
     #[track_caller]
     pub fn assert_state_with_diff(&mut self, expected_diff_text: String) {
-        let (snapshot, selections) = self
-            .editor
-            .update(&mut self.cx, |editor, cx| editor.selections.all_display(cx));
+        let (snapshot, selections) = self.editor.update(&mut self.cx, |editor, cx| {
+            (
+                editor.snapshot(cx).buffer_snapshot.clone(),
+                editor.selections.ranges::<usize>(cx),
+            )
+        });
 
-        let diff_snapshot = snapshot.diff_snapshot();
-        let diff_offsets = selections
-            .into_iter()
-            .map(|s| {
-                let start = snapshot.display_point_to_diff_offset(s.start, Bias::Left).0;
-                let end = snapshot.display_point_to_diff_offset(s.end, Bias::Left).0;
-                cmp::min(start, end)..cmp::max(start, end)
-            })
-            .collect::<Vec<_>>();
+        let actual_marked_text = generate_marked_text(&snapshot.text(), &selections, true);
 
-        let actual_marked_text = generate_marked_text(&diff_snapshot.text(), &diff_offsets, true);
-
-        // Read the actual diff from the editor's row highlights and block
-        // decorations.
-        let line_infos = diff_snapshot.row_infos(0).collect::<Vec<_>>();
+        // Read the actual diff.
+        let line_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
         let has_diff = line_infos.iter().any(|info| info.diff_status.is_some());
-
         let actual_diff = actual_marked_text
             .split('\n')
             .zip(line_infos)

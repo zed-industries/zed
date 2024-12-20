@@ -1,5 +1,7 @@
 use super::*;
+use git::diff::DiffHunkStatus;
 use gpui::{AppContext, Context, TestAppContext};
+use indoc::indoc;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
@@ -23,7 +25,10 @@ fn test_singleton(cx: &mut AppContext) {
     assert_eq!(snapshot.text(), buffer.read(cx).text());
 
     assert_eq!(
-        snapshot.buffer_rows(MultiBufferRow(0)).collect::<Vec<_>>(),
+        snapshot
+            .row_infos(MultiBufferRow(0))
+            .map(|info| info.buffer_row)
+            .collect::<Vec<_>>(),
         (0..buffer.read(cx).row_count())
             .map(Some)
             .collect::<Vec<_>>()
@@ -34,7 +39,10 @@ fn test_singleton(cx: &mut AppContext) {
 
     assert_eq!(snapshot.text(), buffer.read(cx).text());
     assert_eq!(
-        snapshot.buffer_rows(MultiBufferRow(0)).collect::<Vec<_>>(),
+        snapshot
+            .row_infos(MultiBufferRow(0))
+            .map(|info| info.buffer_row)
+            .collect::<Vec<_>>(),
         (0..buffer.read(cx).row_count())
             .map(Some)
             .collect::<Vec<_>>()
@@ -163,19 +171,31 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
         )
     );
     assert_eq!(
-        snapshot.buffer_rows(MultiBufferRow(0)).collect::<Vec<_>>(),
+        snapshot
+            .row_infos(MultiBufferRow(0))
+            .map(|info| info.buffer_row)
+            .collect::<Vec<_>>(),
         [Some(1), Some(2), Some(3), Some(4), Some(3)]
     );
     assert_eq!(
-        snapshot.buffer_rows(MultiBufferRow(2)).collect::<Vec<_>>(),
+        snapshot
+            .row_infos(MultiBufferRow(2))
+            .map(|info| info.buffer_row)
+            .collect::<Vec<_>>(),
         [Some(3), Some(4), Some(3)]
     );
     assert_eq!(
-        snapshot.buffer_rows(MultiBufferRow(4)).collect::<Vec<_>>(),
+        snapshot
+            .row_infos(MultiBufferRow(4))
+            .map(|info| info.buffer_row)
+            .collect::<Vec<_>>(),
         [Some(3)]
     );
     assert_eq!(
-        snapshot.buffer_rows(MultiBufferRow(5)).collect::<Vec<_>>(),
+        snapshot
+            .row_infos(MultiBufferRow(5))
+            .map(|info| info.buffer_row)
+            .collect::<Vec<_>>(),
         []
     );
 
@@ -633,11 +653,17 @@ fn test_empty_multibuffer(cx: &mut AppContext) {
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(snapshot.text(), "");
     assert_eq!(
-        snapshot.buffer_rows(MultiBufferRow(0)).collect::<Vec<_>>(),
+        snapshot
+            .row_infos(MultiBufferRow(0))
+            .map(|info| info.buffer_row)
+            .collect::<Vec<_>>(),
         &[Some(0)]
     );
     assert_eq!(
-        snapshot.buffer_rows(MultiBufferRow(1)).collect::<Vec<_>>(),
+        snapshot
+            .row_infos(MultiBufferRow(1))
+            .map(|info| info.buffer_row)
+            .collect::<Vec<_>>(),
         &[]
     );
 }
@@ -851,6 +877,256 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut AppContext) {
     );
 }
 
+#[gpui::test]
+fn test_expand_diff_hunks(cx: &mut TestAppContext) {
+    let text = indoc!(
+        "
+        ZERO
+        one
+        TWO
+        three
+        six
+        "
+    );
+    let base_text = indoc!(
+        "
+        one
+        two
+        three
+        four
+        five
+        six
+        "
+    );
+
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+    let change_set = cx.new_model(|cx| {
+        BufferChangeSet::new_with_base_text(
+            base_text.to_string(),
+            buffer.read(cx).text_snapshot(),
+            cx,
+        )
+    });
+
+    let multibuffer = cx.new_model(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+        multibuffer.add_change_set(change_set.clone(), cx);
+        multibuffer
+    });
+
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+    assert_eq!(
+        snapshot.text(),
+        indoc!(
+            "
+            ZERO
+            one
+            TWO
+            three
+            six
+            "
+        ),
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+            + ZERO
+              one
+            - two
+            + TWO
+              three
+            - four
+            - five
+              six
+            "
+        ),
+    );
+
+    assert_eq!(
+        snapshot
+            .row_infos(MultiBufferRow(0))
+            .map(|info| info.buffer_row)
+            .collect::<Vec<_>>(),
+        vec![
+            Some(0),
+            Some(1),
+            None,
+            Some(2),
+            Some(3),
+            None,
+            None,
+            Some(4),
+            Some(5)
+        ]
+    );
+
+    // assert_chunks_in_ranges(&snapshot);
+    // assert_consistent_line_numbers(&snapshot);
+
+    // for (point, offset) in &[
+    //     (
+    //         DiffPoint::new(0, 0),
+    //         DiffOffset(snapshot.text().find("ZERO").unwrap()),
+    //     ),
+    //     (
+    //         DiffPoint::new(2, 2),
+    //         DiffOffset(snapshot.text().find("two").unwrap() + 2),
+    //     ),
+    //     (
+    //         DiffPoint::new(4, 3),
+    //         DiffOffset(snapshot.text().find("three").unwrap() + 3),
+    //     ),
+    //     (DiffPoint::new(8, 0), DiffOffset(snapshot.text().len())),
+    // ] {
+    //     let actual = snapshot.point_to_offset(*point);
+    //     assert_eq!(actual, *offset, "for {:?}", point);
+    //     let actual = snapshot.offset_to_point(*offset);
+    //     assert_eq!(actual, *point, "for {:?}", offset);
+    // }
+
+    // diff_map.update(cx, |diff_map, cx| {
+    //     diff_map.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+    // });
+    // let sync = diff_map.update(cx, |diff_map, cx| {
+    //     diff_map.sync(deps.multibuffer_snapshot.clone(), vec![], cx)
+    // });
+    // assert_new_snapshot(
+    //     &mut snapshot,
+    //     sync,
+    //     indoc!(
+    //         "
+    //         ZERO
+    //         one
+    //         TWO
+    //         three
+    //         six
+    //         "
+    //     ),
+    // );
+
+    // // Expand the first diff hunk
+    // diff_map.update(cx, |diff_map, cx| {
+    //     let position = deps.multibuffer_snapshot.anchor_before(Point::new(2, 0));
+    //     diff_map.expand_diff_hunks(vec![position..position], cx)
+    // });
+    // let sync = diff_map.update(cx, |diff_map, cx| {
+    //     diff_map.sync(deps.multibuffer_snapshot.clone(), vec![], cx)
+    // });
+    // assert_new_snapshot(
+    //     &mut snapshot,
+    //     sync,
+    //     indoc!(
+    //         "
+    //           ZERO
+    //           one
+    //         - two
+    //         + TWO
+    //           three
+    //           six
+    //         "
+    //     ),
+    // );
+
+    // // Expand the second diff hunk
+    // diff_map.update(cx, |diff_map, cx| {
+    //     let position = deps.multibuffer_snapshot.anchor_before(Point::new(3, 0));
+    //     diff_map.expand_diff_hunks(vec![position..position], cx)
+    // });
+    // let sync = diff_map.update(cx, |diff_map, cx| {
+    //     diff_map.sync(deps.multibuffer_snapshot.clone(), vec![], cx)
+    // });
+    // assert_new_snapshot(
+    //     &mut snapshot,
+    //     sync,
+    //     indoc!(
+    //         "
+    //           ZERO
+    //           one
+    //         - two
+    //         + TWO
+    //           three
+    //         - four
+    //         - five
+    //           six
+    //         "
+    //     ),
+    // );
+
+    // // Edit the buffer before the first hunk
+    // let edits = deps.update_buffer(cx, |buffer, cx| {
+    //     buffer.edit_via_marked_text(
+    //         indoc!(
+    //             "
+    //             ZERO
+    //             one« hundred
+    //               thousand»
+    //             TWO
+    //             three
+    //             six
+    //             "
+    //         ),
+    //         None,
+    //         cx,
+    //     );
+    // });
+
+    // let sync = diff_map.update(cx, |diff_map, cx| {
+    //     diff_map.sync(deps.multibuffer_snapshot.clone(), edits, cx)
+    // });
+    // assert_new_snapshot(
+    //     &mut snapshot,
+    //     sync,
+    //     indoc!(
+    //         "
+    //           ZERO
+    //           one hundred
+    //             thousand
+    //         - two
+    //         + TWO
+    //           three
+    //         - four
+    //         - five
+    //           six
+    //         "
+    //     ),
+    // );
+
+    // // Recalculate the diff, changing the first diff hunk.
+    // let _ = deps.change_set.update(cx, |change_set, cx| {
+    //     change_set.recalculate_diff(deps.buffer.read(cx).text_snapshot(), cx)
+    // });
+    // cx.run_until_parked();
+    // let sync = diff_map.update(cx, |diff_map, cx| {
+    //     diff_map.sync(deps.multibuffer_snapshot.clone(), Vec::new(), cx)
+    // });
+    // assert_new_snapshot(
+    //     &mut snapshot,
+    //     sync,
+    //     indoc!(
+    //         "
+    //           ZERO
+    //           one hundred
+    //             thousand
+    //           TWO
+    //           three
+    //         - four
+    //         - five
+    //           six
+    //         "
+    //     ),
+    // );
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
@@ -1062,7 +1338,10 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
         log::info!("MultiBuffer text: {:?}", expected_text);
 
         assert_eq!(
-            snapshot.buffer_rows(MultiBufferRow(0)).collect::<Vec<_>>(),
+            snapshot
+                .row_infos(MultiBufferRow(0))
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
             expected_buffer_rows,
         );
 
@@ -1070,7 +1349,8 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
             let start_row = rng.gen_range(0..=expected_buffer_rows.len());
             assert_eq!(
                 snapshot
-                    .buffer_rows(MultiBufferRow(start_row as u32))
+                    .row_infos(MultiBufferRow(start_row as u32))
+                    .map(|info| info.buffer_row)
                     .collect::<Vec<_>>(),
                 &expected_buffer_rows[start_row..],
                 "buffer_rows({})",
@@ -1987,4 +2267,80 @@ fn test_split_ranges_single_range_spanning_three_excerpts(cx: &mut AppContext) {
     ];
 
     assert_eq!(actual_ranges, expected_ranges);
+}
+
+#[track_caller]
+fn assert_new_snapshot(
+    multibuffer: &Model<MultiBuffer>,
+    snapshot: &mut MultiBufferSnapshot,
+    subscription: &mut Subscription,
+    cx: &mut TestAppContext,
+    expected_diff: &str,
+) {
+    let new_snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    let actual_text = new_snapshot.text();
+    let line_infos = new_snapshot
+        .row_infos(MultiBufferRow(0))
+        .collect::<Vec<_>>();
+    let has_diff = line_infos.iter().any(|info| info.diff_status.is_some());
+    let actual_diff = actual_text
+        .split('\n')
+        .zip(line_infos)
+        .map(|(line, info)| {
+            let marker = match info.diff_status {
+                Some(DiffHunkStatus::Added) => "+ ",
+                Some(DiffHunkStatus::Removed) => "- ",
+                Some(DiffHunkStatus::Modified) => unreachable!(),
+                None => {
+                    if has_diff {
+                        "  "
+                    } else {
+                        ""
+                    }
+                }
+            };
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("{marker}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    pretty_assertions::assert_eq!(actual_diff, expected_diff);
+    check_edits(
+        snapshot,
+        &new_snapshot,
+        &subscription.consume().into_inner(),
+    );
+    *snapshot = new_snapshot;
+}
+
+#[track_caller]
+fn check_edits(
+    old_snapshot: &MultiBufferSnapshot,
+    new_snapshot: &MultiBufferSnapshot,
+    edits: &[Edit<usize>],
+) {
+    let mut text = old_snapshot.text();
+    let new_text = new_snapshot.text();
+    for edit in edits.iter().rev() {
+        if !text.is_char_boundary(edit.old.start)
+            || !text.is_char_boundary(edit.old.end)
+            || !new_text.is_char_boundary(edit.new.start)
+            || !new_text.is_char_boundary(edit.new.end)
+        {
+            panic!(
+                "invalid edits: {:?}\nold text: {:?}\nnew text: {:?}",
+                edits, text, new_text
+            );
+        }
+
+        text.replace_range(
+            edit.old.start..edit.old.end,
+            &new_text[edit.new.start..edit.new.end],
+        );
+    }
+
+    pretty_assertions::assert_eq!(text, new_text, "invalid edits: {:?}", edits);
 }

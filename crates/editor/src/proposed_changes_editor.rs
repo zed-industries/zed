@@ -223,9 +223,9 @@ impl ProposedChangesEditor {
         self.buffer_entries = buffer_entries;
         self.editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |selections| selections.refresh());
-            editor.display_map.update(cx, |display_map, cx| {
+            editor.buffer.update(cx, |buffer, cx| {
                 for change_set in new_change_sets {
-                    display_map.add_change_set(change_set, cx)
+                    buffer.add_change_set(change_set, cx)
                 }
             })
         });

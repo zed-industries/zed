@@ -1,12 +1,11 @@
 use super::{custom_highlights::CustomHighlightsChunks, DisplayAnchor};
-use crate::RowInfo;
 use collections::HashMap;
 use git::diff::DiffHunkStatus;
 use gpui::{AppContext, Context as _, HighlightStyle, Model, ModelContext, Subscription};
 use language::{BufferChunks, BufferId, Chunk};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow, MultiBufferRows,
-    MultiBufferSnapshot, ToOffset, ToPoint as _,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
 };
 use project::buffer_store::BufferChangeSet;
 use std::{
@@ -1249,7 +1248,7 @@ impl DiffMapSnapshot {
         };
         let input_buffer_rows = self
             .buffer
-            .buffer_rows(MultiBufferRow(buffer_transform_start.row + overshoot));
+            .row_infos(MultiBufferRow(buffer_transform_start.row + overshoot));
 
         DiffMapRows {
             diff_point,
@@ -2373,7 +2372,7 @@ mod tests {
         );
     }
 
-    // #[track_caller]
+    #[track_caller]
     fn assert_new_snapshot(
         snapshot: &mut DiffMapSnapshot,
         (new_snapshot, edits): (DiffMapSnapshot, Vec<Edit<DiffOffset>>),

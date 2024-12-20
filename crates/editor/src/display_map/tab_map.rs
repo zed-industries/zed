@@ -164,7 +164,7 @@ pub struct TabSnapshot {
 
 impl TabSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
-        self.fold_snapshot.inlay_snapshot.buffer()
+        &self.fold_snapshot.inlay_snapshot.buffer
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -317,7 +317,8 @@ impl TabSnapshot {
     }
 
     pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
-        let fold_point = self.fold_snapshot.make_fold_point(point, bias);
+        let inlay_point = self.fold_snapshot.inlay_snapshot.to_inlay_point(point);
+        let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         self.to_tab_point(fold_point)
     }
 
@@ -601,7 +602,7 @@ impl<'a> Iterator for TabChunks<'a> {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{diff_map::DiffMap, fold_map::FoldMap, inlay_map::InlayMap},
+        display_map::{fold_map::FoldMap, inlay_map::InlayMap},
         MultiBuffer,
     };
     use rand::{prelude::StdRng, Rng};
@@ -609,8 +610,8 @@ mod tests {
     #[gpui::test]
     fn test_expand_tabs(cx: &mut gpui::AppContext) {
         let buffer = MultiBuffer::build_simple("", cx);
-        let (_, diff_snapshot) = DiffMap::new(buffer, cx);
-        let (_, inlay_snapshot) = InlayMap::new(diff_snapshot.clone());
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -626,8 +627,8 @@ mod tests {
         let output = "A   BC  DEF G   HI J K L M";
 
         let buffer = MultiBuffer::build_simple(input, cx);
-        let (_, diff_snapshot) = DiffMap::new(buffer, cx);
-        let (_, inlay_snapshot) = InlayMap::new(diff_snapshot.clone());
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -673,8 +674,8 @@ mod tests {
         let input = "abcdefg⋯hij";
 
         let buffer = MultiBuffer::build_simple(input, cx);
-        let (_, diff_snapshot) = DiffMap::new(buffer.clone(), cx);
-        let (_, inlay_snapshot) = InlayMap::new(diff_snapshot.clone());
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -687,8 +688,8 @@ mod tests {
         let input = "\t \thello";
 
         let buffer = MultiBuffer::build_simple(input, cx);
-        let (_, diff_snapshot) = DiffMap::new(buffer.clone(), cx);
-        let (_, inlay_snapshot) = InlayMap::new(diff_snapshot);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -748,11 +749,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
 
-        let (_, diff_snapshot) = DiffMap::new(buffer.clone(), cx);
-
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(diff_snapshot.clone());
-
-        log::info!("DiffMap text: {:?}", diff_snapshot.text());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        log::info!("InlayMap text: {:?}", inlay_snapshot.text());
         let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
         fold_map.randomly_mutate(&mut rng);
         let (fold_snapshot, _) = fold_map.read(inlay_snapshot, vec![]);
