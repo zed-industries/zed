@@ -1435,11 +1435,19 @@ impl Language {
                 SyntaxSnapshot::single_tree_captures(range.clone(), text, &tree, self, |grammar| {
                     grammar.highlights_query.as_ref()
                 });
+            let matches =
+                SyntaxSnapshot::single_tree_matches(range.clone(), text, &tree, self, |grammar| {
+                    grammar.brackets_config.as_ref().map(|config| &config.query)
+                });
             let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
-            for chunk in
-                BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
-            {
+            for chunk in BufferChunks::new(
+                text,
+                range,
+                Some((captures, highlight_maps, matches)),
+                false,
+                None,
+            ) {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.syntax_highlight_id {
                     if !highlight_id.is_default() {

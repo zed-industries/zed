@@ -789,6 +789,28 @@ impl SyntaxSnapshot {
         )
     }
 
+    pub fn single_tree_matches<'a>(
+        range: Range<usize>,
+        text: &'a Rope,
+        tree: &'a Tree,
+        language: &'a Arc<Language>,
+        query: fn(&Grammar) -> Option<&Query>,
+    ) -> SyntaxMapMatches<'a> {
+        SyntaxMapMatches::new(
+            range.clone(),
+            text,
+            [SyntaxLayer {
+                language,
+                tree,
+                depth: 0,
+                offset: (0, tree_sitter::Point::new(0, 0)),
+            }]
+            .into_iter(),
+            query,
+            TreeSitterOptions::default(),
+        )
+    }
+
     pub fn captures<'a>(
         &'a self,
         range: Range<usize>,

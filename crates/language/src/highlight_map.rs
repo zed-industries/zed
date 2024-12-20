@@ -48,6 +48,13 @@ impl HighlightMap {
             .copied()
             .unwrap_or(DEFAULT_SYNTAX_HIGHLIGHT_ID)
     }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl HighlightId {

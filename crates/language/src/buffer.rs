@@ -565,12 +565,12 @@ struct RainbowBracketsHighlighter<'a> {
 
     colors: BTreeMap<OrdRange, HighlightId>,
     /// Index of next color to use.
-    palette_index: usize,
-    palette: Vec<HighlightId>,
+    palette_index: u32,
+    palette: HighlightMap,
 }
 
 impl<'a> RainbowBracketsHighlighter<'a> {
-    fn new(palette: Vec<HighlightId>, matches: SyntaxMapMatches<'a>) -> Option<Self> {
+    fn new(palette: HighlightMap, matches: SyntaxMapMatches<'a>) -> Option<Self> {
         if palette.is_empty() {
             return None;
         }
@@ -581,14 +581,15 @@ impl<'a> RainbowBracketsHighlighter<'a> {
             palette,
         })
     }
-    fn next_highlight_id(palette: &[HighlightId], palette_index: &mut usize) -> HighlightId {
-        let next_highlight_id = palette[*palette_index];
-        *palette_index = (*palette_index + 1) % palette.len();
+    fn next_highlight_id(palette: &HighlightMap, palette_index: &mut u32) -> HighlightId {
+        let next_highlight_id = palette.get(*palette_index);
+        *palette_index = (*palette_index + 1) % palette.len() as u32;
         next_highlight_id
     }
 }
 impl<'a> Highlighter<'a> for RainbowBracketsHighlighter<'a> {
     fn narrow(&mut self, range: Range<usize>) {
+        dbg!(&range, &self.colors);
         self.colors
             .retain(|(start, end), _| range.contains(start) || range.contains(end));
         // if let Some(capture) = self.matches.peek() {
@@ -608,11 +609,13 @@ impl<'a> Highlighter<'a> for RainbowBracketsHighlighter<'a> {
     fn seek_next_capture_offset(&mut self, current_offset: usize) -> usize {
         // First let's fetch captures up until the opening brace is past the current_offset
         // The ending brace might fall within visible range.
+        dbg!(current_offset);
         let mut next_capture_start = usize::MAX;
         while let Some(matches) = self.matches.peek() {
             let [start, end] = matches.captures else {
                 break;
             };
+            dbg!(start.node.start_byte(), end.node.start_byte());
             let start_byte = start.node.start_byte();
             if start_byte > current_offset {
                 break;
@@ -624,13 +627,16 @@ impl<'a> Highlighter<'a> for RainbowBracketsHighlighter<'a> {
             let start_byte = end.node.start_byte();
             let end_byte = end.node.end_byte();
             self.colors.insert((start_byte, end_byte), highlight_id);
-            self.matches.advance();
+            if !self.matches.advance() {
+                break;
+            }
         }
         // Now let's throw away anything that starts before current_offset
+        dbg!(&self.colors);
         self.colors
-            .retain(|(start, end), _| *start >= current_offset || *end >= current_offset);
+            .retain(|(start, end), _| *start >= current_offset || *end > current_offset);
         if let Some(((start_offset, _), _)) = self.colors.iter().next() {
-            next_capture_start = *start_offset;
+            next_capture_start = *start_offset.max(&current_offset);
         }
 
         next_capture_start
@@ -675,8 +681,12 @@ impl<'a> BufferChunkHighlights<'a> {
     fn current_capture(&self) -> Option<(usize, HighlightId)> {
         self.highlighters
             .iter()
-            .rev()
-            .find_map(|highlighter| highlighter.current_capture())
+            .min_by_key(|highlighter| {
+                highlighter
+                    .current_capture()
+                    .map_or(usize::MAX, |(offset, _)| offset)
+            })
+            .and_then(|highlighter| highlighter.current_capture())
     }
 }
 
@@ -2949,8 +2959,11 @@ impl BufferSnapshot {
         None
     }
 
-    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures, Vec<HighlightMap>) {
-        let captures = self.syntax.captures(range, &self.text, |grammar| {
+    fn get_highlights(
+        &self,
+        range: Range<usize>,
+    ) -> (SyntaxMapCaptures, Vec<HighlightMap>, SyntaxMapMatches) {
+        let captures = self.syntax.captures(range.clone(), &self.text, |grammar| {
             grammar.highlights_query.as_ref()
         });
         let highlight_maps = captures
@@ -2958,7 +2971,10 @@ impl BufferSnapshot {
             .iter()
             .map(|grammar| grammar.highlight_map())
             .collect();
-        (captures, highlight_maps)
+        let matches = self.syntax.matches(range, &self.text, |grammar| {
+            grammar.brackets_config.as_ref().map(|config| &config.query)
+        });
+        (captures, highlight_maps, matches)
     }
 
     /// Iterates over chunks of text in the given range of the buffer. Text is chunked
@@ -4252,15 +4268,27 @@ impl<'a> BufferChunks<'a> {
     pub(crate) fn new(
         text: &'a Rope,
         range: Range<usize>,
-        syntax: Option<(SyntaxMapCaptures<'a>, Vec<HighlightMap>)>,
+        syntax: Option<(
+            SyntaxMapCaptures<'a>,
+            Vec<HighlightMap>,
+            SyntaxMapMatches<'a>,
+        )>,
         diagnostics: bool,
         buffer_snapshot: Option<&'a BufferSnapshot>,
     ) -> Self {
         let mut highlights = None;
-        if let Some((captures, highlight_maps)) = syntax {
-            highlights = Some(BufferChunkHighlights::new(vec![Box::new(
-                TreeSitterHighlights::new(captures, highlight_maps),
-            )]));
+        if let Some((captures, highlight_maps, matches)) = syntax {
+            let highlighter = highlight_maps.iter().next().cloned();
+            // let mut highlighters: Vec<Box<dyn Highlighter>> = vec![Box::new(
+            //     TreeSitterHighlights::new(captures, highlight_maps),
+            // )];
+            let mut highlighters: Vec<Box<dyn Highlighter>> = vec![];
+            highlighters.extend(highlighter.and_then(|highlighter| {
+                RainbowBracketsHighlighter::new(highlighter, matches)
+                    .map(|brackets| Box::new(brackets) as Box<dyn Highlighter>)
+            }));
+            dbg!(highlighters.len());
+            highlights = Some(BufferChunkHighlights::new(highlighters));
         }
 
         let diagnostic_endpoints = diagnostics.then(|| Vec::new().into_iter().peekable());
@@ -4291,8 +4319,13 @@ impl<'a> BufferChunks<'a> {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights.narrow(range);
             } else if let Some(snapshot) = self.buffer_snapshot {
-                let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
-                *highlights = BufferChunkHighlights::new(vec![]);
+                let (captures, highlight_maps, matches) =
+                    snapshot.get_highlights(self.range.clone());
+                let highlighter = highlight_maps.iter().next().cloned().unwrap();
+                *highlights = BufferChunkHighlights::new(vec![
+                    Box::new(TreeSitterHighlights::new(captures, highlight_maps)),
+                    Box::new(RainbowBracketsHighlighter::new(highlighter, matches).unwrap()),
+                ]);
             } else {
                 // We cannot obtain new highlights for a language-aware buffer iterator, as we don't have a buffer snapshot.
                 // Seeking such BufferChunks is not supported.
@@ -4406,6 +4439,7 @@ impl<'a> Iterator for BufferChunks<'a> {
 
         if let Some(chunk) = self.chunks.peek() {
             let chunk_start = self.range.start;
+            dbg!(next_capture_start);
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
@@ -4419,6 +4453,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 }
             }
 
+            dbg!(chunk_end, self.chunks.offset());
             let slice =
                 &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
             self.range.start = chunk_end;
