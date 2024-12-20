@@ -1981,7 +1981,6 @@ impl MultiBuffer {
                 self.capability = buffer.read(cx).capability();
                 Event::CapabilityChanged
             }
-            //
             language::BufferEvent::Operation { .. } => return,
         });
     }
@@ -3896,7 +3895,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn text_summary(&self) -> TextSummary {
-        self.excerpts.summary().text.clone()
+        self.diff_transforms.summary().output.clone()
     }
 
     pub fn text_summary_for_range<D, O>(&self, range: Range<O>) -> D
@@ -6051,6 +6050,9 @@ impl<'a> Iterator for MultiBufferRows<'a> {
     type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.point >= self.diff_transforms.end(&()).0 {
+            self.diff_transforms.next(&());
+        }
         let diff_transform = self.diff_transforms.item();
         let result = if let Some(DiffTransform::DeletedHunk { .. }) = diff_transform {
             Some(RowInfo {
@@ -6072,11 +6074,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                 diff_status,
             })
         };
-
         self.point += Point::new(1, 0);
-        if self.point >= self.diff_transforms.end(&()).0 {
-            self.diff_transforms.next(&());
-        }
         result
     }
 }
