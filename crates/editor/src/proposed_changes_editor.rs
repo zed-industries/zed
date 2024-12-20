@@ -61,7 +61,7 @@ impl ProposedChangesEditor {
         let mut this = Self {
             editor: cx.new_view(|cx| {
                 let mut editor = Editor::for_multibuffer(multibuffer.clone(), project, true, cx);
-                editor.set_expand_all_diff_hunks();
+                editor.set_expand_all_diff_hunks(cx);
                 editor.set_completion_provider(None);
                 editor.clear_code_action_providers();
                 editor.set_semantics_provider(
@@ -223,9 +223,11 @@ impl ProposedChangesEditor {
         self.buffer_entries = buffer_entries;
         self.editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |selections| selections.refresh());
-            for change_set in new_change_sets {
-                editor.diff_map.add_change_set(change_set, cx)
-            }
+            editor.display_map.update(cx, |display_map, cx| {
+                for change_set in new_change_sets {
+                    display_map.add_change_set(change_set, cx)
+                }
+            })
         });
     }
 

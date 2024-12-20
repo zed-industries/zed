@@ -1,5 +1,7 @@
+use crate::RowInfo;
+
 use super::{
-    fold_map::FoldBufferRows,
+    fold_map::FoldRows,
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
     Highlights,
 };
@@ -60,16 +62,16 @@ pub struct WrapChunks<'a> {
 }
 
 #[derive(Clone)]
-pub struct WrapBufferRows<'a> {
-    input_buffer_rows: FoldBufferRows<'a>,
-    input_buffer_row: Option<u32>,
+pub struct WrapRows<'a> {
+    input_buffer_rows: FoldRows<'a>,
+    input_buffer_row: RowInfo,
     output_row: u32,
     soft_wrapped: bool,
     max_output_row: u32,
     transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
 }
 
-impl<'a> WrapBufferRows<'a> {
+impl<'a> WrapRows<'a> {
     pub(crate) fn seek(&mut self, start_row: u32) {
         self.transforms
             .seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
@@ -717,7 +719,7 @@ impl WrapSnapshot {
         self.transforms.summary().output.longest_row
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> WrapBufferRows {
+    pub fn row_infos(&self, start_row: u32) -> WrapRows {
         let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>(&());
         transforms.seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
         let mut input_row = transforms.start().1.row();
@@ -725,9 +727,9 @@ impl WrapSnapshot {
             input_row += start_row - transforms.start().0.row();
         }
         let soft_wrapped = transforms.item().map_or(false, |t| !t.is_isomorphic());
-        let mut input_buffer_rows = self.tab_snapshot.buffer_rows(input_row);
+        let mut input_buffer_rows = self.tab_snapshot.rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
-        WrapBufferRows {
+        WrapRows {
             transforms,
             input_buffer_row,
             input_buffer_rows,
@@ -847,7 +849,7 @@ impl WrapSnapshot {
             }
 
             let text = language::Rope::from(self.text().as_str());
-            let mut input_buffer_rows = self.tab_snapshot.buffer_rows(0);
+            let mut input_buffer_rows = self.tab_snapshot.rows(0);
             let mut expected_buffer_rows = Vec::new();
             let mut prev_tab_row = 0;
             for display_row in 0..=self.max_point().row() {
@@ -855,7 +857,7 @@ impl WrapSnapshot {
                 if tab_point.row() == prev_tab_row && display_row != 0 {
                     expected_buffer_rows.push(None);
                 } else {
-                    expected_buffer_rows.push(input_buffer_rows.next().unwrap());
+                    expected_buffer_rows.push(input_buffer_rows.next().unwrap().buffer_row);
                 }
 
                 prev_tab_row = tab_point.row();
@@ -864,7 +866,8 @@ impl WrapSnapshot {
 
             for start_display_row in 0..expected_buffer_rows.len() {
                 assert_eq!(
-                    self.buffer_rows(start_display_row as u32)
+                    self.row_infos(start_display_row as u32)
+                        .map(|row_info| row_info.buffer_row)
                         .collect::<Vec<_>>(),
                     &expected_buffer_rows[start_display_row..],
                     "invalid buffer_rows({}..)",
@@ -958,8 +961,8 @@ impl<'a> Iterator for WrapChunks<'a> {
     }
 }
 
-impl<'a> Iterator for WrapBufferRows<'a> {
-    type Item = Option<u32>;
+impl<'a> Iterator for WrapRows<'a> {
+    type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_row > self.max_output_row {
@@ -979,7 +982,11 @@ impl<'a> Iterator for WrapBufferRows<'a> {
             self.soft_wrapped = true;
         }
 
-        Some(if soft_wrapped { None } else { buffer_row })
+        Some(if soft_wrapped {
+            RowInfo::default()
+        } else {
+            buffer_row
+        })
     }
 }
 
@@ -1161,7 +1168,7 @@ fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
+        display_map::{diff_map::DiffMap, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         MultiBuffer,
     };
     use gpui::{font, px, test::observe};
@@ -1209,9 +1216,11 @@ mod tests {
         });
         let mut buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (diff_map, diff_snapshot) = cx.update(|cx| DiffMap::new(buffer.clone(), cx));
+        log::info!("DiffMap text: {:?}", diff_snapshot.text());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(diff_snapshot);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
-        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
         let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
@@ -1293,8 +1302,10 @@ mod tests {
             }
 
             log::info!("Buffer text: {:?}", buffer_snapshot.text());
-            let (inlay_snapshot, inlay_edits) =
-                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+            let (diff_snapshot, diff_edits) = diff_map.update(cx, |diff_map, cx| {
+                diff_map.sync(buffer_snapshot.clone(), buffer_edits, cx)
+            });
+            let (inlay_snapshot, inlay_edits) = inlay_map.sync(diff_snapshot, diff_edits);
             log::info!("InlayMap text: {:?}", inlay_snapshot.text());
             let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
             log::info!("FoldMap text: {:?}", fold_snapshot.text());
