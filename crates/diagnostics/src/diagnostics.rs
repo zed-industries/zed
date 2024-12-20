@@ -22,24 +22,26 @@ use gpui::{
 };
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
-    OffsetRangeExt, Point, Selection, SelectionGoal,
+    OffsetRangeExt, Point, Selection, SelectionGoal, ToTreeSitterPoint,
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
 use project_diagnostics_settings::ProjectDiagnosticsSettings;
+use regex::Regex;
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
+    cmp,
     cmp::Ordering,
     mem,
-    ops::{Range, RangeInclusive},
-    sync::Arc,
+    ops::{Range, RangeBounds, RangeInclusive},
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
-use util::{RangeExt, ResultExt};
+use util::ResultExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     ItemNavHistory, ToolbarItemLocation, Workspace,
@@ -422,32 +424,31 @@ impl ProjectDiagnosticsEditor {
                         blocks: Default::default(),
                         block_count: 0,
                     };
-                    let mut pending_range: Option<(Range<Point>, usize)> = None;
+                    let mut pending_range: Option<(Range<Point>, Range<Point>, usize)> = None;
                     let mut is_first_excerpt_for_group = true;
                     for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
                         let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
-                        if let Some((range, start_ix)) = &mut pending_range {
+                        if let Some((range, context_range, start_ix)) = &mut pending_range {
                             if let Some(entry) = resolved_entry.as_ref() {
-                                if entry.range.start.row <= range.end.row + 1 + self.context * 2 {
-                                    let expanded_range = expand_entry_range(entry, &snapshot);
-                                    range.end = range.end.max(expanded_range.end);
-                                    continue;
-                                }
+                                let expanded_range = dbg!(context_range_for_entry(
+                                    entry,
+                                    self.context,
+                                    &snapshot,
+                                    cx
+                                ));
+                                dbg!(&context_range);
+                                context_range.start = context_range.start.min(expanded_range.start);
+                                context_range.end = context_range.end.max(expanded_range.end);
+                                dbg!(&context_range);
+                                continue;
                             }
-
-                            let excerpt_start =
-                                Point::new(range.start.row.saturating_sub(self.context), 0);
-                            let excerpt_end = snapshot.clip_point(
-                                Point::new(range.end.row + self.context, u32::MAX),
-                                Bias::Left,
-                            );
 
                             let excerpt_id = excerpts
                                 .insert_excerpts_after(
                                     prev_excerpt_id,
                                     buffer.clone(),
                                     [ExcerptRange {
-                                        context: excerpt_start..excerpt_end,
+                                        context: dbg!(context_range.clone()),
                                         primary: Some(range.clone()),
                                     }],
                                     cx,
@@ -505,8 +506,10 @@ impl ProjectDiagnosticsEditor {
                         }
 
                         if let Some(entry) = resolved_entry.as_ref() {
-                            let expanded_range = expand_entry_range(entry, &snapshot);
-                            pending_range = Some((expanded_range, ix));
+                            let range = entry.range.clone();
+                            let expanded_range =
+                                context_range_for_entry(entry, self.context, &snapshot, cx);
+                            pending_range = Some((range, expanded_range, ix));
                         }
                     }
 
@@ -922,66 +925,168 @@ fn compare_diagnostics(
         .then_with(|| old.diagnostic.message.cmp(&new.diagnostic.message))
 }
 
-const DIAGNOSTIC_EXPANSION_ROW_LIMIT: u32 = 16;
+const DIAGNOSTIC_EXPANSION_ROW_LIMIT: u32 = 32;
 
-fn expand_entry_range(entry: &DiagnosticEntry<Point>, snapshot: &BufferSnapshot) -> Range<Point> {
-    if !entry.diagnostic.is_primary {
-        return entry.range.clone();
-    }
-    let (start_row, end_row) = expand_row_range_to_ancestor_with_limit(
+fn context_range_for_entry<'a>(
+    entry: &DiagnosticEntry<Point>,
+    context: u32,
+    snapshot: &BufferSnapshot,
+    cx: &'a AppContext,
+) -> Range<Point> {
+    if let Some(rows) = heuristic_syntactic_expand(
         entry.range.clone(),
         DIAGNOSTIC_EXPANSION_ROW_LIMIT,
         snapshot,
-    )
-    .into_inner();
+        cx,
+    ) {
+        return Range {
+            start: Point::new(*rows.start(), 0),
+            end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
+        };
+    }
     Range {
-        start: Point::new(start_row, 0),
-        end: snapshot.clip_point(Point::new(end_row, u32::MAX), Bias::Left),
+        start: Point::new(entry.range.start.row.saturating_sub(context), 0),
+        end: snapshot.clip_point(
+            Point::new(entry.range.end.row + context, u32::MAX),
+            Bias::Left,
+        ),
     }
 }
 
-/// When the parent TreeSitter node spans more rows than the input range, returns an expanded row
-/// range. This expansion will be limited to the specified `row_count_limit`. When this limit is
-/// exceeded by the ancestor node row range, extra lines after the input range are reduced first.
-fn expand_row_range_to_ancestor_with_limit(
+/// Expands the input range using syntax information from TreeSitter. This expansion will be limited
+/// to the specified `max_row_count`.
+///
+/// If there is a containing outline item that is less than `max_row_count`, it will be returned.
+/// Otherwise fairly arbitrary heuristics are applied to attempt to return a logical block of code.
+fn heuristic_syntactic_expand<'a>(
     input_range: Range<Point>,
-    row_count_limit: u32,
-    snapshot: &BufferSnapshot,
-) -> RangeInclusive<BufferRow> {
-    let input_row_range = input_range.start.row..=input_range.end.row;
+    max_row_count: u32,
+    snapshot: &'a BufferSnapshot,
+    cx: &'a AppContext,
+) -> Option<RangeInclusive<BufferRow>> {
     let input_row_count = input_range.end.row - input_range.start.row;
-    if input_row_count > row_count_limit {
-        return input_row_range;
+    if input_row_count > max_row_count {
+        return None;
     }
-    // Query with a slightly larger range than the diagnostic input range to get the parent node.
-    let query_range = input_range.start.saturating_sub(Point::new(0, 1))
-        ..snapshot.clip_point(input_range.end + Point::new(0, 1), Bias::Left);
-    let Some(ancestor) = snapshot.syntax_ancestor(query_range) else {
-        return input_row_range;
-    };
-    let ancestor_range = ancestor.byte_range().to_point(&snapshot);
-    if !ancestor_range.contains_inclusive(&input_range) {
-        log::error!(
-            "AST ancestor range ({:?}) does not include query range ({:?}).",
-            ancestor_range,
-            input_range
-        );
-        return input_row_range;
-    }
-    let ancestor_row_count = ancestor_range.end.row - ancestor_range.start.row;
-    if ancestor_row_count > row_count_limit {
-        let count_with_no_extra_rows_after = input_range.end.row - ancestor_range.start.row;
-        if count_with_no_extra_rows_after > row_count_limit {
-            return RangeInclusive::new(
-                input_range.start.row.saturating_sub(row_count_limit),
-                input_range.end.row,
-            );
-        } else {
-            return RangeInclusive::new(
-                ancestor_range.start.row,
-                ancestor_range.start.row + row_count_limit,
-            );
+
+    // If the outline node contains the diagnostic and is small enough, just use that.
+    let outline_range = snapshot.outline_range_containing(input_range.clone());
+    if let Some(outline_range) = outline_range.clone() {
+        // Remove blank lines from start and end
+        if let Some(start_row) = (outline_range.start.row..outline_range.end.row)
+            .into_iter()
+            .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
+        {
+            if let Some(end_row) = (outline_range.start.row..outline_range.end.row + 1)
+                .rev()
+                .into_iter()
+                .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
+            {
+                let row_count = end_row.saturating_sub(start_row);
+                if row_count <= max_row_count {
+                    return Some(RangeInclusive::new(
+                        outline_range.start.row,
+                        outline_range.end.row,
+                    ));
+                }
+            }
         }
     }
-    return ancestor_range.start.row..=ancestor_range.end.row;
+
+    let mut node = snapshot.syntax_ancestor(input_range.clone())?;
+    loop {
+        let node_start = Point::from_ts_point(node.start_position());
+        let node_end = Point::from_ts_point(node.end_position());
+        let node_range = node_start..node_end;
+        let row_count = node_end.row - node_start.row + 1;
+
+        // Stop if we've exceeded the row count or reached an outline node. Then, find the interval
+        // of node children which contains the query range. For example, this allows just returning
+        // the header of a declaration rather than the entire declaration.
+        if row_count > max_row_count || outline_range == Some(node_range.clone()) {
+            let mut cursor = node.walk();
+            let mut included_child_start = None;
+            let mut included_child_end = None;
+            let mut previous_end = node_start;
+            if cursor.goto_first_child() {
+                loop {
+                    let child_node = cursor.node();
+                    let child_range = previous_end..Point::from_ts_point(child_node.end_position());
+                    if included_child_start.is_none() && child_range.contains(&input_range.start) {
+                        included_child_start = Some(child_range.start);
+                    }
+                    if child_range.contains(&input_range.end) {
+                        included_child_end = Some(child_range.end);
+                    }
+                    previous_end = child_range.end;
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+            let end = included_child_end.unwrap_or(node_range.end);
+            if let Some(start) = included_child_start {
+                let row_count = end.row - start.row;
+                if row_count < max_row_count {
+                    return Some(RangeInclusive::new(start.row, end.row));
+                }
+            }
+
+            log::info!(
+                "Expanding to ancestor started on {} node exceeding row limit of {max_row_count}.",
+                node.grammar_name()
+            );
+            return None;
+        }
+
+        let node_name = node.grammar_name();
+        let node_row_range = RangeInclusive::new(node_range.start.row, node_range.end.row);
+        if node_name.ends_with("block") {
+            return Some(node_row_range);
+        } else if node_name.ends_with("statement") || node_name.ends_with("declaration") {
+            // Expand to the nearest dedent or blank line for statements and declarations.
+            let tab_size = snapshot.settings_at(node_range.start, cx).tab_size.get();
+            let indent_level = snapshot
+                .line_indent_for_row(node_range.start.row)
+                .len(tab_size);
+            let rows_remaining = max_row_count.saturating_sub(row_count);
+            let Some(start_row) = (node_range.start.row.saturating_sub(rows_remaining)
+                ..node_range.start.row)
+                .rev()
+                .find(|row| is_line_blank_or_indented_less(indent_level, *row, tab_size, snapshot))
+            else {
+                return Some(node_row_range);
+            };
+            let rows_remaining = max_row_count.saturating_sub(node_range.end.row - start_row);
+            let Some(end_row) = (node_range.end.row + 1
+                ..cmp::min(
+                    node_range.end.row + rows_remaining + 1,
+                    snapshot.row_count(),
+                ))
+                .find(|row| is_line_blank_or_indented_less(indent_level, *row, tab_size, snapshot))
+            else {
+                return Some(node_row_range);
+            };
+            return Some(RangeInclusive::new(start_row, end_row));
+        }
+
+        // TODO: doing this instead of walking a cursor as that doesn't work - why?
+        let Some(parent) = node.parent() else {
+            log::info!(
+                "Expanding to ancestor reached the top node, so using default context line count.",
+            );
+            return None;
+        };
+        node = parent;
+    }
+}
+
+fn is_line_blank_or_indented_less(
+    indent_level: u32,
+    row: u32,
+    tab_size: u32,
+    snapshot: &BufferSnapshot,
+) -> bool {
+    let line_indent = snapshot.line_indent_for_row(row);
+    line_indent.is_line_blank() || line_indent.len(tab_size) < indent_level
 }

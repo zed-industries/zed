@@ -68,7 +68,7 @@ pub use text::{
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{debug_panic, RangeExt};
+use util::{debug_panic, maybe, RangeExt};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -3029,6 +3029,48 @@ impl BufferSnapshot {
             result
         });
         Some(items)
+    }
+
+    pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
+        let range = range.to_offset(self);
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+            grammar.outline_config.as_ref().map(|c| &c.query)
+        });
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|g| g.outline_config.as_ref().unwrap())
+            .collect::<Vec<_>>();
+
+        while let Some(mat) = matches.peek() {
+            let config = &configs[mat.grammar_index];
+            let containing_item_node = maybe!({
+                let item_node = mat.captures.iter().find_map(|cap| {
+                    if cap.index == config.item_capture_ix {
+                        Some(cap.node)
+                    } else {
+                        None
+                    }
+                })?;
+
+                let item_byte_range = item_node.byte_range();
+                if item_byte_range.end < range.start || item_byte_range.start > range.end {
+                    None
+                } else {
+                    Some(item_node)
+                }
+            });
+
+            if let Some(item_node) = containing_item_node {
+                return Some(
+                    Point::from_ts_point(item_node.start_position())
+                        ..Point::from_ts_point(item_node.end_position()),
+                );
+            }
+
+            matches.advance();
+        }
+        None
     }
 
     pub fn outline_items_containing<T: ToOffset>(

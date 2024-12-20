@@ -3714,6 +3714,7 @@ dependencies = [
  "serde_json",
  "settings",
  "theme",
+ "tree-sitter",
  "ui",
  "unindent",
  "util",
