@@ -24,7 +24,8 @@ use std::{
     usize,
 };
 use ui::{
-    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, ListItem, Scrollbar,
+    ScrollbarState, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
@@ -513,7 +514,7 @@ impl GitPanel {
                         true
                     }
                 }
-                None => true,
+                None => false,
             });
         for worktree in project.visible_worktrees(cx) {
             let worktree_id = worktree.read(cx).id();
@@ -983,17 +984,16 @@ impl GitPanel {
                 this.child(git_status_icon(status))
             })
             .child(
-                h_flex().gap_1p5().child(
-                    Label::new(&details.display_name)
-                        .when(selected, |entry_label| entry_label.color(Color::Selected)),
-                ),
+                ListItem::new(("label", id))
+                    .toggle_state(selected)
+                    .child(h_flex().gap_1p5().child(details.display_name.clone()))
+                    .on_click(move |_, cx| {
+                        handle.update(cx, |git_panel, cx| {
+                            git_panel.selected_item = Some(details.index);
+                            git_panel.reveal_entry_in_git_multi_buffer(&details, cx);
+                        });
+                    }),
             )
-            .on_click(move |_, cx| {
-                handle.update(cx, |git_panel, cx| {
-                    git_panel.selected_item = Some(details.index);
-                    git_panel.reveal_entry_in_git_multi_buffer(&details, cx);
-                });
-            })
     }
 
     fn reveal_entry_in_git_multi_buffer(
