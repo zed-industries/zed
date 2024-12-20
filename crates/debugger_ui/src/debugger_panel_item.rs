@@ -5,6 +5,7 @@ use crate::module_list::ModuleList;
 use crate::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use crate::variable_list::VariableList;
 
+use dap::proto_conversions;
 use dap::{
     client::DebugAdapterClientId, debugger_settings::DebuggerSettings, Capabilities,
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, OutputEventCategory, StoppedEvent,
@@ -421,6 +422,18 @@ impl DebugPanelItem {
         if Self::should_skip_event(self, client_id, self.thread_id) {
             return;
         }
+
+        self.dap_store.update(cx, |dap_store, _| {
+            if let Some((downstream_client, project_id)) = dap_store.downstream_client() {
+                let message = proto_conversions::capabilities_to_proto(
+                    &dap_store.capabilities_by_id(client_id),
+                    *project_id,
+                    client_id.to_proto(),
+                );
+
+                downstream_client.send(message).log_err();
+            }
+        });
 
         cx.notify();
     }

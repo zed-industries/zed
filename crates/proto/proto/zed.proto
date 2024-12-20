@@ -312,7 +312,9 @@ message Envelope {
         SetActiveDebugLine set_active_debug_line = 292;
         RemoveActiveDebugLine remove_active_debug_line = 293;
         SetDebuggerPanelItem set_debugger_panel_item = 294;
-        UpdateDebugAdapter update_debug_adapter = 295; // current max
+        UpdateDebugAdapter update_debug_adapter = 295;
+        ShutdownDebugClient shutdown_debug_client = 296;
+        SetDebugClientCapabilities set_debug_client_capabilities = 297; // current max
     }
 
     reserved 87 to 88;
@@ -2415,6 +2417,24 @@ message RefreshLlmToken {}
 enum BreakpointKind {
     Standard = 0;
     Log = 1;
+}
+
+message ShutdownDebugClient {
+    uint64 client_id = 1;
+    uint64 project_id = 2;
+}
+
+message SetDebugClientCapabilities {
+uint64 client_id = 1;
+uint64 project_id = 2;
+bool supports_loaded_sources_request = 3;
+bool supports_modules_request = 4;
+bool supports_restart_request = 5;
+bool supports_set_expression = 6;
+bool supports_single_thread_execution_requests = 7;
+bool supports_step_back = 8;
+bool supports_stepping_granularity = 9;
+bool supports_terminate_threads_request = 10;
 }
 
 message Breakpoint {

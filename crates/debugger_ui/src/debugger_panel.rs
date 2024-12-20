@@ -855,6 +855,8 @@ impl DebugPanel {
         debug_panel_item.update(cx, |this, cx| {
             this.from_proto(payload, cx);
         });
+
+        cx.notify();
     }
 
     fn handle_module_event(

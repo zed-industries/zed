@@ -379,6 +379,8 @@ messages!(
     (SetActiveDebugLine, Background),
     (RemoveActiveDebugLine, Background),
     (SetDebuggerPanelItem, Background),
+    (ShutdownDebugClient, Background),
+    (SetDebugClientCapabilities, Background),
 );
 
 request_messages!(
@@ -597,6 +599,8 @@ entity_messages!(
     SetActiveDebugLine,
     RemoveActiveDebugLine,
     SetDebuggerPanelItem,
+    ShutdownDebugClient,
+    SetDebugClientCapabilities,
 );
 
 entity_messages!(

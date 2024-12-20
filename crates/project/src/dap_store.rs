@@ -107,10 +107,12 @@ impl DapStore {
     const INDEX_STARTS_AT_ONE: bool = true;
 
     pub fn init(client: &AnyProtoClient) {
-        client.add_model_message_handler(DapStore::handle_synchronize_breakpoints);
-        client.add_model_message_handler(DapStore::handle_set_active_debug_line);
         client.add_model_message_handler(DapStore::handle_remove_active_debug_line);
+        client.add_model_message_handler(DapStore::handle_shutdown_debug_client);
+        client.add_model_message_handler(DapStore::handle_set_active_debug_line);
+        client.add_model_message_handler(DapStore::handle_set_debug_client_capabilities);
         client.add_model_message_handler(DapStore::handle_set_debug_panel_item);
+        client.add_model_message_handler(DapStore::handle_synchronize_breakpoints);
         client.add_model_message_handler(DapStore::handle_update_debug_adapter);
     }
 
@@ -661,6 +663,15 @@ impl DapStore {
                 .await?;
 
             this.update(&mut cx, |store, cx| {
+                if let Some((downstream_client, project_id)) = store.downstream_client.as_ref() {
+                    let message = dap::proto_conversions::capabilities_to_proto(
+                        &capabilities.clone(),
+                        *project_id,
+                        client.id().to_proto(),
+                    );
+
+                    downstream_client.send(message).log_err();
+                }
                 store.capabilities.insert(client.id(), capabilities);
 
                 cx.notify();
@@ -1357,6 +1368,15 @@ impl DapStore {
         self.ignore_breakpoints.remove(client_id);
         let capabilities = self.capabilities.remove(client_id);
 
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            let request = proto::ShutdownDebugClient {
+                client_id: client_id.to_proto(),
+                project_id: *project_id,
+            };
+
+            downstream_client.send(request).log_err();
+        }
+
         cx.spawn(|_, _| async move {
             let client = match client {
                 DebugAdapterClientState::Starting(task) => task.await,
@@ -1464,6 +1484,40 @@ impl DapStore {
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| {
             cx.emit(DapStoreEvent::UpdateDebugAdapter(envelope.payload));
+        })
+    }
+
+    async fn handle_set_debug_client_capabilities(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::SetDebugClientCapabilities>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |dap_store, cx| {
+            if dap_store.upstream_client().is_some() {
+                *dap_store
+                    .capabilities
+                    .entry(DebugAdapterClientId::from_proto(envelope.payload.client_id))
+                    .or_default() =
+                    dap::proto_conversions::capabilities_from_proto(&envelope.payload);
+
+                cx.notify();
+            }
+        })
+    }
+
+    async fn handle_shutdown_debug_client(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::ShutdownDebugClient>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |dap_store, cx| {
+            if matches!(dap_store.mode, DapStoreMode::Remote(_)) {
+                dap_store.clients.remove(&DebugAdapterClientId::from_proto(
+                    envelope.payload.client_id,
+                ));
+
+                cx.notify();
+            }
         })
     }
 
