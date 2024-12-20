@@ -615,9 +615,20 @@ impl Item for Editor {
                 .read(cx)
                 .as_singleton()
                 .and_then(|buffer| buffer.read(cx).project_path(cx))
-                .and_then(|path| self.project.as_ref()?.read(cx).entry_for_path(&path, cx))
-                .map(|entry| {
-                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, params.selected)
+                .and_then(|path| {
+                    let project = self.project.as_ref()?.read(cx);
+                    let entry = project.entry_for_path(&path, cx)?;
+                    let git_status = project
+                        .worktree_for_id(path.worktree_id, cx)?
+                        .read(cx)
+                        .snapshot()
+                        .status_for_file(path.path);
+
+                    Some(entry_git_aware_label_color(
+                        git_status,
+                        entry.is_ignored,
+                        params.selected,
+                    ))
                 })
                 .unwrap_or_else(|| entry_label_color(params.selected))
         } else {
@@ -1559,10 +1570,10 @@ pub fn entry_git_aware_label_color(
         Color::Ignored
     } else {
         match git_status {
-            Some(GitFileStatus::Added) => Color::Created,
+            Some(GitFileStatus::Added) | Some(GitFileStatus::Untracked) => Color::Created,
             Some(GitFileStatus::Modified) => Color::Modified,
             Some(GitFileStatus::Conflict) => Color::Conflict,
-            None => entry_label_color(selected),
+            Some(GitFileStatus::Deleted) | None => entry_label_color(selected),
         }
     }
 }

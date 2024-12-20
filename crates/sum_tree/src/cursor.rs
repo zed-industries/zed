@@ -60,6 +60,7 @@ where
         }
     }
 
+    /// Item is None, when the list is empty, or this cursor is at the end of the list.
     #[track_caller]
     pub fn item(&self) -> Option<&'a T> {
         self.assert_did_seek();
