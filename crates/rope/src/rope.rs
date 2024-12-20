@@ -990,6 +990,19 @@ impl TextSummary {
         }
     }
 
+    pub fn newline() -> Self {
+        Self {
+            len: 1,
+            len_utf16: OffsetUtf16(1),
+            first_line_chars: 0,
+            last_line_chars: 0,
+            last_line_len_utf16: 0,
+            lines: Point::new(1, 0),
+            longest_row: 0,
+            longest_row_chars: 0,
+        }
+    }
+
     pub fn add_newline(&mut self) {
         self.len += 1;
         self.len_utf16 += OffsetUtf16(self.len_utf16.0 + 1);

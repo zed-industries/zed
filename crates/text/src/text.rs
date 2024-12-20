@@ -2176,10 +2176,14 @@ impl BufferSnapshot {
     where
         D: TextDimension,
     {
+        self.text_summary_for_range(0..self.offset_for_anchor(anchor))
+    }
+
+    pub fn offset_for_anchor(&self, anchor: &Anchor) -> usize {
         if *anchor == Anchor::MIN {
-            D::zero(&())
+            0
         } else if *anchor == Anchor::MAX {
-            D::from_text_summary(&self.visible_text.summary())
+            self.visible_text.len()
         } else {
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
@@ -2217,7 +2221,7 @@ impl BufferSnapshot {
             if fragment.visible {
                 fragment_offset += anchor.offset - insertion.split_offset;
             }
-            self.text_summary_for_range(0..fragment_offset)
+            fragment_offset
         }
     }
 
