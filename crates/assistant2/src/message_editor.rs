@@ -7,17 +7,17 @@ use gpui::{
     WeakView,
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use language_model_selector::LanguageModelSelector;
 use rope::Point;
-use settings::{update_settings_file, Settings};
+use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, CheckboxWithLabel, ElevationIndex, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, Tooltip,
+    PopoverMenuHandle,
 };
 use workspace::Workspace;
 
-use crate::assistant_settings::AssistantSettings;
+use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::context_strip::ContextStrip;
@@ -33,8 +33,8 @@ pub struct MessageEditor {
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     inline_context_picker: View<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    language_model_selector: View<LanguageModelSelector>,
-    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
+    model_selector: View<AssistantModelSelector>,
+    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     use_tools: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -50,6 +50,7 @@ impl MessageEditor {
         let context_store = cx.new_model(|_cx| ContextStore::new());
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
+        let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(10, cx);
@@ -92,27 +93,17 @@ impl MessageEditor {
             context_picker_menu_handle,
             inline_context_picker,
             inline_context_picker_menu_handle,
-            language_model_selector: cx.new_view(|cx| {
-                let fs = fs.clone();
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _cx| settings.set_model(model.clone()),
-                        );
-                    },
-                    cx,
-                )
+            model_selector: cx.new_view(|cx| {
+                AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
             }),
-            language_model_selector_menu_handle: PopoverMenuHandle::default(),
+            model_selector_menu_handle,
             use_tools: false,
             _subscriptions: subscriptions,
         }
     }
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
-        self.language_model_selector_menu_handle.toggle(cx);
+        self.model_selector_menu_handle.toggle(cx)
     }
 
     fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
@@ -203,50 +194,6 @@ impl MessageEditor {
         let editor_focus_handle = self.editor.focus_handle(cx);
         cx.focus(&editor_focus_handle);
     }
-
-    fn render_language_model_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let active_model = LanguageModelRegistry::read_global(cx).active_model();
-        let focus_handle = self.language_model_selector.focus_handle(cx).clone();
-
-        LanguageModelSelectorPopoverMenu::new(
-            self.language_model_selector.clone(),
-            ButtonLike::new("active-model")
-                .style(ButtonStyle::Subtle)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_0p5()
-                        .child(
-                            div()
-                                .overflow_x_hidden()
-                                .flex_grow()
-                                .whitespace_nowrap()
-                                .child(match active_model {
-                                    Some(model) => h_flex()
-                                        .child(
-                                            Label::new(model.name().0)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .into_any_element(),
-                                    _ => Label::new("No model selected")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .into_any_element(),
-                                }),
-                        )
-                        .child(
-                            Icon::new(IconName::ChevronDown)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
-                        ),
-                )
-                .tooltip(move |cx| {
-                    Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
-                }),
-        )
-        .with_handle(self.language_model_selector_menu_handle.clone())
-    }
 }
 
 impl FocusableView for MessageEditor {
@@ -321,22 +268,19 @@ impl Render for MessageEditor {
                         }),
                     ))
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(self.render_language_model_selector(cx))
-                            .child(
-                                ButtonLike::new("chat")
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::ModalSurface)
-                                    .child(Label::new("Submit"))
-                                    .children(
-                                        KeyBinding::for_action_in(&Chat, &focus_handle, cx)
-                                            .map(|binding| binding.into_any_element()),
-                                    )
-                                    .on_click(move |_event, cx| {
-                                        focus_handle.dispatch_action(&Chat, cx);
-                                    }),
-                            ),
+                        h_flex().gap_1().child(self.model_selector.clone()).child(
+                            ButtonLike::new("chat")
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::ModalSurface)
+                                .child(Label::new("Submit"))
+                                .children(
+                                    KeyBinding::for_action_in(&Chat, &focus_handle, cx)
+                                        .map(|binding| binding.into_any_element()),
+                                )
+                                .on_click(move |_event, cx| {
+                                    focus_handle.dispatch_action(&Chat, cx);
+                                }),
+                        ),
                     ),
             )
     }
