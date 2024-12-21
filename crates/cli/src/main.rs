@@ -9,18 +9,20 @@ use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use collections::HashMap;
 use parking_lot::Mutex;
 use std::{
-    env, fs,
-    io::{self, IsTerminal},
+    env, fs, io,
     path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
     thread::{self, JoinHandle},
 };
 use tempfile::NamedTempFile;
-use util::{load_login_shell_environment, paths::PathWithPosition, ResultExt};
+use util::paths::PathWithPosition;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use util::load_shell_from_passwd;
+use {
+    std::io::IsTerminal,
+    util::{load_login_shell_environment, load_shell_from_passwd, ResultExt},
+};
 
 struct Detect;
 
