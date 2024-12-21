@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Shadow Examples</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                font-size: 12px;
+                margin: 0;
+                padding: 0;
+                background-color: #ffffff;
+            }
+            .container {
+                display: flex;
+                flex-direction: column;
+                height: 100vh;
+                overflow-y: scroll;
+            }
+            .row {
+                display: flex;
+                border-bottom: 1px solid rgba(0, 0, 0, 1);
+            }
+            .example {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                width: calc(100% / 6);
+                border-right: 1px solid rgba(0, 0, 0, 1);
+            }
+            .box {
+                width: 64px;
+                height: 64px;
+                background-color: #ffffff;
+                border: 1px solid rgba(0, 0, 0, 0.1);
+                margin: 48px 0;
+            }
+            .label {
+                width: 100%;
+                border-top: 1px solid rgba(0, 0, 0, 1);
+                padding: 4px;
+                text-align: center;
+            }
+
+            /* Shapes */
+            .square {
+            }
+            .rounded-small {
+                border-radius: 4px;
+            }
+            .rounded-medium {
+                border-radius: 8px;
+            }
+            .rounded-large {
+                border-radius: 12px;
+            }
+            .circle {
+                border-radius: 50%;
+            }
+
+            /* Shadows */
+            .shadow-sm {
+                box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            }
+            .shadow-md {
+                box-shadow:
+                    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+                    0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            }
+            .shadow-lg {
+                box-shadow:
+                    0 10px 15px -3px rgba(0, 0, 0, 0.1),
+                    0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            }
+            .shadow-xl {
+                box-shadow:
+                    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+                    0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            }
+            .shadow-2xl {
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            }
+
+            /* Blur radii */
+            .blur-0 {
+                box-shadow: 0 8px 0 0 rgba(0, 0, 0, 0.3);
+            }
+            .blur-2 {
+                box-shadow: 0 8px 2px 0 rgba(0, 0, 0, 0.3);
+            }
+            .blur-4 {
+                box-shadow: 0 8px 4px 0 rgba(0, 0, 0, 0.3);
+            }
+            .blur-8 {
+                box-shadow: 0 8px 8px 0 rgba(0, 0, 0, 0.3);
+            }
+            .blur-16 {
+                box-shadow: 0 8px 16px 0 rgba(0, 0, 0, 0.3);
+            }
+
+            /* Spread radii */
+            .spread-0 {
+                box-shadow: 0 8px 8px 0 rgba(0, 0, 0, 0.3);
+            }
+            .spread-2 {
+                box-shadow: 0 8px 8px 2px rgba(0, 0, 0, 0.3);
+            }
+            .spread-4 {
+                box-shadow: 0 8px 8px 4px rgba(0, 0, 0, 0.3);
+            }
+            .spread-8 {
+                box-shadow: 0 8px 8px 8px rgba(0, 0, 0, 0.3);
+            }
+            .spread-16 {
+                box-shadow: 0 8px 8px 16px rgba(0, 0, 0, 0.3);
+            }
+
+            /* Directional shadows */
+            .shadow-left {
+                box-shadow: -8px 0 8px 0 rgba(128, 0, 128, 0.3);
+            }
+            .shadow-right {
+                box-shadow: 8px 0 8px 0 rgba(128, 0, 128, 0.3);
+            }
+            .shadow-top {
+                box-shadow: 0 -8px 8px 0 rgba(128, 0, 128, 0.3);
+            }
+            .shadow-bottom {
+                box-shadow: 0 8px 8px 0 rgba(128, 0, 128, 0.3);
+            }
+
+            /* Multiple shadows */
+            .shadow-multiple {
+                box-shadow:
+                    0 -12px 8px 2px rgba(255, 0, 0, 0.3),
+                    12px 0 8px 2px rgba(255, 255, 0, 0.3),
+                    0 12px 8px 2px rgba(0, 255, 0, 0.3),
+                    -12px 0 8px 2px rgba(0, 0, 255, 0.3);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="row">
+                <div class="example">
+                    <div class="box square shadow-bottom"></div>
+                    <div class="label">Square</div>
+                </div>
+                <div class="example">
+                    <div class="box rounded-small shadow-bottom"></div>
+                    <div class="label">Rounded 4</div>
+                </div>
+                <div class="example">
+                    <div class="box rounded-medium shadow-bottom"></div>
+                    <div class="label">Rounded 8</div>
+                </div>
+                <div class="example">
+                    <div class="box rounded-large shadow-bottom"></div>
+                    <div class="label">Rounded 16</div>
+                </div>
+                <div class="example">
+                    <div class="box circle shadow-bottom"></div>
+                    <div class="label">Circle</div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="example">
+                    <div class="box circle"></div>
+                    <div class="label">None</div>
+                </div>
+                <div class="example">
+                    <div class="box circle shadow-sm"></div>
+                    <div class="label">Small</div>
+                </div>
+                <div class="example">
+                    <div class="box circle shadow-md"></div>
+                    <div class="label">Medium</div>
+                </div>
+                <div class="example">
+                    <div class="box circle shadow-lg"></div>
+                    <div class="label">Large</div>
+                </div>
+                <div class="example">
+                    <div class="box circle shadow-xl"></div>
+                    <div class="label">Extra Large</div>
+                </div>
+                <div class="example">
+                    <div class="box circle shadow-2xl"></div>
+                    <div class="label">2X Large</div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="example">
+                    <div class="box circle blur-0"></div>
+                    <div class="label">Blur 0</div>
+                </div>
+                <div class="example">
+                    <div class="box circle blur-2"></div>
+                    <div class="label">Blur 2</div>
+                </div>
+                <div class="example">
+                    <div class="box circle blur-4"></div>
+                    <div class="label">Blur 4</div>
+                </div>
+                <div class="example">
+                    <div class="box circle blur-8"></div>
+                    <div class="label">Blur 8</div>
+                </div>
+                <div class="example">
+                    <div class="box circle blur-16"></div>
+                    <div class="label">Blur 16</div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="example">
+                    <div class="box circle spread-0"></div>
+                    <div class="label">Spread 0</div>
+                </div>
+                <div class="example">
+                    <div class="box circle spread-2"></div>
+                    <div class="label">Spread 2</div>
+                </div>
+                <div class="example">
+                    <div class="box circle spread-4"></div>
+                    <div class="label">Spread 4</div>
+                </div>
+                <div class="example">
+                    <div class="box circle spread-8"></div>
+                    <div class="label">Spread 8</div>
+                </div>
+                <div class="example">
+                    <div class="box circle spread-16"></div>
+                    <div class="label">Spread 16</div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="example">
+                    <div class="box square spread-0"></div>
+                    <div class="label">Square Spread 0</div>
+                </div>
+                <div class="example">
+                    <div class="box square spread-8"></div>
+                    <div class="label">Square Spread 8</div>
+                </div>
+                <div class="example">
+                    <div class="box square spread-16"></div>
+                    <div class="label">Square Spread 16</div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="example">
+                    <div class="box rounded-large spread-0"></div>
+                    <div class="label">Rounded Large Spread 0</div>
+                </div>
+                <div class="example">
+                    <div class="box rounded-large spread-8"></div>
+                    <div class="label">Rounded Large Spread 8</div>
+                </div>
+                <div class="example">
+                    <div class="box rounded-large spread-16"></div>
+                    <div class="label">Rounded Large Spread 16</div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="example">
+                    <div class="box circle shadow-left"></div>
+                    <div class="label">Left</div>
+                </div>
+                <div class="example">
+                    <div class="box circle shadow-right"></div>
+                    <div class="label">Right</div>
+                </div>
+                <div class="example">
+                    <div class="box circle shadow-top"></div>
+                    <div class="label">Top</div>
+                </div>
+                <div class="example">
+                    <div class="box circle shadow-bottom"></div>
+                    <div class="label">Bottom</div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="example">
+                    <div class="box square shadow-left"></div>
+                    <div class="label">Square Left</div>
+                </div>
+                <div class="example">
+                    <div class="box square shadow-right"></div>
+                    <div class="label">Square Right</div>
+                </div>
+                <div class="example">
+                    <div class="box square shadow-top"></div>
+                    <div class="label">Square Top</div>
+                </div>
+                <div class="example">
+                    <div class="box square shadow-bottom"></div>
+                    <div class="label">Square Bottom</div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="example">
+                    <div class="box rounded-large shadow-left"></div>
+                    <div class="label">Rounded Large Left</div>
+                </div>
+                <div class="example">
+                    <div class="box rounded-large shadow-right"></div>
+                    <div class="label">Rounded Large Right</div>
+                </div>
+                <div class="example">
+                    <div class="box rounded-large shadow-top"></div>
+                    <div class="label">Rounded Large Top</div>
+                </div>
+                <div class="example">
+                    <div class="box rounded-large shadow-bottom"></div>
+                    <div class="label">Rounded Large Bottom</div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="example">
+                    <div class="box circle shadow-multiple"></div>
+                    <div class="label">Circle Multiple</div>
+                </div>
+                <div class="example">
+                    <div class="box square shadow-multiple"></div>
+                    <div class="label">Square Multiple</div>
+                </div>
+                <div class="example">
+                    <div class="box rounded-large shadow-multiple"></div>
+                    <div class="label">Rounded Large Multiple</div>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>
