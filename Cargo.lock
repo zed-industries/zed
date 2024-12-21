@@ -2491,7 +2491,6 @@ dependencies = [
  "release_channel",
  "serde",
  "tempfile",
- "tokio",
  "util",
 ]
 

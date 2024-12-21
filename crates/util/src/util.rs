@@ -11,7 +11,6 @@ use futures::Future;
 
 use itertools::Either;
 use regex::Regex;
-use smol::process::Command;
 use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
@@ -113,7 +112,7 @@ where
 }
 
 #[cfg(unix)]
-pub async fn load_shell_from_passwd() -> Result<()> {
+pub fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
         n if n < 0 => 1024,
         n => n as usize,
@@ -161,7 +160,7 @@ pub async fn load_shell_from_passwd() -> Result<()> {
     Ok(())
 }
 
-pub async fn load_login_shell_environment() -> Result<()> {
+pub fn load_login_shell_environment() -> Result<()> {
     let marker = "ZED_LOGIN_SHELL_START";
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
@@ -187,10 +186,9 @@ pub async fn load_login_shell_environment() -> Result<()> {
         shell_cmd_prefix.as_deref().unwrap_or("")
     );
 
-    let output = Command::new(&shell)
+    let output = std::process::Command::new(&shell)
         .args(["-l", "-i", "-c", &shell_cmd])
         .output()
-        .await
         .context("failed to spawn login shell to source login environment variables")?;
     if !output.status.success() {
         Err(anyhow!("login shell exited with error"))?;

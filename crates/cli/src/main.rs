@@ -9,14 +9,18 @@ use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use collections::HashMap;
 use parking_lot::Mutex;
 use std::{
-    env, fs, io,
+    env, fs,
+    io::{self, IsTerminal},
     path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
     thread::{self, JoinHandle},
 };
 use tempfile::NamedTempFile;
-use util::paths::PathWithPosition;
+use util::{load_login_shell_environment, paths::PathWithPosition, ResultExt};
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use util::load_shell_from_passwd;
 
 struct Detect;
 
@@ -24,7 +28,6 @@ trait InstalledApp {
     fn zed_version_string(&self) -> String;
     fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
     fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus>;
-    async fn get_env_vars(&self) -> Option<HashMap<String, String>>;
 }
 
 #[derive(Parser, Debug)]
@@ -97,8 +100,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     Ok(canonicalized.to_string(|path| path.to_string_lossy().to_string()))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Exit flatpak sandbox if needed
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
@@ -163,7 +165,16 @@ async fn main() -> Result<()> {
         None
     };
 
-    let env = app.get_env_vars().await;
+    // On Linux, desktop entry uses `cli` to spawn `zed`, so we need to load env vars from the shell
+    // since it doesn't inherit env vars from the terminal.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    if !std::io::stdout().is_terminal() {
+        load_shell_from_passwd().log_err();
+        load_login_shell_environment().log_err();
+    }
+
+    let env = Some(std::env::vars().collect::<HashMap<_, _>>());
+
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
     let mut urls = vec![];
@@ -257,11 +268,10 @@ async fn main() -> Result<()> {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux {
-    use collections::HashMap;
     use std::{
         env,
         ffi::OsString,
-        io::{self, IsTerminal},
+        io,
         os::unix::net::{SocketAddr, UnixDatagram},
         path::{Path, PathBuf},
         process::{self, ExitStatus},
@@ -273,8 +283,6 @@ mod linux {
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
     use once_cell::sync::Lazy;
-    use util::ResultExt;
-    use util::{load_login_shell_environment, load_shell_from_passwd};
 
     use crate::{Detect, InstalledApp};
 
@@ -338,17 +346,6 @@ mod linux {
             std::process::Command::new(self.0.clone())
                 .arg(ipc_url)
                 .status()
-        }
-
-        async fn get_env_vars(&self) -> Option<HashMap<String, String>> {
-            // The desktop entry uses `cli` to spawn `zed`, so we need to load env vars from the shell
-            // since it doesn't inherit env vars from the terminal.
-            if !std::io::stdout().is_terminal() {
-                load_shell_from_passwd().await.log_err();
-                load_login_shell_environment().await.log_err();
-            }
-
-            Some(std::env::vars().collect::<HashMap<_, _>>())
         }
     }
 
@@ -505,7 +502,6 @@ mod flatpak {
 #[cfg(target_os = "windows")]
 mod windows {
     use crate::{Detect, InstalledApp};
-    use collections::HashMap;
     use std::io;
     use std::path::Path;
     use std::process::ExitStatus;
@@ -521,9 +517,6 @@ mod windows {
         fn run_foreground(&self, _ipc_url: String) -> io::Result<ExitStatus> {
             unimplemented!()
         }
-        async fn get_env_vars(&self) -> Option<HashMap<String, String>> {
-            unimplemented!()
-        }
     }
 
     impl Detect {
@@ -536,7 +529,6 @@ mod windows {
 #[cfg(target_os = "macos")]
 mod mac_os {
     use anyhow::{anyhow, Context, Result};
-    use collections::HashMap;
     use core_foundation::{
         array::{CFArray, CFIndex},
         string::kCFStringEncodingUTF8,
@@ -708,10 +700,6 @@ mod mac_os {
             };
 
             std::process::Command::new(path).arg(ipc_url).status()
-        }
-
-        async fn get_env_vars(&self) -> Option<HashMap<String, String>> {
-            Some(std::env::vars().collect::<HashMap<_, _>>())
         }
     }
 

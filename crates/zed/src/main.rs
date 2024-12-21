@@ -221,9 +221,9 @@ fn main() {
             .spawn(async {
                 #[cfg(unix)]
                 {
-                    load_shell_from_passwd().await.log_err();
+                    load_shell_from_passwd().log_err();
                 }
-                load_login_shell_environment().await.log_err();
+                load_login_shell_environment().log_err();
             })
             .detach()
     };
