@@ -154,7 +154,9 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        let entry = &self.matches[self.selected_index];
+        let Some(entry) = self.matches.get(self.selected_index) else {
+            return;
+        };
 
         let Some(thread_store) = self.thread_store.upgrade() else {
             return;
