@@ -41,6 +41,20 @@
     (#set! tag python-pytest-method)
 )
 
+; decorated pytest functions
+(
+    (module
+        (decorated_definition
+            (decorator)+ @decorator
+            definition: (function_definition
+                name: (identifier) @run @_pytest_decorated_method_name
+                (#match? @_pytest_decorated_method_name "^test_")
+                )
+            ) @python-pytest-method
+        )
+    (#set! tag python-pytest-method)
+)
+
 ; pytest classes
 (
     (module
