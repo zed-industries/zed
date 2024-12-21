@@ -90,7 +90,7 @@ impl ActiveThread {
 
         let theme_settings = ThemeSettings::get_global(cx);
         let ui_font_size = TextSize::Default.rems(cx);
-        let buffer_font_size = theme_settings.buffer_font_size;
+        let buffer_font_size = TextSize::Small.rems(cx);
 
         let mut text_style = cx.text_style();
         text_style.refine(&TextStyleRefinement {
@@ -105,6 +105,40 @@ impl ActiveThread {
             syntax: cx.theme().syntax().clone(),
             selection_background_color: cx.theme().players().local().selection,
             code_block: StyleRefinement {
+                background: Some(cx.theme().colors().editor_foreground.opacity(0.01).into()),
+                margin: gpui::EdgesRefinement {
+                    top: Some(gpui::Length::Definite(rems(0.5).into())),
+                    left: Some(gpui::Length::Definite(rems(0.).into())),
+                    right: Some(gpui::Length::Definite(rems(0.).into())),
+                    bottom: Some(gpui::Length::Definite(rems(1.).into())),
+                },
+                padding: gpui::EdgesRefinement {
+                    top: Some(gpui::DefiniteLength::Absolute(
+                        gpui::AbsoluteLength::Pixels(gpui::Pixels(8.)),
+                    )),
+                    left: Some(gpui::DefiniteLength::Absolute(
+                        gpui::AbsoluteLength::Pixels(gpui::Pixels(8.)),
+                    )),
+                    right: Some(gpui::DefiniteLength::Absolute(
+                        gpui::AbsoluteLength::Pixels(gpui::Pixels(8.)),
+                    )),
+                    bottom: Some(gpui::DefiniteLength::Absolute(
+                        gpui::AbsoluteLength::Pixels(gpui::Pixels(8.)),
+                    )),
+                },
+                border_widths: gpui::EdgesRefinement {
+                    top: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(1.0))),
+                    left: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(1.))),
+                    right: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(1.))),
+                    bottom: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(1.))),
+                },
+                corner_radii: gpui::CornersRefinement {
+                    top_left: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(2.))),
+                    top_right: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(2.))),
+                    bottom_right: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(2.))),
+                    bottom_left: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(2.))),
+                },
+                border_color: Some(cx.theme().colors().border_variant.opacity(0.5)),
                 text: Some(TextStyleRefinement {
                     font_family: Some(theme_settings.buffer_font.family.clone()),
                     font_size: Some(buffer_font_size.into()),
@@ -218,16 +252,16 @@ impl ActiveThread {
             .child(
                 v_flex()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(cx.theme().colors().border_variant)
                     .bg(cx.theme().colors().editor_background)
                     .rounded_md()
                     .child(
                         h_flex()
-                            .justify_between()
-                            .py_1()
-                            .px_2()
+                            .py_2()
+                            .px_3()
                             .border_b_1()
                             .border_color(cx.theme().colors().border_variant)
+                            .justify_between()
                             .child(
                                 h_flex()
                                     .gap_1p5()
@@ -243,7 +277,7 @@ impl ActiveThread {
                                     ),
                             ),
                     )
-                    .child(v_flex().px_2().py_1().text_ui(cx).child(markdown.clone()))
+                    .child(v_flex().p_3().text_ui(cx).child(markdown.clone()))
                     .when_some(context, |parent, context| {
                         parent.child(
                             h_flex().flex_wrap().gap_2().p_1p5().children(
