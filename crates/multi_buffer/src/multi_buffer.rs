@@ -745,15 +745,30 @@ impl MultiBuffer {
     ) -> (HashMap<BufferId, Vec<BufferEdit>>, Vec<ExcerptId>) {
         let mut buffer_edits: HashMap<BufferId, Vec<BufferEdit>> = Default::default();
         let mut edited_excerpt_ids = Vec::new();
+        let mut diff_transforms_cursor = snapshot
+            .diff_transforms
+            .cursor::<(usize, ExcerptOffset)>(&());
         let mut cursor = snapshot.excerpts.cursor::<usize>(&());
         for (ix, (range, new_text)) in edits.into_iter().enumerate() {
             let original_indent_column = original_indent_columns.get(ix).copied().unwrap_or(0);
-            cursor.seek(&range.start, Bias::Right, &());
-            if cursor.item().is_none() && range.start == *cursor.start() {
-                cursor.prev(&());
+
+            diff_transforms_cursor.seek_forward(&range.start, Bias::Right, &());
+            let mut start_excerpt_offset = diff_transforms_cursor.start().1;
+            if let Some(DiffTransform::BufferContent { .. }) = diff_transforms_cursor.item() {
+                let offset_in_transform = range.start - diff_transforms_cursor.start().0;
+                start_excerpt_offset.value += offset_in_transform;
             }
+
+            diff_transforms_cursor.seek_forward(&range.end, Bias::Right, &());
+            let mut end_excerpt_offset = diff_transforms_cursor.start().1;
+            if let Some(DiffTransform::BufferContent { .. }) = diff_transforms_cursor.item() {
+                let offset_in_transform = range.start - diff_transforms_cursor.start().0;
+                end_excerpt_offset.value += offset_in_transform;
+            }
+
+            cursor.seek_forward(&start_excerpt_offset.value, Bias::Right, &());
             let start_excerpt = cursor.item().expect("start offset out of bounds");
-            let start_overshoot = range.start - cursor.start();
+            let start_overshoot = start_excerpt_offset.value - cursor.start();
             let buffer_start = start_excerpt
                 .range
                 .context
@@ -762,12 +777,12 @@ impl MultiBuffer {
                 + start_overshoot;
             edited_excerpt_ids.push(start_excerpt.id);
 
-            cursor.seek(&range.end, Bias::Right, &());
-            if cursor.item().is_none() && range.end == *cursor.start() {
+            cursor.seek_forward(&end_excerpt_offset.value, Bias::Right, &());
+            if cursor.item().is_none() && end_excerpt_offset.value == *cursor.start() {
                 cursor.prev(&());
             }
             let end_excerpt = cursor.item().expect("end offset out of bounds");
-            let end_overshoot = range.end - cursor.start();
+            let end_overshoot = end_excerpt_offset.value - cursor.start();
             let buffer_end = end_excerpt
                 .range
                 .context
