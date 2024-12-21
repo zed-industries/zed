@@ -427,9 +427,24 @@
       "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn",
-      "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
+      "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }],
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
+      "alt-z": ["app_menu::OpenApplicationMenu", "Zed"],
+      "alt-f": ["app_menu::OpenApplicationMenu", "File"],
+      "alt-e": ["app_menu::OpenApplicationMenu", "Edit"],
+      "alt-s": ["app_menu::OpenApplicationMenu", "Selection"],
+      "alt-v": ["app_menu::OpenApplicationMenu", "View"],
+      "alt-g": ["app_menu::OpenApplicationMenu", "Go"],
+      "alt-w": ["app_menu::OpenApplicationMenu", "Window"],
+      "alt-h": ["app_menu::OpenApplicationMenu", "Help"]
+    }
+  },
+  {
+    "context": "ApplicationMenu",
+    "bindings": {
+      "left": ["app_menu::NavigateApplicationMenuInDirection", "Left"],
+      "right": ["app_menu::NavigateApplicationMenuInDirection", "Right"]
     }
   },
   // Bindings from Sublime Text

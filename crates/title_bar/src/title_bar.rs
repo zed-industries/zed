@@ -7,6 +7,10 @@ mod window_controls;
 mod stories;
 
 use crate::application_menu::ApplicationMenu;
+
+#[cfg(not(target_os = "macos"))]
+use crate::application_menu::{NavigateApplicationMenuInDirection, OpenApplicationMenu};
+
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
@@ -53,7 +57,39 @@ actions!(
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
         let item = cx.new_view(|cx| TitleBar::new("title-bar", workspace, cx));
-        workspace.set_titlebar_item(item.into(), cx)
+        workspace.set_titlebar_item(item.into(), cx);
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(|workspace, action: &OpenApplicationMenu, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| menu.open_menu(action, cx));
+                    }
+                });
+            }
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(
+            |workspace, action: &NavigateApplicationMenuInDirection, cx| {
+                if let Some(titlebar) = workspace
+                    .titlebar_item()
+                    .and_then(|item| item.downcast::<TitleBar>().ok())
+                {
+                    titlebar.update(cx, |titlebar, cx| {
+                        if let Some(ref menu) = titlebar.application_menu {
+                            menu.update(cx, |menu, cx| {
+                                menu.navigate_menus_in_direction(action, cx)
+                            });
+                        }
+                    });
+                }
+            },
+        );
     })
     .detach();
 }
@@ -135,8 +171,8 @@ impl Render for TitleBar {
                         h_flex()
                             .gap_1()
                             .when_some(self.application_menu.clone(), |this, menu| {
-                                let is_any_menu_deployed = menu.read(cx).is_any_deployed();
-                                this.child(menu).when(!is_any_menu_deployed, |this| {
+                                let all_menus_shown = menu.read(cx).all_menus_shown();
+                                this.child(menu).when(!all_menus_shown, |this| {
                                     this.children(self.render_project_host(cx))
                                         .child(self.render_project_name(cx))
                                         .children(self.render_project_branch(cx))
