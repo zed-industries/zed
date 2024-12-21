@@ -5350,6 +5350,7 @@ dependencies = [
  "rand 0.8.5",
  "raw-window-handle",
  "refineable",
+ "reliability",
  "resvg",
  "schemars",
  "seahash",
@@ -10266,6 +10267,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "reliability"
+version = "0.1.0"
+dependencies = [
+ "futures 0.3.31",
+]
+
+[[package]]
 name = "remote"
 version = "0.1.0"
 dependencies = [
@@ -10325,6 +10333,7 @@ dependencies = [
  "project",
  "proto",
  "release_channel",
+ "reliability",
  "remote",
  "reqwest_client",
  "rpc",
@@ -16062,6 +16071,7 @@ dependencies = [
  "proto",
  "recent_projects",
  "release_channel",
+ "reliability",
  "remote",
  "repl",
  "reqwest_client",
