@@ -1,8 +1,8 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
-    Model, ScrollStrategy, SharedString, StrikethroughStyle, StyledText, UniformListScrollHandle,
-    ViewContext, WeakView,
+    Model, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
+    UniformListScrollHandle, ViewContext, WeakView,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -30,7 +30,10 @@ use crate::{
 };
 use crate::{AcceptInlineCompletion, InlineCompletionMenuHint, InlineCompletionText};
 
-pub const MAX_COMPLETIONS_ASIDE_WIDTH: Pixels = px(500.);
+pub const MENU_GAP: Pixels = px(4.);
+pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
+pub const MENU_ASIDE_MIN_WIDTH: Pixels = px(260.);
+pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
 
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
@@ -131,14 +134,12 @@ impl CodeContextMenu {
     pub fn render_aside(
         &self,
         style: &EditorStyle,
-        max_height: Pixels,
+        max_size: Size<Pixels>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<AnyElement> {
         match self {
-            CodeContextMenu::Completions(menu) => {
-                menu.render_aside(style, max_height, workspace, cx)
-            }
+            CodeContextMenu::Completions(menu) => menu.render_aside(style, max_size, workspace, cx),
             CodeContextMenu::CodeActions(_) => None,
         }
     }
@@ -613,7 +614,7 @@ impl CompletionsMenu {
     fn render_aside(
         &self,
         style: &EditorStyle,
-        max_height: Pixels,
+        max_size: Size<Pixels>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<AnyElement> {
@@ -663,10 +664,9 @@ impl CompletionsMenu {
                 .child(
                     multiline_docs
                         .id("multiline_docs")
-                        .max_h(max_height)
-                        .px_2()
-                        .min_w(px(260.))
-                        .max_w(MAX_COMPLETIONS_ASIDE_WIDTH)
+                        .px(MENU_ASIDE_X_PADDING / 2.)
+                        .max_w(max_size.width)
+                        .max_h(max_size.height)
                         .overflow_y_scroll()
                         .occlude(),
                 )
