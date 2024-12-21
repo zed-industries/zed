@@ -180,14 +180,13 @@ vertex ShadowVertexOutput shadow_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Shadow shadow = shadows[shadow_id];
 
-  float margin = 3. * shadow.blur_radius;
-  // Set the bounds of the shadow and adjust its size based on the shadow's
-  // spread radius to achieve the spreading effect
+  // Calculate the expanded bounds
+  float expansion = max(3. * shadow.blur_radius, 1.0);
   Bounds_ScaledPixels bounds = shadow.bounds;
-  bounds.origin.x -= margin;
-  bounds.origin.y -= margin;
-  bounds.size.width += 2. * margin;
-  bounds.size.height += 2. * margin;
+  bounds.origin.x -= expansion;
+  bounds.origin.y -= expansion;
+  bounds.size.width += 2. * expansion;
+  bounds.size.height += 2. * expansion;
 
   float4 device_position =
       to_device_position(unit_vertex, bounds, viewport_size);
@@ -212,39 +211,23 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
   float2 half_size = size / 2.;
   float2 center = origin + half_size;
   float2 point = input.position.xy - center;
-  float corner_radius;
-  if (point.x < 0.) {
-    if (point.y < 0.) {
-      corner_radius = shadow.corner_radii.top_left;
-    } else {
-      corner_radius = shadow.corner_radii.bottom_left;
-    }
+
+  // Calculate distance from the edge of the shape
+  float2 d = abs(point) - half_size + shadow.corner_radii.top_left;
+  float distance = length(max(d, 0.)) + min(max(d.x, d.y), 0.) - shadow.corner_radii.top_left;
+
+  if (shadow.blur_radius == 0.0) {
+    // For zero blur, use a sharp cutoff
+    return distance <= 0.0 ? input.color : float4(0.0);
   } else {
-    if (point.y < 0.) {
-      corner_radius = shadow.corner_radii.top_right;
-    } else {
-      corner_radius = shadow.corner_radii.bottom_right;
-    }
+    // For non-zero blur, use a smooth falloff
+    float alpha = saturate(0.5 - distance / shadow.blur_radius);
+
+    // Improve the gradient quality by applying a curve
+    alpha = smoothstep(0.0, 1.0, alpha);
+
+    return input.color * float4(1., 1., 1., alpha);
   }
-
-  // The signal is only non-zero in a limited range, so don't waste samples
-  float low = point.y - half_size.y;
-  float high = point.y + half_size.y;
-  float start = clamp(-3. * shadow.blur_radius, low, high);
-  float end = clamp(3. * shadow.blur_radius, low, high);
-
-  // Accumulate samples (we can get away with surprisingly few samples)
-  float step = (end - start) / 4.;
-  float y = start + step * 0.5;
-  float alpha = 0.;
-  for (int i = 0; i < 4; i++) {
-    alpha += blur_along_x(point.x, point.y - y, shadow.blur_radius,
-                          corner_radius, half_size) *
-             gaussian(y, shadow.blur_radius) * step;
-    y += step;
-  }
-
-  return input.color * float4(1., 1., 1., alpha);
 }
 
 struct UnderlineVertexOutput {

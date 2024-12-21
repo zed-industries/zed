@@ -52,8 +52,94 @@ fn example(label: impl Into<SharedString>, example: impl IntoElement) -> impl In
 
 impl Render for Shadow {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().bg(rgb(0xffffff)).size_full().text_xs().child(
-            div().flex().flex_col().size_full().children(vec![
+        div()
+            .id("shadow-example")
+            .overflow_y_scroll()
+            .bg(rgb(0xffffff))
+            .size_full()
+            .text_xs()
+            .child(div().flex().flex_col().size_full().children(vec![
+                div()
+                    .border_b_1()
+                    .border_color(hsla(0.0, 0.0, 0.0, 1.0))
+                    .flex()
+                    .flex_row()
+                    .children(vec![
+                        example(
+                            "Square",
+                            div()
+                                .size_16()
+                                .bg(rgb(0xffffff))
+                                .border_1()
+                                .border_color(hsla(0.0, 0.0, 0.0, 0.1))
+                                .shadow(smallvec![BoxShadow {
+                                    color: hsla(0.0, 0.5, 0.5, 0.3),
+                                    offset: point(px(0.), px(8.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(0.),
+                                }]),
+                        ),
+                        example(
+                            "Rounded 4",
+                            div()
+                                .size_16()
+                                .bg(rgb(0xffffff))
+                                .border_1()
+                                .border_color(hsla(0.0, 0.0, 0.0, 0.1))
+                                .rounded(px(4.))
+                                .shadow(smallvec![BoxShadow {
+                                    color: hsla(0.0, 0.5, 0.5, 0.3),
+                                    offset: point(px(0.), px(8.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(0.),
+                                }]),
+                        ),
+                        example(
+                            "Rounded 8",
+                            div()
+                                .size_16()
+                                .bg(rgb(0xffffff))
+                                .border_1()
+                                .border_color(hsla(0.0, 0.0, 0.0, 0.1))
+                                .rounded(px(8.))
+                                .shadow(smallvec![BoxShadow {
+                                    color: hsla(0.0, 0.5, 0.5, 0.3),
+                                    offset: point(px(0.), px(8.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(0.),
+                                }]),
+                        ),
+                        example(
+                            "Rounded 16",
+                            div()
+                                .size_16()
+                                .bg(rgb(0xffffff))
+                                .border_1()
+                                .border_color(hsla(0.0, 0.0, 0.0, 0.1))
+                                .rounded(px(16.))
+                                .shadow(smallvec![BoxShadow {
+                                    color: hsla(0.0, 0.5, 0.5, 0.3),
+                                    offset: point(px(0.), px(8.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(0.),
+                                }]),
+                        ),
+                        example(
+                            "Circle",
+                            div()
+                                .size_16()
+                                .bg(rgb(0xffffff))
+                                .border_1()
+                                .border_color(hsla(0.0, 0.0, 0.0, 0.1))
+                                .rounded_full()
+                                .shadow(smallvec![BoxShadow {
+                                    color: hsla(0.0, 0.5, 0.5, 0.3),
+                                    offset: point(px(0.), px(8.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(0.),
+                                }]),
+                        ),
+                    ]),
                 div()
                     .border_b_1()
                     .border_color(hsla(0.0, 0.0, 0.0, 1.0))
@@ -249,8 +335,7 @@ impl Render for Shadow {
                             ]),
                         ),
                     ),
-            ]),
-        )
+            ]))
     }
 }
 
