@@ -87,12 +87,8 @@ git clean -q -dff
 git checkout -q -b ${bump_main_branch_name}
 cargo set-version --package zed --bump minor
 cargo check -q
-message="${next_minor_branch_name} dev
 
-Release Notes:
-
-- N/A"
-git commit -q --all --message "$message"
+git commit -q --all --message "${next_minor_branch_name} dev"
 
 git checkout -q main
 
@@ -108,7 +104,12 @@ Prepared new Zed versions locally. You will need to push the branches and open a
       ${prev_minor_branch_name} \\
       ${bump_main_branch_name}
 
-    gh pr create --base main --head ${bump_main_branch_name}
+    echo -e "Release Notes:\n\n-N/A" | gh pr create \\
+      --title "Bump Zed to v${major}.${next_minor}" \\
+      --body-file "-" \\
+      --base main \\
+      --head ${bump_main_branch_name} \\
+      --web
 
 # To undo this push:
 

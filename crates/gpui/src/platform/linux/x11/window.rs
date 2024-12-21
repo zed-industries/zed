@@ -1100,6 +1100,30 @@ impl PlatformWindow for X11Window {
         }
     }
 
+    fn inner_window_bounds(&self) -> WindowBounds {
+        let state = self.0.state.borrow();
+        if self.is_maximized() {
+            WindowBounds::Maximized(state.bounds)
+        } else {
+            let mut bounds = state.bounds;
+            let [left, right, top, bottom] = state.last_insets;
+
+            let [left, right, top, bottom] = [
+                Pixels((left as f32) / state.scale_factor),
+                Pixels((right as f32) / state.scale_factor),
+                Pixels((top as f32) / state.scale_factor),
+                Pixels((bottom as f32) / state.scale_factor),
+            ];
+
+            bounds.origin.x += left;
+            bounds.origin.y += top;
+            bounds.size.width -= left + right;
+            bounds.size.height -= top + bottom;
+
+            WindowBounds::Windowed(bounds)
+        }
+    }
+
     fn content_size(&self) -> Size<Pixels> {
         // We divide by the scale factor here because this value is queried to determine how much to draw,
         // but it will be multiplied later by the scale to adjust for scaling.

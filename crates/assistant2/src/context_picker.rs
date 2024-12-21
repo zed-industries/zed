@@ -10,6 +10,7 @@ use gpui::{
     WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use release_channel::ReleaseChannel;
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::Workspace;
@@ -50,23 +51,27 @@ impl ContextPicker {
         confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let mut entries = vec![
-            ContextPickerEntry {
-                name: "File".into(),
-                kind: ContextKind::File,
-                icon: IconName::File,
-            },
-            ContextPickerEntry {
+        let mut entries = Vec::new();
+        entries.push(ContextPickerEntry {
+            name: "File".into(),
+            kind: ContextKind::File,
+            icon: IconName::File,
+        });
+        let release_channel = ReleaseChannel::global(cx);
+        // The directory context picker isn't fully implemented yet, so limit it
+        // to development builds.
+        if release_channel == ReleaseChannel::Dev {
+            entries.push(ContextPickerEntry {
                 name: "Folder".into(),
                 kind: ContextKind::Directory,
                 icon: IconName::Folder,
-            },
-            ContextPickerEntry {
-                name: "Fetch".into(),
-                kind: ContextKind::FetchedUrl,
-                icon: IconName::Globe,
-            },
-        ];
+            });
+        }
+        entries.push(ContextPickerEntry {
+            name: "Fetch".into(),
+            kind: ContextKind::FetchedUrl,
+            icon: IconName::Globe,
+        });
 
         if thread_store.is_some() {
             entries.push(ContextPickerEntry {
