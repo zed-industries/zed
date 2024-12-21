@@ -555,11 +555,7 @@ fn string_match_candidates<'a>(
 ) -> Vec<StringMatchCandidate> {
     candidates
         .enumerate()
-        .map(|(index, (_, candidate))| StringMatchCandidate {
-            id: index,
-            char_bag: candidate.resolved_label.chars().collect(),
-            string: candidate.display_label().into(),
-        })
+        .map(|(index, (_, candidate))| StringMatchCandidate::new(index, candidate.display_label()))
         .collect()
 }
 
