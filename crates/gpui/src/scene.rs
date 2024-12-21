@@ -493,10 +493,12 @@ impl From<Underline> for Primitive {
 pub(crate) struct Shadow {
     pub order: DrawOrder,
     pub blur_radius: ScaledPixels,
+    pub spread_radius: ScaledPixels,
     pub bounds: Bounds<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
+    pub offset: Point<ScaledPixels>,
 }
 
 impl From<Shadow> for Primitive {

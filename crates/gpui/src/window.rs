@@ -2286,6 +2286,8 @@ impl<'a> WindowContext<'a> {
                 content_mask: content_mask.scale(scale_factor),
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
+                spread_radius: shadow.spread_radius.scale(scale_factor),
+                offset: shadow.offset.scale(scale_factor),
             });
         }
     }
