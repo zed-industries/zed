@@ -97,6 +97,7 @@ impl ModuleList {
             this.update(&mut cx, |this, cx| {
                 std::mem::swap(&mut this.modules, &mut modules);
                 this.list.reset(this.modules.len());
+                cx.notify();
 
                 if let Some((client, id)) = this.dap_store.read(cx).downstream_client() {
                     let request = UpdateDebugAdapter {
@@ -110,7 +111,6 @@ impl ModuleList {
 
                     client.send(request).log_err();
                 }
-                cx.notify();
             })
         })
     }

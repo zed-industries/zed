@@ -481,6 +481,16 @@ impl DebugPanelItem {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn output_editor(&self) -> &View<Editor> {
+        &self.output_editor
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn console(&self) -> &View<Console> {
+        &self.console
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn variable_list(&self) -> &View<VariableList> {
         &self.variable_list
     }

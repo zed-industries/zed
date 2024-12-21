@@ -5,6 +5,7 @@ use workspace::Workspace;
 
 use crate::debugger_panel::DebugPanel;
 
+mod console;
 mod debugger_panel;
 mod stack_frame_list;
 mod variable_list;

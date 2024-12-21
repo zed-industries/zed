@@ -944,28 +944,20 @@ impl VariableList {
             return cx.notify();
         }
 
-        let client_id = self.client_id;
-        let variables_reference = state.parent_variables_reference;
-        let name = state.name;
-        let evaluate_name = state.evaluate_name;
-        let stack_frame_id = state.stack_frame_id;
+        let set_value_task = self.dap_store.update(cx, |store, cx| {
+            store.set_variable_value(
+                &self.client_id,
+                state.stack_frame_id,
+                state.parent_variables_reference,
+                state.name,
+                new_variable_value,
+                state.evaluate_name,
+                cx,
+            )
+        });
 
         cx.spawn(|this, mut cx| async move {
-            let set_value_task = this.update(&mut cx, |this, cx| {
-                this.dap_store.update(cx, |store, cx| {
-                    store.set_variable_value(
-                        &client_id,
-                        stack_frame_id,
-                        variables_reference,
-                        name,
-                        new_variable_value,
-                        evaluate_name,
-                        cx,
-                    )
-                })
-            });
-
-            set_value_task?.await?;
+            set_value_task.await?;
 
             this.update(&mut cx, |this, cx| {
                 this.build_entries(false, true, cx);

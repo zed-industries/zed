@@ -264,6 +264,11 @@ impl DebugPanel {
         })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn message_queue(&self) -> &HashMap<DebugAdapterClientId, VecDeque<OutputEvent>> {
+        &self.message_queue
+    }
+
     pub fn active_debug_panel_item(
         &self,
         cx: &mut ViewContext<Self>,

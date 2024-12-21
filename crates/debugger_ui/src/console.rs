@@ -71,6 +71,16 @@ impl Console {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn editor(&self) -> &View<Editor> {
+        &self.console
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn query_bar(&self) -> &View<Editor> {
+        &self.query_bar
+    }
+
     fn handle_stack_frame_list_events(
         &mut self,
         _: View<StackFrameList>,
@@ -92,7 +102,7 @@ impl Console {
         });
     }
 
-    fn evaluate(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+    pub fn evaluate(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         let expression = self.query_bar.update(cx, |editor, cx| {
             let expression = editor.text(cx);
 
