@@ -713,6 +713,7 @@ impl GitPanel {
             if project_buffers.is_empty() {
                 return;
             }
+            let mut change_sets = Vec::with_capacity(project_buffers.len());
             if let Some(buffer_update_task) = git_panel
                 .update(&mut cx, |git_panel, cx| {
                     let editor = git_panel.git_diff_editor.clone();
@@ -723,9 +724,7 @@ impl GitPanel {
                             .with_context(|| format!("opening buffer {buffer_path:?}"))
                             .log_err()
                         {
-                            editor.update(cx, |editor, cx| {
-                                editor.add_change_set(unstaged_changes, cx)
-                            });
+                            change_sets.push(unstaged_changes);
                             buffers_with_ranges.push((
                                 buffer,
                                 diff_hunks
@@ -751,7 +750,9 @@ impl GitPanel {
                 git_panel
                     .update(&mut cx, |git_panel, cx| {
                         git_panel.git_diff_editor.update(cx, |editor, cx| {
-                            editor.expand_all_hunk_diffs(&Default::default(), cx)
+                            for change_set in change_sets {
+                                editor.add_change_set(change_set, cx);
+                            }
                         })
                     })
                     .ok();
