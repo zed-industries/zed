@@ -1105,10 +1105,10 @@ impl DisplaySnapshot {
             .map(|(row, block)| (DisplayRow(row), block))
     }
 
-    pub fn top_excerpt(&self, row: DisplayRow) -> Option<(DisplayRow, &ExcerptInfo)> {
+    pub fn top_excerpt(&self, row: DisplayRow) -> Option<(Option<DisplayRow>, &ExcerptInfo)> {
         self.block_snapshot
             .top_excerpt(row.0)
-            .map(|(row, info)| (DisplayRow(row), info))
+            .map(|(row, info)| (row.map(DisplayRow), info))
     }
 
     pub fn block_for_id(&self, id: BlockId) -> Option<Block> {

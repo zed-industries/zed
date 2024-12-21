@@ -1411,7 +1411,7 @@ impl BlockSnapshot {
         })
     }
 
-    pub fn top_excerpt(&self, top_row: u32) -> Option<(u32, &ExcerptInfo)> {
+    pub fn top_excerpt(&self, top_row: u32) -> Option<(Option<u32>, &ExcerptInfo)> {
         let mut cursor = self.transforms.cursor::<BlockRow>(&());
         cursor.seek(&BlockRow(top_row), Bias::Left, &());
 
@@ -1421,9 +1421,18 @@ impl BlockSnapshot {
             match &transform.block {
                 Some(Block::FoldedBuffer { .. }) => return None,
                 Some(Block::ExcerptBoundary {
-                    prev_excerpt: Some(prev),
+                    prev_excerpt: Some(excerpt),
+                    starts_new_buffer,
                     ..
-                }) => return Some((cursor.end(&()).0, prev)),
+                }) => {
+                    let next_buffer_row = if *starts_new_buffer {
+                        Some(cursor.end(&()).0)
+                    } else {
+                        None
+                    };
+
+                    return Some((next_buffer_row, excerpt));
+                }
                 Some(Block::ExcerptBoundary {
                     prev_excerpt: None, ..
                 })

@@ -2875,25 +2875,34 @@ impl EditorElement {
 
     fn layout_sticky_buffer_header(
         &self,
-        _end_row: DisplayRow,
+        next_buffer_row: Option<DisplayRow>,
+        scroll_position: f32,
+        line_height: Pixels,
         excerpt: &ExcerptInfo,
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
-        let jump_data = jump_data(
-            snapshot,
-            DisplayRow(0),
-            MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
-            excerpt,
-            cx,
-        );
+        let jump_data = jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt, cx);
 
         let mut header = self
             .render_buffer_header(excerpt, false, false, jump_data, cx)
             .into_any_element();
 
-        let origin = hitbox.origin;
+        let mut origin = hitbox.origin;
+
+        if let Some(next_buffer_row) = next_buffer_row {
+            // Push up the sticky header when the excerpt is getting close to the top of the viewport
+
+            let max_row =
+                next_buffer_row.0 - MULTI_BUFFER_EXCERPT_HEADER_HEIGHT - FILE_HEADER_HEIGHT * 2;
+
+            let offset = scroll_position - max_row as f32;
+
+            if offset > 0.0 {
+                origin.y -= Pixels(offset) * line_height;
+            }
+        }
 
         let size = size(
             AvailableSpace::Definite(hitbox.size.width),
@@ -6257,9 +6266,15 @@ impl Element for EditorElement {
 
                         snapshot
                             .top_excerpt(start_row)
-                            .and_then(|(end_row, excerpt)| {
+                            .and_then(|(next_buffer_row, excerpt)| {
                                 self.layout_sticky_buffer_header(
-                                    end_row, excerpt, &snapshot, &hitbox, cx,
+                                    next_buffer_row,
+                                    scroll_position.y,
+                                    line_height,
+                                    excerpt,
+                                    &snapshot,
+                                    &hitbox,
+                                    cx,
                                 )
                             })
                     });
