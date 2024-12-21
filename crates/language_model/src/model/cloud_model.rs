@@ -68,6 +68,7 @@ impl CloudModel {
                 anthropic::Model::Claude3Opus
                 | anthropic::Model::Claude3Sonnet
                 | anthropic::Model::Claude3Haiku
+                | anthropic::Model::Claude3_5Haiku
                 | anthropic::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
