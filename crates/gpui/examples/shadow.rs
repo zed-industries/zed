@@ -16,6 +16,41 @@ impl Shadow {
             .border_1()
             .border_color(hsla(0.0, 0.0, 0.0, 0.1))
     }
+
+    fn square() -> Div {
+        div()
+            .size_16()
+            .bg(rgb(0xffffff))
+            .border_1()
+            .border_color(hsla(0.0, 0.0, 0.0, 0.1))
+    }
+
+    fn rounded_small() -> Div {
+        div()
+            .size_16()
+            .bg(rgb(0xffffff))
+            .rounded(px(4.))
+            .border_1()
+            .border_color(hsla(0.0, 0.0, 0.0, 0.1))
+    }
+
+    fn rounded_medium() -> Div {
+        div()
+            .size_16()
+            .bg(rgb(0xffffff))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(hsla(0.0, 0.0, 0.0, 0.1))
+    }
+
+    fn rounded_large() -> Div {
+        div()
+            .size_16()
+            .bg(rgb(0xffffff))
+            .rounded(px(12.))
+            .border_1()
+            .border_color(hsla(0.0, 0.0, 0.0, 0.1))
+    }
 }
 
 fn example(label: impl Into<SharedString>, example: impl IntoElement) -> impl IntoElement {
@@ -67,11 +102,7 @@ impl Render for Shadow {
                     .children(vec![
                         example(
                             "Square",
-                            div()
-                                .size_16()
-                                .bg(rgb(0xffffff))
-                                .border_1()
-                                .border_color(hsla(0.0, 0.0, 0.0, 0.1))
+                            Shadow::square()
                                 .shadow(smallvec![BoxShadow {
                                     color: hsla(0.0, 0.5, 0.5, 0.3),
                                     offset: point(px(0.), px(8.)),
@@ -81,12 +112,7 @@ impl Render for Shadow {
                         ),
                         example(
                             "Rounded 4",
-                            div()
-                                .size_16()
-                                .bg(rgb(0xffffff))
-                                .border_1()
-                                .border_color(hsla(0.0, 0.0, 0.0, 0.1))
-                                .rounded(px(4.))
+                            Shadow::rounded_small()
                                 .shadow(smallvec![BoxShadow {
                                     color: hsla(0.0, 0.5, 0.5, 0.3),
                                     offset: point(px(0.), px(8.)),
@@ -96,12 +122,7 @@ impl Render for Shadow {
                         ),
                         example(
                             "Rounded 8",
-                            div()
-                                .size_16()
-                                .bg(rgb(0xffffff))
-                                .border_1()
-                                .border_color(hsla(0.0, 0.0, 0.0, 0.1))
-                                .rounded(px(8.))
+                            Shadow::rounded_medium()
                                 .shadow(smallvec![BoxShadow {
                                     color: hsla(0.0, 0.5, 0.5, 0.3),
                                     offset: point(px(0.), px(8.)),
@@ -111,12 +132,7 @@ impl Render for Shadow {
                         ),
                         example(
                             "Rounded 16",
-                            div()
-                                .size_16()
-                                .bg(rgb(0xffffff))
-                                .border_1()
-                                .border_color(hsla(0.0, 0.0, 0.0, 0.1))
-                                .rounded(px(16.))
+                            Shadow::rounded_large()
                                 .shadow(smallvec![BoxShadow {
                                     color: hsla(0.0, 0.5, 0.5, 0.3),
                                     offset: point(px(0.), px(8.)),
@@ -126,12 +142,7 @@ impl Render for Shadow {
                         ),
                         example(
                             "Circle",
-                            div()
-                                .size_16()
-                                .bg(rgb(0xffffff))
-                                .border_1()
-                                .border_color(hsla(0.0, 0.0, 0.0, 0.1))
-                                .rounded_full()
+                            Shadow::base()
                                 .shadow(smallvec![BoxShadow {
                                     color: hsla(0.0, 0.5, 0.5, 0.3),
                                     offset: point(px(0.), px(8.)),
@@ -260,6 +271,74 @@ impl Render for Shadow {
                             }]),
                         ),
                     ]),
+                // Square spread examples
+                div()
+                    .border_b_1()
+                    .border_color(hsla(0.0, 0.0, 0.0, 1.0))
+                    .flex()
+                    .children(vec![
+                        example(
+                            "Square Spread 0",
+                            Shadow::square().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.3),
+                                offset: point(px(0.), px(8.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                            }]),
+                        ),
+                        example(
+                            "Square Spread 8",
+                            Shadow::square().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.3),
+                                offset: point(px(0.), px(8.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(8.),
+                            }]),
+                        ),
+                        example(
+                            "Square Spread 16",
+                            Shadow::square().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.3),
+                                offset: point(px(0.), px(8.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(16.),
+                            }]),
+                        ),
+                    ]),
+                // Rounded large spread examples
+                div()
+                    .border_b_1()
+                    .border_color(hsla(0.0, 0.0, 0.0, 1.0))
+                    .flex()
+                    .children(vec![
+                        example(
+                            "Rounded Large Spread 0",
+                            Shadow::rounded_large().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.3),
+                                offset: point(px(0.), px(8.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                            }]),
+                        ),
+                        example(
+                            "Rounded Large Spread 8",
+                            Shadow::rounded_large().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.3),
+                                offset: point(px(0.), px(8.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(8.),
+                            }]),
+                        ),
+                        example(
+                            "Rounded Large Spread 16",
+                            Shadow::rounded_large().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.3),
+                                offset: point(px(0.), px(8.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(16.),
+                            }]),
+                        ),
+                    ]),
                 // Directional shadows
                 div()
                     .border_b_1()
@@ -302,11 +381,101 @@ impl Render for Shadow {
                                 spread_radius: px(0.),
                             }]),
                         ),
-                    ])
-                    .child(
-                        // Multiple shadows
+                    ]),
+                // Square directional shadows
+                div()
+                    .border_b_1()
+                    .border_color(hsla(0.0, 0.0, 0.0, 1.0))
+                    .flex()
+                    .children(vec![
                         example(
-                            "Multiple",
+                            "Square Left",
+                            Shadow::square().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.5, 0.5, 0.3),
+                                offset: point(px(-8.), px(0.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                            }]),
+                        ),
+                        example(
+                            "Square Right",
+                            Shadow::square().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.5, 0.5, 0.3),
+                                offset: point(px(8.), px(0.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                            }]),
+                        ),
+                        example(
+                            "Square Top",
+                            Shadow::square().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.5, 0.5, 0.3),
+                                offset: point(px(0.), px(-8.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                            }]),
+                        ),
+                        example(
+                            "Square Bottom",
+                            Shadow::square().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.5, 0.5, 0.3),
+                                offset: point(px(0.), px(8.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                            }]),
+                        ),
+                    ]),
+                // Rounded large directional shadows
+                div()
+                    .border_b_1()
+                    .border_color(hsla(0.0, 0.0, 0.0, 1.0))
+                    .flex()
+                    .children(vec![
+                        example(
+                            "Rounded Large Left",
+                            Shadow::rounded_large().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.5, 0.5, 0.3),
+                                offset: point(px(-8.), px(0.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                            }]),
+                        ),
+                        example(
+                            "Rounded Large Right",
+                            Shadow::rounded_large().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.5, 0.5, 0.3),
+                                offset: point(px(8.), px(0.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                            }]),
+                        ),
+                        example(
+                            "Rounded Large Top",
+                            Shadow::rounded_large().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.5, 0.5, 0.3),
+                                offset: point(px(0.), px(-8.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                            }]),
+                        ),
+                        example(
+                            "Rounded Large Bottom",
+                            Shadow::rounded_large().shadow(smallvec![BoxShadow {
+                                color: hsla(0.0, 0.5, 0.5, 0.3),
+                                offset: point(px(0.), px(8.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                            }]),
+                        ),
+                    ]),
+                // Multiple shadows for different shapes
+                div()
+                    .border_b_1()
+                    .border_color(hsla(0.0, 0.0, 0.0, 1.0))
+                    .flex()
+                    .children(vec![
+                        example(
+                            "Circle Multiple",
                             Shadow::base().shadow(smallvec![
                                 BoxShadow {
                                     color: hsla(0.0 / 360., 1.0, 0.5, 0.3), // Red
@@ -334,7 +503,65 @@ impl Render for Shadow {
                                 },
                             ]),
                         ),
-                    ),
+                        example(
+                            "Square Multiple",
+                            Shadow::square().shadow(smallvec![
+                                BoxShadow {
+                                    color: hsla(0.0 / 360., 1.0, 0.5, 0.3), // Red
+                                    offset: point(px(0.), px(-12.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(2.),
+                                },
+                                BoxShadow {
+                                    color: hsla(60.0 / 360., 1.0, 0.5, 0.3), // Yellow
+                                    offset: point(px(12.), px(0.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(2.),
+                                },
+                                BoxShadow {
+                                    color: hsla(120.0 / 360., 1.0, 0.5, 0.3), // Green
+                                    offset: point(px(0.), px(12.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(2.),
+                                },
+                                BoxShadow {
+                                    color: hsla(240.0 / 360., 1.0, 0.5, 0.3), // Blue
+                                    offset: point(px(-12.), px(0.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(2.),
+                                },
+                            ]),
+                        ),
+                        example(
+                            "Rounded Large Multiple",
+                            Shadow::rounded_large().shadow(smallvec![
+                                BoxShadow {
+                                    color: hsla(0.0 / 360., 1.0, 0.5, 0.3), // Red
+                                    offset: point(px(0.), px(-12.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(2.),
+                                },
+                                BoxShadow {
+                                    color: hsla(60.0 / 360., 1.0, 0.5, 0.3), // Yellow
+                                    offset: point(px(12.), px(0.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(2.),
+                                },
+                                BoxShadow {
+                                    color: hsla(120.0 / 360., 1.0, 0.5, 0.3), // Green
+                                    offset: point(px(0.), px(12.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(2.),
+                                },
+                                BoxShadow {
+                                    color: hsla(240.0 / 360., 1.0, 0.5, 0.3), // Blue
+                                    offset: point(px(-12.), px(0.)),
+                                    blur_radius: px(8.),
+                                    spread_radius: px(2.),
+                                },
+                            ]),
+                        ),
+                    ]),
             ]))
     }
 }

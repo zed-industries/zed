@@ -204,30 +204,32 @@ vertex ShadowVertexOutput shadow_vertex(
 fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
                                 constant Shadow *shadows
                                 [[buffer(ShadowInputIndex_Shadows)]]) {
-  Shadow shadow = shadows[input.shadow_id];
+    Shadow shadow = shadows[input.shadow_id];
 
-  float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
-  float2 size = float2(shadow.bounds.size.width, shadow.bounds.size.height);
-  float2 half_size = size / 2.;
-  float2 center = origin + half_size;
-  float2 point = input.position.xy - center;
+    float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
+    float2 size = float2(shadow.bounds.size.width, shadow.bounds.size.height);
+    float2 half_size = size / 2.;
+    float2 center = origin + half_size;
+    float2 point = input.position.xy - center;
 
-  // Calculate distance from the edge of the shape
-  float2 d = abs(point) - half_size + shadow.corner_radii.top_left;
-  float distance = length(max(d, 0.)) + min(max(d.x, d.y), 0.) - shadow.corner_radii.top_left;
+    // Calculate distance from the edge of the shape
+    float2 d = abs(point) - half_size + shadow.corner_radii.top_left;
+    float corner_distance = length(max(d, 0.)) + min(max(d.x, d.y), 0.);
+    float distance = corner_distance - shadow.corner_radii.top_left;
 
-  if (shadow.blur_radius == 0.0) {
-    // For zero blur, use a sharp cutoff
-    return distance <= 0.0 ? input.color : float4(0.0);
-  } else {
-    // For non-zero blur, use a smooth falloff
-    float alpha = saturate(0.5 - distance / shadow.blur_radius);
+    // Apply spread (reduced effect and maintaining circular shape)
+    float spread_factor = 0.5; // Adjust this to fine-tune the spread effect
+    distance -= shadow.spread_radius * spread_factor;
+    distance = length(max(float2(distance, 0.), 0.)) + min(distance, 0.);
 
-    // Improve the gradient quality by applying a curve
-    alpha = smoothstep(0.0, 1.0, alpha);
+    // Improved blur calculation
+    float blur_amount = shadow.blur_radius * 0.5;
+    float alpha = smoothstep(blur_amount, -blur_amount, distance);
+
+    // Apply a smoother falloff
+    alpha = pow(alpha, 1.3);
 
     return input.color * float4(1., 1., 1., alpha);
-  }
 }
 
 struct UnderlineVertexOutput {
