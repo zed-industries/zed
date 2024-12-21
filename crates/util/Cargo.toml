@@ -35,6 +35,7 @@ smol.workspace = true
 take-until = "0.2.0"
 tempfile = { workspace = true, optional = true }
 unicase.workspace = true
+libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tendril = "0.4.3"

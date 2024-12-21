@@ -2491,6 +2491,7 @@ dependencies = [
  "release_channel",
  "serde",
  "tempfile",
+ "tokio",
  "util",
 ]
 
@@ -13980,6 +13981,7 @@ dependencies = [
  "git2",
  "globset",
  "itertools 0.13.0",
+ "libc",
  "log",
  "rand 0.8.5",
  "regex",
