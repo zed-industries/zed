@@ -1,17 +1,22 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
-use git::repository::GitFileStatus;
+use editor::{
+    scroll::{Autoscroll, AutoscrollStrategy},
+    Editor, MultiBuffer, DEFAULT_MULTIBUFFER_CONTEXT,
+};
+use git::{diff::DiffHunk, repository::GitFileStatus};
 use gpui::{
     actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
     CursorStyle, EventEmitter, FocusHandle, FocusableView, KeyContext,
     ListHorizontalSizingBehavior, ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent,
-    MouseButton, Stateful, Task, UniformListScrollHandle, View, WeakView,
+    MouseButton, ScrollStrategy, Stateful, Task, UniformListScrollHandle, View, WeakView,
 };
+use language::{Buffer, BufferRow, OffsetRangeExt};
+use menu::{SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use menu::{SelectNext, SelectPrev};
 use std::{
     cell::OnceCell,
     collections::HashSet,
@@ -28,11 +33,9 @@ use ui::{
     ScrollbarState, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
-use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::Workspace;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    ItemHandle,
+    ItemHandle, Workspace,
 };
 
 use crate::{git_status_icon, settings::GitPanelSettings};
