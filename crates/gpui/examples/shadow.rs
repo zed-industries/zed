@@ -58,7 +58,7 @@ impl Render for Shadow {
             .bg(rgb(0xffffff))
             .size_full()
             .text_xs()
-            .child(div().flex().flex_col().size_full().children(vec![
+            .child(div().flex().flex_col().w_full().children(vec![
                 div()
                     .border_b_1()
                     .border_color(hsla(0.0, 0.0, 0.0, 1.0))
