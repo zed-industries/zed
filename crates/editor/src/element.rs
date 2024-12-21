@@ -1192,12 +1192,13 @@ impl EditorElement {
         );
 
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-        let show_scrollbars = match scrollbar_settings.show {
-            ShowScrollbar::Auto => {
-                let editor = self.editor.read(cx);
-                let is_singleton = editor.is_singleton(cx);
-                // Git
-                (is_singleton && scrollbar_settings.git_diff && !snapshot.diff_map.is_empty())
+        let show_scrollbars = self.editor.read(cx).show_scrollbars
+            && match scrollbar_settings.show {
+                ShowScrollbar::Auto => {
+                    let editor = self.editor.read(cx);
+                    let is_singleton = editor.is_singleton(cx);
+                    // Git
+                    (is_singleton && scrollbar_settings.git_diff && !snapshot.diff_map.is_empty())
                     ||
                     // Buffer Search Results
                     (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
@@ -1213,11 +1214,11 @@ impl EditorElement {
                     ||
                     // Scrollmanager
                     editor.scroll_manager.scrollbars_visible()
-            }
-            ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
-            ShowScrollbar::Always => true,
-            ShowScrollbar::Never => false,
-        };
+                }
+                ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
+                ShowScrollbar::Always => true,
+                ShowScrollbar::Never => false,
+            };
 
         let axes: AxisPair<bool> = scrollbar_settings.axes.into();
 
