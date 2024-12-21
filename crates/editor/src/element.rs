@@ -2348,7 +2348,11 @@ impl EditorElement {
                                 jump_data,
                                 cx,
                             ));
+                        } else {
+                            result =
+                                result.child(div().h(FILE_HEADER_HEIGHT as f32 * cx.line_height()));
                         }
+
                         if *show_excerpt_controls {
                             result = result.child(
                                 h_flex()
