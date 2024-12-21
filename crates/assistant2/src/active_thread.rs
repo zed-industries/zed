@@ -205,10 +205,10 @@ impl ActiveThread {
 
         let context = self.thread.read(cx).context_for_message(message_id);
 
-        let (role_icon, role_name) = match message.role {
-            Role::User => (IconName::Person, "You"),
-            Role::Assistant => (IconName::ZedAssistant, "Assistant"),
-            Role::System => (IconName::Settings, "System"),
+        let (role_icon, role_name, role_color) = match message.role {
+            Role::User => (IconName::Person, "You", Color::Muted),
+            Role::Assistant => (IconName::ZedAssistant, "Assistant", Color::Accent),
+            Role::System => (IconName::Settings, "System", Color::Default),
         };
 
         div()
@@ -234,9 +234,13 @@ impl ActiveThread {
                                     .child(
                                         Icon::new(role_icon)
                                             .size(IconSize::XSmall)
-                                            .color(Color::Muted),
+                                            .color(role_color),
                                     )
-                                    .child(Label::new(role_name).size(LabelSize::XSmall)),
+                                    .child(
+                                        Label::new(role_name)
+                                            .size(LabelSize::XSmall)
+                                            .color(role_color),
+                                    ),
                             ),
                     )
                     .child(v_flex().px_2().py_1().text_ui(cx).child(markdown.clone()))
