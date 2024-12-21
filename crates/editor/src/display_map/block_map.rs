@@ -1415,11 +1415,23 @@ impl BlockSnapshot {
         let mut cursor = self.transforms.cursor::<BlockRow>(&());
         cursor.seek(&BlockRow(top_row), Bias::Left, &());
 
+        if let Some(transform) = cursor.item() {
+            if matches!(&transform.block, Some(Block::FoldedBuffer { .. })) {
+                return None;
+            }
+        }
+
         cursor.next(&());
 
         while let Some(transform) = cursor.item() {
             match &transform.block {
-                Some(Block::FoldedBuffer { .. }) => return None,
+                Some(Block::FoldedBuffer {
+                    prev_excerpt: Some(excerpt),
+                    ..
+                }) => {
+                    let next_buffer_row = Some(cursor.end(&()).0 + 1);
+                    return Some((next_buffer_row, excerpt));
+                }
                 Some(Block::ExcerptBoundary {
                     prev_excerpt: Some(excerpt),
                     starts_new_buffer,
@@ -1433,11 +1445,7 @@ impl BlockSnapshot {
 
                     return Some((next_buffer_row, excerpt));
                 }
-                Some(Block::ExcerptBoundary {
-                    prev_excerpt: None, ..
-                })
-                | Some(Block::Custom { .. })
-                | None => {}
+                _ => {}
             }
 
             cursor.next(&());
