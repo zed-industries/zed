@@ -1,0 +1,11 @@
+%USERPROFILE%\.cargo\bin
+%USERPROFILE%\.dotnet\tools
+%USERPROFILE%\.mix\escripts
+%USERPROFILE%\AppData\Local\emsdk
+%USERPROFILE%\AppData\Local\emsdk\upstream\emscripten
+%USERPROFILE%\AppData\Local\Microsoft\WindowsApps
+%USERPROFILE%\AppData\Local\Programs\Microsoft VS Code\bin
+%USERPROFILE%\AppData\Local\Yarn\bin
+%USERPROFILE%\AppData\Roaming\npm
+%USERPROFILE%\go\bin
+%USERPROFILE%\scoop\shims
