@@ -48,6 +48,7 @@ pub(crate) struct WindowsPlatform {
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
+    menus: Vec<OwnedMenu>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -70,6 +71,7 @@ impl WindowsPlatformState {
         Self {
             callbacks,
             current_cursor,
+            menus: Vec::new(),
         }
     }
 }
@@ -449,8 +451,15 @@ impl Platform for WindowsPlatform {
         self.state.borrow_mut().callbacks.reopen = Some(callback);
     }
 
+    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
+        self.state.borrow_mut().menus = menus.into_iter().map(|menu| menu.owned()).collect();
+    }
+
+    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
+        Some(self.state.borrow().menus.clone())
+    }
+
     // todo(windows)
-    fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
     fn set_dock_menu(&self, _menus: Vec<MenuItem>, _keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
