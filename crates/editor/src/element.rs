@@ -2210,6 +2210,7 @@ impl EditorElement {
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
         selections: &[Selection<Point>],
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+        top_excerpt_id: Option<ExcerptId>,
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let mut element = match block {
@@ -2339,13 +2340,15 @@ impl EditorElement {
                 if let Some(next_excerpt) = next_excerpt {
                     let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt, cx);
                     if *starts_new_buffer {
-                        result = result.child(self.render_buffer_header(
-                            next_excerpt,
-                            false,
-                            false,
-                            jump_data,
-                            cx,
-                        ));
+                        if top_excerpt_id != Some(next_excerpt.id) {
+                            result = result.child(self.render_buffer_header(
+                                next_excerpt,
+                                false,
+                                false,
+                                jump_data,
+                                cx,
+                            ));
+                        }
                         if *show_excerpt_controls {
                             result = result.child(
                                 h_flex()
@@ -2676,6 +2679,7 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         selections: &[Selection<Point>],
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+        top_excerpt_id: Option<ExcerptId>,
         cx: &mut WindowContext,
     ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
@@ -2714,6 +2718,7 @@ impl EditorElement {
                 &mut resized_blocks,
                 selections,
                 is_row_soft_wrapped,
+                top_excerpt_id,
                 cx,
             );
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
@@ -2725,6 +2730,7 @@ impl EditorElement {
                 style: BlockStyle::Fixed,
             });
         }
+
         for (row, block) in non_fixed_blocks {
             let style = block.style();
             let width = match style {
@@ -2760,6 +2766,7 @@ impl EditorElement {
                 &mut resized_blocks,
                 selections,
                 is_row_soft_wrapped,
+                top_excerpt_id,
                 cx,
             );
 
@@ -2807,6 +2814,7 @@ impl EditorElement {
                             &mut resized_blocks,
                             selections,
                             is_row_soft_wrapped,
+                            top_excerpt_id,
                             cx,
                         );
 
@@ -2882,7 +2890,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
         cx: &mut WindowContext,
-    ) -> Option<AnyElement> {
+    ) -> AnyElement {
         let jump_data = jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt, cx);
 
         let mut header = self
@@ -2911,7 +2919,7 @@ impl EditorElement {
 
         header.prepaint_as_root(origin, size, cx);
 
-        Some(header)
+        header
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6098,6 +6106,9 @@ impl Element for EditorElement {
                     let scroll_range_bounds = scrollbar_range_data.scroll_range;
                     let mut scroll_width = scroll_range_bounds.size.width;
 
+                    let top_excerpt = snapshot.top_excerpt(start_row);
+                    let top_excerpt_id = top_excerpt.map(|(_, excerpt)| excerpt.id);
+
                     let blocks = cx.with_element_namespace("blocks", |cx| {
                         self.render_blocks(
                             start_row..end_row,
@@ -6113,6 +6124,7 @@ impl Element for EditorElement {
                             &line_layouts,
                             &local_selections,
                             is_row_soft_wrapped,
+                            top_excerpt_id,
                             cx,
                         )
                     });
@@ -6125,6 +6137,20 @@ impl Element for EditorElement {
                             return self.prepaint(None, bounds, &mut (), cx);
                         }
                     };
+
+                    let sticky_buffer_header = top_excerpt.map(|(next_buffer_row, excerpt)| {
+                        cx.with_element_namespace("blocks", |cx| {
+                            self.layout_sticky_buffer_header(
+                                next_buffer_row,
+                                scroll_position.y,
+                                line_height,
+                                excerpt,
+                                &snapshot,
+                                &hitbox,
+                                cx,
+                            )
+                        })
+                    });
 
                     let start_buffer_row =
                         MultiBufferRow(start_anchor.to_point(&snapshot.buffer_snapshot).row);
@@ -6254,7 +6280,7 @@ impl Element for EditorElement {
 
                     let mut block_start_rows = HashSet::default();
 
-                    let sticky_buffer_header = cx.with_element_namespace("blocks", |cx| {
+                    cx.with_element_namespace("blocks", |cx| {
                         self.layout_blocks(
                             &mut blocks,
                             &mut block_start_rows,
@@ -6263,20 +6289,6 @@ impl Element for EditorElement {
                             scroll_pixel_position,
                             cx,
                         );
-
-                        snapshot
-                            .top_excerpt(start_row)
-                            .and_then(|(next_buffer_row, excerpt)| {
-                                self.layout_sticky_buffer_header(
-                                    next_buffer_row,
-                                    scroll_position.y,
-                                    line_height,
-                                    excerpt,
-                                    &snapshot,
-                                    &hitbox,
-                                    cx,
-                                )
-                            })
                     });
 
                     let cursors = self.collect_cursors(&snapshot, cx);
