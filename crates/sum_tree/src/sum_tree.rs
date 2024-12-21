@@ -761,6 +761,30 @@ impl<T: KeyedItem> SumTree<T> {
             None
         }
     }
+
+    pub fn update<F, R>(
+        &mut self,
+        key: &T::Key,
+        cx: &<T::Summary as Summary>::Context,
+        f: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let mut cursor = self.cursor::<T::Key>(cx);
+        let mut new_tree = cursor.slice(key, Bias::Left, cx);
+        let mut result = None;
+        if Ord::cmp(key, &cursor.end(cx)) == Ordering::Equal {
+            let mut updated = cursor.item().unwrap().clone();
+            result = Some(f(&mut updated));
+            new_tree.push(updated, cx);
+            cursor.next(cx);
+        }
+        new_tree.append(cursor.suffix(cx), cx);
+        drop(cursor);
+        *self = new_tree;
+        result
+    }
 }
 
 impl<T, S> Default for SumTree<T>

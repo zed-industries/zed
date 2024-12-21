@@ -155,7 +155,7 @@ pub struct Snapshot {
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
     always_included_entries: Vec<Arc<Path>>,
-    repository_entries: TreeMap<RepositoryWorkDirectory, RepositoryEntry>,
+    repository_entries: SumTree<RepositoryEntry>,
 
     /// A number that increases every time the worktree begins scanning
     /// a set of paths from the filesystem. This scanning could be caused
@@ -192,7 +192,7 @@ pub struct RepositoryEntry {
     ///     - my_sub_folder_1/project_root/changed_file_1
     ///     - my_sub_folder_2/changed_file_2
     pub(crate) git_entries_by_path: SumTree<GitEntry>,
-    pub(crate) work_directory: WorkDirectoryEntry,
+    pub(crate) work_directory: RepositoryWorkDirectory,
     pub(crate) branch: Option<Arc<str>>,
 
     /// If location_in_repo is set, it means the .git folder is external
@@ -1264,7 +1264,7 @@ impl LocalWorktree {
                                 if let Some(entry) = new_snapshot.entry_for_id(new_entry_id) {
                                     let old_repo = old_snapshot
                                         .repository_entries
-                                        .get(&RepositoryWorkDirectory(entry.path.clone()))
+                                        .get(&PathKey(entry.path.clone()), &())
                                         .cloned();
                                     changes.push((
                                         entry.path.clone(),
@@ -1281,7 +1281,7 @@ impl LocalWorktree {
                             if let Some(entry) = old_snapshot.entry_for_id(old_entry_id) {
                                 let old_repo = old_snapshot
                                     .repository_entries
-                                    .get(&RepositoryWorkDirectory(entry.path.clone()))
+                                    .get(&RepositoryWorkDirectory(entry.path.clone()), &())
                                     .cloned();
                                 changes.push((
                                     entry.path.clone(),
@@ -1309,7 +1309,7 @@ impl LocalWorktree {
                     if let Some(entry) = old_snapshot.entry_for_id(entry_id) {
                         let old_repo = old_snapshot
                             .repository_entries
-                            .get(&RepositoryWorkDirectory(entry.path.clone()))
+                            .get(&RepositoryWorkDirectory(entry.path.clone()), &())
                             .cloned();
                         changes.push((
                             entry.path.clone(),
@@ -2317,7 +2317,7 @@ impl Snapshot {
 
             if let Some(entry) = self.entry_for_id(*work_directory_entry) {
                 let work_directory = RepositoryWorkDirectory(entry.path.clone());
-                if self.repository_entries.get(&work_directory).is_some() {
+                if self.repository_entries.get(&work_directory, &()).is_some() {
                     self.repository_entries.update(&work_directory, |repo| {
                         repo.branch = repository.branch.map(Into::into);
                     });
@@ -2431,7 +2431,7 @@ impl Snapshot {
     pub fn repositories(
         &self,
     ) -> impl Iterator<Item = (&RepositoryWorkDirectory, &RepositoryEntry)> {
-        self.repository_entries.iter()
+        self.repository_entries.self.repository_entries.iter()
     }
 
     /// Get the repository whose work directory contains the given path.
@@ -2439,7 +2439,7 @@ impl Snapshot {
         &self,
         path: &RepositoryWorkDirectory,
     ) -> Option<RepositoryEntry> {
-        self.repository_entries.get(path).cloned()
+        self.repository_entries.get(path, &()).cloned()
     }
 
     /// Get the repository whose work directory contains the given path.
@@ -2524,7 +2524,7 @@ impl Snapshot {
             };
 
             if let Some((entry_ix, prev_statuses)) = entry_to_finish {
-                cursor.seek_forward(&GitEntryTraversalTarget::PathSuccessor(
+                cursor.seek_forward(&PathSummaryTraversalTarget::PathSuccessor(
                     &entries[entry_ix].path,
                 ));
 
@@ -2541,7 +2541,7 @@ impl Snapshot {
                 };
             } else {
                 if entries[entry_ix].is_dir() {
-                    cursor.seek_forward(&GitEntryTraversalTarget::Path(&entries[entry_ix].path));
+                    cursor.seek_forward(&PathSummaryTraversalTarget::Path(&entries[entry_ix].path));
                     entry_stack.push((entry_ix, cursor.start()));
                 }
                 entry_ix += 1;
@@ -2590,18 +2590,18 @@ impl Snapshot {
 
     pub fn root_git_entry(&self) -> Option<RepositoryEntry> {
         self.repository_entries
-            .get(&RepositoryWorkDirectory(Path::new("").into()))
+            .get(&PathKey(Path::new("").into()), &())
             .map(|entry| entry.to_owned())
     }
 
     pub fn git_entry(&self, work_directory_path: Arc<Path>) -> Option<RepositoryEntry> {
         self.repository_entries
-            .get(&RepositoryWorkDirectory(work_directory_path))
+            .get(&PathKey(work_directory_path), &())
             .map(|entry| entry.to_owned())
     }
 
     pub fn git_entries(&self) -> impl Iterator<Item = &RepositoryEntry> {
-        self.repository_entries.values()
+        self.repository_entries.iter()
     }
 
     pub fn scan_id(&self) -> usize {
@@ -2672,9 +2672,7 @@ impl LocalSnapshot {
         }
 
         for (work_dir_path, change) in repo_changes.iter() {
-            let new_repo = self
-                .repository_entries
-                .get(&RepositoryWorkDirectory(work_dir_path.clone()));
+            let new_repo = self.repository_entries.get(&PathKey(work_dir_path.clone()));
             match (&change.old_repository, new_repo) {
                 (Some(old_repo), Some(new_repo)) => {
                     updated_repositories.push(new_repo.build_update(old_repo));
@@ -3557,34 +3555,96 @@ pub struct GitEntry {
 }
 
 #[derive(Clone, Debug)]
-pub struct GitEntrySummary {
+struct PathItem<I>(I);
+
+#[derive(Clone, Debug)]
+struct PathSummary<S> {
     max_path: Arc<Path>,
-    statuses: GitStatuses,
+    item_summary: S,
 }
 
-impl sum_tree::Summary for GitEntrySummary {
+impl<S: Summary> Summary for PathSummary<S> {
     type Context = ();
 
-    fn zero(_cx: &Self::Context) -> Self {
-        GitEntrySummary {
-            max_path: Arc::from(Path::new("")),
-            statuses: Default::default(),
+    fn zero(cx: &Self::Context) -> Self {
+        Self {
+            max_path: Path::new("").into(),
+            item_summary: S::zero(&()),
         }
     }
 
-    fn add_summary(&mut self, rhs: &Self, _: &Self::Context) {
+    fn add_summary(&mut self, rhs: &Self, cx: &Self::Context) {
         self.max_path = rhs.max_path.clone();
-        self.statuses += rhs.statuses;
+        self.item_summary.add_summary(&rhs.item_summary, &());
+    }
+}
+
+impl<I> sum_tree::Item for PathItem<I>
+where
+    I: sum_tree::Item + AsRef<Arc<Path>> + Clone,
+{
+    type Summary = PathSummary<I::Summary>;
+
+    fn summary(&self, cx: &<Self::Summary as Summary>::Context) -> Self::Summary {
+        PathSummary {
+            max_path: self.0.as_ref().clone(),
+            item_summary: self.0.summary(cx),
+        }
+    }
+}
+
+// This type exists because we can't implement Summary for ()
+#[derive(Clone)]
+struct Nothing;
+
+impl Summary for Nothing {
+    type Context = ();
+
+    fn zero(_: &()) -> Self {
+        Nothing
+    }
+
+    fn add_summary(&mut self, _: &Self, _: &()) {}
+}
+
+impl sum_tree::Item for RepositoryEntry {
+    type Summary = PathSummary<Nothing>;
+
+    fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
+        PathSummary {
+            max_path: self.work_directory.0.clone(),
+            item_summary: Nothing,
+        }
+    }
+}
+
+impl sum_tree::KeyedItem for RepositoryEntry {
+    type Key = PathKey;
+
+    fn key(&self) -> Self::Key {
+        PathKey(self.work_directory.0.clone())
+    }
+}
+
+impl sum_tree::Summary for GitStatuses {
+    type Context = ();
+
+    fn zero(_: &Self::Context) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, rhs: &Self, cx: &Self::Context) {
+        *self += rhs;
     }
 }
 
 impl sum_tree::Item for GitEntry {
-    type Summary = GitEntrySummary;
+    type Summary = PathSummary<GitStatuses>;
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
-        GitEntrySummary {
+        PathSummary {
             max_path: self.path.0.clone(),
-            statuses: match self.git_status {
+            item_summary: match self.git_status {
                 GitFileStatus::Added => GitStatuses {
                     added: 1,
                     ..Default::default()
@@ -3658,56 +3718,56 @@ impl std::ops::Sub for GitStatuses {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, GitEntrySummary> for GitStatuses {
+impl<'a> sum_tree::Dimension<'a, PathSummary<GitStatuses>> for GitStatuses {
     fn zero(_cx: &()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a GitEntrySummary, _: &()) {
-        *self += summary.statuses
+    fn add_summary(&mut self, summary: &'a PathSummary<GitStatuses>, _: &()) {
+        *self += summary.item_summary
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, GitEntrySummary> for PathKey {
-    fn zero(_cx: &()) -> Self {
+impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for PathKey {
+    fn zero(_: &()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a GitEntrySummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a PathSummary<S>, _: &()) {
         self.0 = summary.max_path.clone();
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, GitEntrySummary> for TraversalProgress<'a> {
+impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for TraversalProgress<'a> {
     fn zero(_cx: &()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a GitEntrySummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a PathSummary<S>, _: &()) {
         self.max_path = summary.max_path.as_ref();
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-enum GitEntryTraversalTarget<'a> {
+enum PathSummaryTraversalTarget<'a> {
     PathSuccessor(&'a Path),
     Path(&'a Path),
 }
 
-impl<'a> GitEntryTraversalTarget<'a> {
+impl<'a> PathSummaryTraversalTarget<'a> {
     fn path(&self) -> &'a Path {
         match self {
-            GitEntryTraversalTarget::Path(path) => path,
-            GitEntryTraversalTarget::PathSuccessor(path) => path,
+            PathSummaryTraversalTarget::Path(path) => path,
+            PathSummaryTraversalTarget::PathSuccessor(path) => path,
         }
     }
 
-    fn with_path(self, path: &Path) -> GitEntryTraversalTarget<'_> {
+    fn with_path(self, path: &Path) -> PathSummaryTraversalTarget<'_> {
         match self {
-            GitEntryTraversalTarget::PathSuccessor(_) => {
-                GitEntryTraversalTarget::PathSuccessor(path)
+            PathSummaryTraversalTarget::PathSuccessor(_) => {
+                PathSummaryTraversalTarget::PathSuccessor(path)
             }
-            GitEntryTraversalTarget::Path(_) => GitEntryTraversalTarget::Path(path),
+            PathSummaryTraversalTarget::Path(_) => PathSummaryTraversalTarget::Path(path),
         }
     }
 
@@ -3722,13 +3782,13 @@ impl<'a> GitEntryTraversalTarget<'a> {
     }
 }
 
-impl<'a, 'b> SeekTarget<'a, GitEntrySummary, TraversalProgress<'a>>
-    for GitEntryTraversalTarget<'b>
+impl<'a, 'b, S: Summary> SeekTarget<'a, PathSummary<S>, TraversalProgress<'a>>
+    for PathSummaryTraversalTarget<'b>
 {
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
         match self {
-            GitEntryTraversalTarget::Path(path) => path.cmp(&cursor_location.max_path),
-            GitEntryTraversalTarget::PathSuccessor(path) => {
+            PathSummaryTraversalTarget::Path(path) => path.cmp(&cursor_location.max_path),
+            PathSummaryTraversalTarget::PathSuccessor(path) => {
                 if cursor_location.max_path.starts_with(path) {
                     Ordering::Greater
                 } else {
@@ -3739,13 +3799,13 @@ impl<'a, 'b> SeekTarget<'a, GitEntrySummary, TraversalProgress<'a>>
     }
 }
 
-impl<'a, 'b> SeekTarget<'a, GitEntrySummary, (TraversalProgress<'a>, GitStatuses)>
-    for GitEntryTraversalTarget<'b>
+impl<'a, 'b> SeekTarget<'a, PathSummary<GitStatuses>, (TraversalProgress<'a>, GitStatuses)>
+    for PathSummaryTraversalTarget<'b>
 {
     fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitStatuses), _: &()) -> Ordering {
         match self {
-            GitEntryTraversalTarget::Path(path) => path.cmp(&cursor_location.0.max_path),
-            GitEntryTraversalTarget::PathSuccessor(path) => {
+            PathSummaryTraversalTarget::Path(path) => path.cmp(&cursor_location.0.max_path),
+            PathSummaryTraversalTarget::PathSuccessor(path) => {
                 if cursor_location.0.max_path.starts_with(path) {
                     Ordering::Greater
                 } else {
@@ -3769,7 +3829,7 @@ impl<'a, I> AllStatusesCursor<'a, I>
 where
     I: Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)> + FusedIterator,
 {
-    fn seek_forward(&mut self, target: &GitEntryTraversalTarget<'_>) {
+    fn seek_forward(&mut self, target: &PathSummaryTraversalTarget<'_>) {
         loop {
             let (work_dir, cursor) = match &mut self.current_location {
                 Some(location) => location,
@@ -4809,11 +4869,12 @@ impl BackgroundScanner {
                     changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                 }
                 state.snapshot.repository_entries.update(
-                    &work_directory,
+                    &PathKey(work_directory.0),
+                    &(),
                     move |repository_entry| {
                         repository_entry
                             .git_entries_by_path
-                            .edit(changed_path_statuses, &())
+                            .edit(changed_path_statuses, &());
                     },
                 );
             }
@@ -4891,7 +4952,7 @@ impl BackgroundScanner {
             if let Some(repository) = snapshot.repository_for_work_directory(path) {
                 let entry = repository.work_directory.0;
                 snapshot.git_repositories.remove(&entry);
-                snapshot.snapshot.repository_entries.remove(path);
+                snapshot.snapshot.repository_entries.remove(path, &());
                 return Some(());
             }
         }
@@ -5118,7 +5179,7 @@ impl BackgroundScanner {
                     location_in_repo: state
                         .snapshot
                         .repository_entries
-                        .get(&work_directory)
+                        .get(&work_directory, &())
                         .and_then(|repo| repo.location_in_repo.clone())
                         .clone(),
                     work_directory,
@@ -5640,13 +5701,14 @@ impl<'a> Default for TraversalProgress<'a> {
 }
 
 pub struct GitTraversal<'a> {
-    // statuses: /AllStatusesCursor<'a, I>,
+    // TODO
+    // statuses: Cursor<>
     traversal: Traversal<'a>,
 }
 
 pub struct EntryWithGitStatus {
-    entry: Entry,
-    git_status: Option<GitFileStatus>,
+    pub entry: Entry,
+    pub git_status: Option<GitFileStatus>,
 }
 
 impl Deref for EntryWithGitStatus {
@@ -5657,12 +5719,8 @@ impl Deref for EntryWithGitStatus {
     }
 }
 
-impl<
-        'a,
-        // I: Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)> + FusedIterator,
-    > Iterator for GitTraversal<'a>
-{
-    type Item = (Entry, Option<GitFileStatus>);
+impl<'a> Iterator for GitTraversal<'a> {
+    type Item = EntryWithGitStatus;
     fn next(&mut self) -> Option<Self::Item> {
         todo!()
     }
