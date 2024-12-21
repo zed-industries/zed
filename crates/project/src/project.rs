@@ -39,7 +39,10 @@ use futures::{
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
-use git::{blame::Blame, repository::GitRepository};
+use git::{
+    blame::Blame,
+    repository::{GitFileStatus, GitRepository},
+};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, EventEmitter, Hsla,
     Model, ModelContext, SharedString, Task, WeakModel, WindowContext,
@@ -1430,6 +1433,15 @@ impl Project {
                     .is_some_and(|e| e.id == entry_id)
             })
             .unwrap_or(false)
+    }
+
+    pub fn project_path_git_status(
+        &self,
+        project_path: &ProjectPath,
+        cx: &AppContext,
+    ) -> Option<GitFileStatus> {
+        self.worktree_for_id(project_path.worktree_id, cx)
+            .and_then(|worktree| worktree.read(cx).status_for_file(&project_path.path))
     }
 
     pub fn visibility_for_paths(&self, paths: &[PathBuf], cx: &AppContext) -> Option<bool> {
@@ -4444,11 +4456,11 @@ impl Completion {
     }
 }
 
-pub fn sort_worktree_entries(entries: &mut [Entry]) {
+pub fn sort_worktree_entries(entries: &mut [(Entry, Option<GitFileStatus>)]) {
     entries.sort_by(|entry_a, entry_b| {
         compare_paths(
-            (&entry_a.path, entry_a.is_file()),
-            (&entry_b.path, entry_b.is_file()),
+            (&entry_a.0.path, entry_a.0.is_file()),
+            (&entry_b.0.path, entry_b.0.is_file()),
         )
     });
 }

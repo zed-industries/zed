@@ -284,6 +284,14 @@ impl Default for RepositoryWorkDirectory {
     }
 }
 
+impl Deref for RepositoryWorkDirectory {
+    type Target = Path;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
 impl AsRef<Path> for RepositoryWorkDirectory {
     fn as_ref(&self) -> &Path {
         self.0.as_ref()
@@ -5631,6 +5639,45 @@ impl<'a> Default for TraversalProgress<'a> {
     }
 }
 
+pub struct GitTraversal<'a> {
+    // statuses: /AllStatusesCursor<'a, I>,
+    traversal: Traversal<'a>,
+}
+
+pub struct EntryWithGitStatus {
+    entry: Entry,
+    git_status: Option<GitFileStatus>,
+}
+
+impl Deref for EntryWithGitStatus {
+    type Target = Entry;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entry
+    }
+}
+
+impl<
+        'a,
+        // I: Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)> + FusedIterator,
+    > Iterator for GitTraversal<'a>
+{
+    type Item = (Entry, Option<GitFileStatus>);
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
+    }
+}
+
+impl<
+        'a,
+        // I: Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)> + FusedIterator,
+    > DoubleEndedIterator for GitTraversal<'a>
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        todo!()
+    }
+}
+
 pub struct Traversal<'a> {
     cursor: sum_tree::Cursor<'a, Entry, TraversalProgress<'a>>,
     include_ignored: bool,
@@ -5659,6 +5706,14 @@ impl<'a> Traversal<'a> {
         }
         traversal
     }
+
+    pub fn with_git_statuses(self, snapshot: &'a Snapshot) -> GitTraversal<'a> {
+        GitTraversal {
+            // statuses: all_statuses_cursor(snapshot),
+            traversal: self,
+        }
+    }
+
     pub fn advance(&mut self) -> bool {
         self.advance_by(1)
     }

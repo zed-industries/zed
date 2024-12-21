@@ -379,7 +379,7 @@ impl WorktreeStore {
 
         cx.subscribe(
             worktree,
-            |this, _, event: &worktree::Event, cx| match event {
+            |_this, _, event: &worktree::Event, cx| match event {
                 worktree::Event::UpdatedGitRepositories(_) => {
                     cx.emit(WorktreeStoreEvent::GitRepositoryUpdated);
                 }

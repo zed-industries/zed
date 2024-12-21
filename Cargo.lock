@@ -8430,6 +8430,7 @@ dependencies = [
  "editor",
  "file_icons",
  "fuzzy",
+ "git",
  "gpui",
  "itertools 0.13.0",
  "language",

@@ -19,7 +19,7 @@ use gpui::{
 };
 use language::{Buffer, BufferRow};
 use multi_buffer::{ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer};
-use project::{Entry, Project, ProjectEntryId, ProjectPath, WorktreeId};
+use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use text::{OffsetRangeExt, ToPoint};
 use theme::ActiveTheme;
 use ui::prelude::*;
@@ -194,14 +194,27 @@ impl ProjectDiffEditor {
                 let open_tasks = project
                     .update(&mut cx, |project, cx| {
                         let worktree = project.worktree_for_id(id, cx)?;
-                        let applicable_entries = worktree
-                            .read(cx)
-                            .entries(false, 0)
-                            .filter(|entry| !entry.is_external)
-                            .filter(|entry| entry.is_file())
-                            .filter_map(|entry| Some((entry.git_status?, entry)))
-                            .filter_map(|(git_status, entry)| {
-                                Some((git_status, entry.id, project.path_for_entry(entry.id, cx)?))
+                        let snapshot = worktree.read(cx).snapshot();
+                        let applicable_entries = snapshot
+                            .repositories()
+                            .filter_map(|(work_dir, _entry)| {
+                                Some((work_dir, snapshot.git_status(work_dir)?))
+                            })
+                            .flat_map(|(work_dir, statuses)| {
+                                statuses.into_iter().map(|git_entry| {
+                                    (git_entry.git_status, work_dir.join(git_entry.path))
+                                })
+                            })
+                            .filter_map(|(status, path)| {
+                                let id = snapshot.entry_for_path(&path)?.id;
+                                Some((
+                                    status,
+                                    id,
+                                    ProjectPath {
+                                        worktree_id: snapshot.id(),
+                                        path: path.into(),
+                                    },
+                                ))
                             })
                             .collect::<Vec<_>>();
                         Some(
