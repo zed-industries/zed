@@ -1273,23 +1273,45 @@ impl Language {
             .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
+        let mut injection_language_capture_ix = None;
         let mut content_capture_ix = None;
+        let mut injection_content_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
                 ("language", &mut language_capture_ix),
+                ("injection.language", &mut injection_language_capture_ix),
                 ("content", &mut content_capture_ix),
+                ("injection.content", &mut injection_content_capture_ix),
             ],
         );
+        language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
+            (None, Some(ix)) => Some(ix),
+            (Some(_), Some(_)) => {
+                return Err(anyhow!(
+                    "both language and injection.language captures are present"
+                ));
+            }
+            _ => language_capture_ix,
+        };
+        content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
+            (None, Some(ix)) => Some(ix),
+            (Some(_), Some(_)) => {
+                return Err(anyhow!(
+                    "both content and injection.content captures are present"
+                ));
+            }
+            _ => content_capture_ix,
+        };
         let patterns = (0..query.pattern_count())
             .map(|ix| {
                 let mut config = InjectionPatternConfig::default();
                 for setting in query.property_settings(ix) {
                     match setting.key.as_ref() {
-                        "language" => {
+                        "language" | "injection.language" => {
                             config.language.clone_from(&setting.value);
                         }
-                        "combined" => {
+                        "combined" | "injection.combined" => {
                             config.combined = true;
                         }
                         _ => {}
