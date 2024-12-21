@@ -996,7 +996,6 @@ struct JumpData {
     excerpt_id: ExcerptId,
     position: Point,
     anchor: text::Anchor,
-    path: Option<project::ProjectPath>,
     line_offset_from_top: u32,
 }
 
