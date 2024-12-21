@@ -1,6 +1,6 @@
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
-    code_context_menus::{CodeActionsMenu, MAX_COMPLETIONS_ASIDE_WIDTH},
+    code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -2931,6 +2931,11 @@ impl EditorElement {
                 }
             };
 
+        let viewport_bounds = Bounds::new(Default::default(), cx.viewport_size()).extend(Edges {
+            right: -Self::SCROLLBAR_WIDTH - MENU_GAP,
+            ..Default::default()
+        });
+
         // If the context menu's max height won't fit below, then flip it above the line and display
         // it in reverse order. If the available space above is less than below.
         let unconstrained_max_height = line_height * 12. + POPOVER_Y_PADDING;
@@ -2952,7 +2957,7 @@ impl EditorElement {
         // If less than 3 lines fit within the text bounds, instead fit within the window.
         if height < min_height {
             let available_above = bottom_y_when_flipped;
-            let available_below = cx.viewport_size().height - target_position.y;
+            let available_below = viewport_bounds.bottom() - target_position.y;
             if available_below > 3. * line_height {
                 y_is_flipped = false;
                 height = min_height;
@@ -2970,6 +2975,7 @@ impl EditorElement {
 
         let max_height_in_lines = ((height - POPOVER_Y_PADDING) / line_height).floor() as u32;
 
+        // TODO(mgsloan): use viewport_bounds.width as a max width when rendering menu.
         let Some(mut menu_element) = self.editor.update(cx, |editor, cx| {
             editor.render_context_menu(&self.style, max_height_in_lines, cx)
         }) else {
@@ -2978,13 +2984,11 @@ impl EditorElement {
 
         let menu_size = menu_element.layout_as_root(AvailableSpace::min_size(), cx);
         let menu_position = gpui::Point {
-            x: if target_position.x + menu_size.width > cx.viewport_size().width {
-                // Snap the right edge of the list to the right edge of the window if its horizontal bounds
-                // overflow.
-                (cx.viewport_size().width - menu_size.width).max(Pixels::ZERO)
-            } else {
-                target_position.x
-            },
+            // Snap the right edge of the list to the right edge of the window if its horizontal bounds
+            // overflow. Include space for the scrollbar.
+            x: target_position
+                .x
+                .min((viewport_bounds.right() - menu_size.width).max(Pixels::ZERO)),
             y: if y_is_flipped {
                 bottom_y_when_flipped - menu_size.height
             } else {
@@ -2993,43 +2997,31 @@ impl EditorElement {
         };
         cx.defer_draw(menu_element, menu_position, 1);
 
-        let aside_element = self.editor.update(cx, |editor, cx| {
-            editor.render_context_menu_aside(&self.style, unconstrained_max_height, cx)
-        });
-        if let Some(aside_element) = aside_element {
-            let menu_bounds = Bounds::new(menu_position, menu_size);
-            let max_menu_size = size(menu_size.width, unconstrained_max_height);
-            let max_menu_bounds = if y_is_flipped {
-                Bounds::new(
-                    point(
-                        menu_position.x,
-                        bottom_y_when_flipped - max_menu_size.height,
-                    ),
-                    max_menu_size,
-                )
-            } else {
-                Bounds::new(target_position, max_menu_size)
-            };
-
-            // Pad the target by 4 pixels to create a gap.
-            let mut extend_amount = Edges::all(px(4.));
-            // Extend to include the cursored line to avoid overlapping it.
-            if y_is_flipped {
-                extend_amount.bottom = line_height;
-            } else {
-                extend_amount.top = line_height;
-            }
-            self.layout_context_menu_aside(
-                text_hitbox,
-                y_is_flipped,
-                menu_position,
-                menu_bounds.extend(extend_amount),
-                max_menu_bounds.extend(extend_amount),
-                unconstrained_max_height,
-                aside_element,
-                cx,
-            );
-        }
+        // Layout documentation aside
+        let menu_bounds = Bounds::new(menu_position, menu_size);
+        let max_menu_size = size(menu_size.width, unconstrained_max_height);
+        let max_menu_bounds = if y_is_flipped {
+            Bounds::new(
+                point(
+                    menu_position.x,
+                    bottom_y_when_flipped - max_menu_size.height,
+                ),
+                max_menu_size,
+            )
+        } else {
+            Bounds::new(target_position, max_menu_size)
+        };
+        self.layout_context_menu_aside(
+            text_hitbox,
+            y_is_flipped,
+            menu_position,
+            menu_bounds,
+            max_menu_bounds,
+            unconstrained_max_height,
+            line_height,
+            viewport_bounds,
+            cx,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3038,66 +3030,106 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         y_is_flipped: bool,
         menu_position: gpui::Point<Pixels>,
-        target_bounds: Bounds<Pixels>,
-        max_target_bounds: Bounds<Pixels>,
+        menu_bounds: Bounds<Pixels>,
+        max_menu_bounds: Bounds<Pixels>,
         max_height: Pixels,
-        aside: AnyElement,
+        line_height: Pixels,
+        viewport_bounds: Bounds<Pixels>,
         cx: &mut WindowContext,
     ) {
-        let mut aside = aside;
-        let actual_size = aside.layout_as_root(AvailableSpace::min_size(), cx);
-
-        // Snap to right side of window if it would overflow.
-        let aside_x = cmp::min(
-            menu_position.x,
-            cx.viewport_size().width - actual_size.width,
-        );
-        if aside_x < px(0.) {
-            // Not enough space, skip drawing.
-            return;
+        let mut extend_amount = Edges::all(MENU_GAP);
+        // Extend to include the cursored line to avoid overlapping it.
+        if y_is_flipped {
+            extend_amount.bottom = line_height;
+        } else {
+            extend_amount.top = line_height;
         }
+        let target_bounds = menu_bounds.extend(extend_amount);
+        let max_target_bounds = max_menu_bounds.extend(extend_amount);
 
-        let top_position = point(aside_x, target_bounds.top() - actual_size.height);
-        let bottom_position = point(aside_x, target_bounds.bottom());
-        let right_position = point(target_bounds.right(), menu_position.y);
+        let available_within_viewport = target_bounds.space_within(&viewport_bounds);
+        let positioned_aside = if available_within_viewport.right >= MENU_ASIDE_MIN_WIDTH {
+            let max_width = cmp::min(
+                available_within_viewport.right - px(1.),
+                MENU_ASIDE_MAX_WIDTH,
+            );
+            let Some(mut aside) =
+                self.render_context_menu_aside(size(max_width, max_height - POPOVER_Y_PADDING), cx)
+            else {
+                return;
+            };
+            aside.layout_as_root(AvailableSpace::min_size(), cx);
+            let right_position = point(target_bounds.right(), menu_position.y);
+            Some((aside, right_position))
+        } else {
+            let max_size = size(
+                // TODO(mgsloan): Once the menu is bounded by viewport width the bound on viewport
+                // won't be needed here.
+                cmp::min(
+                    cmp::max(menu_bounds.size.width - px(2.), MENU_ASIDE_MIN_WIDTH),
+                    viewport_bounds.right(),
+                ),
+                cmp::min(
+                    max_height,
+                    cmp::max(
+                        available_within_viewport.top,
+                        available_within_viewport.bottom,
+                    ),
+                ) - POPOVER_Y_PADDING,
+            );
+            let Some(mut aside) = self.render_context_menu_aside(max_size, cx) else {
+                return;
+            };
+            let actual_size = aside.layout_as_root(AvailableSpace::min_size(), cx);
 
-        let fit_horizontally_within = |available: Edges<Pixels>, wanted: Size<Pixels>| {
-            // Prefer to fit to the right, then on the same side of the line as the menu, then on
-            // the other side of the line.
-            if wanted.width < available.right {
-                Some(right_position)
-            } else if !y_is_flipped && wanted.height < available.bottom {
-                Some(bottom_position)
-            } else if !y_is_flipped && wanted.height < available.top {
-                Some(top_position)
-            } else if y_is_flipped && wanted.height < available.top {
-                Some(top_position)
-            } else if y_is_flipped && wanted.height < available.bottom {
-                Some(bottom_position)
-            } else {
-                None
-            }
+            let top_position = point(menu_position.x, target_bounds.top() - actual_size.height);
+            let bottom_position = point(menu_position.x, target_bounds.bottom());
+
+            let fit_within = |available: Edges<Pixels>, wanted: Size<Pixels>| {
+                // Prefer to fit on the same side of the line as the menu, then on the other side of
+                // the line.
+                if !y_is_flipped && wanted.height < available.bottom {
+                    Some(bottom_position)
+                } else if !y_is_flipped && wanted.height < available.top {
+                    Some(top_position)
+                } else if y_is_flipped && wanted.height < available.top {
+                    Some(top_position)
+                } else if y_is_flipped && wanted.height < available.bottom {
+                    Some(bottom_position)
+                } else {
+                    None
+                }
+            };
+
+            // Prefer choosing a direction using max sizes rather than actual size for stability.
+            let available_within_text = max_target_bounds.space_within(&text_hitbox.bounds);
+            let wanted = size(MENU_ASIDE_MAX_WIDTH, max_height);
+            let aside_position = fit_within(available_within_text, wanted)
+                // Fallback: fit max size in window.
+                .or_else(|| fit_within(max_target_bounds.space_within(&viewport_bounds), wanted))
+                // Fallback: fit actual size in window.
+                .or_else(|| fit_within(available_within_viewport, actual_size));
+
+            aside_position.map(|position| (aside, position))
         };
 
-        // Prefer choosing a direction using max sizes rather than actual size for stability.
-        let mut available = max_target_bounds.space_within(&text_hitbox.bounds);
-        let mut wanted = size(MAX_COMPLETIONS_ASIDE_WIDTH, max_height);
-        let aside_position = fit_horizontally_within(available, wanted)
-            .or_else(|| {
-                // Fallback: fit max size in window.
-                available = max_target_bounds
-                    .space_within(&Bounds::new(Default::default(), cx.viewport_size()));
-                fit_horizontally_within(available, wanted)
-            })
-            .or_else(|| {
-                // Fallback: fit actual size in window.
-                wanted = actual_size;
-                fit_horizontally_within(available, wanted)
-            });
-
         // Skip drawing if it doesn't fit anywhere.
-        if let Some(aside_position) = aside_position {
-            cx.defer_draw(aside, aside_position, 1);
+        if let Some((aside, position)) = positioned_aside {
+            cx.defer_draw(aside, position, 1);
+        }
+    }
+
+    fn render_context_menu_aside(
+        &self,
+        max_size: Size<Pixels>,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        if max_size.width < px(100.) || max_size.height < px(12.) {
+            None
+        } else {
+            self.editor.update(cx, |editor, cx| {
+                editor.render_context_menu_aside(&self.style, max_size, cx)
+            })
         }
     }
 

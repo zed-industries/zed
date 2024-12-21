@@ -5133,14 +5133,14 @@ impl Editor {
     fn render_context_menu_aside(
         &self,
         style: &EditorStyle,
-        max_height: Pixels,
+        max_size: Size<Pixels>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<AnyElement> {
         self.context_menu.borrow().as_ref().and_then(|menu| {
             if menu.visible() {
                 menu.render_aside(
                     style,
-                    max_height,
+                    max_size,
                     self.workspace.as_ref().map(|(w, _)| w.clone()),
                     cx,
                 )
