@@ -307,6 +307,7 @@ messages!(
     (UpdateFollowers, Foreground),
     (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
+    (UpdateDebugAdapter, Foreground),
     (UpdateParticipantLocation, Foreground),
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
@@ -374,6 +375,12 @@ messages!(
     (SyncExtensionsResponse, Background),
     (InstallExtension, Background),
     (RegisterBufferWithLanguageServers, Background),
+    (SynchronizeBreakpoints, Background),
+    (SetActiveDebugLine, Background),
+    (RemoveActiveDebugLine, Background),
+    (SetDebuggerPanelItem, Background),
+    (ShutdownDebugClient, Background),
+    (SetDebugClientCapabilities, Background),
 );
 
 request_messages!(
@@ -565,6 +572,7 @@ entity_messages!(
     UpdateProjectCollaborator,
     UpdateWorktree,
     UpdateWorktreeSettings,
+    UpdateDebugAdapter,
     LspExtExpandMacro,
     LspExtOpenDocs,
     AdvertiseContexts,
@@ -587,6 +595,12 @@ entity_messages!(
     GetPathMetadata,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
+    SynchronizeBreakpoints,
+    SetActiveDebugLine,
+    RemoveActiveDebugLine,
+    SetDebuggerPanelItem,
+    ShutdownDebugClient,
+    SetDebugClientCapabilities,
 );
 
 entity_messages!(

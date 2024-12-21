@@ -17,6 +17,7 @@ use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
+use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
@@ -28,7 +29,10 @@ use gpui::{
 };
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
-use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
+use paths::{
+    local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path,
+};
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -37,8 +41,8 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_project_settings_content, initial_tasks_content, KeymapFile, Settings, SettingsStore,
-    DEFAULT_KEYMAP_PATH,
+    initial_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
+    KeymapFile, Settings, SettingsStore, DEFAULT_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
@@ -70,7 +74,9 @@ actions!(
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
+        OpenProjectDebugTasks,
         OpenTasks,
+        OpenDebugTasks,
         ResetDatabase,
         ShowAll,
         ToggleFullScreen,
@@ -320,6 +326,8 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
         let assistant_panel =
             assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
 
+        let debug_panel = DebugPanel::load(workspace_handle.clone(), cx.clone());
+
         let (
             project_panel,
             outline_panel,
@@ -328,6 +336,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             chat_panel,
             notification_panel,
             assistant_panel,
+            debug_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
@@ -336,12 +345,14 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             chat_panel,
             notification_panel,
             assistant_panel,
+            debug_panel,
         )?;
 
         workspace_handle.update(&mut cx, |workspace, cx| {
             workspace.add_panel(project_panel, cx);
             workspace.add_panel(outline_panel, cx);
             workspace.add_panel(terminal_panel, cx);
+            workspace.add_panel(debug_panel, cx);
             workspace.add_panel(channels_panel, cx);
             workspace.add_panel(chat_panel, cx);
             workspace.add_panel(notification_panel, cx);
@@ -544,6 +555,7 @@ fn register_actions(
         )
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
+        .register_action(open_project_debug_tasks_file)
         .register_action(
             move |workspace: &mut Workspace,
                   _: &zed_actions::OpenDefaultKeymap,
@@ -688,6 +700,8 @@ fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContex
             toolbar.add_item(project_search_bar, cx);
             let lsp_log_item = cx.new_view(|_| language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, cx);
+            let dap_log_item = cx.new_view(|_| debugger_tools::DapLogToolbarItemView::new());
+            toolbar.add_item(dap_log_item, cx);
             let syntax_tree_item =
                 cx.new_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, cx);
@@ -1029,6 +1043,19 @@ fn open_project_tasks_file(
         workspace,
         local_tasks_file_relative_path(),
         initial_tasks_content(),
+        cx,
+    )
+}
+
+fn open_project_debug_tasks_file(
+    workspace: &mut Workspace,
+    _: &OpenProjectDebugTasks,
+    cx: &mut ViewContext<Workspace>,
+) {
+    open_local_file(
+        workspace,
+        local_debug_file_relative_path(),
+        initial_debug_tasks_content(),
         cx,
     )
 }
@@ -3553,6 +3580,8 @@ mod tests {
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);
+            project::dap_store::DapStore::init(&app_state.client.clone().into());
+            debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);
             app_state

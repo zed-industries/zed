@@ -2649,9 +2649,12 @@ dependencies = [
  "clock",
  "collab_ui",
  "collections",
+ "command_palette_hooks",
  "context_server",
  "ctor",
+ "dap",
  "dashmap 6.1.0",
+ "debugger_ui",
  "derive_more",
  "editor",
  "env_logger 0.11.5",
@@ -3541,6 +3544,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "dap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-pipe",
+ "async-tar",
+ "async-trait",
+ "client",
+ "collections",
+ "dap-types",
+ "env_logger 0.11.5",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "log",
+ "node_runtime",
+ "parking_lot",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "smol",
+ "sysinfo",
+ "task",
+ "util",
+]
+
+[[package]]
+name = "dap-types"
+version = "0.0.1"
+source = "git+https://github.com/zed-industries/dap-types?rev=0f4da80b6f4713d268922556425b669627373b3e#0f4da80b6f4713d268922556425b669627373b3e"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "dap_adapters"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dap",
+ "paths",
+ "regex",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "task",
+ "util",
+]
+
+[[package]]
 name = "dashmap"
 version = "5.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3611,6 +3672,56 @@ dependencies = [
  "libc",
  "libdbus-sys",
  "winapi",
+]
+
+[[package]]
+name = "debugger_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dap",
+ "editor",
+ "futures 0.3.31",
+ "gpui",
+ "project",
+ "serde_json",
+ "settings",
+ "smol",
+ "util",
+ "workspace",
+]
+
+[[package]]
+name = "debugger_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "command_palette_hooks",
+ "dap",
+ "editor",
+ "env_logger 0.11.5",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "language",
+ "menu",
+ "picker",
+ "project",
+ "rpc",
+ "serde",
+ "serde_json",
+ "settings",
+ "sysinfo",
+ "task",
+ "tasks_ui",
+ "terminal_view",
+ "theme",
+ "ui",
+ "unindent",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -3903,6 +4014,7 @@ dependencies = [
  "log",
  "lsp",
  "markdown",
+ "menu",
  "multi_buffer",
  "ordered-float 2.10.1",
  "parking_lot",
@@ -9547,6 +9659,8 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "dap",
+ "dap_adapters",
  "env_logger 0.11.5",
  "fancy-regex 0.14.0",
  "fs",
@@ -10128,6 +10242,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auto_update",
+ "dap",
  "editor",
  "extension_host",
  "file_finder",
@@ -11866,6 +11981,7 @@ dependencies = [
  "indoc",
  "libsqlite3-sys",
  "parking_lot",
+ "project",
  "smol",
  "sqlformat",
  "thread_local",
@@ -12620,6 +12736,7 @@ dependencies = [
  "parking_lot",
  "schemars",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "sha2",
  "shellexpand 2.1.2",
@@ -16012,6 +16129,8 @@ dependencies = [
  "command_palette_hooks",
  "copilot",
  "db",
+ "debugger_tools",
+ "debugger_ui",
  "diagnostics",
  "editor",
  "env_logger 0.11.5",

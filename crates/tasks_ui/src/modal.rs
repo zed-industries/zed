@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
-use task::{ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
+use task::{ResolvedTask, RevealTarget, TaskContext, TaskModal, TaskTemplate, TaskType};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
@@ -33,6 +33,8 @@ pub(crate) struct TasksModalDelegate {
     prompt: String,
     task_context: TaskContext,
     placeholder_text: Arc<str>,
+    /// If this delegate is responsible for running a scripting task or a debugger
+    task_modal_type: TaskModal,
 }
 
 /// Task template amendments to do before resolving the context.
@@ -48,6 +50,7 @@ impl TasksModalDelegate {
         task_context: TaskContext,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakView<Workspace>,
+        task_modal_type: TaskModal,
     ) -> Self {
         let placeholder_text = if let Some(TaskOverrides {
             reveal_target: Some(RevealTarget::Center),
@@ -67,6 +70,7 @@ impl TasksModalDelegate {
             selected_index: 0,
             prompt: String::default(),
             task_context,
+            task_modal_type,
             task_overrides,
             placeholder_text,
         }
@@ -126,11 +130,18 @@ impl TasksModal {
         task_context: TaskContext,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakView<Workspace>,
+        task_modal_type: TaskModal,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(task_store, task_context, task_overrides, workspace),
+                TasksModalDelegate::new(
+                    task_store,
+                    task_context,
+                    task_overrides,
+                    workspace,
+                    task_modal_type,
+                ),
                 cx,
             )
         });
@@ -187,11 +198,12 @@ impl PickerDelegate for TasksModalDelegate {
         query: String,
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Task<()> {
+        let task_type = self.task_modal_type.clone();
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
                     match &mut picker.delegate.candidates {
-                        Some(candidates) => string_match_candidates(candidates.iter()),
+                        Some(candidates) => string_match_candidates(candidates.iter(), task_type),
                         None => {
                             let Ok((worktree, location)) =
                                 picker.delegate.workspace.update(cx, |workspace, cx| {
@@ -225,7 +237,8 @@ impl PickerDelegate for TasksModalDelegate {
 
                             let mut new_candidates = used;
                             new_candidates.extend(current);
-                            let match_candidates = string_match_candidates(new_candidates.iter());
+                            let match_candidates =
+                                string_match_candidates(new_candidates.iter(), task_type);
                             let _ = picker.delegate.candidates.insert(new_candidates);
                             match_candidates
                         }
@@ -296,7 +309,19 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                match task.task_type() {
+                    TaskType::Script => schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        task,
+                        omit_history_entry,
+                        cx,
+                    ),
+                    // This would allow users to access to debug history and other issues
+                    TaskType::Debug(_) => workspace.project().update(cx, |project, cx| {
+                        project.start_debug_adapter_client_from_task(task, cx)
+                    }),
+                };
             })
             .ok();
         cx.emit(DismissEvent);
@@ -443,7 +468,20 @@ impl PickerDelegate for TasksModalDelegate {
         }
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                match task.task_type() {
+                    TaskType::Script => schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        task,
+                        omit_history_entry,
+                        cx,
+                    ),
+                    // TODO: Should create a schedule_resolved_debug_task function
+                    // This would allow users to access to debug history and other issues
+                    TaskType::Debug(_) => workspace.project().update(cx, |project, cx| {
+                        project.start_debug_adapter_client_from_task(task, cx)
+                    }),
+                };
             })
             .ok();
         cx.emit(DismissEvent);
@@ -552,9 +590,14 @@ impl PickerDelegate for TasksModalDelegate {
 
 fn string_match_candidates<'a>(
     candidates: impl Iterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
+    task_modal_type: TaskModal,
 ) -> Vec<StringMatchCandidate> {
     candidates
         .enumerate()
+        .filter(|(_, (_, candidate))| match candidate.task_type() {
+            TaskType::Script => task_modal_type == TaskModal::ScriptModal,
+            TaskType::Debug(_) => task_modal_type == TaskModal::DebugModal,
+        })
         .map(|(index, (_, candidate))| StringMatchCandidate {
             id: index,
             char_bag: candidate.resolved_label.chars().collect(),
