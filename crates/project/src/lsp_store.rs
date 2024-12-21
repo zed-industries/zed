@@ -6,6 +6,7 @@ use crate::{
     lsp_ext_command,
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
+    project_tree::{LanguageServerTree, ProjectTree},
     relativize_path, resolve_path,
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -173,6 +174,7 @@ pub struct LocalLspStore {
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     _subscription: gpui::Subscription,
     registered_buffers: HashMap<BufferId, usize>,
+    lsp_tree: Model<LanguageServerTree>,
 }
 
 impl LocalLspStore {
@@ -1027,7 +1029,7 @@ impl LocalLspStore {
             })
     }
 
-    pub(crate) fn language_server_ids_for_buffer(
+    fn language_server_ids_for_buffer(
         &self,
         buffer: &Buffer,
         cx: &AppContext,
@@ -1047,7 +1049,7 @@ impl LocalLspStore {
         }
     }
 
-    pub(crate) fn language_servers_for_buffer<'a>(
+    fn language_servers_for_buffer<'a>(
         &'a self,
         buffer: &'a Buffer,
         cx: &'a AppContext,
@@ -2479,6 +2481,42 @@ impl LocalLspStore {
             failure_reason: None,
         })
     }
+
+    fn remove_worktree(
+        &mut self,
+        id_to_remove: WorktreeId,
+        cx: &mut ModelContext<'_, LspStore>,
+    ) -> Vec<LanguageServerId> {
+        self.diagnostics.remove(&id_to_remove);
+        self.prettier_store.update(cx, |prettier_store, cx| {
+            prettier_store.remove_worktree(id_to_remove, cx);
+        });
+
+        let mut servers_to_remove = BTreeMap::default();
+        let mut servers_to_preserve = HashSet::default();
+        for ((worktree_id, server_name), &server_id) in &self.language_server_ids {
+            if worktree_id == &id_to_remove {
+                servers_to_remove.insert(server_id, server_name.clone());
+            } else {
+                servers_to_preserve.insert(server_id);
+            }
+        }
+        servers_to_remove.retain(|server_id, _| !servers_to_preserve.contains(server_id));
+        for (server_id_to_remove, server_name) in &servers_to_remove {
+            self.language_server_ids
+                .remove(&(id_to_remove, server_name.clone()));
+            self.language_server_watched_paths
+                .remove(&server_id_to_remove);
+            self.language_server_paths_watched_for_rename
+                .remove(&server_id_to_remove);
+            self.last_workspace_edits_by_language_server
+                .remove(&server_id_to_remove);
+            self.language_servers.remove(&server_id_to_remove);
+            cx.emit(LspStoreEvent::LanguageServerRemoved(*server_id_to_remove));
+        }
+        servers_to_remove.into_keys().collect()
+    }
+
     fn rebuild_watched_paths_inner<'a>(
         &'a self,
         language_server_id: LanguageServerId,
@@ -2930,6 +2968,7 @@ impl LspStore {
             let (sender, receiver) = watch::channel();
             (Self::maintain_workspace_config(receiver, cx), sender)
         };
+        let project_tree = ProjectTree::new(languages.clone(), worktree_store.clone(), cx);
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
                 worktree_store: worktree_store.clone(),
@@ -2956,6 +2995,7 @@ impl LspStore {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)
                 }),
                 registered_buffers: HashMap::default(),
+                lsp_tree: LanguageServerTree::new(languages.clone(), project_tree, cx),
             }),
             last_formatting_failure: None,
             downstream_client: None,
@@ -3182,6 +3222,19 @@ impl LspStore {
 
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
+            local.lsp_tree.update(cx, |this, cx| {
+                maybe!({
+                    let buffs = this
+                        .get(
+                            buffer.read(cx).project_path(cx)?,
+                            buffer.read(cx).language()?.name(),
+                            cx,
+                        )
+                        .collect::<Vec<_>>();
+                    println!("{}", buffs.len());
+                    Some(())
+                });
+            });
             local.initialize_buffer(buffer, cx);
         }
 
@@ -5176,39 +5229,11 @@ impl LspStore {
 
     fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
         self.diagnostic_summaries.remove(&id_to_remove);
-        let to_remove = Vec::new();
         if let Some(local) = self.as_local_mut() {
-            local.diagnostics.remove(&id_to_remove);
-            local.prettier_store.update(cx, |prettier_store, cx| {
-                prettier_store.remove_worktree(id_to_remove, cx);
-            });
-
-            let mut servers_to_remove = HashMap::default();
-            let mut servers_to_preserve = HashSet::default();
-            for ((worktree_id, server_name), &server_id) in &local.language_server_ids {
-                if worktree_id == &id_to_remove {
-                    servers_to_remove.insert(server_id, server_name.clone());
-                } else {
-                    servers_to_preserve.insert(server_id);
-                }
+            let to_remove = local.remove_worktree(id_to_remove, cx);
+            for server in to_remove {
+                self.language_server_statuses.remove(&server);
             }
-            servers_to_remove.retain(|server_id, _| !servers_to_preserve.contains(server_id));
-            for (server_id_to_remove, server_name) in servers_to_remove {
-                local
-                    .language_server_ids
-                    .remove(&(id_to_remove, server_name));
-                local
-                    .language_server_watched_paths
-                    .remove(&server_id_to_remove);
-                local
-                    .last_workspace_edits_by_language_server
-                    .remove(&server_id_to_remove);
-                local.language_servers.remove(&server_id_to_remove);
-                cx.emit(LspStoreEvent::LanguageServerRemoved(server_id_to_remove));
-            }
-        }
-        for server in to_remove {
-            self.language_server_statuses.remove(&server);
         }
     }
 
@@ -6263,18 +6288,13 @@ impl LspStore {
     }
 
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
-        if let Some(local_lsp_store) = self.as_local() {
-            if let Some(LanguageServerState::Running { server, .. }) =
-                local_lsp_store.language_servers.get(&id)
-            {
-                Some(server.clone())
-            } else if let Some((_, server)) =
-                local_lsp_store.supplementary_language_servers.get(&id)
-            {
-                Some(Arc::clone(server))
-            } else {
-                None
-            }
+        let local_lsp_store = self.as_local()?;
+        if let Some(LanguageServerState::Running { server, .. }) =
+            local_lsp_store.language_servers.get(&id)
+        {
+            Some(server.clone())
+        } else if let Some((_, server)) = local_lsp_store.supplementary_language_servers.get(&id) {
+            Some(Arc::clone(server))
         } else {
             None
         }
