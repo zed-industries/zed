@@ -1498,8 +1498,6 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
-    dbg!(snapshot.git_status(&Path::new("")));
-
     check_propagated_statuses(
         &snapshot,
         &[
@@ -2181,8 +2179,8 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         let tree = tree.read(cx);
-        let (work_dir, _) = tree.repositories().next().unwrap();
-        assert_eq!(work_dir.as_ref(), Path::new("projects/project1"));
+        let repo = tree.repositories().next().unwrap();
+        assert_eq!(repo.path.as_ref(), Path::new("projects/project1"));
         assert_eq!(
             tree.status_for_file(Path::new("projects/project1/a")),
             Some(GitFileStatus::Modified)
@@ -2202,8 +2200,8 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         let tree = tree.read(cx);
-        let (work_dir, _) = tree.repositories().next().unwrap();
-        assert_eq!(work_dir.as_ref(), Path::new("projects/project2"));
+        let repo = tree.repositories().next().unwrap();
+        assert_eq!(repo.path.as_ref(), Path::new("projects/project2"));
         assert_eq!(
             tree.status_for_file(Path::new("projects/project2/a")),
             Some(GitFileStatus::Modified)
@@ -2256,23 +2254,13 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 
         assert!(tree.repository_for_path("c.txt".as_ref()).is_none());
 
-        let entry = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
-        assert_eq!(
-            entry
-                .work_directory(tree)
-                .map(|directory| directory.as_ref().to_owned()),
-            Some(Path::new("dir1").to_owned())
-        );
+        let repo = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
+        assert_eq!(repo.path.as_ref(), Path::new("dir1"));
 
-        let entry = tree
+        let repo = tree
             .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
             .unwrap();
-        assert_eq!(
-            entry
-                .work_directory(tree)
-                .map(|directory| directory.as_ref().to_owned()),
-            Some(Path::new("dir1/deps/dep1").to_owned())
-        );
+        assert_eq!(repo.path.as_ref(), Path::new("dir1/deps/dep1"));
 
         let entries = tree.files(false, 0);
 
@@ -2281,10 +2269,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
             .map(|(entry, repo)| {
                 (
                     entry.path.as_ref(),
-                    repo.and_then(|repo| {
-                        repo.work_directory(tree)
-                            .map(|work_directory| work_directory.0.to_path_buf())
-                    }),
+                    repo.map(|repo| repo.path.to_path_buf()),
                 )
             })
             .collect::<Vec<_>>();
@@ -2396,8 +2381,8 @@ async fn test_git_status(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories().count(), 1);
-        let (dir, repo_entry) = snapshot.repositories().next().unwrap();
-        assert_eq!(dir.as_ref(), Path::new("project"));
+        let repo_entry = snapshot.repositories().next().unwrap();
+        assert_eq!(repo_entry.path.as_ref(), Path::new("project"));
         assert!(repo_entry.location_in_repo.is_none());
 
         assert_eq!(
@@ -2465,7 +2450,6 @@ async fn test_git_status(cx: &mut TestAppContext) {
             Some(GitFileStatus::Modified)
         );
     });
-    dbg!("***********************************");
 
     std::fs::remove_file(work_dir.join(B_TXT)).unwrap();
     std::fs::remove_dir_all(work_dir.join("c")).unwrap();
@@ -2570,9 +2554,8 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
     // Check that the right git state is observed on startup
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-        let (dir, _) = snapshot.repositories().next().unwrap();
-
-        let entries = snapshot.git_status(dir).unwrap();
+        let repo = snapshot.repositories().next().unwrap();
+        let entries = repo.status().collect::<Vec<_>>();
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
@@ -2593,10 +2576,8 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-        let (dir, _) = snapshot.repositories().next().unwrap();
-
-        // Takes a work directory, and returns all file entries with a git status.
-        let entries = snapshot.git_status(dir).unwrap();
+        let repository = snapshot.repositories().next().unwrap();
+        let entries = repository.status().collect::<Vec<_>>();
 
         std::assert_eq!(entries.len(), 4, "entries: {entries:?}");
         assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
@@ -2628,8 +2609,8 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-        let (dir, _) = snapshot.repositories().next().unwrap();
-        let entries = snapshot.git_status(dir).unwrap();
+        let repo = snapshot.repositories().next().unwrap();
+        let entries = repo.status().collect::<Vec<_>>();
 
         // Deleting an untracked entry, b.txt, should leave no status
         // a.txt was tracked, and so should have a status
@@ -2696,15 +2677,15 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories().count(), 1);
-        let (dir, repo_entry) = snapshot.repositories().next().unwrap();
+        let repo = snapshot.repositories().next().unwrap();
         // Path is blank because the working directory of
         // the git repository is located at the root of the project
-        assert_eq!(dir.as_ref(), Path::new(""));
+        assert_eq!(repo.path.as_ref(), Path::new(""));
 
         // This is the missing path between the root of the project (sub-folder-2) and its
         // location relative to the root of the repository.
         assert_eq!(
-            repo_entry.location_in_repo,
+            repo.location_in_repo,
             Some(Arc::from(Path::new("sub-folder-1/sub-folder-2")))
         );
 

@@ -394,9 +394,8 @@ impl GitPanel {
 
             let mut visible_worktree_entries = Vec::new();
             let repositories = snapshot.repositories().take(1); // Only use the first for now
-            for (work_dir, _) in repositories {
-                visible_worktree_entries
-                    .extend(snapshot.git_status(&work_dir).unwrap_or(Vec::new()));
+            for repository in repositories {
+                visible_worktree_entries.extend(repository.status());
             }
 
             // let statuses = snapshot.propagate_git_statuses(&visible_worktree_entries);
