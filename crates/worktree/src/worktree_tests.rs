@@ -1,6 +1,6 @@
 use crate::{
-    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, Snapshot, Worktree,
-    WorktreeModelHandle,
+    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, GitEntry, PathChange, Snapshot,
+    Worktree, WorktreeModelHandle,
 };
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
@@ -3183,7 +3183,10 @@ fn check_propagated_statuses(
         .iter()
         .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
         .collect::<Vec<_>>();
-    let statuses = snapshot.propagate_git_statuses(&entries);
+    // TODO: recreate this
+    // let statuses = snapshot.propagate_git_statuses(&entries);
+    let statuses: Vec<Option<GitFileStatus>> = Vec::new();
+    panic!("Redo git status propogation");
     assert_eq!(
         entries
             .iter()

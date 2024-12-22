@@ -22,7 +22,6 @@ use editor::{
 };
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
-use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement,
     AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div,
@@ -57,7 +56,7 @@ use workspace::{
     },
     OpenInTerminal, WeakItemHandle, Workspace,
 };
-use worktree::{Entry, ProjectEntryId, WorktreeId};
+use worktree::{Entry, GitEntry, ProjectEntryId, WorktreeId};
 
 actions!(
     outline_panel,
@@ -352,8 +351,7 @@ enum ExcerptOutlines {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FoldedDirsEntry {
     worktree_id: WorktreeId,
-    entries: Vec<Entry>,
-    git_file_statuses: Vec<Option<GitFileStatus>>,
+    entries: Vec<GitEntry>,
 }
 
 // TODO: collapse the inner enums into panel entry
@@ -581,10 +579,9 @@ impl OutlineEntry {
 #[derive(Debug, Clone, Eq)]
 struct FsEntryFile {
     worktree_id: WorktreeId,
-    entry: Entry,
+    entry: GitEntry,
     buffer_id: BufferId,
     excerpts: Vec<ExcerptId>,
-    git_status: Option<GitFileStatus>,
 }
 
 impl PartialEq for FsEntryFile {
@@ -604,8 +601,7 @@ impl Hash for FsEntryFile {
 #[derive(Debug, Clone, Eq)]
 struct FsEntryDirectory {
     worktree_id: WorktreeId,
-    entry: Entry,
-    git_status: Option<GitFileStatus>,
+    entry: GitEntry,
 }
 
 impl PartialEq for FsEntryDirectory {
@@ -2087,13 +2083,11 @@ impl OutlinePanel {
         };
         let (item_id, label_element, icon) = match rendered_entry {
             FsEntry::File(FsEntryFile {
-                worktree_id,
-                entry,
-                git_status,
-                ..
+                worktree_id, entry, ..
             }) => {
                 let name = self.entry_name(worktree_id, entry, cx);
-                let color = entry_git_aware_label_color(*git_status, entry.is_ignored, is_active);
+                let color =
+                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
                     FileIcons::get_icon(&entry.path, cx)
                         .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
@@ -2113,18 +2107,18 @@ impl OutlinePanel {
                     icon.unwrap_or_else(empty_icon),
                 )
             }
-            FsEntry::Directory(FsEntryDirectory {
-                worktree_id,
+            FsEntry::Directory(directory) => {
+                let name = self.entry_name(&directory.worktree_id, &directory.entry, cx);
 
-                entry,
-                git_status,
-            }) => {
-                let name = self.entry_name(worktree_id, entry, cx);
-
-                let is_expanded = !self
-                    .collapsed_entries
-                    .contains(&CollapsedEntry::Dir(*worktree_id, entry.id));
-                let color = entry_git_aware_label_color(*git_status, entry.is_ignored, is_active);
+                let is_expanded = !self.collapsed_entries.contains(&CollapsedEntry::Dir(
+                    directory.worktree_id,
+                    directory.entry.id,
+                ));
+                let color = entry_git_aware_label_color(
+                    directory.entry.git_status,
+                    directory.entry.is_ignored,
+                    is_active,
+                );
                 let icon = if settings.folder_icons {
                     FileIcons::get_folder_icon(is_expanded, cx)
                 } else {
@@ -2133,7 +2127,7 @@ impl OutlinePanel {
                 .map(Icon::from_path)
                 .map(|icon| icon.color(color).into_any_element());
                 (
-                    ElementId::from(entry.id.to_proto() as usize),
+                    ElementId::from(directory.entry.id.to_proto() as usize),
                     HighlightedLabel::new(
                         name,
                         string_match
@@ -2214,7 +2208,10 @@ impl OutlinePanel {
                     .contains(&CollapsedEntry::Dir(folded_dir.worktree_id, dir.id))
             });
             let is_ignored = folded_dir.entries.iter().any(|entry| entry.is_ignored);
-            let git_status = folded_dir.git_file_statuses.first().cloned().flatten();
+            let git_status = folded_dir
+                .entries
+                .first()
+                .and_then(|entry| entry.git_status);
             let color = entry_git_aware_label_color(git_status, is_ignored, is_active);
             let icon = if settings.folder_icons {
                 FileIcons::get_folder_icon(is_expanded, cx)
@@ -2520,7 +2517,7 @@ impl OutlinePanel {
                     let mut processed_external_buffers = HashSet::default();
                     let mut new_worktree_entries = HashMap::<
                         WorktreeId,
-                        (worktree::Snapshot, HashMap<ProjectEntryId, Entry>),
+                        (worktree::Snapshot, HashMap<ProjectEntryId, GitEntry>),
                     >::default();
                     let mut worktree_excerpts = HashMap::<
                         WorktreeId,
@@ -2561,12 +2558,13 @@ impl OutlinePanel {
 
                             match entry_id.and_then(|id| worktree.entry_for_id(id)).cloned() {
                                 Some(entry) => {
-                                    let mut traversal = worktree.traverse_from_path(
-                                        true,
-                                        true,
-                                        true,
-                                        entry.path.as_ref(),
-                                    );
+                                    let entry = GitEntry {
+                                        git_status: worktree.status_for_file(&entry.path),
+                                        entry,
+                                    };
+                                    let mut traversal = worktree
+                                        .traverse_from_path(true, true, true, entry.path.as_ref())
+                                        .with_git_statuses();
 
                                     let mut entries_to_add = HashMap::default();
                                     worktree_excerpts
@@ -2598,7 +2596,7 @@ impl OutlinePanel {
                                             .is_none();
                                         if new_entry_added && traversal.back_to_parent() {
                                             if let Some(parent_entry) = traversal.entry() {
-                                                current_entry = parent_entry.clone();
+                                                current_entry = parent_entry.to_owned();
                                                 continue;
                                             }
                                         }
@@ -2636,15 +2634,14 @@ impl OutlinePanel {
                             let mut entries = entries.into_values().collect::<Vec<_>>();
                             // For a proper git status propagation, we have to keep the entries sorted lexicographically.
                             entries.sort_by(|a, b| a.path.as_ref().cmp(b.path.as_ref()));
-                            let statuses = worktree_snapshot.propagate_git_statuses(&entries);
-                            let entries = entries.into_iter().zip(statuses).collect::<Vec<_>>();
+                            worktree_snapshot.propagate_git_statuses(&mut entries);
                             (worktree_id, entries)
                         })
                         .flat_map(|(worktree_id, entries)| {
                             {
                                 entries
                                     .into_iter()
-                                    .filter_map(|(entry, git_status)| {
+                                    .filter_map(|entry| {
                                         if auto_fold_dirs {
                                             if let Some(parent) = entry.path.parent() {
                                                 let children = new_children_count
@@ -2664,7 +2661,6 @@ impl OutlinePanel {
                                             Some(FsEntry::Directory(FsEntryDirectory {
                                                 worktree_id,
                                                 entry,
-                                                git_status,
                                             }))
                                         } else {
                                             let (buffer_id, excerpts) = worktree_excerpts
@@ -2677,7 +2673,6 @@ impl OutlinePanel {
                                                 buffer_id,
                                                 entry,
                                                 excerpts,
-                                                git_status,
                                             }))
                                         }
                                     })
@@ -3461,7 +3456,6 @@ impl OutlinePanel {
                                             FoldedDirsEntry {
                                                 worktree_id: directory_entry.worktree_id,
                                                 entries: vec![directory_entry.entry.clone()],
-                                                git_file_statuses: vec![directory_entry.git_status],
                                             },
                                         ))
                                     };
@@ -3472,7 +3466,6 @@ impl OutlinePanel {
                                     FoldedDirsEntry {
                                         worktree_id: directory_entry.worktree_id,
                                         entries: vec![directory_entry.entry.clone()],
-                                        git_file_statuses: vec![directory_entry.git_status],
                                     },
                                 ));
                             }
@@ -3715,7 +3708,6 @@ impl OutlinePanel {
                 1 => PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
                     worktree_id: folded_dirs_entry.worktree_id,
                     entry: folded_dirs_entry.entries[0].clone(),
-                    git_status: folded_dirs_entry.git_file_statuses[0],
                 })),
                 _ => entry,
             }
@@ -3778,7 +3770,7 @@ impl OutlinePanel {
 
     fn dir_names_string(
         &self,
-        entries: &[Entry],
+        entries: &[GitEntry],
         worktree_id: WorktreeId,
         cx: &AppContext,
     ) -> String {
@@ -4521,7 +4513,7 @@ impl OutlinePanel {
     fn buffers_inside_directory(
         &self,
         dir_worktree: WorktreeId,
-        dir_entry: &Entry,
+        dir_entry: &GitEntry,
     ) -> HashSet<BufferId> {
         if !dir_entry.is_dir() {
             debug_panic!("buffers_inside_directory called on a non-directory entry {dir_entry:?}");

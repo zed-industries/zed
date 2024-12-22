@@ -63,7 +63,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyTaskExt},
     DraggedSelection, OpenInTerminal, PreviewTabsSettings, SelectedEntry, Workspace,
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, GitEntry, GitEntryRef};
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -76,11 +76,7 @@ pub struct ProjectPanel {
     // An update loop that keeps incrementing/decrementing scroll offset while there is a dragged entry that's
     // hovered over the start/end of a list.
     hover_scroll_task: Option<Task<()>>,
-    visible_entries: Vec<(
-        WorktreeId,
-        Vec<(Entry, Option<GitFileStatus>)>,
-        OnceCell<HashSet<Arc<Path>>>,
-    )>,
+    visible_entries: Vec<(WorktreeId, Vec<GitEntry>, OnceCell<HashSet<Arc<Path>>>)>,
     /// Maps from leaf project entry ID to the currently selected ancestor.
     /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
@@ -893,7 +889,7 @@ impl ProjectPanel {
             let (worktree_id, worktree_entries, _) = &self.visible_entries[worktree_ix];
             let selection = SelectedEntry {
                 worktree_id: *worktree_id,
-                entry_id: worktree_entries[entry_ix].0.id,
+                entry_id: worktree_entries[entry_ix].id,
             };
             self.selection = Some(selection);
             if cx.modifiers().shift {
@@ -1366,6 +1362,7 @@ impl ProjectPanel {
         let mut siblings: Vec<_> = worktree
             .snapshot()
             .child_entries(parent_path)
+            .with_git_statuses()
             .filter(|sibling| {
                 sibling.id == latest_entry.id
                     || !marked_entries_in_worktree.contains(&&SelectedEntry {
@@ -1373,14 +1370,13 @@ impl ProjectPanel {
                         entry_id: sibling.id,
                     })
             })
-            .map(|sibling| &(*sibling, None))
-            .cloned()
+            .map(|entry| entry.to_owned())
             .collect();
 
         project::sort_worktree_entries(&mut siblings);
         let sibling_entry_index = siblings
             .iter()
-            .position(|sibling| sibling.0.id == latest_entry.0.id)?;
+            .position(|sibling| sibling.id == latest_entry.id)?;
 
         if let Some(next_sibling) = sibling_entry_index
             .checked_add(1)
@@ -1388,7 +1384,7 @@ impl ProjectPanel {
         {
             return Some(SelectedEntry {
                 worktree_id,
-                entry_id: next_sibling.0.id,
+                entry_id: next_sibling.id,
             });
         }
         if let Some(prev_sibling) = sibling_entry_index
@@ -1397,7 +1393,7 @@ impl ProjectPanel {
         {
             return Some(SelectedEntry {
                 worktree_id,
-                entry_id: prev_sibling.0.id,
+                entry_id: prev_sibling.id,
             });
         }
         // No neighbour sibling found, fall back to parent
@@ -1491,7 +1487,7 @@ impl ProjectPanel {
                 if let Some(entry) = worktree_entries.get(entry_ix) {
                     let selection = SelectedEntry {
                         worktree_id: *worktree_id,
-                        entry_id: entry.0.id,
+                        entry_id: entry.id,
                     };
                     self.selection = Some(selection);
                     if cx.modifiers().shift {
@@ -1511,7 +1507,7 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             true,
-            |entry, _, worktree_id| {
+            |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
                         if selection.worktree_id == worktree_id {
@@ -1541,7 +1537,7 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             false,
-            |entry, _, worktree_id| {
+            |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
                         if selection.worktree_id == worktree_id {
@@ -1571,7 +1567,7 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             true,
-            |entry, git_status, worktree_id| {
+            |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
                         if selection.worktree_id == worktree_id {
@@ -1581,7 +1577,9 @@ impl ProjectPanel {
                         }
                     }))
                     && entry.is_file()
-                    && git_status.is_some_and(|status| matches!(status, GitFileStatus::Modified))
+                    && entry
+                        .git_status
+                        .is_some_and(|status| matches!(status, GitFileStatus::Modified))
             },
             cx,
         );
@@ -1649,7 +1647,7 @@ impl ProjectPanel {
         let selection = self.find_entry(
             self.selection.as_ref(),
             true,
-            |entry, git_status, worktree_id| {
+            |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
                         if selection.worktree_id == worktree_id {
@@ -1659,7 +1657,9 @@ impl ProjectPanel {
                         }
                     }))
                     && entry.is_file()
-                    && git_status.is_some_and(|status| matches!(status, GitFileStatus::Modified))
+                    && entry
+                        .git_status
+                        .is_some_and(|status| matches!(status, GitFileStatus::Modified))
             },
             cx,
         );
@@ -2110,7 +2110,7 @@ impl ProjectPanel {
         {
             if *worktree_id == selection.worktree_id {
                 for entry in worktree_entries {
-                    if entry.0.id == selection.entry_id {
+                    if entry.id == selection.entry_id {
                         return Some((worktree_index, entry_index, visible_entries_index));
                     } else {
                         visible_entries_index += 1;
@@ -2308,7 +2308,7 @@ impl ProjectPanel {
             }
 
             let mut visible_worktree_entries = Vec::new();
-            let mut entry_iter = snapshot.entries(true, 0);
+            let mut entry_iter = snapshot.entries(true, 0).with_git_statuses();
             let mut auto_folded_ancestors = vec![];
             while let Some(entry) = entry_iter.entry() {
                 if auto_collapse_dirs && entry.kind.is_dir() {
@@ -2350,7 +2350,7 @@ impl ProjectPanel {
                     }
                 }
                 auto_folded_ancestors.clear();
-                visible_worktree_entries.push(entry.clone());
+                visible_worktree_entries.push(entry.to_owned());
                 let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id {
                     entry.id == new_entry_id || {
                         self.ancestors.get(&entry.id).map_or(false, |entries| {
@@ -2364,24 +2364,27 @@ impl ProjectPanel {
                     false
                 };
                 if precedes_new_entry {
-                    visible_worktree_entries.push(Entry {
-                        id: NEW_ENTRY_ID,
-                        kind: new_entry_kind,
-                        path: entry.path.join("\0").into(),
-                        inode: 0,
-                        mtime: entry.mtime,
-                        size: entry.size,
-                        is_ignored: entry.is_ignored,
-                        is_external: false,
-                        is_private: false,
-                        is_always_included: entry.is_always_included,
-                        canonical_path: entry.canonical_path.clone(),
-                        char_bag: entry.char_bag,
-                        is_fifo: entry.is_fifo,
+                    visible_worktree_entries.push(GitEntry {
+                        entry: Entry {
+                            id: NEW_ENTRY_ID,
+                            kind: new_entry_kind,
+                            path: entry.path.join("\0").into(),
+                            inode: 0,
+                            mtime: entry.mtime,
+                            size: entry.size,
+                            is_ignored: entry.is_ignored,
+                            is_external: false,
+                            is_private: false,
+                            is_always_included: entry.is_always_included,
+                            canonical_path: entry.canonical_path.clone(),
+                            char_bag: entry.char_bag,
+                            is_fifo: entry.is_fifo,
+                        },
+                        git_status: entry.git_status,
                     });
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
-                let (depth, path) = if Some(entry) == worktree.read(cx).root_entry() {
+                let (depth, path) = if Some(entry.entry) == worktree.read(cx).root_entry() {
                     let Some(path_name) = worktree_abs_path
                         .file_name()
                         .with_context(|| {
@@ -2458,11 +2461,7 @@ impl ProjectPanel {
                 entry_iter.advance();
             }
 
-            let git_statuses = snapshot.propagate_git_statuses(&mut visible_worktree_entries);
-            let mut visible_worktree_entries = visible_worktree_entries
-                .into_iter()
-                .zip(git_statuses.into_iter())
-                .collect::<Vec<_>>();
+            snapshot.propagate_git_statuses(&mut visible_worktree_entries);
             project::sort_worktree_entries(&mut visible_worktree_entries);
 
             self.visible_entries
@@ -2475,7 +2474,7 @@ impl ProjectPanel {
                 if worktree_id == *id {
                     entries
                         .iter()
-                        .position(|entry| entry.0.id == project_entry_id)
+                        .position(|entry| entry.id == project_entry_id)
                 } else {
                     visited_worktrees_length += entries.len();
                     None
@@ -2654,19 +2653,19 @@ impl ProjectPanel {
             return visible_worktree_entries
                 .iter()
                 .enumerate()
-                .find(|(_, entry)| entry.0.id == entry_id)
+                .find(|(_, entry)| entry.id == entry_id)
                 .map(|(ix, _)| (worktree_ix, ix, total_ix + ix));
         }
         None
     }
 
-    fn entry_at_index(&self, index: usize) -> Option<(WorktreeId, Option<GitFileStatus>, &Entry)> {
+    fn entry_at_index(&self, index: usize) -> Option<(WorktreeId, GitEntryRef)> {
         let mut offset = 0;
         for (worktree_id, visible_worktree_entries, _) in &self.visible_entries {
             if visible_worktree_entries.len() > offset + index {
                 return visible_worktree_entries
                     .get(index)
-                    .map(|(entry, git_file_status)| (*worktree_id, *git_file_status, entry));
+                    .map(|entry| (*worktree_id, entry.to_ref()));
             }
             offset += visible_worktree_entries.len();
         }
@@ -2695,11 +2694,11 @@ impl ProjectPanel {
             let entries = entries_paths.get_or_init(|| {
                 visible_worktree_entries
                     .iter()
-                    .map(|e| (e.0.path.clone()))
+                    .map(|e| (e.path.clone()))
                     .collect()
             });
             for entry in visible_worktree_entries[entry_range].iter() {
-                callback(&entry.0, entries, cx);
+                callback(&entry, entries, cx);
             }
             ix = end_ix;
         }
@@ -2744,11 +2743,11 @@ impl ProjectPanel {
                 let entries = entries_paths.get_or_init(|| {
                     visible_worktree_entries
                         .iter()
-                        .map(|e| (e.0.path.clone()))
+                        .map(|e| (e.path.clone()))
                         .collect()
                 });
-                for (entry, git_status) in visible_worktree_entries[entry_range].iter() {
-                    let status = git_status_setting.then_some(*git_status).flatten();
+                for entry in visible_worktree_entries[entry_range].iter() {
+                    let status = git_status_setting.then_some(entry.git_status).flatten();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
                     let icon = match entry.kind {
                         EntryKind::File => {
@@ -2897,9 +2896,9 @@ impl ProjectPanel {
         worktree_id: WorktreeId,
         reverse_search: bool,
         only_visible_entries: bool,
-        predicate: impl Fn(&Entry, Option<GitFileStatus>, WorktreeId) -> bool,
+        predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Entry> {
+    ) -> Option<GitEntry> {
         if only_visible_entries {
             let entries = self
                 .visible_entries
@@ -2914,19 +2913,18 @@ impl ProjectPanel {
                 .clone();
 
             return utils::ReversibleIterable::new(entries.iter(), reverse_search)
-                .find(|ele| predicate(&ele.0, ele.1, worktree_id))
-                .map(|ele| ele.0);
+                .find(|ele| predicate(ele.to_ref(), worktree_id))
+                .cloned();
         }
 
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         worktree.update(cx, |tree, _| {
             utils::ReversibleIterable::new(
-                tree.entries(true, 0usize)
-                    .with_git_statuses(&tree.snapshot()),
+                tree.entries(true, 0usize).with_git_statuses(),
                 reverse_search,
             )
-            .find_single_ended(|ele| predicate(&ele.0, ele.1, worktree_id))
-            .map(|ele| ele.0)
+            .find_single_ended(|ele| predicate(*ele, worktree_id))
+            .map(|ele| ele.to_owned())
         })
     }
 
@@ -2934,7 +2932,7 @@ impl ProjectPanel {
         &self,
         start: Option<&SelectedEntry>,
         reverse_search: bool,
-        predicate: impl Fn(&Entry, Option<GitFileStatus>, WorktreeId) -> bool,
+        predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
@@ -2956,11 +2954,9 @@ impl ProjectPanel {
                 let root_entry = tree.root_entry()?;
                 let tree_id = tree.id();
 
-                // TOOD: Expose the all statuses cursor, as a wrapper over a Traversal
-                // The co-iterates the GitEntries as the file entries come through
                 let mut first_iter = tree
                     .traverse_from_path(true, true, true, entry.path.as_ref())
-                    .with_git_statuses(tree);
+                    .with_git_statuses();
 
                 if reverse_search {
                     first_iter.next();
@@ -2968,25 +2964,25 @@ impl ProjectPanel {
 
                 let first = first_iter
                     .enumerate()
-                    .take_until(|(count, ele)| ele.0 == root_entry && *count != 0usize)
-                    .map(|(_, ele)| ele)
-                    .find(|ele| predicate(ele.0, ele.1 tree_id))
-                    .cloned();
+                    .take_until(|(count, entry)| entry.entry == root_entry && *count != 0usize)
+                    .map(|(_, entry)| entry)
+                    .find(|ele| predicate(*ele, tree_id))
+                    .map(|ele| ele.to_owned());
 
-                let second_iter = tree.entries(true, 0usize);
+                let second_iter = tree.entries(true, 0usize).with_git_statuses();
 
                 let second = if reverse_search {
                     second_iter
                         .take_until(|ele| ele.id == start.entry_id)
-                        .filter(|ele| predicate(ele, tree_id))
+                        .filter(|ele| predicate(*ele, tree_id))
                         .last()
-                        .cloned()
+                        .map(|ele| ele.to_owned())
                 } else {
                     second_iter
                         .take_while(|ele| ele.id != start.entry_id)
-                        .filter(|ele| predicate(ele, tree_id))
+                        .filter(|ele| predicate(*ele, tree_id))
                         .last()
-                        .cloned()
+                        .map(|ele| ele.to_owned())
                 };
 
                 if reverse_search {
@@ -3043,7 +3039,7 @@ impl ProjectPanel {
         &self,
         start: Option<&SelectedEntry>,
         reverse_search: bool,
-        predicate: impl Fn(&Entry, WorktreeId) -> bool,
+        predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
@@ -3085,8 +3081,8 @@ impl ProjectPanel {
                 )
             };
 
-            let first_search = first_iter.find(|ele| predicate(ele, start.worktree_id));
-            let second_search = second_iter.find(|ele| predicate(ele, start.worktree_id));
+            let first_search = first_iter.find(|ele| predicate(ele.to_ref(), start.worktree_id));
+            let second_search = second_iter.find(|ele| predicate(ele.to_ref(), start.worktree_id));
 
             if first_search.is_some() {
                 return first_search.map(|entry| SelectedEntry {
@@ -4026,8 +4022,7 @@ impl Render for ProjectPanel {
                                     if cx.modifiers().secondary() {
                                         let ix = active_indent_guide.offset.y;
                                         let Some((target_entry, worktree)) = maybe!({
-                                            let (worktree_id, _git_status, entry) =
-                                                this.entry_at_index(ix)?;
+                                            let (worktree_id, entry) = this.entry_at_index(ix)?;
                                             let worktree = this
                                                 .project
                                                 .read(cx)

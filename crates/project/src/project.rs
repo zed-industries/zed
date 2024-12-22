@@ -4456,11 +4456,13 @@ impl Completion {
     }
 }
 
-pub fn sort_worktree_entries(entries: &mut [(Entry, Option<GitFileStatus>)]) {
+pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
     entries.sort_by(|entry_a, entry_b| {
+        let entry_a = entry_a.as_ref();
+        let entry_b = entry_b.as_ref();
         compare_paths(
-            (&entry_a.0.path, entry_a.0.is_file()),
-            (&entry_b.0.path, entry_b.0.is_file()),
+            (&entry_a.path, entry_a.is_file()),
+            (&entry_b.path, entry_b.is_file()),
         )
     });
 }

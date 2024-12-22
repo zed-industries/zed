@@ -193,7 +193,7 @@ pub struct RepositoryEntry {
     /// With this setup, this field would contain 2 entries, like so:
     ///     - my_sub_folder_1/project_root/changed_file_1
     ///     - my_sub_folder_2/changed_file_2
-    pub(crate) git_entries_by_path: SumTree<GitEntry>,
+    pub(crate) git_entries_by_path: SumTree<StatusEntry>,
     pub(crate) work_directory_id: ProjectEntryId,
     pub(crate) work_directory: WorkDirectory,
     pub(crate) branch: Option<Arc<str>>,
@@ -226,7 +226,7 @@ impl RepositoryEntry {
         self.into()
     }
 
-    pub fn status(&self) -> impl Iterator<Item = GitEntry> + '_ {
+    pub fn status(&self) -> impl Iterator<Item = StatusEntry> + '_ {
         self.git_entries_by_path.iter().cloned()
     }
 }
@@ -2480,7 +2480,7 @@ impl Snapshot {
     }
 
     #[cfg(any(feature = "test-support", test))]
-    pub fn git_satus(&self, work_dir: &Path) -> Option<Vec<GitEntry>> {
+    pub fn git_satus(&self, work_dir: &Path) -> Option<Vec<StatusEntry>> {
         self.repositories
             .get(&PathKey(work_dir.into()), &())
             .map(|repo| repo.status().collect())
@@ -2532,7 +2532,7 @@ impl Snapshot {
         })
     }
 
-    pub fn propagate_git_statuses(&self, entries: &[Entry]) -> Vec<Option<GitFileStatus>> {
+    pub fn propagate_git_statuses(&self, entries: &mut [GitEntry]) -> Vec<Option<GitFileStatus>> {
         let mut cursor = all_statuses_cursor(self);
         let mut entry_stack = Vec::<(usize, GitStatuses)>::new();
 
@@ -3586,7 +3586,7 @@ pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
 pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GitEntry {
+pub struct StatusEntry {
     pub path: RepoPath,
     pub git_status: GitFileStatus,
 }
@@ -3665,7 +3665,7 @@ impl sum_tree::Summary for GitStatuses {
     }
 }
 
-impl sum_tree::Item for GitEntry {
+impl sum_tree::Item for StatusEntry {
     type Summary = PathSummary<GitStatuses>;
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
@@ -3694,7 +3694,7 @@ impl sum_tree::Item for GitEntry {
     }
 }
 
-impl sum_tree::KeyedItem for GitEntry {
+impl sum_tree::KeyedItem for StatusEntry {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
@@ -3779,7 +3779,7 @@ struct AllStatusesCursor<'a, I> {
     repos: I,
     current_location: Option<(
         &'a WorkDirectory,
-        Cursor<'a, GitEntry, (TraversalProgress<'a>, GitStatuses)>,
+        Cursor<'a, StatusEntry, (TraversalProgress<'a>, GitStatuses)>,
     )>,
     statuses_before_current_repo: GitStatuses,
 }
@@ -4809,7 +4809,7 @@ impl BackgroundScanner {
                 let mut changed_path_statuses = Vec::new();
                 for (repo_path, status) in &*status.entries {
                     paths.remove_repo_path(repo_path);
-                    changed_path_statuses.push(Edit::Insert(GitEntry {
+                    changed_path_statuses.push(Edit::Insert(StatusEntry {
                         path: repo_path.clone(),
                         git_status: *status,
                     }));
@@ -5226,7 +5226,7 @@ impl BackgroundScanner {
                 };
 
             new_entries_by_path.insert_or_replace(
-                GitEntry {
+                StatusEntry {
                     path: path.clone(),
                     git_status: *status,
                 },
@@ -5639,12 +5639,13 @@ impl<'a> Default for TraversalProgress<'a> {
     }
 }
 
-pub struct EntryWithGitStatusRef<'a> {
+#[derive(Debug, Clone, Copy)]
+pub struct GitEntryRef<'a> {
     pub entry: &'a Entry,
     pub git_status: Option<GitFileStatus>,
 }
 
-impl<'a> EntryWithGitStatusRef<'a> {
+impl<'a> GitEntryRef<'a> {
     fn entry(entry: &'a Entry) -> Self {
         Self {
             entry,
@@ -5652,15 +5653,15 @@ impl<'a> EntryWithGitStatusRef<'a> {
         }
     }
 
-    pub fn to_owned(&self) -> EntryWithGitStatus {
-        EntryWithGitStatus {
+    pub fn to_owned(&self) -> GitEntry {
+        GitEntry {
             entry: self.entry.clone(),
             git_status: self.git_status.clone(),
         }
     }
 }
 
-impl<'a> Deref for EntryWithGitStatusRef<'a> {
+impl<'a> Deref for GitEntryRef<'a> {
     type Target = Entry;
 
     fn deref(&self) -> &Self::Target {
@@ -5668,15 +5669,37 @@ impl<'a> Deref for EntryWithGitStatusRef<'a> {
     }
 }
 
-pub struct EntryWithGitStatus {
+impl<'a> AsRef<Entry> for GitEntryRef<'a> {
+    fn as_ref(&self) -> &Entry {
+        self.entry
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitEntry {
     pub entry: Entry,
     pub git_status: Option<GitFileStatus>,
 }
 
-impl Deref for EntryWithGitStatus {
+impl GitEntry {
+    pub fn to_ref(&self) -> GitEntryRef {
+        GitEntryRef {
+            entry: &self.entry,
+            git_status: self.git_status.clone(),
+        }
+    }
+}
+
+impl Deref for GitEntry {
     type Target = Entry;
 
     fn deref(&self) -> &Self::Target {
+        &self.entry
+    }
+}
+
+impl<'a> AsRef<Entry> for GitEntry {
+    fn as_ref(&self) -> &Entry {
         &self.entry
     }
 }
@@ -5685,7 +5708,7 @@ pub struct GitTraversal<'a> {
     traversal: Traversal<'a>,
     reset: bool,
     repositories: Cursor<'a, RepositoryEntry, PathProgress<'a>>,
-    statuses: Option<Cursor<'a, GitEntry, PathProgress<'a>>>,
+    statuses: Option<Cursor<'a, StatusEntry, PathProgress<'a>>>,
 }
 
 impl<'a> GitTraversal<'a> {
@@ -5718,7 +5741,7 @@ impl<'a> GitTraversal<'a> {
         self.traversal.end_offset()
     }
 
-    pub fn entry(&mut self) -> Option<EntryWithGitStatusRef<'a>> {
+    pub fn entry(&mut self) -> Option<GitEntryRef<'a>> {
         let reset = mem::take(&mut self.reset);
         let entry = self.traversal.cursor.item()?;
         let current_repository_id = self
@@ -5735,7 +5758,7 @@ impl<'a> GitTraversal<'a> {
         }
         let Some(repository) = self.repositories.item() else {
             self.statuses = None;
-            return Some(EntryWithGitStatusRef::entry(entry));
+            return Some(GitEntryRef::entry(entry));
         };
 
         if reset || Some(repository.work_directory_id) != current_repository_id {
@@ -5743,30 +5766,30 @@ impl<'a> GitTraversal<'a> {
         }
 
         let Some(statuses) = self.statuses.as_mut() else {
-            return Some(EntryWithGitStatusRef::entry(entry));
+            return Some(GitEntryRef::entry(entry));
         };
         let Some(repo_path) = repository.relativize(&entry.path).ok() else {
-            return Some(EntryWithGitStatusRef::entry(entry));
+            return Some(GitEntryRef::entry(entry));
         };
         let found = statuses.seek_forward(&PathTarget::Path(&repo_path.0), Bias::Left, &());
 
         if found {
             let Some(status) = statuses.item() else {
-                return Some(EntryWithGitStatusRef::entry(entry));
+                return Some(GitEntryRef::entry(entry));
             };
 
-            Some(EntryWithGitStatusRef {
+            Some(GitEntryRef {
                 entry,
                 git_status: Some(status.git_status),
             })
         } else {
-            Some(EntryWithGitStatusRef::entry(entry))
+            Some(GitEntryRef::entry(entry))
         }
     }
 }
 
 impl<'a> Iterator for GitTraversal<'a> {
-    type Item = EntryWithGitStatusRef<'a>;
+    type Item = GitEntryRef<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(item) = self.entry() {
             self.advance();
@@ -6009,8 +6032,36 @@ pub struct ChildEntriesIter<'a> {
     traversal: Traversal<'a>,
 }
 
+impl<'a> ChildEntriesIter<'a> {
+    pub fn with_git_statuses(self) -> ChildEntriesGitIter<'a> {
+        ChildEntriesGitIter {
+            parent_path: self.parent_path,
+            traversal: self.traversal.with_git_statuses(),
+        }
+    }
+}
+
+pub struct ChildEntriesGitIter<'a> {
+    parent_path: &'a Path,
+    traversal: GitTraversal<'a>,
+}
+
 impl<'a> Iterator for ChildEntriesIter<'a> {
     type Item = &'a Entry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(item) = self.traversal.entry() {
+            if item.path.starts_with(self.parent_path) {
+                self.traversal.advance_to_sibling();
+                return Some(item);
+            }
+        }
+        None
+    }
+}
+
+impl<'a> Iterator for ChildEntriesGitIter<'a> {
+    type Item = GitEntryRef<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(item) = self.traversal.entry() {

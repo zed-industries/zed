@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use worktree::GitEntry;
+use worktree::StatusEntry;
 
 use git::repository::{GitFileStatus, RepoPath};
 
@@ -90,7 +90,7 @@ pub struct GitPanel {
     // not hidden by folding or such
     visible_entries: Vec<(
         WorktreeId,
-        Vec<worktree::GitEntry>,
+        Vec<worktree::StatusEntry>,
         OnceCell<HashSet<RepoPath>>,
     )>,
     width: Option<Pixels>,
@@ -232,7 +232,7 @@ impl GitPanel {
     }
 
     fn calculate_depth_and_difference(
-        entry: &GitEntry,
+        entry: &StatusEntry,
         visible_worktree_entries: &HashSet<RepoPath>,
     ) -> (usize, usize) {
         let (depth, difference) = entry
