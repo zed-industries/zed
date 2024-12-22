@@ -10,8 +10,6 @@ fi
 
 input_file=$1;
 
-# cat panic.json| jq -r .backtrace[] | sed s'/.*+//'
-#
 if [[ "$input_file" == *.json ]]; then
     version=$(cat $input_file | jq -r .app_version)
     channel=$(cat $input_file | jq -r .release_channel)
@@ -30,7 +28,7 @@ if [[ "$input_file" == *.json ]]; then
         gunzip  target/dsyms/$dsym.gz
     fi
 
-    cat $input_file | jq -r .backtrace[] | sed s'/.*+//' | llvm-symbolizer --obj=target/dsyms/$dsym | rustfilt
+    cat $input_file | jq -r .backtrace[] | sed s'/.*+//' | llvm-symbolizer --no-demangle --obj=target/dsyms/$dsym | rustfilt
 
 else # ips file
 
