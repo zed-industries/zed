@@ -879,7 +879,7 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_expand_diff_hunks(cx: &mut TestAppContext) {
+fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     let text = indoc!(
         "
         ZERO
@@ -1115,6 +1115,187 @@ fn test_expand_diff_hunks(cx: &mut TestAppContext) {
             "
         ),
     );
+}
+
+#[gpui::test]
+fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
+    let base_text_1 = indoc!(
+        "
+        one
+        two
+        three
+        four
+        five
+        six
+        "
+    );
+    let text_1 = indoc!(
+        "
+        ZERO
+        one
+        TWO
+        three
+        six
+        "
+    );
+    let base_text_2 = indoc!(
+        "
+        seven
+        eight
+        nine
+        ten
+        eleven
+        twelve
+        "
+    );
+    let text_2 = indoc!(
+        "
+        eight
+        nine
+        eleven
+        THIRTEEN
+        FOURTEEN
+        "
+    );
+
+    let buffer_1 = cx.new_model(|cx| Buffer::local(text_1, cx));
+    let buffer_2 = cx.new_model(|cx| Buffer::local(text_2, cx));
+    let change_set_1 = cx.new_model(|cx| {
+        BufferChangeSet::new_with_base_text(
+            base_text_1.to_string(),
+            buffer_1.read(cx).text_snapshot(),
+            cx,
+        )
+    });
+    let change_set_2 = cx.new_model(|cx| {
+        BufferChangeSet::new_with_base_text(
+            base_text_2.to_string(),
+            buffer_2.read(cx).text_snapshot(),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+
+    let multibuffer = cx.new_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange {
+                context: text::Anchor::MIN..text::Anchor::MAX,
+                primary: None,
+            }],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange {
+                context: text::Anchor::MIN..text::Anchor::MAX,
+                primary: None,
+            }],
+            cx,
+        );
+        multibuffer.add_change_set(change_set_1.clone(), cx);
+        multibuffer.add_change_set(change_set_2.clone(), cx);
+        multibuffer
+    });
+
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+    assert_eq!(
+        snapshot.text(),
+        indoc!(
+            "
+            ZERO
+            one
+            TWO
+            three
+            six
+
+            eight
+            nine
+            eleven
+            THIRTEEN
+            FOURTEEN
+            "
+        ),
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+            + ZERO
+              one
+            - two
+            + TWO
+              three
+            - four
+            - five
+              six
+
+            - seven
+              eight
+              nine
+            - ten
+              eleven
+            - twelve
+            + THIRTEEN
+            + FOURTEEN
+            "
+        ),
+    );
+
+    let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
+    let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
+    let base_id_1 = change_set_1.read_with(cx, |change_set, cx| {
+        change_set.base_text.as_ref().unwrap().read(cx).remote_id()
+    });
+    let base_id_2 = change_set_2.read_with(cx, |change_set, cx| {
+        change_set.base_text.as_ref().unwrap().read(cx).remote_id()
+    });
+
+    let buffer_lines = (0..snapshot.max_row().0 + 1)
+        .map(|row| {
+            let (buffer, range) = snapshot.buffer_line_for_row(MultiBufferRow(row))?;
+            Some((
+                buffer.remote_id(),
+                buffer.text_for_range(range).collect::<String>(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    pretty_assertions::assert_eq!(
+        buffer_lines,
+        [
+            Some((id_1, "ZERO".into())),
+            Some((id_1, "one".into())),
+            Some((base_id_1, "two".into())),
+            Some((id_1, "TWO".into())),
+            Some((id_1, "three".into())),
+            Some((base_id_1, "four".into())),
+            Some((base_id_1, "five".into())),
+            Some((id_1, "six".into())),
+            Some((id_1, "".into())),
+            Some((base_id_2, "seven".into())),
+            Some((id_2, "eight".into())),
+            Some((id_2, "nine".into())),
+            Some((base_id_2, "ten".into())),
+            Some((id_2, "eleven".into())),
+            Some((base_id_2, "twelve".into())),
+            Some((id_2, "THIRTEEN".into())),
+            Some((id_2, "FOURTEEN".into())),
+            Some((id_2, "".into())),
+        ]
+    );
+
+    assert_point_translation(&snapshot);
 }
 
 #[gpui::test(iterations = 100)]

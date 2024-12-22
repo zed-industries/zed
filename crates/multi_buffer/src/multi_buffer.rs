@@ -3879,23 +3879,50 @@ impl MultiBufferSnapshot {
         row: MultiBufferRow,
     ) -> Option<(&BufferSnapshot, Range<Point>)> {
         let mut cursor = self.excerpts.cursor::<Point>(&());
+        let mut diff_transforms_cursor = self.diff_transforms.cursor::<(Point, ExcerptPoint)>(&());
+
         let point = Point::new(row.0, 0);
-        cursor.seek(&point, Bias::Right, &());
-        if cursor.item().is_none() && *cursor.start() == point {
+        diff_transforms_cursor.seek(&point, Bias::Right, &());
+        if diff_transforms_cursor.item().is_none() && *cursor.start() == point {
             cursor.prev(&());
         }
-        if let Some(excerpt) = cursor.item() {
-            let overshoot = row.0 - cursor.start().row;
-            let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer);
-            let excerpt_end = excerpt.range.context.end.to_point(&excerpt.buffer);
-            let buffer_row = excerpt_start.row + overshoot;
-            let line_start = Point::new(buffer_row, 0);
-            let line_end = Point::new(buffer_row, excerpt.buffer.line_len(buffer_row));
-            return Some((
-                &excerpt.buffer,
-                line_start.max(excerpt_start)..line_end.min(excerpt_end),
-            ));
+
+        let overshoot = point - diff_transforms_cursor.start().0;
+
+        if let Some(DiffTransform::DeletedHunk {
+            buffer_id,
+            base_text_byte_range,
+            ..
+        }) = diff_transforms_cursor.item()
+        {
+            let diff = self.diffs.get(&buffer_id).expect("buffer_id not found");
+            let buffer = &diff.base_text;
+            let hunk_start = buffer.offset_to_point(base_text_byte_range.start);
+            let hunk_end = buffer.offset_to_point(base_text_byte_range.end);
+            let line_start = hunk_start + overshoot;
+            let line_end = Point::new(line_start.row, buffer.line_len(line_start.row));
+            return Some((buffer, line_start..line_end.min(hunk_end)));
+        } else {
+            let excerpt_point = diff_transforms_cursor.start().1 + ExcerptPoint::wrap(overshoot);
+            cursor.seek(&excerpt_point.value, Bias::Right, &());
+            if cursor.item().is_none() && *cursor.start() == point {
+                cursor.prev(&());
+            }
+
+            if let Some(excerpt) = cursor.item() {
+                let overshoot = excerpt_point.row() - cursor.start().row;
+                let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer);
+                let excerpt_end = excerpt.range.context.end.to_point(&excerpt.buffer);
+                let buffer_row = excerpt_start.row + overshoot;
+                let line_start = Point::new(buffer_row, 0);
+                let line_end = Point::new(buffer_row, excerpt.buffer.line_len(buffer_row));
+                return Some((
+                    &excerpt.buffer,
+                    line_start.max(excerpt_start)..line_end.min(excerpt_end),
+                ));
+            }
         }
+
         None
     }
 
