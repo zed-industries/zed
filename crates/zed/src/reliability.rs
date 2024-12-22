@@ -1,31 +1,26 @@
+use crate::stdout_is_a_pty;
 use anyhow::{Context, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
 use client::{telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{AppContext, SemanticVersion};
-use http_client::{HttpRequestExt, Method};
-
-use http_client::{self, HttpClient, HttpClientWithUrl};
+use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
-use release_channel::ReleaseChannel;
-use release_channel::RELEASE_CHANNEL;
+use release_channel::{ReleaseChannel, RELEASE_CHANNEL};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
     env,
-    ffi::OsStr,
+    ffi::{c_void, OsStr},
     sync::{atomic::Ordering, Arc},
 };
 use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
-use telemetry_events::LocationData;
-use telemetry_events::Panic;
-use telemetry_events::PanicRequest;
+use telemetry_events::{LocationData, Panic, PanicRequest};
 use url::Url;
 use util::ResultExt;
 
-use crate::stdout_is_a_pty;
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn init_panic_hook(
@@ -69,25 +64,35 @@ pub fn init_panic_hook(
             );
             std::process::exit(-1);
         }
+        let main_module_base_address = get_main_module_base_address();
 
         let backtrace = Backtrace::new();
-        let mut backtrace = backtrace
+        let mut symbols = backtrace
             .frames()
             .iter()
             .flat_map(|frame| {
-                frame
-                    .symbols()
-                    .iter()
-                    .filter_map(|frame| Some(format!("{:#}", frame.name()?)))
+                let base = frame
+                    .module_base_address()
+                    .unwrap_or(main_module_base_address);
+                frame.symbols().iter().map(move |symbol| {
+                    format!(
+                        "{}+{}",
+                        symbol
+                            .name()
+                            .as_ref()
+                            .map_or("<unknown>".to_owned(), <_>::to_string),
+                        (frame.ip() as isize).saturating_sub(base as isize)
+                    )
+                })
             })
             .collect::<Vec<_>>();
 
         // Strip out leading stack frames for rust panic-handling.
-        if let Some(ix) = backtrace
+        if let Some(ix) = symbols
             .iter()
             .position(|name| name == "rust_begin_unwind" || name == "_rust_begin_unwind")
         {
-            backtrace.drain(0..=ix);
+            symbols.drain(0..=ix);
         }
 
         let panic_data = telemetry_events::Panic {
@@ -98,12 +103,13 @@ pub fn init_panic_hook(
                 line: location.line(),
             }),
             app_version: app_version.to_string(),
-            release_channel: RELEASE_CHANNEL.display_name().into(),
+            release_channel: RELEASE_CHANNEL.dev_name().into(),
+            target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
-            backtrace,
+            backtrace: symbols,
             system_id: system_id.clone(),
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),
@@ -131,6 +137,25 @@ pub fn init_panic_hook(
 
         std::process::abort();
     }));
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_main_module_base_address() -> *mut c_void {
+    let mut dl_info = libc::Dl_info {
+        dli_fname: std::ptr::null(),
+        dli_fbase: std::ptr::null_mut(),
+        dli_sname: std::ptr::null(),
+        dli_saddr: std::ptr::null_mut(),
+    };
+    unsafe {
+        libc::dladdr(get_main_module_base_address as _, &mut dl_info);
+    }
+    dl_info.dli_fbase
+}
+
+#[cfg(target_os = "windows")]
+fn get_main_module_base_address() -> *mut c_void {
+    std::ptr::null_mut()
 }
 
 pub fn init(
