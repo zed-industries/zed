@@ -5,19 +5,20 @@ let
   inherit (pkgs) lib;
 in
 pkgs.mkShell rec {
-  packages = [
-    pkgs.clang
-    pkgs.curl
-    pkgs.cmake
-    pkgs.perl
-    pkgs.pkg-config
-    pkgs.protobuf
-    pkgs.rustPlatform.bindgenHook
-    pkgs.rust-analyzer
+  packages =
+    [
+      pkgs.clang
+      pkgs.curl
+      pkgs.cmake
+      pkgs.perl
+      pkgs.pkg-config
+      pkgs.protobuf
+      pkgs.rustPlatform.bindgenHook
+      pkgs.rust-analyzer
     ]
     ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-    pkgs.mold
-  ];
+      pkgs.mold
+    ];
 
   buildInputs =
     [
