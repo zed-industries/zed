@@ -52,6 +52,7 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
         project.dap_store().update(cx, |store, cx| {
             store.start_test_client(
                 task::DebugAdapterConfig {
+                    label: "test config".into(),
                     kind: task::DebugAdapterKind::Fake,
                     request: task::DebugRequestType::Launch,
                     program: None,

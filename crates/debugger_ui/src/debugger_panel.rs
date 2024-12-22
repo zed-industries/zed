@@ -602,18 +602,18 @@ impl DebugPanel {
             return;
         };
 
-        let Some(client_kind) = self
+        let Some(client_name) = self
             .dap_store
             .read(cx)
             .client_by_id(client_id)
-            .map(|client| client.config().kind)
+            .map(|client| client.config().label)
         else {
             return; // this can never happen
         };
 
         let client_id = *client_id;
 
-        let client_name = SharedString::from(client_kind.display_name().to_string());
+        let client_name = SharedString::from(client_name);
 
         cx.spawn({
             let event = event.clone();

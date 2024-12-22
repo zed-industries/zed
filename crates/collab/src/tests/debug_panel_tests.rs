@@ -78,6 +78,7 @@ async fn test_debug_panel_item_opens_on_remote(
         project.dap_store().update(cx, |store, cx| {
             store.start_test_client(
                 dap::DebugAdapterConfig {
+                    label: "test config".into(),
                     kind: dap::DebugAdapterKind::Fake,
                     request: dap::DebugRequestType::Launch,
                     program: None,

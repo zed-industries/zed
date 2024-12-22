@@ -317,6 +317,7 @@ mod tests {
         let mut client = DebugAdapterClient::new(
             crate::client::DebugAdapterClientId(1),
             DebugAdapterConfig {
+                label: "test config".into(),
                 kind: task::DebugAdapterKind::Fake,
                 request: task::DebugRequestType::Launch,
                 program: None,
@@ -397,6 +398,7 @@ mod tests {
         let mut client = DebugAdapterClient::new(
             crate::client::DebugAdapterClientId(1),
             DebugAdapterConfig {
+                label: "test config".into(),
                 kind: task::DebugAdapterKind::Fake,
                 request: task::DebugRequestType::Launch,
                 program: None,

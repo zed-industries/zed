@@ -53,6 +53,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
         project.dap_store().update(cx, |store, cx| {
             store.start_test_client(
                 task::DebugAdapterConfig {
+                    label: "test config".into(),
                     kind: task::DebugAdapterKind::Fake,
                     request: task::DebugRequestType::Launch,
                     program: None,
@@ -216,6 +217,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         project.dap_store().update(cx, |store, cx| {
             store.start_test_client(
                 task::DebugAdapterConfig {
+                    label: "test config".into(),
                     kind: task::DebugAdapterKind::Fake,
                     request: task::DebugRequestType::Launch,
                     program: None,

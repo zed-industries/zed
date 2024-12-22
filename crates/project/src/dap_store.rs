@@ -871,6 +871,7 @@ impl DapStore {
                         client.adapter().clone(),
                         client.binary().clone(),
                         DebugAdapterConfig {
+                            label: config.label.clone(),
                             kind: config.kind.clone(),
                             request: match args.request {
                                 StartDebuggingRequestArgumentsRequest::Launch => {

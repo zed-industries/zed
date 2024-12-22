@@ -19,6 +19,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
         project.dap_store().update(cx, |store, cx| {
             store.start_test_client(
                 task::DebugAdapterConfig {
+                    label: "test config".into(),
                     kind: task::DebugAdapterKind::Fake,
                     request: task::DebugRequestType::Launch,
                     program: None,
@@ -135,6 +136,7 @@ async fn test_we_can_only_have_one_panel_per_debug_thread(
         project.dap_store().update(cx, |store, cx| {
             store.start_test_client(
                 task::DebugAdapterConfig {
+                    label: "test config".into(),
                     kind: task::DebugAdapterKind::Fake,
                     request: task::DebugRequestType::Launch,
                     program: None,
@@ -282,6 +284,7 @@ async fn test_client_can_open_multiple_thread_panels(
         project.dap_store().update(cx, |store, cx| {
             store.start_test_client(
                 task::DebugAdapterConfig {
+                    label: "test config".into(),
                     kind: task::DebugAdapterKind::Fake,
                     request: task::DebugRequestType::Launch,
                     program: None,
@@ -426,6 +429,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         project.dap_store().update(cx, |store, cx| {
             store.start_test_client(
                 task::DebugAdapterConfig {
+                    label: "test config".into(),
                     kind: task::DebugAdapterKind::Fake,
                     request: task::DebugRequestType::Launch,
                     program: None,

@@ -117,6 +117,8 @@ pub struct CustomArgs {
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugAdapterConfig {
+    /// Name of the debug task
+    pub label: String,
     /// The type of adapter you want to use
     #[serde(flatten)]
     pub kind: DebugAdapterKind,
@@ -168,6 +170,7 @@ impl DebugTaskDefinition {
         let cwd = self.cwd.clone().map(PathBuf::from).take_if(|p| p.exists());
 
         let task_type = TaskType::Debug(DebugAdapterConfig {
+            label: self.label.clone(),
             kind: self.kind,
             request: self.request,
             program: self.program,

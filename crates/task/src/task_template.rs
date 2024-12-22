@@ -105,6 +105,7 @@ mod deserialization_tests {
     #[test]
     fn deserialize_task_type_debug() {
         let adapter_config = DebugAdapterConfig {
+            label: "test config".into(),
             kind: DebugAdapterKind::Python(TCPHost::default()),
             request: crate::DebugRequestType::Launch,
             program: Some("main".to_string()),
