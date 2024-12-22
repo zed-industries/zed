@@ -397,6 +397,12 @@ pub async fn post_panic(
 }
 
 fn report_to_slack(panic: &Panic) -> bool {
+    // Panics on macOS should make their way to Slack as a crash report,
+    // so we don't need to send them a second time via this channel.
+    if panic.os_name == "macOS" {
+        return false;
+    }
+
     if panic.payload.contains("ERROR_SURFACE_LOST_KHR") {
         return false;
     }
