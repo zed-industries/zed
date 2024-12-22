@@ -45,13 +45,13 @@ pub trait Summary: Clone {
 /// This type exists because we can't implement Summary for () without causing
 /// type resolution errors
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-struct Nothing;
+pub struct Unit;
 
-impl Summary for Nothing {
+impl Summary for Unit {
     type Context = ();
 
     fn zero(_: &()) -> Self {
-        Nothing
+        Unit
     }
 
     fn add_summary(&mut self, _: &Self, _: &()) {}

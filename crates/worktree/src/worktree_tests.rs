@@ -2322,7 +2322,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_git_status(cx: &mut TestAppContext) {
+async fn test_file_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
     const IGNORE_RULE: &str = "**/target";
@@ -2715,6 +2715,95 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "x": {
+                ".git": {},
+                "x1.txt": "foo",
+                "x2.txt": "bar",
+                "y": {
+                    ".git": {},
+                    "y1.txt": "baz",
+                    "y2.txt": "qux"
+                },
+                "z.txt": "sneaky..."
+            },
+            "z": {
+                ".git": {},
+                "z1.txt": "quux",
+                "z2.txt": "quuux"
+            }
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/x/.git"),
+        &[
+            (Path::new("x2.txt"), GitFileStatus::Modified),
+            (Path::new("z.txt"), GitFileStatus::Added),
+        ],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/x/y/.git"),
+        &[(Path::new("y1.txt"), GitFileStatus::Conflict)],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/z/.git"),
+        &[(Path::new("z2.txt"), GitFileStatus::Added)],
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+
+    dbg!(snapshot.git_satus(Path::new("x")));
+
+    let mut traversal = snapshot
+        .traverse_from_path(true, false, true, Path::new("x"))
+        .with_git_statuses();
+
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("x/x1.txt"));
+    assert_eq!(entry.git_status, None);
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("x/x2.txt"));
+    assert_eq!(entry.git_status, Some(GitFileStatus::Modified));
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("x/y/y1.txt"));
+    assert_eq!(entry.git_status, Some(GitFileStatus::Conflict));
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("x/y/y2.txt"));
+    assert_eq!(entry.git_status, None);
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("x/z.txt"));
+    assert_eq!(entry.git_status, Some(GitFileStatus::Added));
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("z/z1.txt"));
+    assert_eq!(entry.git_status, None);
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("z/z2.txt"));
+    assert_eq!(entry.git_status, Some(GitFileStatus::Added));
+}
+
+#[gpui::test]
 async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -2945,19 +3034,33 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
                     ".git": {},
                     "y1.txt": "baz",
                     "y2.txt": "qux"
-                }
+                },
+                "z.txt": "sneaky..."
             },
+            "z": {
+                ".git": {},
+                "z1.txt": "quux",
+                "z2.txt": "quuux"
+            }
         }),
     )
     .await;
 
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/.git"),
-        &[(Path::new("x2.txt"), GitFileStatus::Modified)],
+        &[
+            (Path::new("x2.txt"), GitFileStatus::Modified),
+            (Path::new("z.txt"), GitFileStatus::Added),
+        ],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/y/.git"),
         &[(Path::new("y1.txt"), GitFileStatus::Conflict)],
+    );
+
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/z/.git"),
+        &[(Path::new("z2.txt"), GitFileStatus::Added)],
     );
 
     let tree = Worktree::local(
@@ -2977,13 +3080,21 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
-    // Sanity check the propagation for x/y
+    // Sanity check the propagation for x/y and z
     check_propagated_statuses(
         &snapshot,
         &[
             (Path::new("x/y"), Some(GitFileStatus::Conflict)), // the y git repository has conflict file in it, and so should have a conflict status
             (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
             (Path::new("x/y/y2.txt"), None),
+        ],
+    );
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new("z"), Some(GitFileStatus::Added)), // the y git repository has conflict file in it, and so should have a conflict status
+            (Path::new("z/z1.txt"), None),
+            (Path::new("z/z2.txt"), Some(GitFileStatus::Added)),
         ],
     );
 
@@ -3007,6 +3118,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
             (Path::new("x/y"), Some(GitFileStatus::Conflict)),
             (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
             (Path::new("x/y/y2.txt"), None),
+            (Path::new("x/z.txt"), Some(GitFileStatus::Added)),
         ],
     );
 
@@ -3031,6 +3143,10 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
             (Path::new("x/y"), Some(GitFileStatus::Conflict)),
             (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
             (Path::new("x/y/y2.txt"), None),
+            (Path::new("x/z.txt"), Some(GitFileStatus::Added)),
+            (Path::new("z"), Some(GitFileStatus::Added)),
+            (Path::new("z/z1.txt"), None),
+            (Path::new("z/z2.txt"), Some(GitFileStatus::Added)),
         ],
     );
 }

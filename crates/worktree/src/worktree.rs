@@ -64,7 +64,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use sum_tree::{Bias, Cursor, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
+use sum_tree::{
+    Bias, Cursor, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet, Unit,
+};
 use text::{LineEnding, Rope};
 use util::{
     paths::{home_dir, PathMatcher, SanitizedPath},
@@ -284,18 +286,14 @@ impl WorkDirectory {
     /// of the project root folder, then the returned RepoPath is relative to the root
     /// of the repository and not a valid path inside the project.
     pub fn relativize(&self, path: &Path) -> Result<RepoPath> {
-        let relativize_path = |path: &Path| {
+        if let Some(location_in_repo) = &self.location_in_repo {
+            Ok(location_in_repo.join(path).into())
+        } else {
             let relativized_path = path
                 .strip_prefix(&self.path)
                 .map_err(|_| anyhow!("could not relativize {:?} against {:?}", path, self.path))?;
 
             Ok(relativized_path.into())
-        };
-
-        if let Some(location_in_repo) = &self.location_in_repo {
-            relativize_path(&location_in_repo.join(path))
-        } else {
-            relativize_path(path)
         }
     }
 }
@@ -382,12 +380,12 @@ pub struct LocalRepositoryEntry {
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
-    type Summary = PathSummary<Nothing>;
+    type Summary = PathSummary<Unit>;
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
             max_path: self.work_directory.path.clone(),
-            item_summary: Nothing,
+            item_summary: Unit,
         }
     }
 }
@@ -2268,7 +2266,7 @@ impl Snapshot {
         self.entries_by_path = {
             let mut cursor = self.entries_by_path.cursor::<TraversalProgress>(&());
             let mut new_entries_by_path =
-                cursor.slice(&TraversalTarget::Path(&removed_entry.path), Bias::Left, &());
+                cursor.slice(&TraversalTarget::path(&removed_entry.path), Bias::Left, &());
             while let Some(entry) = cursor.item() {
                 if entry.path.starts_with(&removed_entry.path) {
                     self.entries_by_id.remove(&entry.id, &());
@@ -2444,6 +2442,7 @@ impl Snapshot {
             &(),
         );
         Traversal {
+            repositories: &self.repositories,
             cursor,
             include_files,
             include_dirs,
@@ -2459,6 +2458,7 @@ impl Snapshot {
         path: &Path,
     ) -> Traversal {
         Traversal::new(
+            &self.repositories,
             &self.entries_by_path,
             include_files,
             include_dirs,
@@ -2569,9 +2569,7 @@ impl Snapshot {
             };
 
             if let Some((entry_ix, prev_statuses)) = entry_to_finish {
-                cursor.seek_forward(&PathSummaryTraversalTarget::PathSuccessor(
-                    &entries[entry_ix].path,
-                ));
+                cursor.seek_forward(&PathTarget::Successor(&entries[entry_ix].path));
 
                 let statuses = cursor.start() - prev_statuses;
 
@@ -2586,7 +2584,7 @@ impl Snapshot {
                 };
             } else {
                 if entries[entry_ix].is_dir() {
-                    cursor.seek_forward(&PathSummaryTraversalTarget::Path(&entries[entry_ix].path));
+                    cursor.seek_forward(&PathTarget::Path(&entries[entry_ix].path));
                     entry_stack.push((entry_ix, cursor.start()));
                 }
                 entry_ix += 1;
@@ -2606,9 +2604,10 @@ impl Snapshot {
 
     pub fn child_entries<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
         let mut cursor = self.entries_by_path.cursor(&());
-        cursor.seek(&TraversalTarget::Path(parent_path), Bias::Right, &());
+        cursor.seek(&TraversalTarget::path(parent_path), Bias::Right, &());
         let traversal = Traversal {
             cursor,
+            repositories: &self.repositories,
             include_files: true,
             include_dirs: true,
             include_ignored: true,
@@ -3078,8 +3077,8 @@ impl BackgroundScannerState {
                 .snapshot
                 .entries_by_path
                 .cursor::<TraversalProgress>(&());
-            new_entries = cursor.slice(&TraversalTarget::Path(path), Bias::Left, &());
-            removed_entries = cursor.slice(&TraversalTarget::PathSuccessor(path), Bias::Left, &());
+            new_entries = cursor.slice(&TraversalTarget::path(path), Bias::Left, &());
+            removed_entries = cursor.slice(&TraversalTarget::successor(path), Bias::Left, &());
             new_entries.append(cursor.suffix(&()), &());
         }
         self.snapshot.entries_by_path = new_entries;
@@ -3593,7 +3592,9 @@ pub struct GitEntry {
 }
 
 #[derive(Clone, Debug)]
-struct PathItem<I>(I);
+struct PathProgress<'a> {
+    max_path: &'a Path,
+}
 
 #[derive(Clone, Debug)]
 pub struct PathSummary<S> {
@@ -3617,41 +3618,29 @@ impl<S: Summary> Summary for PathSummary<S> {
     }
 }
 
-impl<I> sum_tree::Item for PathItem<I>
-where
-    I: sum_tree::Item + AsRef<Arc<Path>> + Clone,
-{
-    type Summary = PathSummary<I::Summary>;
-
-    fn summary(&self, cx: &<Self::Summary as Summary>::Context) -> Self::Summary {
-        PathSummary {
-            max_path: self.0.as_ref().clone(),
-            item_summary: self.0.summary(cx),
+impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for PathProgress<'a> {
+    fn zero(_: &<PathSummary<S> as Summary>::Context) -> Self {
+        Self {
+            max_path: Path::new(""),
         }
     }
-}
 
-// This type exists because we can't implement Summary for ()
-#[derive(Clone)]
-pub struct Nothing;
-
-impl Summary for Nothing {
-    type Context = ();
-
-    fn zero(_: &()) -> Self {
-        Nothing
+    fn add_summary(
+        &mut self,
+        summary: &'a PathSummary<S>,
+        _: &<PathSummary<S> as Summary>::Context,
+    ) {
+        self.max_path = summary.max_path.as_ref()
     }
-
-    fn add_summary(&mut self, _: &Self, _: &()) {}
 }
 
 impl sum_tree::Item for RepositoryEntry {
-    type Summary = PathSummary<Nothing>;
+    type Summary = PathSummary<Unit>;
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
             max_path: self.work_directory.path.clone(),
-            item_summary: Nothing,
+            item_summary: Unit,
         }
     }
 }
@@ -3786,75 +3775,6 @@ impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for TraversalProgre
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum PathSummaryTraversalTarget<'a> {
-    PathSuccessor(&'a Path),
-    Path(&'a Path),
-}
-
-impl<'a> PathSummaryTraversalTarget<'a> {
-    fn path(&self) -> &'a Path {
-        match self {
-            PathSummaryTraversalTarget::Path(path) => path,
-            PathSummaryTraversalTarget::PathSuccessor(path) => path,
-        }
-    }
-
-    fn with_path(self, path: &Path) -> PathSummaryTraversalTarget<'_> {
-        match self {
-            PathSummaryTraversalTarget::PathSuccessor(_) => {
-                PathSummaryTraversalTarget::PathSuccessor(path)
-            }
-            PathSummaryTraversalTarget::Path(_) => PathSummaryTraversalTarget::Path(path),
-        }
-    }
-
-    fn cmp_path(&self, other: &Path) -> std::cmp::Ordering {
-        SeekTarget::<PathSummary<GitStatuses>, TraversalProgress>::cmp(
-            self,
-            &TraversalProgress {
-                max_path: other,
-                ..Default::default()
-            },
-            &(),
-        )
-    }
-}
-
-impl<'a, 'b, S: Summary> SeekTarget<'a, PathSummary<S>, TraversalProgress<'a>>
-    for PathSummaryTraversalTarget<'b>
-{
-    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &S::Context) -> Ordering {
-        match self {
-            PathSummaryTraversalTarget::Path(path) => path.cmp(&cursor_location.max_path),
-            PathSummaryTraversalTarget::PathSuccessor(path) => {
-                if cursor_location.max_path.starts_with(path) {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                }
-            }
-        }
-    }
-}
-
-impl<'a, 'b> SeekTarget<'a, PathSummary<GitStatuses>, (TraversalProgress<'a>, GitStatuses)>
-    for PathSummaryTraversalTarget<'b>
-{
-    fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitStatuses), _: &()) -> Ordering {
-        match self {
-            PathSummaryTraversalTarget::Path(path) => path.cmp(&cursor_location.0.max_path),
-            PathSummaryTraversalTarget::PathSuccessor(path) => {
-                if cursor_location.0.max_path.starts_with(path) {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                }
-            }
-        }
-    }
-}
-
 struct AllStatusesCursor<'a, I> {
     repos: I,
     current_location: Option<(
@@ -3868,7 +3788,7 @@ impl<'a, I> AllStatusesCursor<'a, I>
 where
     I: Iterator<Item = &'a RepositoryEntry> + FusedIterator,
 {
-    fn seek_forward(&mut self, target: &PathSummaryTraversalTarget<'_>) {
+    fn seek_forward(&mut self, target: &PathTarget<'_>) {
         loop {
             let (work_dir, cursor) = match &mut self.current_location {
                 Some(location) => location,
@@ -5719,10 +5639,33 @@ impl<'a> Default for TraversalProgress<'a> {
     }
 }
 
-pub struct GitTraversal<'a> {
-    // TODO
-    // statuses: I,
-    traversal: Traversal<'a>,
+pub struct EntryWithGitStatusRef<'a> {
+    pub entry: &'a Entry,
+    pub git_status: Option<GitFileStatus>,
+}
+
+impl<'a> EntryWithGitStatusRef<'a> {
+    fn entry(entry: &'a Entry) -> Self {
+        Self {
+            entry,
+            git_status: None,
+        }
+    }
+
+    pub fn to_owned(&self) -> EntryWithGitStatus {
+        EntryWithGitStatus {
+            entry: self.entry.clone(),
+            git_status: self.git_status.clone(),
+        }
+    }
+}
+
+impl<'a> Deref for EntryWithGitStatusRef<'a> {
+    type Target = Entry;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entry
+    }
 }
 
 pub struct EntryWithGitStatus {
@@ -5738,24 +5681,104 @@ impl Deref for EntryWithGitStatus {
     }
 }
 
-impl<'a> Iterator for GitTraversal<'a> {
-    type Item = EntryWithGitStatus;
-    fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+pub struct GitTraversal<'a> {
+    traversal: Traversal<'a>,
+    reset: bool,
+    repositories: Cursor<'a, RepositoryEntry, PathProgress<'a>>,
+    statuses: Option<Cursor<'a, GitEntry, PathProgress<'a>>>,
+}
+
+impl<'a> GitTraversal<'a> {
+    pub fn advance(&mut self) -> bool {
+        self.advance_by(1)
+    }
+
+    pub fn advance_by(&mut self, count: usize) -> bool {
+        self.traversal.advance_by(count)
+    }
+
+    pub fn advance_to_sibling(&mut self) -> bool {
+        self.traversal.advance_to_sibling()
+    }
+
+    pub fn back_to_parent(&mut self) -> bool {
+        if self.traversal.back_to_parent() {
+            self.reset = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn start_offset(&self) -> usize {
+        self.traversal.start_offset()
+    }
+
+    pub fn end_offset(&self) -> usize {
+        self.traversal.end_offset()
+    }
+
+    pub fn entry(&mut self) -> Option<EntryWithGitStatusRef<'a>> {
+        let reset = mem::take(&mut self.reset);
+        let entry = self.traversal.cursor.item()?;
+        let current_repository_id = self
+            .repositories
+            .item()
+            .map(|repository| repository.work_directory_id);
+
+        if reset {
+            self.repositories
+                .seek(&PathTarget::Path(&entry.path), Bias::Left, &());
+        } else {
+            self.repositories
+                .seek_forward(&PathTarget::Path(&entry.path), Bias::Left, &());
+        }
+        let Some(repository) = self.repositories.item() else {
+            self.statuses = None;
+            return Some(EntryWithGitStatusRef::entry(entry));
+        };
+
+        if reset || Some(repository.work_directory_id) != current_repository_id {
+            self.statuses = Some(repository.git_entries_by_path.cursor::<PathProgress>(&()));
+        }
+
+        let Some(statuses) = self.statuses.as_mut() else {
+            return Some(EntryWithGitStatusRef::entry(entry));
+        };
+        let Some(repo_path) = repository.relativize(&entry.path).ok() else {
+            return Some(EntryWithGitStatusRef::entry(entry));
+        };
+        let found = statuses.seek_forward(&PathTarget::Path(&repo_path.0), Bias::Left, &());
+
+        if found {
+            let Some(status) = statuses.item() else {
+                return Some(EntryWithGitStatusRef::entry(entry));
+            };
+
+            Some(EntryWithGitStatusRef {
+                entry,
+                git_status: Some(status.git_status),
+            })
+        } else {
+            Some(EntryWithGitStatusRef::entry(entry))
+        }
     }
 }
 
-impl<
-        'a,
-        // I: Iterator<Item = (&'a RepositoryWorkDirectory, &'a RepositoryEntry)> + FusedIterator,
-    > DoubleEndedIterator for GitTraversal<'a>
-{
-    fn next_back(&mut self) -> Option<Self::Item> {
-        todo!()
+impl<'a> Iterator for GitTraversal<'a> {
+    type Item = EntryWithGitStatusRef<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(item) = self.entry() {
+            self.advance();
+            Some(item)
+        } else {
+            None
+        }
     }
 }
 
 pub struct Traversal<'a> {
+    repositories: &'a SumTree<RepositoryEntry>,
     cursor: sum_tree::Cursor<'a, Entry, TraversalProgress<'a>>,
     include_ignored: bool,
     include_files: bool,
@@ -5764,6 +5787,7 @@ pub struct Traversal<'a> {
 
 impl<'a> Traversal<'a> {
     fn new(
+        repositories: &'a SumTree<RepositoryEntry>,
         entries: &'a SumTree<Entry>,
         include_files: bool,
         include_dirs: bool,
@@ -5771,8 +5795,9 @@ impl<'a> Traversal<'a> {
         start_path: &Path,
     ) -> Self {
         let mut cursor = entries.cursor(&());
-        cursor.seek(&TraversalTarget::Path(start_path), Bias::Left, &());
+        cursor.seek(&TraversalTarget::path(start_path), Bias::Left, &());
         let mut traversal = Self {
+            repositories,
             cursor,
             include_files,
             include_dirs,
@@ -5784,10 +5809,24 @@ impl<'a> Traversal<'a> {
         traversal
     }
 
-    pub fn with_git_statuses(self, snapshot: &'a Snapshot) -> GitTraversal<'a> {
+    pub fn with_git_statuses(self) -> GitTraversal<'a> {
+        let mut repositories = self.repositories.cursor::<PathProgress>(&());
+        if let Some(start_path) = self.cursor.item() {
+            repositories.seek(&PathTarget::Path(&start_path.path), Bias::Left, &());
+        };
+        let statuses = repositories.item().map(|repository| {
+            let mut statuses = repository.git_entries_by_path.cursor::<PathProgress>(&());
+            if let Some(start_path) = self.cursor.item() {
+                statuses.seek(&PathTarget::Path(&start_path.path), Bias::Left, &());
+            }
+            statuses
+        });
+
         GitTraversal {
-            // statuses: all_statuses_cursor(snapshot),
             traversal: self,
+            repositories,
+            reset: false,
+            statuses,
         }
     }
 
@@ -5810,11 +5849,8 @@ impl<'a> Traversal<'a> {
 
     pub fn advance_to_sibling(&mut self) -> bool {
         while let Some(entry) = self.cursor.item() {
-            self.cursor.seek_forward(
-                &TraversalTarget::PathSuccessor(&entry.path),
-                Bias::Left,
-                &(),
-            );
+            self.cursor
+                .seek_forward(&TraversalTarget::successor(&entry.path), Bias::Left, &());
             if let Some(entry) = self.cursor.item() {
                 if (self.include_files || !entry.is_file())
                     && (self.include_dirs || !entry.is_dir())
@@ -5832,7 +5868,7 @@ impl<'a> Traversal<'a> {
             return false;
         };
         self.cursor
-            .seek(&TraversalTarget::Path(parent_path), Bias::Left, &())
+            .seek(&TraversalTarget::path(parent_path), Bias::Left, &())
     }
 
     pub fn entry(&self) -> Option<&'a Entry> {
@@ -5865,10 +5901,64 @@ impl<'a> Iterator for Traversal<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum PathTarget<'a> {
+    Path(&'a Path),
+    Successor(&'a Path),
+}
+
+impl<'a> PathTarget<'a> {
+    fn path(&self) -> &'a Path {
+        match self {
+            PathTarget::Path(path) => path,
+            PathTarget::Successor(path) => path,
+        }
+    }
+
+    fn with_path(self, path: &Path) -> PathTarget<'_> {
+        match self {
+            PathTarget::Successor(_) => PathTarget::Successor(path),
+            PathTarget::Path(_) => PathTarget::Path(path),
+        }
+    }
+
+    fn cmp_path(&self, other: &Path) -> Ordering {
+        match self {
+            PathTarget::Path(path) => path.cmp(&other),
+            PathTarget::Successor(path) => {
+                if other.starts_with(path) {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'b, S: Summary> SeekTarget<'a, PathSummary<S>, PathProgress<'a>> for PathTarget<'b> {
+    fn cmp(&self, cursor_location: &PathProgress<'a>, _: &S::Context) -> Ordering {
+        self.cmp_path(&cursor_location.max_path)
+    }
+}
+
+impl<'a, 'b, S: Summary> SeekTarget<'a, PathSummary<S>, TraversalProgress<'a>> for PathTarget<'b> {
+    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &S::Context) -> Ordering {
+        self.cmp_path(&cursor_location.max_path)
+    }
+}
+
+impl<'a, 'b> SeekTarget<'a, PathSummary<GitStatuses>, (TraversalProgress<'a>, GitStatuses)>
+    for PathTarget<'b>
+{
+    fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitStatuses), _: &()) -> Ordering {
+        self.cmp_path(&cursor_location.0.max_path)
+    }
+}
+
 #[derive(Debug)]
 enum TraversalTarget<'a> {
-    Path(&'a Path),
-    PathSuccessor(&'a Path),
+    Path(PathTarget<'a>),
     Count {
         count: usize,
         include_files: bool,
@@ -5877,17 +5967,18 @@ enum TraversalTarget<'a> {
     },
 }
 
-impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTarget<'b> {
-    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
+impl<'a> TraversalTarget<'a> {
+    fn path(path: &'a Path) -> Self {
+        Self::Path(PathTarget::Path(path))
+    }
+
+    fn successor(path: &'a Path) -> Self {
+        Self::Path(PathTarget::Successor(path))
+    }
+
+    fn cmp_progress(&self, progress: &TraversalProgress) -> Ordering {
         match self {
-            TraversalTarget::Path(path) => path.cmp(&cursor_location.max_path),
-            TraversalTarget::PathSuccessor(path) => {
-                if cursor_location.max_path.starts_with(path) {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                }
-            }
+            TraversalTarget::Path(path) => path.cmp_path(&progress.max_path),
             TraversalTarget::Count {
                 count,
                 include_files,
@@ -5895,9 +5986,21 @@ impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTa
                 include_ignored,
             } => Ord::cmp(
                 count,
-                &cursor_location.count(*include_files, *include_dirs, *include_ignored),
+                &progress.count(*include_files, *include_dirs, *include_ignored),
             ),
         }
+    }
+}
+
+impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTarget<'b> {
+    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
+        self.cmp_progress(cursor_location)
+    }
+}
+
+impl<'a, 'b> SeekTarget<'a, PathSummary<Unit>, TraversalProgress<'a>> for TraversalTarget<'b> {
+    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
+        self.cmp_progress(cursor_location)
     }
 }
 
