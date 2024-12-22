@@ -311,7 +311,6 @@ gpui::actions!(
         OpenExcerpts,
         OpenExcerptsSplit,
         OpenProposedChangesEditor,
-        OpenFile,
         OpenDocs,
         OpenPermalinkToLine,
         OpenUrl,
@@ -391,3 +390,5 @@ gpui::actions!(
 action_as!(outline, ToggleOutline as Toggle);
 
 action_as!(go_to_line, ToggleGoToLine as Toggle);
+
+action_as!(editor, OpenSelectedFilename as [OpenFile]);
