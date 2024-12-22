@@ -165,7 +165,7 @@ pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
     is_open: bool,
-    active_panel_index: usize,
+    active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
     pub(crate) serialized_dock: Option<DockData>,
     resizeable: bool,
