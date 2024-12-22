@@ -4,7 +4,7 @@ mod mac_watcher;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub mod linux_watcher;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use git::GitHostingProviderRegistry;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -585,7 +585,9 @@ impl Fs for RealFs {
 
         let is_symlink = symlink_metadata.file_type().is_symlink();
         let metadata = if is_symlink {
-            smol::fs::metadata(path).await?
+            smol::fs::metadata(path)
+                .await
+                .with_context(|| "accessing symlink for path {path}")?
         } else {
             symlink_metadata
         };
