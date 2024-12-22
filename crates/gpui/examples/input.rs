@@ -1,6 +1,13 @@
 use std::ops::Range;
 
-use gpui::*;
+use gpui::{
+    actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative, rgb, rgba, size,
+    white, yellow, App, AppContext, Bounds, ClipboardItem, CursorStyle, ElementId,
+    ElementInputHandler, FocusHandle, FocusableView, GlobalElementId, KeyBinding, Keystroke,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
+    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, View, ViewContext,
+    ViewInputHandler, WindowBounds, WindowContext, WindowOptions,
+};
 use unicode_segmentation::*;
 
 actions!(
@@ -463,7 +470,7 @@ impl Element for TextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0x3311FF30),
+                    rgba(0x3311ff30),
                 )),
                 None,
             )

@@ -2396,7 +2396,6 @@ impl Snapshot {
             .map(|(path, entry)| (&path.0, entry))
     }
 
-    /// Get the repository whose work directory contains the given path.
     pub fn repository_for_work_directory(&self, path: &Path) -> Option<RepositoryEntry> {
         self.repository_entries
             .get(&RepositoryWorkDirectory(path.into()))

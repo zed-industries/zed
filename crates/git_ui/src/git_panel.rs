@@ -1,4 +1,16 @@
+use anyhow::Result;
 use collections::HashMap;
+use db::kvp::KEY_VALUE_STORE;
+use git::repository::GitFileStatus;
+use gpui::{
+    actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
+    CursorStyle, EventEmitter, FocusHandle, FocusableView, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent,
+    MouseButton, Stateful, Task, UniformListScrollHandle, View, WeakView,
+};
+use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
+use serde::{Deserialize, Serialize};
+use settings::Settings as _;
 use std::{
     cell::OnceCell,
     collections::HashSet,
@@ -8,19 +20,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-
-use git::repository::GitFileStatus;
-
-use util::{ResultExt, TryFutureExt};
-
-use db::kvp::KEY_VALUE_STORE;
-use gpui::*;
-use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
-use serde::{Deserialize, Serialize};
-use settings::Settings as _;
 use ui::{
     prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
 };
+use util::{ResultExt, TryFutureExt};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 

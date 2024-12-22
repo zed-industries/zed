@@ -1,7 +1,7 @@
 // Doing `if let` gives you nice scoping with passes/encoders
 #![allow(irrefutable_let_patterns)]
 
-use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
+use super::{BladeAtlas, BladeContext, PATH_TEXTURE_FORMAT};
 use crate::{
     AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels, GpuSpecs,
     MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
@@ -11,74 +11,12 @@ use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
-#[cfg(target_os = "macos")]
-use std::{ffi::c_void, ptr::NonNull};
 
 use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Default)]
-pub struct Context {}
-#[cfg(target_os = "macos")]
-pub type Renderer = BladeRenderer;
-
-#[cfg(target_os = "macos")]
-pub unsafe fn new_renderer(
-    _context: self::Context,
-    _native_window: *mut c_void,
-    native_view: *mut c_void,
-    bounds: crate::Size<f32>,
-    transparent: bool,
-) -> Renderer {
-    use raw_window_handle as rwh;
-    struct RawWindow {
-        view: *mut c_void,
-    }
-
-    impl rwh::HasWindowHandle for RawWindow {
-        fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
-            let view = NonNull::new(self.view).unwrap();
-            let handle = rwh::AppKitWindowHandle::new(view);
-            Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
-        }
-    }
-    impl rwh::HasDisplayHandle for RawWindow {
-        fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
-            let handle = rwh::AppKitDisplayHandle::new();
-            Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
-        }
-    }
-
-    let gpu = Arc::new(
-        gpu::Context::init_windowed(
-            &RawWindow {
-                view: native_view as *mut _,
-            },
-            gpu::ContextDesc {
-                validation: cfg!(debug_assertions),
-                capture: false,
-                overlay: false,
-            },
-        )
-        .unwrap(),
-    );
-
-    BladeRenderer::new(
-        gpu,
-        BladeSurfaceConfig {
-            size: gpu::Extent {
-                width: bounds.width as u32,
-                height: bounds.height as u32,
-                depth: 1,
-            },
-            transparent,
-        },
-    )
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -354,10 +292,14 @@ pub struct BladeSurfaceConfig {
     pub transparent: bool,
 }
 
+//Note: we could see some of these fields moved into `BladeContext`
+// so that they are shared between windows. E.g. `pipelines`.
+// But that is complicated by the fact that pipelines depend on
+// the format and alpha mode.
 pub struct BladeRenderer {
     gpu: Arc<gpu::Context>,
+    surface: gpu::Surface,
     surface_config: gpu::SurfaceConfig,
-    alpha_mode: gpu::AlphaMode,
     command_encoder: gpu::CommandEncoder,
     last_sync_point: Option<gpu::SyncPoint>,
     pipelines: BladePipelines,
@@ -370,7 +312,11 @@ pub struct BladeRenderer {
 }
 
 impl BladeRenderer {
-    pub fn new(gpu: Arc<gpu::Context>, config: BladeSurfaceConfig) -> Self {
+    pub fn new<I: raw_window_handle::HasWindowHandle + raw_window_handle::HasDisplayHandle>(
+        context: &BladeContext,
+        window: &I,
+        config: BladeSurfaceConfig,
+    ) -> anyhow::Result<Self> {
         let surface_config = gpu::SurfaceConfig {
             size: config.size,
             usage: gpu::TextureUsage::TARGET,
@@ -379,20 +325,23 @@ impl BladeRenderer {
             allow_exclusive_full_screen: false,
             transparent: config.transparent,
         };
-        let surface_info = gpu.resize(surface_config);
+        let surface = context
+            .gpu
+            .create_surface_configured(window, surface_config)
+            .unwrap();
 
-        let command_encoder = gpu.create_command_encoder(gpu::CommandEncoderDesc {
+        let command_encoder = context.gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
             buffer_count: 2,
         });
-        let pipelines = BladePipelines::new(&gpu, surface_info);
+        let pipelines = BladePipelines::new(&context.gpu, surface.info());
         let instance_belt = BufferBelt::new(BufferBeltDescriptor {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,
             alignment: 0x40, // Vulkan `minStorageBufferOffsetAlignment` on Intel Xe
         });
-        let atlas = Arc::new(BladeAtlas::new(&gpu));
-        let atlas_sampler = gpu.create_sampler(gpu::SamplerDesc {
+        let atlas = Arc::new(BladeAtlas::new(&context.gpu));
+        let atlas_sampler = context.gpu.create_sampler(gpu::SamplerDesc {
             name: "atlas",
             mag_filter: gpu::FilterMode::Linear,
             min_filter: gpu::FilterMode::Linear,
@@ -402,13 +351,13 @@ impl BladeRenderer {
         #[cfg(target_os = "macos")]
         let core_video_texture_cache = unsafe {
             use foreign_types::ForeignType as _;
-            CVMetalTextureCache::new(gpu.metal_device().as_ptr()).unwrap()
+            CVMetalTextureCache::new(context.gpu.metal_device().as_ptr()).unwrap()
         };
 
-        Self {
-            gpu,
+        Ok(Self {
+            gpu: Arc::clone(&context.gpu),
+            surface,
             surface_config,
-            alpha_mode: surface_info.alpha,
             command_encoder,
             last_sync_point: None,
             pipelines,
@@ -418,7 +367,7 @@ impl BladeRenderer {
             atlas_sampler,
             #[cfg(target_os = "macos")]
             core_video_texture_cache,
-        }
+        })
     }
 
     fn wait_for_gpu(&mut self) {
@@ -452,7 +401,8 @@ impl BladeRenderer {
         if always_resize || gpu_size != self.surface_config.size {
             self.wait_for_gpu();
             self.surface_config.size = gpu_size;
-            self.gpu.resize(self.surface_config);
+            self.gpu
+                .reconfigure_surface(&mut self.surface, self.surface_config);
         }
     }
 
@@ -460,10 +410,10 @@ impl BladeRenderer {
         if transparent != self.surface_config.transparent {
             self.wait_for_gpu();
             self.surface_config.transparent = transparent;
-            let surface_info = self.gpu.resize(self.surface_config);
+            self.gpu
+                .reconfigure_surface(&mut self.surface, self.surface_config);
             self.pipelines.destroy(&self.gpu);
-            self.pipelines = BladePipelines::new(&self.gpu, surface_info);
-            self.alpha_mode = surface_info.alpha;
+            self.pipelines = BladePipelines::new(&self.gpu, self.surface.info());
         }
     }
 
@@ -490,13 +440,13 @@ impl BladeRenderer {
 
     #[cfg(target_os = "macos")]
     pub fn layer(&self) -> metal::MetalLayer {
-        self.gpu.metal_layer().unwrap()
+        self.surface.metal_layer()
     }
 
     #[cfg(target_os = "macos")]
     pub fn layer_ptr(&self) -> *mut metal::CAMetalLayer {
         use metal::foreign_types::ForeignType as _;
-        self.gpu.metal_layer().unwrap().as_ptr()
+        self.surface.metal_layer().as_ptr()
     }
 
     #[profiling::function]
@@ -538,14 +488,17 @@ impl BladeRenderer {
             };
 
             let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
-            let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
-                colors: &[gpu::RenderTarget {
-                    view: tex_info.raw_view,
-                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
-                    finish_op: gpu::FinishOp::Store,
-                }],
-                depth_stencil: None,
-            });
+            let mut pass = self.command_encoder.render(
+                "paths",
+                gpu::RenderTargetSet {
+                    colors: &[gpu::RenderTarget {
+                        view: tex_info.raw_view,
+                        init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                        finish_op: gpu::FinishOp::Store,
+                    }],
+                    depth_stencil: None,
+                },
+            );
 
             let mut encoder = pass.with(&self.pipelines.path_rasterization);
             encoder.bind(
@@ -566,6 +519,7 @@ impl BladeRenderer {
         self.instance_belt.destroy(&self.gpu);
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
         self.pipelines.destroy(&self.gpu);
+        self.gpu.destroy_surface(&mut self.surface);
     }
 
     pub fn draw(&mut self, scene: &Scene) {
@@ -575,7 +529,7 @@ impl BladeRenderer {
 
         let frame = {
             profiling::scope!("acquire frame");
-            self.gpu.acquire_frame()
+            self.surface.acquire_frame()
         };
         self.command_encoder.init_texture(frame.texture());
 
@@ -584,21 +538,24 @@ impl BladeRenderer {
                 self.surface_config.size.width as f32,
                 self.surface_config.size.height as f32,
             ],
-            premultiplied_alpha: match self.alpha_mode {
+            premultiplied_alpha: match self.surface.info().alpha {
                 gpu::AlphaMode::Ignored | gpu::AlphaMode::PostMultiplied => 0,
                 gpu::AlphaMode::PreMultiplied => 1,
             },
             pad: 0,
         };
 
-        if let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
-            colors: &[gpu::RenderTarget {
-                view: frame.texture_view(),
-                init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
-                finish_op: gpu::FinishOp::Store,
-            }],
-            depth_stencil: None,
-        }) {
+        if let mut pass = self.command_encoder.render(
+            "main",
+            gpu::RenderTargetSet {
+                colors: &[gpu::RenderTarget {
+                    view: frame.texture_view(),
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
+                    finish_op: gpu::FinishOp::Store,
+                }],
+                depth_stencil: None,
+            },
+        ) {
             profiling::scope!("render pass");
             for batch in scene.batches() {
                 match batch {

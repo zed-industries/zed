@@ -3142,7 +3142,7 @@ impl LspStore {
     fn request_workspace_config_refresh(&mut self) {
         *self._maintain_workspace_config.1.borrow_mut() = ();
     }
-    // todo!
+
     pub fn prettier_store(&self) -> Option<Model<PrettierStore>> {
         self.as_local().map(|local| local.prettier_store.clone())
     }
