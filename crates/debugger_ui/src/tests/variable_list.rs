@@ -26,7 +26,8 @@ async fn test_basic_fetch_initial_scope_and_variables(
     let fs = FakeFs::new(executor.clone());
 
     let test_file_content = r#"
-        console.log("Some value");
+        const variable1 = "Value 1";
+        const variable2 = "Value 2";
     "#
     .unindent();
 
@@ -85,7 +86,7 @@ async fn test_basic_fetch_initial_scope_and_variables(
             adapter_data: None,
             checksums: None,
         }),
-        line: 3,
+        line: 1,
         column: 1,
         end_line: None,
         end_column: None,
@@ -138,8 +139,8 @@ async fn test_basic_fetch_initial_scope_and_variables(
 
     let variables = vec![
         Variable {
-            name: "Variable 1".into(),
-            value: "Value 1".into(),
+            name: "variable1".into(),
+            value: "value 1".into(),
             type_: None,
             presentation_hint: None,
             evaluate_name: None,
@@ -149,8 +150,8 @@ async fn test_basic_fetch_initial_scope_and_variables(
             memory_reference: None,
         },
         Variable {
-            name: "Variable 2".into(),
-            value: "Value 2".into(),
+            name: "variable2".into(),
+            value: "value 2".into(),
             type_: None,
             presentation_hint: None,
             evaluate_name: None,
@@ -270,7 +271,12 @@ async fn test_fetch_variables_for_multiple_scopes(
     let fs = FakeFs::new(executor.clone());
 
     let test_file_content = r#"
-        console.log("Some value");
+        const variable1 = {
+            nested1: "Nested 1",
+            nested2: "Nested 2",
+        };
+        const variable2 = "Value 2";
+        const variable3 = "Value 3";
     "#
     .unindent();
 
@@ -329,7 +335,7 @@ async fn test_fetch_variables_for_multiple_scopes(
             adapter_data: None,
             checksums: None,
         }),
-        line: 3,
+        line: 1,
         column: 1,
         end_line: None,
         end_column: None,
@@ -400,8 +406,8 @@ async fn test_fetch_variables_for_multiple_scopes(
         2,
         vec![
             Variable {
-                name: "Variable 1".into(),
-                value: "Value 1".into(),
+                name: "variable1".into(),
+                value: "{nested1: \"Nested 1\", nested2: \"Nested 2\"}".into(),
                 type_: None,
                 presentation_hint: None,
                 evaluate_name: None,
@@ -411,7 +417,7 @@ async fn test_fetch_variables_for_multiple_scopes(
                 memory_reference: None,
             },
             Variable {
-                name: "Variable 2".into(),
+                name: "variable2".into(),
                 value: "Value 2".into(),
                 type_: None,
                 presentation_hint: None,
@@ -426,7 +432,7 @@ async fn test_fetch_variables_for_multiple_scopes(
     variables.insert(
         3,
         vec![Variable {
-            name: "Variable 3".into(),
+            name: "variable3".into(),
             value: "Value 3".into(),
             type_: None,
             presentation_hint: None,
@@ -561,7 +567,12 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
     let fs = FakeFs::new(executor.clone());
 
     let test_file_content = r#"
-        console.log("Some value");
+        const variable1 = {
+            nested1: "Nested 1",
+            nested2: "Nested 2",
+        };
+        const variable2 = "Value 2";
+        const variable3 = "Value 3";
     "#
     .unindent();
 
@@ -620,7 +631,7 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
             adapter_data: None,
             checksums: None,
         }),
-        line: 3,
+        line: 1,
         column: 1,
         end_line: None,
         end_column: None,
@@ -688,8 +699,8 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
 
     let scope1_variables = vec![
         Variable {
-            name: "Variable 1".into(),
-            value: "Value 1".into(),
+            name: "variable1".into(),
+            value: "{nested1: \"Nested 1\", nested2: \"Nested 2\"}".into(),
             type_: None,
             presentation_hint: None,
             evaluate_name: None,
@@ -699,7 +710,7 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
             memory_reference: None,
         },
         Variable {
-            name: "Variable 2".into(),
+            name: "variable2".into(),
             value: "Value 2".into(),
             type_: None,
             presentation_hint: None,
@@ -713,8 +724,8 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
 
     let nested_variables = vec![
         Variable {
-            name: "Nested Variable 1".into(),
-            value: "Nested Value 1".into(),
+            name: "nested1".into(),
+            value: "Nested 1".into(),
             type_: None,
             presentation_hint: None,
             evaluate_name: None,
@@ -724,8 +735,8 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
             memory_reference: None,
         },
         Variable {
-            name: "Nested Variable 2".into(),
-            value: "Nested Value 2".into(),
+            name: "nested2".into(),
+            value: "Nested 2".into(),
             type_: None,
             presentation_hint: None,
             evaluate_name: None,
@@ -737,8 +748,8 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
     ];
 
     let scope2_variables = vec![Variable {
-        name: "Variable 1".into(),
-        value: "Value 1".into(),
+        name: "variable3".into(),
+        value: "Value 3".into(),
         type_: None,
         presentation_hint: None,
         evaluate_name: None,

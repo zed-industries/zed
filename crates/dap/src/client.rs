@@ -392,8 +392,7 @@ mod tests {
         init_test(cx);
 
         let adapter = Arc::new(FakeAdapter::new());
-        let was_called = Arc::new(AtomicBool::new(false));
-        let was_called_clone = was_called.clone();
+        let called_event_handler = Arc::new(AtomicBool::new(false));
 
         let mut client = DebugAdapterClient::new(
             crate::client::DebugAdapterClientId(1),
@@ -416,15 +415,18 @@ mod tests {
 
         client
             .start(
-                move |event, _| {
-                    was_called_clone.store(true, Ordering::SeqCst);
+                {
+                    let called_event_handler = called_event_handler.clone();
+                    move |event, _| {
+                        called_event_handler.store(true, Ordering::SeqCst);
 
-                    assert_eq!(
-                        Message::Event(Box::new(Events::Initialized(
-                            Some(Capabilities::default())
-                        ))),
-                        event
-                    );
+                        assert_eq!(
+                            Message::Event(Box::new(Events::Initialized(Some(
+                                Capabilities::default()
+                            )))),
+                            event
+                        );
+                    }
                 },
                 &mut cx.to_async(),
             )
@@ -440,7 +442,7 @@ mod tests {
         cx.run_until_parked();
 
         assert!(
-            was_called.load(std::sync::atomic::Ordering::SeqCst),
+            called_event_handler.load(std::sync::atomic::Ordering::SeqCst),
             "Event handler was not called"
         );
 

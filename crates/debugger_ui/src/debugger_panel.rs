@@ -923,9 +923,9 @@ impl DebugPanel {
                 debug_panel,
                 self.workspace.clone(),
                 self.dap_store.clone(),
-                cx.new_model(|_| Default::default()), // change this
+                cx.new_model(|_| Default::default()), // TODO debugger: change this
                 &client_id,
-                SharedString::from("test"), // change this
+                SharedString::from("test"), // TODO debugger: change this
                 thread_id,
                 cx,
             )
