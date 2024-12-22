@@ -16046,6 +16046,7 @@ dependencies = [
  "language_selector",
  "language_tools",
  "languages",
+ "libc",
  "log",
  "markdown",
  "markdown_preview",
