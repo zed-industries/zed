@@ -1273,7 +1273,7 @@ impl Workspace {
         self.window_edited
     }
 
-    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
+    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) -> usize {
         let focus_handle = panel.focus_handle(cx);
         cx.on_focus_in(&focus_handle, Self::handle_panel_focused)
             .detach();
@@ -1286,7 +1286,7 @@ impl Workspace {
 
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), cx)
-        });
+        })
     }
 
     pub fn status_bar(&self) -> &View<StatusBar> {
