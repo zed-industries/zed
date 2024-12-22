@@ -333,7 +333,6 @@ impl HttpClient for BlockedHttpClient {
 
 #[derive(Debug)]
 pub struct AwsHttpClient {
-    []
     client: HttpClientWithProxy
 }
 
