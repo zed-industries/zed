@@ -7,7 +7,6 @@ in
 pkgs.mkShell rec {
   packages = [
     pkgs.clang
-    pkgs.mold
     pkgs.curl
     pkgs.cmake
     pkgs.perl
@@ -15,6 +14,9 @@ pkgs.mkShell rec {
     pkgs.protobuf
     pkgs.rustPlatform.bindgenHook
     pkgs.rust-analyzer
+    ]
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+    pkgs.mold
   ];
 
   buildInputs =
@@ -27,7 +29,6 @@ pkgs.mkShell rec {
       pkgs.sqlite
       pkgs.zlib
       pkgs.zstd
-      pkgs.vulkan-loader
       pkgs.rustToolchain
     ]
     ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
@@ -35,6 +36,7 @@ pkgs.mkShell rec {
       pkgs.libxkbcommon
       pkgs.wayland
       pkgs.xorg.libxcb
+      pkgs.vulkan-loader
     ]
     ++ lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.apple-sdk_15;
 
