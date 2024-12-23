@@ -143,7 +143,7 @@ impl ActiveThread {
             inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_size: Some(buffer_font_size.into()),
-                background_color: Some(colors.editor_foreground.opacity(0.01).into()),
+                background_color: Some(colors.editor_foreground.opacity(0.01)),
                 ..Default::default()
             },
             ..Default::default()
