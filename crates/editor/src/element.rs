@@ -501,6 +501,7 @@ impl EditorElement {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
@@ -602,7 +603,7 @@ impl EditorElement {
                 if hitbox.contains(&event.position) {
                     editor.open_excerpts_common(
                         Some(JumpData::MultiBufferRow(MultiBufferRow(multi_buffer_row))),
-                        modifiers.alt == true,
+                        modifiers.alt,
                         cx,
                     );
                     cx.stop_propagation();
@@ -7398,6 +7399,7 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use language::language_settings;
     use log::info;
+    use similar::DiffableStr;
     use std::num::NonZeroU32;
     use util::test::sample_text;
 
@@ -7680,13 +7682,13 @@ mod tests {
             EditorElement::new(&editor, style)
         });
         assert_eq!(state.position_map.line_layouts.len(), 4);
+        assert_eq!(state.line_numbers.len(), 1);
         assert_eq!(
             state
                 .line_numbers
-                .iter()
-                .map(Option::is_some)
-                .collect::<Vec<_>>(),
-            &[false, false, false, true]
+                .get(&MultiBufferRow(0))
+                .and_then(|(line, _)| line.text.as_str()),
+            Some("1")
         );
     }
 
