@@ -1,62 +1,64 @@
 use std::{
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{btree_map::Entry, BTreeMap, BTreeSet},
     ffi::OsStr,
     path::Path,
     sync::Arc,
 };
 
 /// [RootPathTrie] is a workhorse of [super::ProjectTree]. It is responsible for determining the closest known project root for a given path.
-/// We can not
 /// It also determines how much of a given path is unexplored, thus letting callers fill in that gap if needed.
 /// A path is unexplored when the closest ancestor of a path is not the path itself; that means that we have not yet ran the scan on that path.
 /// For example, if there's a project root at path `python/project` and we query for a path `python/project/subdir/another_subdir/file.py`, there is
 /// a known root at `python/project` and the unexplored part is `subdir/another_subdir` - we need to run a scan on these 2 directories
-pub(super) struct RootPathTrie {
+pub(super) struct RootPathTrie<Label> {
     path_component: Arc<OsStr>,
-    value: Option<()>,
-    children: BTreeMap<Arc<OsStr>, RootPathTrie>,
+    labels: BTreeSet<Label>,
+    children: BTreeMap<Arc<OsStr>, RootPathTrie<Label>>,
 }
 
-impl RootPathTrie {
+impl<Label: Ord> RootPathTrie<Label> {
     pub(crate) fn new() -> Self {
-        Self::new_with_key(None)
+        Self::new_with_key(Arc::from(OsStr::new("")))
     }
-    fn new_with_key(value: Option<Arc<OsStr>>) -> Self {
+    fn new_with_key(path_component: Arc<OsStr>) -> Self {
         RootPathTrie {
-            path_component: value.unwrap_or_else(|| Arc::from(OsStr::new(""))),
-            value: None,
-            children: BTreeMap::new(),
+            path_component,
+            labels: Default::default(),
+            children: Default::default(),
         }
     }
-    fn insert(&mut self, path: &TriePath, value: ()) {
+    pub(crate) fn insert(&mut self, path: &TriePath, value: Label) {
         let mut current = self;
 
         for key in path.0.iter() {
             current = match current.children.entry(key.clone()) {
                 Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(RootPathTrie::new_with_key(Some(key.clone())))
+                    vacant_entry.insert(RootPathTrie::new_with_key(key.clone()))
                 }
                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
             };
         }
-        current.value = Some(value);
+        current.labels.insert(value);
     }
-    fn closest_ancestor(&self, path: &TriePath) -> Option<()> {
+    pub(crate) fn walk<'a>(
+        &'a self,
+        path: &TriePath,
+        callback: &mut dyn FnMut(&'a Path, &BTreeSet<Label>),
+    ) {
         let mut current = self;
-        let mut last_value = None;
+
         for key in path.0.iter() {
-            if current.value.is_some() {
-                last_value = current.value;
+            if !current.labels.is_empty() {
+                (callback)(Path::new(""), &current.labels);
             }
             current = match current.children.get(key) {
                 Some(child) => child,
-                None => return last_value,
+                None => return,
             };
         }
-        if current.value.is_some() {
-            last_value = current.value;
+        if !current.labels.is_empty() {
+            (callback)(Path::new(""), &current.labels);
         }
-        last_value
     }
 }
 
