@@ -10,18 +10,32 @@ use std::{
 /// It also determines how much of a given path is unexplored, thus letting callers fill in that gap if needed.
 /// A path is unexplored when the closest ancestor of a path is not the path itself; that means that we have not yet ran the scan on that path.
 /// For example, if there's a project root at path `python/project` and we query for a path `python/project/subdir/another_subdir/file.py`, there is
-/// a known root at `python/project` and the unexplored part is `subdir/another_subdir` - we need to run a scan on these 2 directories
+/// a known root at `python/project` and the unexplored part is `subdir/another_subdir` - we need to run a scan on these 2 directories.
 pub(super) struct RootPathTrie<Label> {
     path_component: Arc<OsStr>,
     labels: BTreeMap<Label, LabelPresence>,
     children: BTreeMap<Arc<OsStr>, RootPathTrie<Label>>,
 }
 
+/// Label presence is a marker that allows to optimize searches within [RootPathTrie]; node label can either be:
+/// - Present; we know there's definitely a project root at this node and it is the only label of that kind on the path to the root of a worktree
+/// (none of it's ancestors or descendants can contain the same present label)
+/// - Known Absent - we know there's definitely no project root at this node and none of it's ancestors are Present (descendants can be present though!).
+/// The distinction is there to optimize searching; when we encounter a node with unknown status, we don't need to look at it's full path
+/// to the root of the worktree; it's sufficient to explore only the path between last node with a KnownAbsent state and the directory of a path.
+/// When there's a present labeled node on the path to the root, we don't need to ask the adapter to run the search at all.
+///
+/// In practical terms, it means that by storing label presence we don't need to do a project discovery on a given folder more than once
+/// (unless the node is invalidated, which can happen when FS entries are renamed/removed).
+///
+/// Storing project absence allows us to recognize which paths have already been scanned for a project root unsuccessfully. This way we don't need to run
+/// such scan more than once.
 #[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Ord, Eq)]
 pub(super) enum LabelPresence {
     Present,
     KnownAbsent,
 }
+
 impl<Label: Ord> RootPathTrie<Label> {
     pub(super) fn new() -> Self {
         Self::new_with_key(Arc::from(OsStr::new("")))

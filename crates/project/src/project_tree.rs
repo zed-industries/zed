@@ -4,7 +4,6 @@
 
 mod path_trie;
 mod server_tree;
-mod toolchain_tree;
 
 use std::{
     borrow::Borrow,

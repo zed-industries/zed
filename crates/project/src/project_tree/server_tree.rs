@@ -27,7 +27,6 @@ pub struct LanguageServerTree {
     project_tree: Model<ProjectTree>,
     languages: Arc<LanguageRegistry>,
     instances: HashMap<ProjectPath, BTreeMap<LanguageServerName, LanguageServerTreeNode>>,
-    // shared_instances: BTreeMap<WorktreeId, BTreeMap<LanguageServerName, LanguageServerId>>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
 }
 
