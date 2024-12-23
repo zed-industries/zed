@@ -508,7 +508,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
-        line_numbers_hitboxes: &[(Hitbox, MultiBufferRow)],
+        line_numbers_hitboxes: &HashMap<MultiBufferRow, Hitbox>,
         cx: &mut ViewContext<Editor>,
     ) {
         if cx.default_prevented() {
@@ -528,7 +528,9 @@ impl EditorElement {
             return;
         }
 
-        if click_count == 2 && !editor.buffer().read(cx).is_singleton() {
+        let is_singleton = editor.buffer().read(cx).is_singleton();
+
+        if click_count == 2 && !is_singleton {
             match EditorSettings::get_global(cx).double_click_in_multibuffer {
                 DoubleClickInMultibuffer::Select => {
                     // do nothing special on double click, all selection logic is below
@@ -547,57 +549,67 @@ impl EditorElement {
             }
         }
 
-        // TODO kb this is slow
-        if let Some((_, multi_buffer_row)) = line_numbers_hitboxes
-            .iter()
-            .find(|(hitbox, _)| hitbox.bounds.contains(&event.position))
-        {
-            editor.open_excerpts_common(
-                Some(JumpData::MultiBufferRow(*multi_buffer_row)),
-                modifiers.alt == true,
-                cx,
-            );
-        }
-
-        // TODO kb do not need this in the multi buffer mode at all?
-        let point_for_position =
-            position_map.point_for_position(text_hitbox.bounds, event.position);
-        let position = point_for_position.previous_valid;
-        if modifiers.shift && modifiers.alt {
-            editor.select(
-                SelectPhase::BeginColumnar {
-                    position,
-                    reset: false,
-                    goal_column: point_for_position.exact_unclipped.column(),
-                },
-                cx,
-            );
-        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.secondary()
-        {
-            editor.select(
-                SelectPhase::Extend {
-                    position,
-                    click_count,
-                },
-                cx,
-            );
+        if is_singleton {
+            let point_for_position =
+                position_map.point_for_position(text_hitbox.bounds, event.position);
+            let position = point_for_position.previous_valid;
+            if modifiers.shift && modifiers.alt {
+                editor.select(
+                    SelectPhase::BeginColumnar {
+                        position,
+                        reset: false,
+                        goal_column: point_for_position.exact_unclipped.column(),
+                    },
+                    cx,
+                );
+            } else if modifiers.shift
+                && !modifiers.control
+                && !modifiers.alt
+                && !modifiers.secondary()
+            {
+                editor.select(
+                    SelectPhase::Extend {
+                        position,
+                        click_count,
+                    },
+                    cx,
+                );
+            } else {
+                let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+                let multi_cursor_modifier = match multi_cursor_setting {
+                    MultiCursorModifier::Alt => modifiers.alt,
+                    MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
+                };
+                editor.select(
+                    SelectPhase::Begin {
+                        position,
+                        add: multi_cursor_modifier,
+                        click_count,
+                    },
+                    cx,
+                );
+            }
+            cx.stop_propagation();
         } else {
-            let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-            let multi_cursor_modifier = match multi_cursor_setting {
-                MultiCursorModifier::Alt => modifiers.alt,
-                MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
-            };
-            editor.select(
-                SelectPhase::Begin {
-                    position,
-                    add: multi_cursor_modifier,
-                    click_count,
-                },
-                cx,
-            );
+            // TODO kb extract common code around this module into method/function
+            let display_row = (((event.position - gutter_hitbox.bounds.origin).y
+                + position_map.scroll_pixel_position.y)
+                / position_map.line_height) as u32;
+            let multi_buffer_row = position_map
+                .snapshot
+                .display_point_to_point(DisplayPoint::new(DisplayRow(display_row), 0), Bias::Right)
+                .row;
+            if let Some(hit_box) = line_numbers_hitboxes.get(&MultiBufferRow(multi_buffer_row)) {
+                if hit_box.contains(&event.position) {
+                    editor.open_excerpts_common(
+                        Some(JumpData::MultiBufferRow(MultiBufferRow(multi_buffer_row))),
+                        modifiers.alt == true,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }
+            }
         }
-
-        cx.stop_propagation();
     }
 
     fn mouse_right_down(
@@ -1986,6 +1998,7 @@ impl EditorElement {
     }
 
     // TODO kb underscore hovered line
+    // TODO kb consider making empty space of pre-10^n numbers clickable too
     #[allow(clippy::too_many_arguments)]
     fn layout_line_numbers(
         &self,
@@ -2036,8 +2049,8 @@ impl EditorElement {
         buffer_rows
             .into_iter()
             .enumerate()
-            .map(|(ix, multibuffer_row)| {
-                let multibuffer_row = multibuffer_row?;
+            .map(|(ix, buffer_row)| {
+                let buffer_row = buffer_row?;
                 let display_row = DisplayRow(rows.start.0 + ix as u32);
                 let color = if active_rows.contains_key(&display_row) {
                     cx.theme().colors().editor_active_line_number
@@ -2045,7 +2058,7 @@ impl EditorElement {
                     cx.theme().colors().editor_line_number
                 };
                 line_number.clear();
-                let default_number = multibuffer_row.0 + 1;
+                let default_number = buffer_row.0 + 1;
                 let number = relative_rows
                     .get(&DisplayRow(ix as u32 + rows.start.0))
                     .unwrap_or(&default_number);
@@ -2076,7 +2089,8 @@ impl EditorElement {
                     false,
                 );
 
-                Some((shaped_line, hitbox, multibuffer_row))
+                let multi_buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
+                Some((shaped_line, hitbox, MultiBufferRow(multi_buffer_row)))
             })
             .collect()
     }
@@ -4820,12 +4834,13 @@ impl EditorElement {
             let editor = self.editor.clone();
             let text_hitbox = layout.text_hitbox.clone();
             let gutter_hitbox = layout.gutter_hitbox.clone();
+            // TODO kb have this hashmap/btreemap all the time, recollecting it here is slow
             let line_numbers_hitboxes = layout
                 .line_numbers
                 .iter()
                 .flatten()
-                .map(|(_, hitbox, multi_buffer_row)| (hitbox.clone(), *multi_buffer_row))
-                .collect::<Vec<_>>();
+                .map(|(_, hitbox, multi_buffer_row)| (*multi_buffer_row, hitbox.clone()))
+                .collect::<HashMap<_, _>>();
 
             move |event: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
