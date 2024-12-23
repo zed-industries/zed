@@ -36,8 +36,8 @@ use gpui::{
     Entity, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, View,
-    ViewContext, WeakView, WindowContext,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
+    UnderlineStyle, View, ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -508,7 +508,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
-        line_numbers_hitboxes: &HashMap<MultiBufferRow, Hitbox>,
+        line_numbers: &HashMap<MultiBufferRow, (ShapedLine, Hitbox)>,
         cx: &mut ViewContext<Editor>,
     ) {
         if cx.default_prevented() {
@@ -599,8 +599,8 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_point(DisplayPoint::new(DisplayRow(display_row), 0), Bias::Right)
                 .row;
-            if let Some(hit_box) = line_numbers_hitboxes.get(&MultiBufferRow(multi_buffer_row)) {
-                if hit_box.contains(&event.position) {
+            if let Some((_, hitbox)) = line_numbers.get(&MultiBufferRow(multi_buffer_row)) {
+                if hitbox.contains(&event.position) {
                     editor.open_excerpts_common(
                         Some(JumpData::MultiBufferRow(MultiBufferRow(multi_buffer_row))),
                         modifiers.alt == true,
@@ -1997,8 +1997,6 @@ impl EditorElement {
         relative_rows
     }
 
-    // TODO kb underscore hovered line
-    // TODO kb consider making empty space of pre-10^n numbers clickable too
     #[allow(clippy::too_many_arguments)]
     fn layout_line_numbers(
         &self,
@@ -2012,12 +2010,12 @@ impl EditorElement {
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
-    ) -> Vec<Option<(ShapedLine, Hitbox, MultiBufferRow)>> {
+    ) -> Arc<HashMap<MultiBufferRow, (ShapedLine, Hitbox)>> {
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
         });
         if !include_line_numbers {
-            return Vec::new();
+            return Arc::default();
         }
 
         let (newest_selection_head, is_relative) = self.editor.update(cx, |editor, cx| {
@@ -2046,10 +2044,10 @@ impl EditorElement {
         };
         let relative_rows = self.calculate_relative_line_numbers(snapshot, &rows, relative_to);
         let mut line_number = String::new();
-        buffer_rows
+        let line_numbers = buffer_rows
             .into_iter()
             .enumerate()
-            .map(|(ix, buffer_row)| {
+            .flat_map(|(ix, buffer_row)| {
                 let buffer_row = buffer_row?;
                 let display_row = DisplayRow(rows.start.0 + ix as u32);
                 let color = if active_rows.contains_key(&display_row) {
@@ -2063,6 +2061,7 @@ impl EditorElement {
                     .get(&DisplayRow(ix as u32 + rows.start.0))
                     .unwrap_or(&default_number);
                 write!(&mut line_number, "{number}").unwrap();
+                // TODO kb underline hovered lines
                 let run = TextRun {
                     len: line_number.len(),
                     font: self.style.text.font(),
@@ -2073,7 +2072,7 @@ impl EditorElement {
                 };
                 let shaped_line = cx
                     .text_system()
-                    .shape_line(line_number.clone().into(), font_size, &[run])
+                    .shape_line(SharedString::from(&line_number), font_size, &[run])
                     .unwrap();
                 let scroll_top = scroll_position.y * line_height;
                 let line_origin = gutter_hitbox.origin
@@ -2090,9 +2089,11 @@ impl EditorElement {
                 );
 
                 let multi_buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
-                Some((shaped_line, hitbox, MultiBufferRow(multi_buffer_row)))
+                let multi_buffer_row = MultiBufferRow(multi_buffer_row);
+                Some((multi_buffer_row, (shaped_line, hitbox)))
             })
-            .collect()
+            .collect();
+        Arc::new(line_numbers)
     }
 
     fn layout_crease_toggles(
@@ -3831,11 +3832,9 @@ impl EditorElement {
         let line_height = layout.position_map.line_height;
         cx.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
-        for line in &layout.line_numbers {
-            if let Some((line, hitbox, _)) = line {
-                line.paint(hitbox.origin, line_height, cx).log_err();
-                cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
-            }
+        for (_, (line, hitbox)) in layout.line_numbers.iter() {
+            line.paint(hitbox.origin, line_height, cx).log_err();
+            cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
         }
     }
 
@@ -4834,13 +4833,7 @@ impl EditorElement {
             let editor = self.editor.clone();
             let text_hitbox = layout.text_hitbox.clone();
             let gutter_hitbox = layout.gutter_hitbox.clone();
-            // TODO kb have this hashmap/btreemap all the time, recollecting it here is slow
-            let line_numbers_hitboxes = layout
-                .line_numbers
-                .iter()
-                .flatten()
-                .map(|(_, hitbox, multi_buffer_row)| (*multi_buffer_row, hitbox.clone()))
-                .collect::<HashMap<_, _>>();
+            let line_numbers = layout.line_numbers.clone();
 
             move |event: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
@@ -4853,7 +4846,7 @@ impl EditorElement {
                                 &position_map,
                                 &text_hitbox,
                                 &gutter_hitbox,
-                                &line_numbers_hitboxes,
+                                line_numbers.as_ref(),
                                 cx,
                             );
                         }),
@@ -6740,7 +6733,7 @@ pub struct EditorLayout {
     active_rows: BTreeMap<DisplayRow, bool>,
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
     line_elements: SmallVec<[AnyElement; 1]>,
-    line_numbers: Vec<Option<(ShapedLine, Hitbox, MultiBufferRow)>>,
+    line_numbers: Arc<HashMap<MultiBufferRow, (ShapedLine, Hitbox)>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
