@@ -12463,7 +12463,20 @@ impl Editor {
                 }
             }
             Some(JumpData::MultiBufferRow(row)) => {
-                todo!("TODO kb")
+                let point = MultiBufferPoint::new(row.0, 0);
+                dbg!(row);
+                if let Some((_asdasds, buffer, _)) =
+                    self.buffer.read(cx).excerpt_containing(point, cx)
+                {
+                    // TODO kb panics when clicked into the lower part(?) of the multi buffer
+                    let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+                    let start_offset = point.to_offset(&multi_buffer_snapshot);
+                    new_selections_by_buffer
+                        .entry(buffer)
+                        .or_insert((Vec::new(), None))
+                        .0
+                        .push(start_offset..start_offset)
+                }
             }
             None => {
                 let selections = self.selections.all::<usize>(cx);

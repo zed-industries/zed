@@ -508,7 +508,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
-        line_numbers_hitboxes: &[Hitbox],
+        line_numbers_hitboxes: &[(Hitbox, MultiBufferRow)],
         cx: &mut ViewContext<Editor>,
     ) {
         if cx.default_prevented() {
@@ -547,24 +547,19 @@ impl EditorElement {
             }
         }
 
-        let editor_snapshot = &position_map.snapshot;
-        if line_numbers_hitboxes
+        // TODO kb this is slow
+        if let Some((_, multi_buffer_row)) = line_numbers_hitboxes
             .iter()
-            .any(|hitbox| hitbox.bounds.contains(&event.position))
+            .find(|(hitbox, _)| hitbox.bounds.contains(&event.position))
         {
-            let multi_buffer_row = editor_snapshot
-                .display_point_to_point(
-                    DisplayPoint::new(DisplayRow(event.position.y.0 as u32), 0),
-                    Bias::Right,
-                )
-                .row;
             editor.open_excerpts_common(
-                Some(JumpData::MultiBufferRow(MultiBufferRow(multi_buffer_row))),
+                Some(JumpData::MultiBufferRow(*multi_buffer_row)),
                 modifiers.alt == true,
                 cx,
             );
         }
 
+        // TODO kb do not need this in the multi buffer mode at all?
         let point_for_position =
             position_map.point_for_position(text_hitbox.bounds, event.position);
         let position = point_for_position.previous_valid;
@@ -1990,6 +1985,7 @@ impl EditorElement {
         relative_rows
     }
 
+    // TODO kb underscore hovered line
     #[allow(clippy::too_many_arguments)]
     fn layout_line_numbers(
         &self,
@@ -2003,7 +1999,7 @@ impl EditorElement {
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
-    ) -> Vec<Option<(ShapedLine, Hitbox)>> {
+    ) -> Vec<Option<(ShapedLine, Hitbox, MultiBufferRow)>> {
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
         });
@@ -2080,7 +2076,7 @@ impl EditorElement {
                     false,
                 );
 
-                Some((shaped_line, hitbox))
+                Some((shaped_line, hitbox, multibuffer_row))
             })
             .collect()
     }
@@ -3822,14 +3818,9 @@ impl EditorElement {
         cx.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
         for line in &layout.line_numbers {
-            if let Some((line, hitbox)) = line {
+            if let Some((line, hitbox, _)) = line {
                 line.paint(hitbox.origin, line_height, cx).log_err();
                 cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
-                // TODO kb
-                // .on_click(move |_, cx| {
-                //     cx.stop_propagation();
-                //     cx.open_url(url.as_str())
-                // })
             }
         }
     }
@@ -4833,7 +4824,7 @@ impl EditorElement {
                 .line_numbers
                 .iter()
                 .flatten()
-                .map(|(_, hitbox)| hitbox.clone())
+                .map(|(_, hitbox, multi_buffer_row)| (hitbox.clone(), *multi_buffer_row))
                 .collect::<Vec<_>>();
 
             move |event: &MouseDownEvent, phase, cx| {
@@ -6734,7 +6725,7 @@ pub struct EditorLayout {
     active_rows: BTreeMap<DisplayRow, bool>,
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
     line_elements: SmallVec<[AnyElement; 1]>,
-    line_numbers: Vec<Option<(ShapedLine, Hitbox)>>,
+    line_numbers: Vec<Option<(ShapedLine, Hitbox, MultiBufferRow)>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
