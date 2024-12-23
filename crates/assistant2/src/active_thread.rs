@@ -3,8 +3,9 @@ use std::sync::Arc;
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, AnyElement, AppContext, Empty, ListAlignment, ListState, Model, StyleRefinement,
-    Subscription, TextStyleRefinement, View, WeakView,
+    list, AbsoluteLength, AnyElement, AppContext, CornersRefinement, DefiniteLength,
+    EdgesRefinement, Empty, Length, ListAlignment, ListState, Model, StyleRefinement, Subscription,
+    TextStyleRefinement, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -89,6 +90,7 @@ impl ActiveThread {
         self.list_state.splice(old_len..old_len, 1);
 
         let theme_settings = ThemeSettings::get_global(cx);
+        let colors = cx.theme().colors();
         let ui_font_size = TextSize::Default.rems(cx);
         let buffer_font_size = TextSize::Small.rems(cx);
         let mut text_style = cx.text_style();
@@ -105,56 +107,43 @@ impl ActiveThread {
             syntax: cx.theme().syntax().clone(),
             selection_background_color: cx.theme().players().local().selection,
             code_block: StyleRefinement {
-                background: Some(cx.theme().colors().editor_foreground.opacity(0.01).into()),
-                overflow: gpui::PointRefinement {
-                    x: Some(gpui::Overflow::Scroll),
-                    y: Some(gpui::Overflow::Visible),
+                margin: EdgesRefinement {
+                    top: Some(Length::Definite(rems(0.5).into())),
+                    left: Some(Length::Definite(rems(0.).into())),
+                    right: Some(Length::Definite(rems(0.).into())),
+                    bottom: Some(Length::Definite(rems(1.).into())),
                 },
-                margin: gpui::EdgesRefinement {
-                    top: Some(gpui::Length::Definite(rems(0.5).into())),
-                    left: Some(gpui::Length::Definite(rems(0.).into())),
-                    right: Some(gpui::Length::Definite(rems(0.).into())),
-                    bottom: Some(gpui::Length::Definite(rems(1.).into())),
+                padding: EdgesRefinement {
+                    top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                 },
-                padding: gpui::EdgesRefinement {
-                    top: Some(gpui::DefiniteLength::Absolute(
-                        gpui::AbsoluteLength::Pixels(gpui::Pixels(8.)),
-                    )),
-                    left: Some(gpui::DefiniteLength::Absolute(
-                        gpui::AbsoluteLength::Pixels(gpui::Pixels(8.)),
-                    )),
-                    right: Some(gpui::DefiniteLength::Absolute(
-                        gpui::AbsoluteLength::Pixels(gpui::Pixels(8.)),
-                    )),
-                    bottom: Some(gpui::DefiniteLength::Absolute(
-                        gpui::AbsoluteLength::Pixels(gpui::Pixels(8.)),
-                    )),
+                background: Some(colors.editor_foreground.opacity(0.01).into()),
+                border_color: Some(colors.border_variant.opacity(0.25)),
+                border_widths: EdgesRefinement {
+                    top: Some(AbsoluteLength::Pixels(Pixels(1.0))),
+                    left: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                    right: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                    bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
                 },
-                border_color: Some(cx.theme().colors().border_variant.opacity(0.25)),
-                border_widths: gpui::EdgesRefinement {
-                    top: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(1.0))),
-                    left: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(1.))),
-                    right: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(1.))),
-                    bottom: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(1.))),
-                },
-                corner_radii: gpui::CornersRefinement {
-                    top_left: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(2.))),
-                    top_right: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(2.))),
-                    bottom_right: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(2.))),
-                    bottom_left: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(2.))),
+                corner_radii: CornersRefinement {
+                    top_left: Some(AbsoluteLength::Pixels(Pixels(2.))),
+                    top_right: Some(AbsoluteLength::Pixels(Pixels(2.))),
+                    bottom_right: Some(AbsoluteLength::Pixels(Pixels(2.))),
+                    bottom_left: Some(AbsoluteLength::Pixels(Pixels(2.))),
                 },
                 text: Some(TextStyleRefinement {
                     font_family: Some(theme_settings.buffer_font.family.clone()),
                     font_size: Some(buffer_font_size.into()),
-                    white_space: Some(gpui::WhiteSpace::Nowrap),
                     ..Default::default()
                 }),
                 ..Default::default()
             },
             inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
-                font_size: Some(ui_font_size.into()),
-                background_color: Some(cx.theme().colors().editor_background),
+                font_size: Some(buffer_font_size.into()),
+                background_color: Some(colors.editor_foreground.opacity(0.01).into()),
                 ..Default::default()
             },
             ..Default::default()
@@ -263,7 +252,7 @@ impl ActiveThread {
                     .rounded_md()
                     .child(
                         h_flex()
-                            .py_2()
+                            .py_1p5()
                             .px_2p5()
                             .border_b_1()
                             .border_color(colors.border_variant)
@@ -286,16 +275,11 @@ impl ActiveThread {
                     .child(v_flex().p_2p5().text_ui(cx).child(markdown.clone()))
                     .when_some(context, |parent, context| {
                         parent.child(
-                            h_flex()
-                                .debug_bg_red()
-                                .flex_wrap()
-                                .gap_2()
-                                .p_1p5()
-                                .children(
-                                    context
-                                        .iter()
-                                        .map(|context| ContextPill::new(context.clone())),
-                                ),
+                            h_flex().flex_wrap().gap_1().p_1p5().children(
+                                context
+                                    .iter()
+                                    .map(|context| ContextPill::new(context.clone())),
+                            ),
                         )
                     }),
             )
