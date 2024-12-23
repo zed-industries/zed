@@ -259,11 +259,7 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
-    pub fn find_closest_project_root(
-        &self,
-        worktree_id: WorktreeId,
-        path: Arc<Path>,
-    ) -> Option<Arc<Path>> {
+    pub fn find_closest_project_root(&self, _: WorktreeId, _: Arc<Path>) -> Option<Arc<Path>> {
         // By default we'll root all projects at the root of a worktree.
         Some(Arc::from("".as_ref()))
     }

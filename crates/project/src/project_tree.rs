@@ -7,7 +7,9 @@ mod server_tree;
 mod toolchain_tree;
 
 use std::{
+    borrow::Borrow,
     collections::{btree_map::Entry as TreeEntry, hash_map::Entry, BTreeMap},
+    ops::ControlFlow,
     path::Path,
     sync::Arc,
 };
@@ -16,6 +18,7 @@ use collections::HashMap;
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{CachedLspAdapter, LanguageName, LanguageRegistry};
 use lsp::LanguageServerName;
+use path_trie::{RootPathTrie, TriePath};
 use settings::WorktreeId;
 use worktree::{Event as WorktreeEvent, Worktree};
 
@@ -28,6 +31,7 @@ pub(crate) use server_tree::LanguageServerTree;
 type IsRoot = bool;
 
 struct WorktreeRoots {
+    _roots: RootPathTrie<LanguageServerName>,
     roots: BTreeMap<Arc<Path>, BTreeMap<LanguageServerName, IsRoot>>,
     worktree_store: Model<WorktreeStore>,
     worktree_subscription: Subscription,
@@ -40,6 +44,7 @@ impl WorktreeRoots {
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx| Self {
+            _roots: RootPathTrie::new(),
             roots: Default::default(),
             worktree_store,
             worktree_subscription: cx.subscribe(&worktree, |this: &mut Self, _, event, cx| {
@@ -97,6 +102,12 @@ impl Ord for AdapterWrapper {
 
 impl Eq for AdapterWrapper {}
 
+impl Borrow<LanguageServerName> for AdapterWrapper {
+    fn borrow(&self) -> &LanguageServerName {
+        &self.0.name
+    }
+}
+
 impl ProjectTree {
     pub(crate) fn new(
         languages: Arc<LanguageRegistry>,
@@ -116,8 +127,12 @@ impl ProjectTree {
         language_name: &LanguageName,
         cx: &mut AppContext,
     ) -> BTreeMap<AdapterWrapper, ProjectPath> {
-        let mut roots = BTreeMap::default();
         let adapters = self.languages.lsp_adapters(&language_name);
+        let mut roots = BTreeMap::from_iter(
+            adapters
+                .into_iter()
+                .map(|adapter| (AdapterWrapper(adapter), None)),
+        );
         let worktree_roots = match self.root_points.entry(worktree_id) {
             Entry::Occupied(occupied_entry) => occupied_entry.get().clone(),
             Entry::Vacant(vacant_entry) => {
@@ -133,54 +148,64 @@ impl ProjectTree {
             }
         };
 
-        // Forward scan to find topmost roots for each adapter
-        let ancestors = path.ancestors().skip(1).collect::<Vec<_>>();
-        for component in ancestors.iter().rev() {
-            worktree_roots.update(cx, |this, cx| {})
-        }
-        for ancestor in path.ancestors().skip(1) {
-            if adapters_with_roots == adapters.len() {
-                // We've found roots for all adapters, no need to continue
-                break;
-            }
-            worktree_roots.update(cx, |this, _| {
-                let adapter_roots = this.roots.entry(ancestor.into()).or_default();
-                for (ix, adapter) in adapters.iter().enumerate() {
-                    let adapter_already_found_root = filled_adapters[ix];
-                    if adapter_already_found_root {
-                        continue;
-                    }
+        let key = TriePath::from(&*path);
 
-                    match adapter_roots.entry(adapter.name.clone()) {
-                        TreeEntry::Vacant(vacant_entry) => {
-                            let root = adapter.find_closest_project_root(worktree_id, path.clone());
-                            vacant_entry.insert(root.is_some());
-                            if let Some(root) = root {
-                                roots.insert(
-                                    AdapterWrapper(adapter.clone()),
-                                    (worktree_id, root).into(),
-                                );
-                            }
-                        }
-                        TreeEntry::Occupied(occupied_entry) => {
-                            let is_root = *occupied_entry.get();
-                            if is_root {
-                                roots.insert(
-                                    AdapterWrapper(adapter.clone()),
-                                    (worktree_id, ancestor).into(),
-                                );
-                            }
-
-                            continue;
-                        }
+        let mut roots = worktree_roots.update(cx, |this, _| {
+            this._roots.walk(&key, &mut |path, labels| {
+                for label in labels {
+                    if let Some(slot) = roots.get_mut(label) {
+                        debug_assert_eq!(slot, &mut None, "For a given path to a root of a worktree there should be at most project root");
+                        let _ = slot.insert(ProjectPath {
+                            worktree_id,
+                            path: path.clone(),
+                        });
                     }
-                    filled_adapters[ix] = true;
-                    adapters_with_roots += 1;
+                }
+                if roots.values().all(|v| v.is_some()) {
+                    // Stop recursing downwards as we've already found all the project roots we're interested in.
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
                 }
             });
-        }
+            roots
+        });
+
+        // for ancestor in path.ancestors().skip(1) {
+        //     worktree_roots.update(cx, |this, _| {
+        //         let adapter_roots = this.roots.entry(ancestor.into()).or_default();
+        //         for (ix, adapter) in adapters.iter().enumerate() {
+        //             match adapter_roots.entry(adapter.name.clone()) {
+        //                 TreeEntry::Vacant(vacant_entry) => {
+        //                     let root = adapter.find_closest_project_root(worktree_id, path.clone());
+        //                     vacant_entry.insert(root.is_some());
+        //                     if let Some(root) = root {
+        //                         roots.insert(
+        //                             AdapterWrapper(adapter.clone()),
+        //                             (worktree_id, root).into(),
+        //                         );
+        //                     }
+        //                 }
+        //                 TreeEntry::Occupied(occupied_entry) => {
+        //                     let is_root = *occupied_entry.get();
+        //                     if is_root {
+        //                         roots.insert(
+        //                             AdapterWrapper(adapter.clone()),
+        //                             (worktree_id, ancestor).into(),
+        //                         );
+        //                     }
+
+        //                     continue;
+        //                 }
+        //             }
+        //         }
+        //     });
+        // }
 
         roots
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|v| (k, v)))
+            .collect()
     }
     fn on_worktree_store_event(
         &mut self,

@@ -1,6 +1,7 @@
 use std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet},
     ffi::OsStr,
+    ops::ControlFlow,
     path::Path,
     sync::Arc,
 };
@@ -43,13 +44,15 @@ impl<Label: Ord> RootPathTrie<Label> {
     pub(crate) fn walk<'a>(
         &'a self,
         path: &TriePath,
-        callback: &mut dyn FnMut(&'a Path, &BTreeSet<Label>),
+        callback: &mut dyn for<'b> FnMut(&'b Arc<Path>, &'a BTreeSet<Label>) -> ControlFlow<()>,
     ) {
         let mut current = self;
-
+        let tmp_path = Arc::from(Path::new(""));
         for key in path.0.iter() {
             if !current.labels.is_empty() {
-                (callback)(Path::new(""), &current.labels);
+                if (callback)(&tmp_path, &current.labels).is_break() {
+                    break;
+                };
             }
             current = match current.children.get(key) {
                 Some(child) => child,
@@ -57,7 +60,7 @@ impl<Label: Ord> RootPathTrie<Label> {
             };
         }
         if !current.labels.is_empty() {
-            (callback)(Path::new(""), &current.labels);
+            (callback)(&tmp_path, &current.labels);
         }
     }
 }
