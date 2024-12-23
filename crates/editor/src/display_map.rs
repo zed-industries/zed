@@ -32,6 +32,7 @@ use crate::{
 pub use block_map::{
     Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap,
     BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+    TopExcerptInfo,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
@@ -51,8 +52,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptInfo, MultiBuffer, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
+    ToOffset, ToPoint,
 };
 use serde::Deserialize;
 use std::{
@@ -1105,10 +1106,8 @@ impl DisplaySnapshot {
             .map(|(row, block)| (DisplayRow(row), block))
     }
 
-    pub fn top_excerpt(&self, row: DisplayRow) -> Option<(Option<DisplayRow>, &ExcerptInfo)> {
-        self.block_snapshot
-            .top_excerpt(row.0)
-            .map(|(row, info)| (row.map(DisplayRow), info))
+    pub fn top_excerpt(&self, row: DisplayRow) -> Option<TopExcerptInfo<'_>> {
+        self.block_snapshot.top_excerpt(row.0)
     }
 
     pub fn block_for_id(&self, id: BlockId) -> Option<Block> {

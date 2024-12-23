@@ -1411,39 +1411,55 @@ impl BlockSnapshot {
         })
     }
 
-    pub fn top_excerpt(&self, top_row: u32) -> Option<(Option<u32>, &ExcerptInfo)> {
+    pub fn top_excerpt(&self, top_row: u32) -> Option<TopExcerptInfo<'_>> {
         let mut cursor = self.transforms.cursor::<BlockRow>(&());
         cursor.seek(&BlockRow(top_row), Bias::Left, &());
 
-        if let Some(transform) = cursor.item() {
-            if matches!(&transform.block, Some(Block::FoldedBuffer { .. })) {
-                return None;
-            }
-        }
-
-        cursor.next(&());
-
         while let Some(transform) = cursor.item() {
+            let start = cursor.start().0;
+            let end = cursor.end(&()).0;
+
             match &transform.block {
+                Some(Block::ExcerptBoundary {
+                    prev_excerpt,
+                    next_excerpt,
+                    starts_new_buffer,
+                    show_excerpt_controls,
+                    ..
+                }) => {
+                    let matches_start = if *show_excerpt_controls && prev_excerpt.is_some() {
+                        start < top_row
+                    } else {
+                        start <= top_row
+                    };
+
+                    if matches_start && top_row <= end {
+                        return next_excerpt.as_ref().map(|excerpt| TopExcerptInfo {
+                            next_buffer_row: None,
+                            next_excerpt_controls_present: *show_excerpt_controls,
+                            excerpt,
+                        });
+                    }
+
+                    let next_buffer_row = if *starts_new_buffer { Some(end) } else { None };
+
+                    return prev_excerpt.as_ref().map(|excerpt| TopExcerptInfo {
+                        excerpt,
+                        next_buffer_row,
+                        next_excerpt_controls_present: *show_excerpt_controls,
+                    });
+                }
                 Some(Block::FoldedBuffer {
                     prev_excerpt: Some(excerpt),
                     ..
                 }) => {
-                    let next_buffer_row = Some(cursor.end(&()).0 + 1);
-                    return Some((next_buffer_row, excerpt));
-                }
-                Some(Block::ExcerptBoundary {
-                    prev_excerpt: Some(excerpt),
-                    starts_new_buffer,
-                    ..
-                }) => {
-                    let next_buffer_row = if *starts_new_buffer {
-                        Some(cursor.end(&()).0)
-                    } else {
-                        None
-                    };
-
-                    return Some((next_buffer_row, excerpt));
+                    if top_row <= start {
+                        return Some(TopExcerptInfo {
+                            next_buffer_row: Some(end),
+                            next_excerpt_controls_present: false,
+                            excerpt,
+                        });
+                    }
                 }
                 _ => {}
             }
@@ -1735,6 +1751,12 @@ impl<'a> BlockChunks<'a> {
             self.input_chunk = Chunk::default();
         }
     }
+}
+
+pub struct TopExcerptInfo<'a> {
+    pub excerpt: &'a ExcerptInfo,
+    pub next_excerpt_controls_present: bool,
+    pub next_buffer_row: Option<u32>,
 }
 
 impl<'a> Iterator for BlockChunks<'a> {

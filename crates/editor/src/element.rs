@@ -22,7 +22,7 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
     LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SoftWrap, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    SoftWrap, ToPoint, ToggleFold, TopExcerptInfo, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
     MULTI_BUFFER_EXCERPT_HEADER_PADDING,
 };
@@ -2887,10 +2887,13 @@ impl EditorElement {
 
     fn layout_sticky_buffer_header(
         &self,
-        next_buffer_row: Option<DisplayRow>,
+        TopExcerptInfo {
+            excerpt,
+            next_excerpt_controls_present,
+            next_buffer_row,
+        }: TopExcerptInfo<'_>,
         scroll_position: f32,
         line_height: Pixels,
-        excerpt: &ExcerptInfo,
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
         cx: &mut WindowContext,
@@ -2906,8 +2909,11 @@ impl EditorElement {
         if let Some(next_buffer_row) = next_buffer_row {
             // Push up the sticky header when the excerpt is getting close to the top of the viewport
 
-            let max_row =
-                next_buffer_row.0 - MULTI_BUFFER_EXCERPT_HEADER_HEIGHT - FILE_HEADER_HEIGHT * 2;
+            let mut max_row = next_buffer_row - FILE_HEADER_HEIGHT * 2;
+
+            if next_excerpt_controls_present {
+                max_row -= MULTI_BUFFER_EXCERPT_HEADER_HEIGHT;
+            }
 
             let offset = scroll_position - max_row as f32;
 
@@ -6110,8 +6116,12 @@ impl Element for EditorElement {
                     let scroll_range_bounds = scrollbar_range_data.scroll_range;
                     let mut scroll_width = scroll_range_bounds.size.width;
 
-                    let top_excerpt = snapshot.top_excerpt(start_row);
-                    let top_excerpt_id = top_excerpt.map(|(_, excerpt)| excerpt.id);
+                    let top_excerpt = if snapshot.buffer_snapshot.show_headers() {
+                        snapshot.top_excerpt(start_row)
+                    } else {
+                        None
+                    };
+                    let top_excerpt_id = top_excerpt.as_ref().map(|top| top.excerpt.id);
 
                     let blocks = cx.with_element_namespace("blocks", |cx| {
                         self.render_blocks(
@@ -6142,13 +6152,12 @@ impl Element for EditorElement {
                         }
                     };
 
-                    let sticky_buffer_header = top_excerpt.map(|(next_buffer_row, excerpt)| {
+                    let sticky_buffer_header = top_excerpt.map(|top_excerpt| {
                         cx.with_element_namespace("blocks", |cx| {
                             self.layout_sticky_buffer_header(
-                                next_buffer_row,
+                                top_excerpt,
                                 scroll_position.y,
                                 line_height,
-                                excerpt,
                                 &snapshot,
                                 &hitbox,
                                 cx,
