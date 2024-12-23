@@ -10,6 +10,7 @@ use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
+use collections::HashMap;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
@@ -40,7 +41,7 @@ use simplelog::ConfigBuilder;
 use std::{
     env,
     fs::OpenOptions,
-    io::{IsTerminal, Write},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process,
     sync::Arc,
@@ -69,22 +70,59 @@ use util::load_shell_from_passwd;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-fn fail_to_launch(e: anyhow::Error) {
-    eprintln!("Zed failed to launch: {e:?}");
-    App::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |cx| cx.new_view(|_| gpui::Empty)) {
-            window.update(cx, |_, cx| {
-                let response = cx.prompt(gpui::PromptLevel::Critical, "Zed failed to launch", Some(&format!("{e}\n\nFor help resolving this, please open an issue on https://github.com/zed-industries/zed")), &["Exit"]);
+fn files_not_createad_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
+    let message = "Zed failed to launch";
+    let error_details = errors
+        .into_iter()
+        .flat_map(|(kind, paths)| {
+            #[allow(unused_mut)] // for non-unix platforms
+            let mut error_kind_details = match paths.len() {
+                0 => return None,
+                1 => format!(
+                    "{kind} when creating directory {:?}",
+                    paths.first().expect("match arm checks for a single entry")
+                ),
+                _many => format!("{kind} when creating directories {paths:?}"),
+            };
 
-                cx.spawn(|_, mut cx| async move {
-                    response.await?;
-                    cx.update(|cx| {
-                        cx.quit()
+            #[cfg(unix)]
+            {
+                match kind {
+                    io::ErrorKind::PermissionDenied => {
+                        error_kind_details.push_str("\n\nConsider using chown and chmod tools for altering the directories permissions if your user has corresponding rights.\
+                            \nFor example, `sudo chown $(whoami):staff ~/.config` and `chmod +uwrx ~/.config`");
+                    }
+                    _ => {}
+                }
+            }
+
+            Some(error_kind_details)
+        })
+        .collect::<Vec<_>>().join("\n\n");
+
+    eprintln!("{message}: {error_details}");
+    App::new().run(move |cx| {
+        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |cx| {
+            cx.new_view(|_| gpui::Empty)
+        }) {
+            window
+                .update(cx, |_, cx| {
+                    let response = cx.prompt(
+                        gpui::PromptLevel::Critical,
+                        message,
+                        Some(&error_details),
+                        &["Exit"],
+                    );
+
+                    cx.spawn(|_, mut cx| async move {
+                        response.await?;
+                        cx.update(|cx| cx.quit())
                     })
-                }).detach_and_log_err(cx);
-            }).log_err();
+                    .detach_and_log_err(cx);
+                })
+                .log_err();
         } else {
-            fail_to_open_window(e, cx)
+            fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
         }
     })
 }
@@ -139,8 +177,9 @@ fn main() {
     menu::init();
     zed_actions::init();
 
-    if let Err(e) = init_paths() {
-        fail_to_launch(e);
+    let file_errors = init_paths();
+    if !file_errors.is_empty() {
+        files_not_createad_on_launch(file_errors);
         return;
     }
 
@@ -907,8 +946,8 @@ pub(crate) async fn restorable_workspace_locations(
     }
 }
 
-fn init_paths() -> anyhow::Result<()> {
-    for path in [
+fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
+    [
         paths::config_dir(),
         paths::extensions_dir(),
         paths::languages_dir(),
@@ -916,12 +955,13 @@ fn init_paths() -> anyhow::Result<()> {
         paths::logs_dir(),
         paths::temp_dir(),
     ]
-    .iter()
-    {
-        std::fs::create_dir_all(path)
-            .map_err(|e| anyhow!("Could not create directory {:?}: {}", path, e))?;
-    }
-    Ok(())
+    .into_iter()
+    .fold(HashMap::default(), |mut errors, path| {
+        if let Err(e) = std::fs::create_dir_all(path) {
+            errors.entry(e.kind()).or_insert_with(Vec::new).push(path);
+        }
+        errors
+    })
 }
 
 fn init_logger() {
@@ -1001,7 +1041,7 @@ fn init_stdout_logger() {
 }
 
 fn stdout_is_a_pty() -> bool {
-    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
+    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
 }
 
 #[derive(Parser, Debug)]
