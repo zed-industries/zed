@@ -36,8 +36,8 @@ use gpui::{
     Entity, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
-    UnderlineStyle, View, ViewContext, WeakView, WindowContext,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, View,
+    ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -2062,7 +2062,7 @@ impl EditorElement {
                 write!(&mut line_number, "{number}").unwrap();
 
                 let shaped_line = self
-                    .shape_line_number(SharedString::from(&line_number), color, false, cx)
+                    .shape_line_number(SharedString::from(&line_number), color, cx)
                     .log_err()?;
                 let scroll_top = scroll_position.y * line_height;
                 let line_origin = gutter_hitbox.map(|hitbox| {
@@ -3834,13 +3834,13 @@ impl EditorElement {
             let Some(hitbox) = hitbox else {
                 continue;
             };
+            let color = if hitbox.is_hovered(cx) {
+                cx.theme().colors().editor_active_line_number
+            } else {
+                cx.theme().colors().editor_line_number
+            };
             let Some(line) = self
-                .shape_line_number(
-                    line.text.clone(),
-                    cx.theme().colors().editor_active_line_number,
-                    hitbox.is_hovered(cx),
-                    cx,
-                )
+                .shape_line_number(line.text.clone(), color, cx)
                 .log_err()
             else {
                 continue;
@@ -4962,7 +4962,6 @@ impl EditorElement {
         &self,
         text: SharedString,
         color: Hsla,
-        hovered: bool,
         cx: &WindowContext,
     ) -> anyhow::Result<ShapedLine> {
         let run = TextRun {
@@ -4970,14 +4969,7 @@ impl EditorElement {
             font: self.style.text.font(),
             color,
             background_color: None,
-            underline: if hovered {
-                Some(UnderlineStyle {
-                    thickness: px(1.0),
-                    ..UnderlineStyle::default()
-                })
-            } else {
-                None
-            },
+            underline: None,
             strikethrough: None,
         };
         cx.text_system().shape_line(
