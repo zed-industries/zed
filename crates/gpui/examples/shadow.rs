@@ -1,4 +1,7 @@
-use gpui::*;
+use gpui::{
+    div, prelude::*, px, rgb, size, App, AppContext, Bounds, ViewContext, WindowBounds,
+    WindowOptions,
+};
 
 struct Shadow {}
 

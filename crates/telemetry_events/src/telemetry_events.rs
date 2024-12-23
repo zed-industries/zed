@@ -2,9 +2,9 @@
 
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Display, sync::Arc, time::Duration};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EventRequestBody {
     /// Identifier unique to each system Zed is installed on
     pub system_id: Option<String>,
@@ -32,7 +32,7 @@ impl EventRequestBody {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EventWrapper {
     pub signed_in: bool,
     /// Duration between this event's timestamp and the timestamp of the first event in the current batch
@@ -91,8 +91,10 @@ impl Display for AssistantPhase {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Event {
+    Flexible(FlexibleEvent),
     Editor(EditorEvent),
     InlineCompletion(InlineCompletionEvent),
+    InlineCompletionRating(InlineCompletionRatingEvent),
     Call(CallEvent),
     Assistant(AssistantEvent),
     Cpu(CpuEvent),
@@ -103,6 +105,12 @@ pub enum Event {
     Edit(EditEvent),
     Action(ActionEvent),
     Repl(ReplEvent),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FlexibleEvent {
+    pub event_type: String,
+    pub event_properties: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -128,6 +136,21 @@ pub struct InlineCompletionEvent {
     pub provider: String,
     pub suggestion_accepted: bool,
     pub file_extension: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum InlineCompletionRating {
+    Positive,
+    Negative,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InlineCompletionRatingEvent {
+    pub rating: InlineCompletionRating,
+    pub input_events: Arc<str>,
+    pub input_excerpt: Arc<str>,
+    pub output_excerpt: Arc<str>,
+    pub feedback: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -246,6 +269,7 @@ pub struct Panic {
     pub app_version: String,
     /// Zed release channel (stable, preview, dev)
     pub release_channel: String,
+    pub target: Option<String>,
     pub os_name: String,
     pub os_version: Option<String>,
     pub architecture: String,

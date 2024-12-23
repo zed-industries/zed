@@ -668,6 +668,7 @@ impl Hash for RenderGlyphParams {
         self.font_size.0.to_bits().hash(state);
         self.subpixel_variant.hash(state);
         self.scale_factor.to_bits().hash(state);
+        self.is_emoji.hash(state);
     }
 }
 

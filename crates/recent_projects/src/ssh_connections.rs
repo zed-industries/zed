@@ -1,13 +1,15 @@
+use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use auto_update::AutoUpdater;
 use editor::Editor;
+use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
     percentage, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
-    EventEmitter, FocusableView, ParentElement as _, PromptLevel, Render, SemanticVersion,
-    SharedString, Task, TextStyleRefinement, Transformation, View, WeakView,
+    EventEmitter, FocusableView, FontFeatures, ParentElement as _, PromptLevel, Render,
+    SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, View, WeakView,
 };
 use gpui::{AppContext, Model};
 
@@ -75,7 +77,7 @@ pub struct SshConnection {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub projects: Vec<SshProject>,
+    pub projects: BTreeSet<SshProject>,
     /// Name to use for this server in UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
@@ -101,7 +103,7 @@ impl From<SshConnection> for SshConnectionOptions {
     }
 }
 
-#[derive(Clone, Default, Serialize, PartialEq, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema)]
 pub struct SshProject {
     pub paths: Vec<String>,
 }
@@ -177,6 +179,7 @@ impl SshPrompt {
         let mut text_style = cx.text_style();
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
+            font_features: Some(FontFeatures::disable_ligatures()),
             font_size: Some(theme.buffer_font_size.into()),
             color: Some(cx.theme().colors().editor_foreground),
             background_color: Some(gpui::transparent_black()),
@@ -198,7 +201,7 @@ impl SshPrompt {
             selection_background_color: cx.theme().players().local().selection,
             ..Default::default()
         };
-        let markdown = cx.new_view(|cx| Markdown::new_text(prompt, markdown_style, None, cx, None));
+        let markdown = cx.new_view(|cx| Markdown::new_text(prompt, markdown_style, None, None, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         cx.focus_view(&self.editor);
@@ -319,9 +322,9 @@ impl RenderOnce for SshConnectionHeader {
         };
 
         h_flex()
-            .px(Spacing::XLarge.rems(cx))
-            .pt(Spacing::Large.rems(cx))
-            .pb(Spacing::Small.rems(cx))
+            .px(DynamicSpacing::Base12.rems(cx))
+            .pt(DynamicSpacing::Base08.rems(cx))
+            .pb(DynamicSpacing::Base04.rems(cx))
             .rounded_t_md()
             .w_full()
             .gap_1p5()
@@ -478,43 +481,17 @@ impl remote::SshClientDelegate for SshClientDelegate {
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> Task<Result<(String, String)>> {
+    ) -> Task<Result<Option<(String, String)>>> {
         cx.spawn(|mut cx| async move {
-                let (release, request_body) = AutoUpdater::get_remote_server_release_url(
-                            platform.os,
-                            platform.arch,
-                            release_channel,
-                            version,
-                            &mut cx,
-                        )
-                        .await
-                        .map_err(|e| {
-                            anyhow!(
-                                "Failed to get remote server binary download url (version: {}, os: {}, arch: {}): {}",
-                                version.map(|v| format!("{}", v)).unwrap_or("unknown".to_string()),
-                                platform.os,
-                                platform.arch,
-                                e
-                            )
-                        })?;
-
-                Ok((release.url, request_body))
-            }
-        )
-    }
-
-    fn remote_server_binary_path(
-        &self,
-        platform: SshPlatform,
-        cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf> {
-        let release_channel = cx.update(|cx| ReleaseChannel::global(cx))?;
-        Ok(paths::remote_server_dir_relative().join(format!(
-            "zed-remote-server-{}-{}-{}",
-            release_channel.dev_name(),
-            platform.os,
-            platform.arch
-        )))
+            AutoUpdater::get_remote_server_release_url(
+                platform.os,
+                platform.arch,
+                release_channel,
+                version,
+                &mut cx,
+            )
+            .await
+        })
     }
 }
 
@@ -653,6 +630,15 @@ pub async fn open_ssh_project(
                 continue;
             }
         }
+
+        window
+            .update(cx, |workspace, cx| {
+                if let Some(client) = workspace.project().read(cx).ssh_client().clone() {
+                    ExtensionStore::global(cx)
+                        .update(cx, |store, cx| store.register_ssh_client(client, cx));
+                }
+            })
+            .ok();
 
         break;
     }

@@ -1,9 +1,14 @@
+use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use gpui::*;
-use std::fs;
+use anyhow::Result;
+use gpui::{
+    actions, div, img, prelude::*, px, rgb, size, App, AppContext, AssetSource, Bounds,
+    ImageSource, KeyBinding, Menu, MenuItem, Point, SharedString, SharedUri, TitlebarOptions,
+    ViewContext, WindowBounds, WindowContext, WindowOptions,
+};
 
 struct Assets {
     base: PathBuf,
@@ -55,13 +60,13 @@ impl RenderOnce for ImageContainer {
                 .size_full()
                 .gap_4()
                 .child(self.text)
-                .child(img(self.src).w(px(256.0)).h(px(256.0))),
+                .child(img(self.src).size(px(256.0))),
         )
     }
 }
 
 struct ImageShowcase {
-    local_resource: Arc<PathBuf>,
+    local_resource: Arc<std::path::Path>,
     remote_resource: SharedUri,
     asset_resource: SharedString,
 }
@@ -75,7 +80,7 @@ impl Render for ImageShowcase {
             .justify_center()
             .items_center()
             .gap_8()
-            .bg(rgb(0xFFFFFF))
+            .bg(rgb(0xffffff))
             .child(
                 div()
                     .flex()
@@ -153,9 +158,10 @@ fn main() {
             cx.open_window(window_options, |cx| {
                 cx.new_view(|_cx| ImageShowcase {
                     // Relative path to your root project path
-                    local_resource: Arc::new(
-                        PathBuf::from_str("crates/gpui/examples/image/app-icon.png").unwrap(),
-                    ),
+                    local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
+                        .unwrap()
+                        .into(),
+
                     remote_resource: "https://picsum.photos/512/512".into(),
 
                     asset_resource: "image/color.svg".into(),

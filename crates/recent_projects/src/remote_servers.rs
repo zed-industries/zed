@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -173,7 +174,7 @@ impl ProjectPicker {
                                     .as_mut()
                                     .and_then(|connections| connections.get_mut(ix))
                                 {
-                                    server.projects.push(SshProject { paths })
+                                    server.projects.insert(SshProject { paths });
                                 }
                             }
                         });
@@ -385,7 +386,7 @@ impl RemoteServerProjects {
         let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
 
         let connection = connect_over_ssh(
-            ConnectionIdentifier::Setup,
+            ConnectionIdentifier::setup(),
             connection_options.clone(),
             ssh_prompt.clone(),
             cx,
@@ -476,7 +477,7 @@ impl RemoteServerProjects {
                     .clone();
 
                 let connect = connect_over_ssh(
-                    ConnectionIdentifier::Setup,
+                    ConnectionIdentifier::setup(),
                     connection_options.clone(),
                     prompt,
                     cx,
@@ -652,7 +653,7 @@ impl RemoteServerProjects {
                             }))
                             .child(
                                 ListItem::new(("new-remote-project", ix))
-                                    .selected(
+                                    .toggle_state(
                                         ssh_server.open_folder.focus_handle.contains_focused(cx),
                                     )
                                     .inset(true)
@@ -687,7 +688,7 @@ impl RemoteServerProjects {
                             }))
                             .child(
                                 ListItem::new(("server-options", ix))
-                                    .selected(
+                                    .toggle_state(
                                         ssh_server.configure.focus_handle.contains_focused(cx),
                                     )
                                     .inset(true)
@@ -771,7 +772,7 @@ impl RemoteServerProjects {
             }))
             .child(
                 ListItem::new((element_id_base, ix))
-                    .selected(navigation.focus_handle.contains_focused(cx))
+                    .toggle_state(navigation.focus_handle.contains_focused(cx))
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(
@@ -784,7 +785,8 @@ impl RemoteServerProjects {
                     .end_hover_slot::<AnyElement>(Some(
                         div()
                             .mr_2()
-                            .child(
+                            .child({
+                                let project = project.clone();
                                 // Right-margin to offset it from the Scrollbar
                                 IconButton::new("remove-remote-project", IconName::TrashAlt)
                                     .icon_size(IconSize::Small)
@@ -792,9 +794,9 @@ impl RemoteServerProjects {
                                     .size(ButtonSize::Large)
                                     .tooltip(|cx| Tooltip::text("Delete Remote Project", cx))
                                     .on_click(cx.listener(move |this, _, cx| {
-                                        this.delete_ssh_project(server_ix, ix, cx)
-                                    })),
-                            )
+                                        this.delete_ssh_project(server_ix, &project, cx)
+                                    }))
+                            })
                             .into_any_element(),
                     )),
             )
@@ -823,14 +825,20 @@ impl RemoteServerProjects {
         });
     }
 
-    fn delete_ssh_project(&mut self, server: usize, project: usize, cx: &mut ViewContext<Self>) {
+    fn delete_ssh_project(
+        &mut self,
+        server: usize,
+        project: &SshProject,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let project = project.clone();
         self.update_settings_file(cx, move |setting, _| {
             if let Some(server) = setting
                 .ssh_connections
                 .as_mut()
                 .and_then(|connections| connections.get_mut(server))
             {
-                server.projects.remove(project);
+                server.projects.remove(&project);
             }
         });
     }
@@ -848,7 +856,7 @@ impl RemoteServerProjects {
                     host: SharedString::from(connection_options.host),
                     username: connection_options.username,
                     port: connection_options.port,
-                    projects: vec![],
+                    projects: BTreeSet::<SshProject>::new(),
                     nickname: None,
                     args: connection_options.args.unwrap_or_default(),
                     upload_binary_over_ssh: None,
@@ -976,7 +984,7 @@ impl RemoteServerProjects {
                                 }))
                                 .child(
                                     ListItem::new("add-nickname")
-                                        .selected(entries[0].focus_handle.contains_focused(cx))
+                                        .toggle_state(entries[0].focus_handle.contains_focused(cx))
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
@@ -1035,7 +1043,7 @@ impl RemoteServerProjects {
                                 })
                                 .child(
                                     ListItem::new("copy-server-address")
-                                        .selected(entries[1].focus_handle.contains_focused(cx))
+                                        .toggle_state(entries[1].focus_handle.contains_focused(cx))
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
@@ -1108,7 +1116,7 @@ impl RemoteServerProjects {
                                 }))
                                 .child(
                                     ListItem::new("remove-server")
-                                        .selected(entries[2].focus_handle.contains_focused(cx))
+                                        .toggle_state(entries[2].focus_handle.contains_focused(cx))
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .start_slot(Icon::new(IconName::Trash).color(Color::Error))
@@ -1136,7 +1144,7 @@ impl RemoteServerProjects {
                                 }))
                                 .child(
                                     ListItem::new("go-back")
-                                        .selected(entries[3].focus_handle.contains_focused(cx))
+                                        .toggle_state(entries[3].focus_handle.contains_focused(cx))
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .start_slot(
@@ -1225,7 +1233,7 @@ impl RemoteServerProjects {
             .anchor_scroll(state.add_new_server.scroll_anchor.clone())
             .child(
                 ListItem::new("register-remove-server-button")
-                    .selected(state.add_new_server.focus_handle.contains_focused(cx))
+                    .toggle_state(state.add_new_server.focus_handle.contains_focused(cx))
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Plus).color(Color::Muted))

@@ -1,12 +1,16 @@
-use std::cell::{RefCell, RefMut};
-use std::hash::Hash;
-use std::os::fd::{AsRawFd, BorrowedFd};
-use std::path::PathBuf;
-use std::rc::{Rc, Weak};
-use std::time::{Duration, Instant};
+use std::{
+    cell::{RefCell, RefMut},
+    hash::Hash,
+    os::fd::{AsRawFd, BorrowedFd},
+    path::PathBuf,
+    rc::{Rc, Weak},
+    time::{Duration, Instant},
+};
 
-use calloop::timer::{TimeoutAction, Timer};
-use calloop::{EventLoop, LoopHandle};
+use calloop::{
+    timer::{TimeoutAction, Timer},
+    EventLoop, LoopHandle,
+};
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
@@ -64,30 +68,28 @@ use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
-use crate::platform::linux::wayland::clipboard::{
-    Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE,
-};
-use crate::platform::linux::wayland::cursor::Cursor;
-use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
-use crate::platform::linux::wayland::window::WaylandWindow;
-use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
-use crate::platform::linux::LinuxClient;
+
 use crate::platform::linux::{
     get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
     reveal_path_internal,
+    wayland::{
+        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
+        cursor::Cursor,
+        serial::{SerialKind, SerialTracker},
+        window::WaylandWindow,
+    },
+    xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+    LinuxClient,
 };
-use crate::platform::PlatformWindow;
+use crate::platform::{blade::BladeContext, PlatformWindow};
 use crate::{
-    point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
-    DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
+    point, px, size, AnyWindowHandle, Bounds, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
+    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScaledPixels,
+    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, DOUBLE_CLICK_INTERVAL,
+    SCROLL_LINES,
 };
-use crate::{
-    AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScaledPixels, ScrollDelta,
-    ScrollWheelEvent, TouchPhase,
-};
-use crate::{LinuxCommon, WindowParams};
 
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
@@ -186,6 +188,7 @@ pub struct Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
+    gpu_context: BladeContext,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -459,6 +462,8 @@ impl WaylandClient {
             })
             .unwrap();
 
+        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
+
         let seat = seat.unwrap();
         let globals = Globals::new(
             globals,
@@ -496,7 +501,7 @@ impl WaylandClient {
                     XDPEvent::CursorTheme(theme) => {
                         if let Some(client) = client.0.upgrade() {
                             let mut client = client.borrow_mut();
-                            client.cursor.set_theme(theme.as_str(), None);
+                            client.cursor.set_theme(theme.as_str());
                         }
                     }
                     XDPEvent::CursorSize(size) => {
@@ -512,6 +517,7 @@ impl WaylandClient {
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
             globals,
+            gpu_context,
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
@@ -627,6 +633,7 @@ impl LinuxClient for WaylandClient {
         let (window, surface_id) = WaylandWindow::new(
             handle,
             state.globals.clone(),
+            &state.gpu_context,
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             state.common.appearance,
@@ -649,15 +656,16 @@ impl LinuxClient for WaylandClient {
 
             if let Some(cursor_shape_device) = &state.cursor_shape_device {
                 cursor_shape_device.set_shape(serial, style.to_shape());
-            } else if state.mouse_focused_window.is_some() {
+            } else if let Some(focused_window) = &state.mouse_focused_window {
                 // cursor-shape-v1 isn't supported, set the cursor using a surface.
                 let wl_pointer = state
                     .wl_pointer
                     .clone()
                     .expect("window is focused by pointer");
+                let scale = focused_window.primary_output_scale();
                 state
                     .cursor
-                    .set_icon(&wl_pointer, serial, &style.to_icon_name());
+                    .set_icon(&wl_pointer, serial, &style.to_icon_name(), scale);
             }
         }
     }
@@ -1208,7 +1216,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             compose.feed(keysym);
                             match compose.status() {
                                 xkb::Status::Composing => {
-                                    keystroke.ime_key = None;
+                                    keystroke.key_char = None;
                                     state.pre_edit_text =
                                         compose.utf8().or(Keystroke::underlying_dead_key(keysym));
                                     let pre_edit =
@@ -1220,7 +1228,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                                 xkb::Status::Composed => {
                                     state.pre_edit_text.take();
-                                    keystroke.ime_key = compose.utf8();
+                                    keystroke.key_char = compose.utf8();
                                     if let Some(keysym) = compose.keysym() {
                                         keystroke.key = xkb::keysym_get_name(keysym);
                                     }
@@ -1340,7 +1348,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                             keystroke: Keystroke {
                                 modifiers: Modifiers::default(),
                                 key: commit_text.clone(),
-                                ime_key: Some(commit_text),
+                                key_char: Some(commit_text),
                             },
                             is_held: false,
                         }));
@@ -1439,9 +1447,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         if let Some(cursor_shape_device) = &state.cursor_shape_device {
                             cursor_shape_device.set_shape(serial, style.to_shape());
                         } else {
-                            state
-                                .cursor
-                                .set_icon(&wl_pointer, serial, &style.to_icon_name());
+                            let scale = window.primary_output_scale();
+                            state.cursor.set_icon(
+                                &wl_pointer,
+                                serial,
+                                &style.to_icon_name(),
+                                scale,
+                            );
                         }
                     }
                     drop(state);

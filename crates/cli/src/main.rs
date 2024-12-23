@@ -1,4 +1,7 @@
-#![cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
+#![cfg_attr(
+    any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+    allow(dead_code)
+)]
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -14,6 +17,12 @@ use std::{
 };
 use tempfile::NamedTempFile;
 use util::paths::PathWithPosition;
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use {
+    std::io::IsTerminal,
+    util::{load_login_shell_environment, load_shell_from_passwd, ResultExt},
+};
 
 struct Detect;
 
@@ -56,6 +65,13 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
+    /// Uninstall Zed from user system
+    #[cfg(all(
+        any(target_os = "linux", target_os = "macos"),
+        not(feature = "no-bundled-uninstall")
+    ))]
+    #[arg(long)]
+    uninstall: bool,
 }
 
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
@@ -88,7 +104,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 
 fn main() -> Result<()> {
     // Exit flatpak sandbox if needed
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         flatpak::try_restart_to_host();
         flatpak::ld_extra_libs();
@@ -106,7 +122,7 @@ fn main() -> Result<()> {
     }
     let args = Args::parse();
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let args = flatpak::set_bin_if_no_escape(args);
 
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
@@ -114,6 +130,29 @@ fn main() -> Result<()> {
     if args.version {
         println!("{}", app.zed_version_string());
         return Ok(());
+    }
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "macos"),
+        not(feature = "no-bundled-uninstall")
+    ))]
+    if args.uninstall {
+        static UNINSTALL_SCRIPT: &[u8] = include_bytes!("../../../script/uninstall.sh");
+
+        let tmp_dir = tempfile::tempdir()?;
+        let script_path = tmp_dir.path().join("uninstall.sh");
+        fs::write(&script_path, UNINSTALL_SCRIPT)?;
+
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))?;
+
+        let status = std::process::Command::new("sh")
+            .arg(&script_path)
+            .env("ZED_CHANNEL", &*release_channel::RELEASE_CHANNEL_NAME)
+            .status()
+            .context("Failed to execute uninstall script")?;
+
+        std::process::exit(status.code().unwrap_or(1));
     }
 
     let (server, server_name) =
@@ -128,7 +167,16 @@ fn main() -> Result<()> {
         None
     };
 
+    // On Linux, desktop entry uses `cli` to spawn `zed`, so we need to load env vars from the shell
+    // since it doesn't inherit env vars from the terminal.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    if !std::io::stdout().is_terminal() {
+        load_shell_from_passwd().log_err();
+        load_login_shell_environment().log_err();
+    }
+
     let env = Some(std::env::vars().collect::<HashMap<_, _>>());
+
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
     let mut urls = vec![];
@@ -220,7 +268,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux {
     use std::{
         env,
@@ -344,7 +392,7 @@ mod linux {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod flatpak {
     use std::ffi::OsString;
     use std::path::PathBuf;

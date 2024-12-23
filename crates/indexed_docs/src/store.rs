@@ -208,7 +208,7 @@ impl IndexedDocsStore {
             let candidates = items
                 .iter()
                 .enumerate()
-                .map(|(ix, item_path)| StringMatchCandidate::new(ix, item_path.clone()))
+                .map(|(ix, item_path)| StringMatchCandidate::new(ix, &item_path))
                 .collect::<Vec<_>>();
 
             let matches = fuzzy::match_strings(
@@ -335,5 +335,11 @@ impl IndexedDocsDatabase {
             txn.commit()?;
             Ok(())
         })
+    }
+}
+
+impl extension::KeyValueStoreDelegate for IndexedDocsDatabase {
+    fn insert(&self, key: String, docs: String) -> Task<Result<()>> {
+        IndexedDocsDatabase::insert(&self, key, docs)
     }
 }

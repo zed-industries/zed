@@ -18,8 +18,8 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::{OpenRemote, RecentProjects};
 use rpc::proto;
+use settings::Settings as _;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -28,14 +28,16 @@ use ui::{
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
-use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
+use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
 #[cfg(feature = "stories")]
 pub use stories::*;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
+
+const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
 
 actions!(
     collab,
@@ -75,7 +77,7 @@ impl Render for TitleBar {
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
-        let titlebar_color = if cfg!(target_os = "linux") {
+        let titlebar_color = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if cx.is_window_active() && !self.should_move {
                 cx.theme().colors().title_bar_background
             } else {
@@ -132,10 +134,20 @@ impl Render for TitleBar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .when_some(self.application_menu.clone(), |this, menu| this.child(menu))
-                            .children(self.render_project_host(cx))
-                            .child(self.render_project_name(cx))
-                            .children(self.render_project_branch(cx))
+                            .map(|title_bar| {
+                                let mut render_project_items = true;
+                                title_bar
+                                    .when_some(self.application_menu.clone(), |title_bar, menu| {
+                                        render_project_items = !menu.read(cx).is_any_deployed();
+                                        title_bar.child(menu)
+                                    })
+                                    .when(render_project_items, |title_bar| {
+                                        title_bar
+                                            .children(self.render_project_host(cx))
+                                            .child(self.render_project_name(cx))
+                                            .children(self.render_project_branch(cx))
+                                    })
+                            })
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(cx))
@@ -214,7 +226,13 @@ impl TitleBar {
 
         let platform_style = PlatformStyle::platform();
         let application_menu = match platform_style {
-            PlatformStyle::Mac => None,
+            PlatformStyle::Mac => {
+                if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
+                    Some(cx.new_view(ApplicationMenu::new))
+                } else {
+                    None
+                }
+            }
             PlatformStyle::Linux | PlatformStyle::Windows => {
                 Some(cx.new_view(ApplicationMenu::new))
             }
@@ -301,21 +319,24 @@ impl TitleBar {
         Some(
             ButtonLike::new("ssh-server-icon")
                 .child(
-                    IconWithIndicator::new(
-                        Icon::new(IconName::Server)
-                            .size(IconSize::XSmall)
-                            .color(icon_color),
-                        Some(Indicator::dot().color(indicator_color)),
-                    )
-                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                    .into_any_element(),
-                )
-                .child(
-                    div()
+                    h_flex()
+                        .gap_2()
                         .max_w_32()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .child(Label::new(nickname.clone()).size(LabelSize::Small)),
+                        .child(
+                            IconWithIndicator::new(
+                                Icon::new(IconName::Server)
+                                    .size(IconSize::XSmall)
+                                    .color(icon_color),
+                                Some(Indicator::dot().color(indicator_color)),
+                            )
+                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                            .into_any_element(),
+                        )
+                        .child(
+                            Label::new(nickname.clone())
+                                .size(LabelSize::Small)
+                                .text_ellipsis(),
+                        ),
                 )
                 .tooltip(move |cx| {
                     Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)
@@ -394,7 +415,6 @@ impl TitleBar {
             "Open recent project".to_string()
         };
 
-        let workspace = self.workspace.clone();
         Button::new("project_name_trigger", name)
             .when(!is_project_selected, |b| b.color(Color::Muted))
             .style(ButtonStyle::Subtle)
@@ -402,18 +422,19 @@ impl TitleBar {
             .tooltip(move |cx| {
                 Tooltip::for_action(
                     "Recent Projects",
-                    &recent_projects::OpenRecent {
+                    &zed_actions::OpenRecent {
                         create_new_window: false,
                     },
                     cx,
                 )
             })
             .on_click(cx.listener(move |_, _, cx| {
-                if let Some(workspace) = workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        RecentProjects::open(workspace, false, cx);
-                    })
-                }
+                cx.dispatch_action(
+                    OpenRecent {
+                        create_new_window: false,
+                    }
+                    .boxed_clone(),
+                );
             }))
     }
 
@@ -440,14 +461,14 @@ impl TitleBar {
                 .tooltip(move |cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
-                        Some(&ToggleVcsMenu),
+                        Some(&zed_actions::branches::OpenRecent),
                         "Local branches only",
                         cx,
                     )
                 })
                 .on_click(move |_, cx| {
-                    let _ = workspace.update(cx, |this, cx| {
-                        BranchList::open(this, &Default::default(), cx);
+                    let _ = workspace.update(cx, |_this, cx| {
+                        cx.dispatch_action(zed_actions::branches::OpenRecent.boxed_clone());
                     });
                 }),
         )
@@ -577,9 +598,19 @@ impl TitleBar {
                         })
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
                         .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
-                        .action("Themes…", theme_selector::Toggle::default().boxed_clone())
-                        .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                        .action(
+                            "Themes…",
+                            zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                        )
+                        .action("Extensions", zed_actions::Extensions.boxed_clone())
                         .separator()
+                        .link(
+                            "Book Onboarding",
+                            OpenBrowser {
+                                url: BOOK_ONBOARDING.to_string(),
+                            }
+                            .boxed_clone(),
+                        )
                         .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -588,8 +619,12 @@ impl TitleBar {
                     ButtonLike::new("user-menu")
                         .child(
                             h_flex()
-                                .gap_1()
-                                .child(Avatar::new(user.avatar_uri.clone()))
+                                .gap_0p5()
+                                .children(
+                                    workspace::WorkspaceSettings::get_global(cx)
+                                        .show_user_picture
+                                        .then(|| Avatar::new(user.avatar_uri.clone())),
+                                )
                                 .child(
                                     Icon::new(IconName::ChevronDown)
                                         .size(IconSize::Small)
@@ -599,15 +634,26 @@ impl TitleBar {
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                 )
-                .anchor(gpui::AnchorCorner::TopRight)
+                .anchor(gpui::Corner::TopRight)
         } else {
             PopoverMenu::new("user-menu")
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
-                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
-                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                            .action(
+                                "Themes…",
+                                zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                            )
+                            .action("Extensions", zed_actions::Extensions.boxed_clone())
+                            .separator()
+                            .link(
+                                "Book Onboarding",
+                                OpenBrowser {
+                                    url: BOOK_ONBOARDING.to_string(),
+                                }
+                                .boxed_clone(),
+                            )
                     })
                     .into()
                 })

@@ -6,22 +6,24 @@ pub use lsp_types::*;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
-use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, SharedString, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
+use schemars::{
+    gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
+    JsonSchema,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{self, Child},
+    process::Child,
 };
 
-#[cfg(target_os = "windows")]
-use smol::process::windows::CommandExt;
-
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fmt,
     io::Write,
     ops::DerefMut,
@@ -78,7 +80,8 @@ pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
-    name: Arc<str>,
+    name: LanguageServerName,
+    process_name: Arc<str>,
     capabilities: RwLock<ServerCapabilities>,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
@@ -105,6 +108,58 @@ impl LanguageServerId {
 
     pub fn to_proto(self) -> u64 {
         self.0 as u64
+    }
+}
+
+/// A name of a language server.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+pub struct LanguageServerName(pub SharedString);
+
+impl std::fmt::Display for LanguageServerName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl AsRef<str> for LanguageServerName {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl AsRef<OsStr> for LanguageServerName {
+    fn as_ref(&self) -> &OsStr {
+        self.0.as_ref().as_ref()
+    }
+}
+
+impl JsonSchema for LanguageServerName {
+    fn schema_name() -> String {
+        "LanguageServerName".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            ..Default::default()
+        }
+        .into()
+    }
+}
+
+impl LanguageServerName {
+    pub const fn new_static(s: &'static str) -> Self {
+        Self(SharedString::new_static(s))
+    }
+
+    pub fn from_proto(s: String) -> Self {
+        Self(s.into())
+    }
+}
+
+impl<'a> From<&'a str> for LanguageServerName {
+    fn from(str: &'a str) -> LanguageServerName {
+        LanguageServerName(str.to_string().into())
     }
 }
 
@@ -269,6 +324,7 @@ impl LanguageServer {
     pub fn new(
         stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
+        server_name: LanguageServerName,
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
@@ -287,29 +343,28 @@ impl LanguageServer {
             &binary.arguments
         );
 
-        let mut command = process::Command::new(&binary.path);
-        command
+        let mut server = util::command::new_smol_command(&binary.path)
             .current_dir(working_dir)
             .args(&binary.arguments)
             .envs(binary.env.unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        #[cfg(windows)]
-        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-        let mut server = command.spawn().with_context(|| {
-            format!(
-                "failed to spawn command. path: {:?}, working directory: {:?}, args: {:?}",
-                binary.path, working_dir, &binary.arguments
-            )
-        })?;
+            .kill_on_drop(true)
+            .spawn()
+            .with_context(|| {
+                format!(
+                    "failed to spawn command. path: {:?}, working directory: {:?}, args: {:?}",
+                    binary.path, working_dir, &binary.arguments
+                )
+            })?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
         let mut server = Self::new_internal(
             server_id,
+            server_name,
             stdin,
             stdout,
             Some(stderr),
@@ -330,7 +385,7 @@ impl LanguageServer {
         );
 
         if let Some(name) = binary.path.file_name() {
-            server.name = name.to_string_lossy().into();
+            server.process_name = name.to_string_lossy().into();
         }
 
         Ok(server)
@@ -339,6 +394,7 @@ impl LanguageServer {
     #[allow(clippy::too_many_arguments)]
     fn new_internal<Stdin, Stdout, Stderr, F>(
         server_id: LanguageServerId,
+        server_name: LanguageServerName,
         stdin: Stdin,
         stdout: Stdout,
         stderr: Option<Stderr>,
@@ -387,7 +443,7 @@ impl LanguageServer {
                 let stderr_captures = stderr_capture.clone();
                 cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_captures).log_err())
             })
-            .unwrap_or_else(|| Task::Ready(Some(None)));
+            .unwrap_or_else(|| Task::ready(None));
         let input_task = cx.spawn(|_| async move {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
@@ -408,7 +464,8 @@ impl LanguageServer {
             notification_handlers,
             response_handlers,
             io_handlers,
-            name: Arc::default(),
+            name: server_name,
+            process_name: Arc::default(),
             capabilities: Default::default(),
             code_action_kinds,
             next_id: Default::default(),
@@ -542,23 +599,19 @@ impl LanguageServer {
         Ok(())
     }
 
-    /// Initializes a language server by sending the `Initialize` request.
-    /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
-    ///
-    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
-    pub fn initialize(
-        mut self,
-        options: Option<Value>,
-        cx: &AppContext,
-    ) -> Task<Result<Arc<Self>>> {
+    pub fn default_initialize_params(&self, cx: &AppContext) -> InitializeParams {
         let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
-        let params = InitializeParams {
+        InitializeParams {
             process_id: None,
             root_path: None,
             root_uri: Some(root_uri.clone()),
-            initialization_options: options,
+            initialization_options: None,
             capabilities: ClientCapabilities {
+                general: Some(GeneralClientCapabilities {
+                    position_encodings: Some(vec![PositionEncodingKind::UTF16]),
+                    ..Default::default()
+                }),
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
                     did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
@@ -589,6 +642,13 @@ impl LanguageServer {
                         snippet_edit_support: Some(true),
                         ..WorkspaceEditClientCapabilities::default()
                     }),
+                    file_operations: Some(WorkspaceFileOperationsClientCapabilities {
+                        dynamic_registration: Some(false),
+                        did_rename: Some(true),
+                        will_rename: Some(true),
+                        ..Default::default()
+                    }),
+                    apply_edit: Some(true),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -640,6 +700,7 @@ impl LanguageServer {
                                 "commitCharacters".to_owned(),
                                 "editRange".to_owned(),
                                 "insertTextMode".to_owned(),
+                                "insertTextFormat".to_owned(),
                                 "data".to_owned(),
                             ]),
                         }),
@@ -700,12 +761,15 @@ impl LanguageServer {
                 }),
                 experimental: Some(json!({
                     "serverStatusNotification": true,
+                    "localDocs": true,
                 })),
                 window: Some(WindowClientCapabilities {
                     work_done_progress: Some(true),
+                    show_message: Some(ShowMessageRequestClientCapabilities {
+                        message_action_item: None,
+                    }),
                     ..Default::default()
                 }),
-                general: None,
             },
             trace: None,
             workspace_folders: Some(vec![WorkspaceFolder {
@@ -719,13 +783,30 @@ impl LanguageServer {
                 }
             }),
             locale: None,
+
             ..Default::default()
+        }
+    }
+
+    /// Initializes a language server by sending the `Initialize` request.
+    /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
+    pub fn initialize(
+        mut self,
+        initialize_params: Option<InitializeParams>,
+        cx: &AppContext,
+    ) -> Task<Result<Arc<Self>>> {
+        let params = if let Some(params) = initialize_params {
+            params
+        } else {
+            self.default_initialize_params(cx)
         };
 
         cx.spawn(|_| async move {
             let response = self.request::<request::Initialize>(params).await?;
             if let Some(info) = response.server_info {
-                self.name = info.name.into();
+                self.process_name = info.name.into();
             }
             self.capabilities = RwLock::new(response.capabilities);
 
@@ -937,8 +1018,12 @@ impl LanguageServer {
     }
 
     /// Get the name of the running language server.
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn name(&self) -> LanguageServerName {
+        self.name.clone()
+    }
+
+    pub fn process_name(&self) -> &str {
+        &self.process_name
     }
 
     /// Get the reported capabilities of the running language server.
@@ -1179,8 +1264,11 @@ impl FakeLanguageServer {
 
         let root = Self::root_path();
 
+        let server_name = LanguageServerName(name.clone().into());
+        let process_name = Arc::from(name.as_str());
         let mut server = LanguageServer::new_internal(
             server_id,
+            server_name.clone(),
             stdin_writer,
             stdout_reader,
             None::<async_pipe::PipeReader>,
@@ -1192,12 +1280,13 @@ impl FakeLanguageServer {
             cx.clone(),
             |_| {},
         );
-        server.name = name.as_str().into();
+        server.process_name = process_name;
         let fake = FakeLanguageServer {
             binary,
             server: Arc::new({
                 let mut server = LanguageServer::new_internal(
                     server_id,
+                    server_name,
                     stdout_writer,
                     stdin_reader,
                     None::<async_pipe::PipeReader>,
@@ -1216,7 +1305,7 @@ impl FakeLanguageServer {
                             .ok();
                     },
                 );
-                server.name = name.as_str().into();
+                server.process_name = name.as_str().into();
                 server
             }),
             notifications_rx,

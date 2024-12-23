@@ -14,7 +14,7 @@ function finalize {
   # verify the mold situation
   if ! command -v mold >/dev/null 2>&1; then
     echo "Warning: Mold binaries are unavailable on your system." >&2
-    echo "    Builds will be slower without mold. Try: scripts/install-mold" >&2
+    echo "    Builds will be slower without mold. Try: script/install-mold" >&2
   fi
   echo "Finished installing Linux dependencies with script/linux"
 }
@@ -37,6 +37,7 @@ if [[ -n $apt ]]; then
     cmake
     clang
     jq
+    netcat-openbsd
     git
     curl
     gettext-base
@@ -67,6 +68,7 @@ yum=$(command -v yum || true)
 if [[ -n $dnf ]] || [[ -n $yum ]]; then
   pkg_cmd="${dnf:-${yum}}"
   deps=(
+    musl-gcc
     gcc
     clang
     cmake
@@ -83,12 +85,14 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     tar
   )
   # perl used for building openssl-sys crate. See: https://docs.rs/openssl/latest/openssl/
+  # openbsd-netcat is unavailable in RHEL8/9 (and nmap-ncat doesn't support sockets)
   if grep -qP '^ID="(fedora)' /etc/os-release; then
     deps+=(
       perl-FindBin
       perl-IPC-Cmd
       perl-File-Compare
       perl-File-Copy
+      netcat
       mold
     )
   elif grep -qP '^ID="(rhel|rocky|alma|centos|ol)' /etc/os-release; then
@@ -119,7 +123,7 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     fi
   fi
 
-  $maysudo $pkg_cmd install -y "${deps[@]}"
+  $maysudo "$pkg_cmd" install -y "${deps[@]}"
   finalize
   exit 0
 fi
@@ -129,23 +133,27 @@ fi
 zyp=$(command -v zypper || true)
 if [[ -n $zyp ]]; then
   deps=(
+    alsa-devel
+    clang
+    cmake
+    fontconfig-devel
     gcc
     gcc-c++
-    clang
-    make
-    cmake
-    alsa-devel
-    fontconfig-devel
-    wayland-devel
-    libxkbcommon-x11-devel
-    openssl-devel
-    libzstd-devel
-    libvulkan1
-    sqlite3-devel
-    jq
     git
-    tar
     gzip
+    jq
+    libvulkan1
+    libxkbcommon-devel
+    libxkbcommon-x11-devel
+    libzstd-devel
+    make
+    mold
+    netcat-openbsd
+    openssl-devel
+    sqlite3-devel
+    tar
+    wayland-devel
+    xcb-util-devel
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   finalize
@@ -159,12 +167,14 @@ if [[ -n $pacman ]]; then
   deps=(
     gcc
     clang
+    musl
     cmake
     alsa-lib
     fontconfig
     wayland
     libgit2
     libxkbcommon-x11
+    openbsd-netcat
     openssl
     zstd
     pkgconf
@@ -194,6 +204,7 @@ if [[ -n $xbps ]]; then
     libxcb-devel
     libxkbcommon-devel
     libzstd-devel
+    openbsd-netcat
     openssl-devel
     wayland-devel
     vulkan-loader
@@ -218,6 +229,7 @@ if [[ -n $emerge ]]; then
     media-libs/alsa-lib
     media-libs/fontconfig
     media-libs/vulkan-loader
+    net-analyzer/openbsd-netcat
     x11-libs/libxcb
     x11-libs/libxkbcommon
     sys-devel/mold

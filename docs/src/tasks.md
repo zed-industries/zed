@@ -17,9 +17,9 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     // Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish, defaults to `false`.
     "allow_concurrent_runs": false,
     // What to do with the terminal pane and tab, after the command was started:
-    // * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
-    // * `no_focus` — always show the terminal pane, add/reuse the task's tab there, but don't focus it
-    // * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
+    // * `always` — always show the task's pane, and focus the corresponding tab in it (default)
+    // * `no_focus` — always show the task's pane, add the task's tab in it, but don't focus it
+    // * `never` — do not alter focus, but still add/reuse the task's tab in its pane
     "reveal": "always",
     // What to do with the terminal pane and tab, after the command had finished:
     // * `never` — Do nothing when the command finishes (default)
@@ -41,7 +41,11 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     //           "args": ["--login"]
     //         }
     //     }
-    "shell": "system"
+    "shell": "system",
+    // Whether to show the task line in the output of the spawned task, defaults to `true`.
+    "show_summary": true,
+    // Whether to show the command line in the output of the spawned task, defaults to `true`.
+    "show_output": true
   }
 ]
 ```
@@ -49,6 +53,10 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
 There are two actions that drive the workflow of using tasks: `task: spawn` and `task: rerun`
 `task: spawn` opens a modal with all available tasks in the current file.
 `task: rerun` reruns the most-recently spawned task. You can also rerun tasks from task modal.
+
+By default, rerunning tasks reuses the same terminal (due to the `"use_new_terminal": false` default) but waits for the previous task to finish before start (due to the `"allow_concurrent_runs": false` default).
+
+Keep `"use_new_terminal": false` and set `"allow_concurrent_runs": true` to allow cancelling previous tasks on rerun.
 
 ## Task templates
 
@@ -89,6 +97,38 @@ You can also use verbose syntax that allows specifying a default if a given vari
 
 These environmental variables can also be used in tasks `cwd`, `args` and `label` fields.
 
+### Variable Quoting
+
+When working with paths containing spaces or other special characters, please ensure variables are properly escaped.
+
+For example, instead of this (which will fail if the path has a space):
+
+```json
+{
+  "label": "stat current file",
+  "command": "stat $ZED_FILE"
+}
+```
+
+Provide the
+
+```json
+{
+  "label": "stat current file",
+  "command": "stat",
+  "args": ["$ZED_FILE"]
+}
+```
+
+Or explicitly include escaped quotes like so:
+
+```json
+{
+  "label": "stat current file",
+  "command": "stat \"$ZED_FILE\""
+}
+```
+
 ## Oneshot tasks
 
 The same task modal opened via `task: spawn` supports arbitrary bash-like command execution: type a command inside the modal text field, and use `opt-enter` to spawn it.
@@ -111,6 +151,30 @@ You can define your own keybindings for your tasks via additional argument to `t
   "context": "Workspace",
   "bindings": {
     "alt-g": ["task::Spawn", { "task_name": "echo current file's path" }]
+  }
+}
+```
+
+Note that these tasks can also have a 'target' specified to control where the spawned task should show up.
+This could be useful for launching a terminal application that you want to use in the center area:
+
+```json
+// In tasks.json
+{
+  "label": "start lazygit",
+  "command": "lazygit -p $ZED_WORKTREE_ROOT"
+}
+```
+
+```json
+// In keymap.json
+{
+  "context": "Workspace",
+  "bindings": {
+    "alt-g": [
+      "task::Spawn",
+      { "task_name": "start lazygit", "reveal_target": "center" }
+    ]
   }
 }
 ```

@@ -1,3 +1,5 @@
+use collections::HashMap;
+
 use crate::{Action, KeyBindingContextPredicate, Keystroke};
 use anyhow::Result;
 use smallvec::SmallVec;
@@ -22,21 +24,36 @@ impl Clone for KeyBinding {
 impl KeyBinding {
     /// Construct a new keybinding from the given data.
     pub fn new<A: Action>(keystrokes: &str, action: A, context_predicate: Option<&str>) -> Self {
-        Self::load(keystrokes, Box::new(action), context_predicate).unwrap()
+        Self::load(keystrokes, Box::new(action), context_predicate, None).unwrap()
     }
 
     /// Load a keybinding from the given raw data.
-    pub fn load(keystrokes: &str, action: Box<dyn Action>, context: Option<&str>) -> Result<Self> {
+    pub fn load(
+        keystrokes: &str,
+        action: Box<dyn Action>,
+        context: Option<&str>,
+        key_equivalents: Option<&HashMap<char, char>>,
+    ) -> Result<Self> {
         let context = if let Some(context) = context {
             Some(KeyBindingContextPredicate::parse(context)?)
         } else {
             None
         };
 
-        let keystrokes = keystrokes
+        let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
             .map(Keystroke::parse)
             .collect::<Result<_>>()?;
+
+        if let Some(equivalents) = key_equivalents {
+            for keystroke in keystrokes.iter_mut() {
+                if keystroke.key.chars().count() == 1 {
+                    if let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap()) {
+                        keystroke.key = key.to_string();
+                    }
+                }
+            }
+        }
 
         Ok(Self {
             keystrokes,

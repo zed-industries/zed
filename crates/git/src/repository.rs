@@ -45,6 +45,9 @@ pub trait GitRepository: Send + Sync {
     fn branch_exits(&self, _: &str) -> Result<bool>;
 
     fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame>;
+
+    /// Returns the path to the repository, typically the `.git` folder.
+    fn dot_git_dir(&self) -> PathBuf;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -81,6 +84,11 @@ impl GitRepository for RealGitRepository {
         if let Ok(mut index) = self.repository.lock().index() {
             _ = index.read(false);
         }
+    }
+
+    fn dot_git_dir(&self) -> PathBuf {
+        let repo = self.repository.lock();
+        repo.path().into()
     }
 
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
@@ -226,7 +234,7 @@ pub struct FakeGitRepository {
 
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
-    pub path: PathBuf,
+    pub dot_git_dir: PathBuf,
     pub event_emitter: smol::channel::Sender<PathBuf>,
     pub index_contents: HashMap<PathBuf, String>,
     pub blames: HashMap<PathBuf, Blame>,
@@ -242,9 +250,9 @@ impl FakeGitRepository {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(path: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+    pub fn new(dot_git_dir: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
-            path,
+            dot_git_dir,
             event_emitter,
             index_contents: Default::default(),
             blames: Default::default(),
@@ -274,6 +282,11 @@ impl GitRepository for FakeGitRepository {
 
     fn head_sha(&self) -> Option<String> {
         None
+    }
+
+    fn dot_git_dir(&self) -> PathBuf {
+        let state = self.state.lock();
+        state.dot_git_dir.clone()
     }
 
     fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus> {
@@ -322,7 +335,7 @@ impl GitRepository for FakeGitRepository {
         state.current_branch_name = Some(name.to_owned());
         state
             .event_emitter
-            .try_send(state.path.clone())
+            .try_send(state.dot_git_dir.clone())
             .expect("Dropped repo change event");
         Ok(())
     }
@@ -332,7 +345,7 @@ impl GitRepository for FakeGitRepository {
         state.branches.insert(name.to_owned());
         state
             .event_emitter
-            .try_send(state.path.clone())
+            .try_send(state.dot_git_dir.clone())
             .expect("Dropped repo change event");
         Ok(())
     }

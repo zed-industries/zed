@@ -105,6 +105,7 @@ pub struct MoveDownByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
+
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct SelectUpByLines {
     #[serde(default)]
@@ -164,6 +165,13 @@ pub struct FoldAtLevel {
 pub struct SpawnNearestTask {
     #[serde(default)]
     pub reveal: task::RevealStrategy,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default)]
+pub enum UuidVersion {
+    #[default]
+    V4,
+    V7,
 }
 
 impl_actions!(
@@ -243,11 +251,13 @@ gpui::actions!(
         DisplayCursorNames,
         DuplicateLineDown,
         DuplicateLineUp,
+        DuplicateSelection,
         ExpandAllHunkDiffs,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
         FoldAll,
+        FoldFunctionBodies,
         FoldRecursive,
         FoldSelectedRanges,
         ToggleFold,
@@ -270,7 +280,11 @@ gpui::actions!(
         HalfPageUp,
         Hover,
         Indent,
+        InsertUuidV4,
+        InsertUuidV7,
         JoinLines,
+        KillRingCut,
+        KillRingYank,
         LineDown,
         LineUp,
         MoveDown,
@@ -293,13 +307,16 @@ gpui::actions!(
         NewlineBelow,
         NextInlineCompletion,
         NextScreen,
+        OpenContextMenu,
         OpenExcerpts,
         OpenExcerptsSplit,
         OpenProposedChangesEditor,
         OpenFile,
+        OpenDocs,
         OpenPermalinkToLine,
         OpenUrl,
         Outdent,
+        AutoIndent,
         PageDown,
         PageUp,
         Paste,

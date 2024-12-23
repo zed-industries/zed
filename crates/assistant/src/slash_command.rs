@@ -1,16 +1,19 @@
 use crate::assistant_panel::ContextEditor;
+use crate::SlashCommandWorkingSet;
 use anyhow::Result;
 use assistant_slash_command::AfterCompletion;
-pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};
+pub use assistant_slash_command::{SlashCommand, SlashCommandOutput};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
 use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use project::CompletionIntent;
 use rope::Point;
 use std::{
+    cell::RefCell,
     ops::Range,
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
@@ -39,6 +42,7 @@ pub mod terminal_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,
+    slash_commands: Arc<SlashCommandWorkingSet>,
     editor: Option<WeakView<ContextEditor>>,
     workspace: Option<WeakView<Workspace>>,
 }
@@ -52,11 +56,13 @@ pub(crate) struct SlashCommandLine {
 
 impl SlashCommandCompletionProvider {
     pub fn new(
+        slash_commands: Arc<SlashCommandWorkingSet>,
         editor: Option<WeakView<ContextEditor>>,
         workspace: Option<WeakView<Workspace>>,
     ) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
+            slash_commands,
             editor,
             workspace,
         }
@@ -69,16 +75,12 @@ impl SlashCommandCompletionProvider {
         name_range: Range<Anchor>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<project::Completion>>> {
-        let commands = SlashCommandRegistry::global(cx);
-        let candidates = commands
-            .command_names()
+        let slash_commands = self.slash_commands.clone();
+        let candidates = slash_commands
+            .command_names(cx)
             .into_iter()
             .enumerate()
-            .map(|(ix, def)| StringMatchCandidate {
-                id: ix,
-                string: def.to_string(),
-                char_bag: def.as_ref().into(),
-            })
+            .map(|(ix, def)| StringMatchCandidate::new(ix, &def))
             .collect::<Vec<_>>();
         let command_name = command_name.to_string();
         let editor = self.editor.clone();
@@ -98,7 +100,7 @@ impl SlashCommandCompletionProvider {
                 matches
                     .into_iter()
                     .filter_map(|mat| {
-                        let command = commands.command(&mat.string)?;
+                        let command = slash_commands.command(&mat.string, cx)?;
                         let mut new_text = mat.string.clone();
                         let requires_argument = command.requires_argument();
                         let accepts_arguments = command.accepts_arguments();
@@ -127,7 +129,6 @@ impl SlashCommandCompletionProvider {
                                                             &command_name,
                                                             &[],
                                                             true,
-                                                            false,
                                                             workspace.clone(),
                                                             cx,
                                                         );
@@ -168,8 +169,7 @@ impl SlashCommandCompletionProvider {
         let mut flag = self.cancel_flag.lock();
         flag.store(true, SeqCst);
         *flag = new_cancel_flag.clone();
-        let commands = SlashCommandRegistry::global(cx);
-        if let Some(command) = commands.command(command_name) {
+        if let Some(command) = self.slash_commands.command(command_name, cx) {
             let completions = command.complete_argument(
                 arguments,
                 new_cancel_flag.clone(),
@@ -212,7 +212,6 @@ impl SlashCommandCompletionProvider {
                                                             &command_name,
                                                             &completed_arguments,
                                                             true,
-                                                            false,
                                                             workspace.clone(),
                                                             cx,
                                                         );
@@ -325,7 +324,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         &self,
         _: Model<Buffer>,
         _: Vec<usize>,
-        _: Arc<RwLock<Box<[project::Completion]>>>,
+        _: Rc<RefCell<Box<[project::Completion]>>>,
         _: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>> {
         Task::ready(Ok(true))

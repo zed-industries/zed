@@ -84,7 +84,7 @@ impl SlashCommand for SelectionCommand {
                 text,
                 run_commands_in_text: false,
             })));
-            events.push(Ok(SlashCommandEvent::EndSection { metadata: None }));
+            events.push(Ok(SlashCommandEvent::EndSection));
             events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
                 text: "\n".to_string(),
                 run_commands_in_text: false,

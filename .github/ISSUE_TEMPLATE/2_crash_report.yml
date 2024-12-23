@@ -20,7 +20,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Run the `copy system specs into clipboard` command palette action and paste the output in the field below.
+      description: Run the `copy system specs into clipboard` command palette action and paste the output in the field below. If you are unable to run the command, please include your Zed version and release channel, operating system and version, RAM amount, and architecture.
     validations:
       required: true
   - type: textarea

@@ -13,12 +13,17 @@ pub(crate) struct X11Display {
 
 impl X11Display {
     pub(crate) fn new(
-        xc: &XCBConnection,
+        xcb: &XCBConnection,
         scale_factor: f32,
         x_screen_index: usize,
-    ) -> Option<Self> {
-        let screen = xc.setup().roots.get(x_screen_index).unwrap();
-        Some(Self {
+    ) -> anyhow::Result<Self> {
+        let Some(screen) = xcb.setup().roots.get(x_screen_index) else {
+            return Err(anyhow::anyhow!(
+                "No screen found with index {}",
+                x_screen_index
+            ));
+        };
+        Ok(Self {
             x_screen_index,
             bounds: Bounds {
                 origin: Default::default(),

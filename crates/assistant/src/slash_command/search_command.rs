@@ -21,6 +21,10 @@ pub(crate) struct SearchSlashCommandFeatureFlag;
 
 impl FeatureFlag for SearchSlashCommandFeatureFlag {
     const NAME: &'static str = "search-slash-command";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 
 pub(crate) struct SearchSlashCommand;

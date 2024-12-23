@@ -4,8 +4,8 @@ use crate::{
     ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowKind, WindowParams,
+    RequestFrameOptions, ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -151,10 +151,6 @@ unsafe fn build_classes() {
         decl.add_method(
             sel!(flagsChanged:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(cancelOperation:),
-            cancel_operation as extern "C" fn(&Object, Sel, id),
         );
 
         decl.add_method(
@@ -310,14 +306,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     decl.register()
 }
 
-#[allow(clippy::enum_variant_names)]
-#[derive(Clone, Debug)]
-enum ImeInput {
-    InsertText(String, Option<Range<usize>>),
-    SetMarkedText(String, Option<Range<usize>>, Option<Range<usize>>),
-    UnmarkText,
-}
-
 struct MacWindowState {
     handle: AnyWindowHandle,
     executor: ForegroundExecutor,
@@ -325,7 +313,7 @@ struct MacWindowState {
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
-    request_frame_callback: Option<Box<dyn FnMut()>>,
+    request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
@@ -338,14 +326,12 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
-    // State tracking what the IME did after the last request
-    last_ime_inputs: Option<SmallVec<[(String, Option<Range<usize>>); 1]>>,
-    previous_keydown_inserted_text: Option<String>,
+    keystroke_for_do_command: Option<Keystroke>,
+    do_command_handled: Option<bool>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
-    ime_composing: bool,
 }
 
 impl MacWindowState {
@@ -619,12 +605,11 @@ impl MacWindow {
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
-                last_ime_inputs: None,
-                previous_keydown_inserted_text: None,
+                keystroke_for_do_command: None,
+                do_command_handled: None,
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
-                ime_composing: false,
             })));
 
             (*native_window).set_ivar(
@@ -1074,7 +1059,7 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.0.as_ref().lock().request_frame_callback = Some(callback);
     }
 
@@ -1117,15 +1102,21 @@ impl PlatformWindow for MacWindow {
         self.0.lock().renderer.sprite_atlas().clone()
     }
 
-    fn gpu_specs(&self) -> Option<crate::GPUSpecs> {
+    fn gpu_specs(&self) -> Option<crate::GpuSpecs> {
         None
     }
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
-        unsafe {
-            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
-            let _: () = msg_send![input_context, invalidateCharacterCoordinates];
-        }
+        let executor = self.0.lock().executor.clone();
+        executor
+            .spawn(async move {
+                unsafe {
+                    let input_context: id =
+                        msg_send![class!(NSTextInputContext), currentInputContext];
+                    let _: () = msg_send![input_context, invalidateCharacterCoordinates];
+                }
+            })
+            .detach()
     }
 }
 
@@ -1226,9 +1217,9 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 //  Brazilian layout:
 //   - `" space` should create an unmarked quote
 //   - `" backspace` should delete the marked quote
+//   - `" "`should create an unmarked quote and a second marked quote
 //   - `" up` should insert a quote, unmark it, and move up one line
 //   - `" cmd-down` should insert a quote, unmark it, and move to the end of the file
-//      - NOTE: The current implementation does not move the selection to the end of the file
 //   - `cmd-ctrl-space` and clicking on an emoji should type it
 //  Czech (QWERTY) layout:
 //   - in vim mode `option-4`  should go to end of line (same as $)
@@ -1241,95 +1232,96 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let window_height = lock.content_size().height;
     let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
-    if let Some(PlatformInput::KeyDown(mut event)) = event {
-        // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
-        // If that event isn't handled, it will then dispatch a "key down" event. GPUI
-        // makes no distinction between these two types of events, so we need to ignore
-        // the "key down" event if we've already just processed its "key equivalent" version.
-        if key_equivalent {
-            lock.last_key_equivalent = Some(event.clone());
-        } else if lock.last_key_equivalent.take().as_ref() == Some(&event) {
-            return NO;
+    let Some(PlatformInput::KeyDown(mut event)) = event else {
+        return NO;
+    };
+    // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
+    // If that event isn't handled, it will then dispatch a "key down" event. GPUI
+    // makes no distinction between these two types of events, so we need to ignore
+    // the "key down" event if we've already just processed its "key equivalent" version.
+    if key_equivalent {
+        lock.last_key_equivalent = Some(event.clone());
+    } else if lock.last_key_equivalent.take().as_ref() == Some(&event) {
+        return NO;
+    }
+
+    drop(lock);
+
+    let is_composing = with_input_handler(this, |input_handler| input_handler.marked_text_range())
+        .flatten()
+        .is_some();
+
+    // If we're composing, send the key to the input handler first;
+    // otherwise we only send to the input handler if we don't have a matching binding.
+    // The input handler may call `do_command_by_selector` if it doesn't know how to handle
+    // a key. If it does so, it will return YES so we won't send the key twice.
+    // We also do this for non-printing keys (like arrow keys and escape) as the IME menu
+    // may need them even if there is no marked text;
+    // however we skip keys with control or the input handler adds control-characters to the buffer.
+    if is_composing || (event.keystroke.key_char.is_none() && !event.keystroke.modifiers.control) {
+        {
+            let mut lock = window_state.as_ref().lock();
+            lock.keystroke_for_do_command = Some(event.keystroke.clone());
+            lock.do_command_handled.take();
+            drop(lock);
         }
 
-        let keydown = event.keystroke.clone();
-        let fn_modifier = keydown.modifiers.function;
-        lock.last_ime_inputs = Some(Default::default());
-        drop(lock);
-
-        // Send the event to the input context for IME handling, unless the `fn` modifier is
-        // being pressed.
-        // this will call back into `insert_text`, etc.
-        if !fn_modifier {
-            unsafe {
-                let input_context: id = msg_send![this, inputContext];
-                let _: BOOL = msg_send![input_context, handleEvent: native_event];
-            }
+        let handled: BOOL = unsafe {
+            let input_context: id = msg_send![this, inputContext];
+            msg_send![input_context, handleEvent: native_event]
+        };
+        window_state.as_ref().lock().keystroke_for_do_command.take();
+        if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
+            return handled as BOOL;
+        } else if handled == YES {
+            return YES;
         }
 
-        let mut handled = false;
-        let mut lock = window_state.lock();
-        let previous_keydown_inserted_text = lock.previous_keydown_inserted_text.take();
-        let mut last_inserts = lock.last_ime_inputs.take().unwrap();
-        let ime_composing = std::mem::take(&mut lock.ime_composing);
+        let mut callback = window_state.as_ref().lock().event_callback.take();
+        let handled: BOOL = if let Some(callback) = callback.as_mut() {
+            !callback(PlatformInput::KeyDown(event)).propagate as BOOL
+        } else {
+            NO
+        };
+        window_state.as_ref().lock().event_callback = callback;
+        return handled as BOOL;
+    }
 
-        let mut callback = lock.event_callback.take();
-        drop(lock);
-
-        let last_insert = last_inserts.pop();
-        // on a brazilian keyboard typing `"` and then hitting `up` will cause two IME
-        // events, one to unmark the quote, and one to send the up arrow.
-        for (text, range) in last_inserts {
-            send_to_input_handler(this, ImeInput::InsertText(text, range));
-        }
-
-        let is_composing =
-            with_input_handler(this, |input_handler| input_handler.marked_text_range())
-                .flatten()
-                .is_some()
-                || ime_composing;
-
-        if let Some((text, range)) = last_insert {
-            if !is_composing {
-                window_state.lock().previous_keydown_inserted_text = Some(text.clone());
-                if let Some(callback) = callback.as_mut() {
-                    event.keystroke.ime_key = Some(text.clone());
-                    handled = !callback(PlatformInput::KeyDown(event)).propagate;
-                }
-            }
-
-            if !handled {
-                handled = true;
-                send_to_input_handler(this, ImeInput::InsertText(text, range));
-            }
-        } else if !is_composing {
-            let is_held = event.is_held;
-
-            if let Some(callback) = callback.as_mut() {
-                handled = !callback(PlatformInput::KeyDown(event)).propagate;
-            }
-
-            if !handled && is_held {
-                if let Some(text) = previous_keydown_inserted_text {
-                    // macOS IME is a bit funky, and even when you've told it there's nothing to
-                    // enter it will still swallow certain keys (e.g. 'f', 'j') and not others
-                    // (e.g. 'n'). This is a problem for certain kinds of views, like the terminal.
-                    with_input_handler(this, |input_handler| {
-                        if input_handler.selected_text_range(false).is_none() {
-                            handled = true;
-                            input_handler.replace_text_in_range(None, &text)
-                        }
-                    });
-                    window_state.lock().previous_keydown_inserted_text = Some(text);
-                }
-            }
-        }
-
-        window_state.lock().event_callback = callback;
-
-        handled as BOOL
+    let mut callback = window_state.as_ref().lock().event_callback.take();
+    let handled = if let Some(callback) = callback.as_mut() {
+        !callback(PlatformInput::KeyDown(event.clone())).propagate as BOOL
     } else {
         NO
+    };
+    window_state.as_ref().lock().event_callback = callback;
+    if handled == YES {
+        return YES;
+    }
+
+    if event.is_held {
+        if let Some(key_char) = event.keystroke.key_char.as_ref() {
+            let handled = with_input_handler(&this, |input_handler| {
+                if !input_handler.apple_press_and_hold_enabled() {
+                    input_handler.replace_text_in_range(None, &key_char);
+                    return YES;
+                }
+                NO
+            });
+            if handled == Some(YES) {
+                return YES;
+            }
+        }
+    }
+
+    // Don't send key equivalents to the input handler,
+    // or macOS shortcuts like cmd-` will stop working.
+    if key_equivalent {
+        return NO;
+    }
+
+    unsafe {
+        let input_context: id = msg_send![this, inputContext];
+        msg_send![input_context, handleEvent: native_event]
     }
 }
 
@@ -1400,6 +1392,14 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         };
 
         match &event {
+            PlatformInput::MouseDown(_) => {
+                drop(lock);
+                unsafe {
+                    let input_context: id = msg_send![this, inputContext];
+                    msg_send![input_context, handleEvent: native_event]
+                }
+                lock = window_state.as_ref().lock();
+            }
             PlatformInput::MouseMove(
                 event @ MouseMoveEvent {
                     pressed_button: Some(_),
@@ -1448,29 +1448,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             callback(event);
             window_state.lock().event_callback = Some(callback);
         }
-    }
-}
-
-// Allows us to receive `cmd-.` (the shortcut for closing a dialog)
-// https://bugs.eclipse.org/bugs/show_bug.cgi?id=300620#c6
-extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-
-    let keystroke = Keystroke {
-        modifiers: Default::default(),
-        key: ".".into(),
-        ime_key: None,
-    };
-    let event = PlatformInput::KeyDown(KeyDownEvent {
-        keystroke: keystroke.clone(),
-        is_held: false,
-    });
-
-    if let Some(mut callback) = lock.event_callback.take() {
-        drop(lock);
-        callback(event);
-        window_state.lock().event_callback = Some(callback);
     }
 }
 
@@ -1646,7 +1623,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
         lock.renderer.set_presents_with_transaction(true);
         lock.stop_display_link();
         drop(lock);
-        callback();
+        callback(Default::default());
 
         let mut lock = window_state.lock();
         lock.request_frame_callback = Some(callback);
@@ -1663,7 +1640,7 @@ unsafe extern "C" fn step(view: *mut c_void) {
 
     if let Some(mut callback) = lock.request_frame_callback.take() {
         drop(lock);
-        callback();
+        callback(Default::default());
         window_state.lock().request_frame_callback = Some(callback);
     }
 }
@@ -1706,7 +1683,10 @@ extern "C" fn first_rect_for_character_range(
         let lock = state.lock();
         let mut frame = NSWindow::frame(lock.native_window);
         let content_layout_rect: CGRect = msg_send![lock.native_window, contentLayoutRect];
-        frame.origin.y -= frame.size.height - content_layout_rect.size.height;
+        let style_mask: NSWindowStyleMask = msg_send![lock.native_window, styleMask];
+        if !style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
+            frame.origin.y -= frame.size.height - content_layout_rect.size.height;
+        }
         frame
     };
     with_input_handler(this, |input_handler| {
@@ -1741,10 +1721,9 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
 
         let text = text.to_str();
         let replacement_range = replacement_range.to_range();
-        send_to_input_handler(
-            this,
-            ImeInput::InsertText(text.to_string(), replacement_range),
-        );
+        with_input_handler(this, |input_handler| {
+            input_handler.replace_text_in_range(replacement_range, &text)
+        });
     }
 }
 
@@ -1766,30 +1745,34 @@ extern "C" fn set_marked_text(
         let selected_range = selected_range.to_range();
         let replacement_range = replacement_range.to_range();
         let text = text.to_str();
-
-        send_to_input_handler(
-            this,
-            ImeInput::SetMarkedText(text.to_string(), replacement_range, selected_range),
-        );
+        with_input_handler(this, |input_handler| {
+            input_handler.replace_and_mark_text_in_range(replacement_range, &text, selected_range)
+        });
     }
 }
 extern "C" fn unmark_text(this: &Object, _: Sel) {
-    send_to_input_handler(this, ImeInput::UnmarkText);
+    with_input_handler(this, |input_handler| input_handler.unmark_text());
 }
 
 extern "C" fn attributed_substring_for_proposed_range(
     this: &Object,
     _: Sel,
     range: NSRange,
-    _actual_range: *mut c_void,
+    actual_range: *mut c_void,
 ) -> id {
     with_input_handler(this, |input_handler| {
         let range = range.to_range()?;
         if range.is_empty() {
             return None;
         }
+        let mut adjusted: Option<Range<usize>> = None;
 
-        let selected_text = input_handler.text_for_range(range.clone())?;
+        let selected_text = input_handler.text_for_range(range.clone(), &mut adjusted)?;
+        if let Some(adjusted) = adjusted {
+            if adjusted != range {
+                unsafe { (actual_range as *mut NSRange).write(NSRange::from(adjusted)) };
+            }
+        }
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];
             let string: id = msg_send![string, initWithString: ns_string(&selected_text)];
@@ -1800,7 +1783,25 @@ extern "C" fn attributed_substring_for_proposed_range(
     .unwrap_or(nil)
 }
 
-extern "C" fn do_command_by_selector(_: &Object, _: Sel, _: Sel) {}
+// We ignore which selector it asks us to do because the user may have
+// bound the shortcut to something else.
+extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
+    let state = unsafe { get_window_state(this) };
+    let mut lock = state.as_ref().lock();
+    let keystroke = lock.keystroke_for_do_command.take();
+    let mut event_callback = lock.event_callback.take();
+    drop(lock);
+
+    if let Some((keystroke, mut callback)) = keystroke.zip(event_callback.as_mut()) {
+        let handled = (callback)(PlatformInput::KeyDown(KeyDownEvent {
+            keystroke,
+            is_held: false,
+        }));
+        state.as_ref().lock().do_command_handled = Some(!handled.propagate);
+    }
+
+    state.as_ref().lock().event_callback = event_callback;
+}
 
 extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     unsafe {
@@ -1947,43 +1948,6 @@ where
         Some(result)
     } else {
         None
-    }
-}
-
-fn send_to_input_handler(window: &Object, ime: ImeInput) {
-    unsafe {
-        let window_state = get_window_state(window);
-        let mut lock = window_state.lock();
-
-        if let Some(mut input_handler) = lock.input_handler.take() {
-            match ime {
-                ImeInput::InsertText(text, range) => {
-                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
-                        ime_input.push((text, range));
-                        lock.input_handler = Some(input_handler);
-                        return;
-                    }
-                    drop(lock);
-                    input_handler.replace_text_in_range(range, &text)
-                }
-                ImeInput::SetMarkedText(text, range, marked_range) => {
-                    lock.ime_composing = true;
-                    drop(lock);
-                    input_handler.replace_and_mark_text_in_range(range, &text, marked_range)
-                }
-                ImeInput::UnmarkText => {
-                    drop(lock);
-                    input_handler.unmark_text()
-                }
-            }
-            window_state.lock().input_handler = Some(input_handler);
-        } else {
-            if let ImeInput::InsertText(text, range) = ime {
-                if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
-                    ime_input.push((text, range));
-                }
-            }
-        }
     }
 }
 

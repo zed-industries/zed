@@ -9,7 +9,7 @@ use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
     FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
     MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, View,
-    VisualContext, WeakView,
+    VisualContext, WeakModel, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -30,11 +30,10 @@ use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
-    notifications::NotifyResultExt,
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, Pane, ToolbarItemLocation,
-    Workspace, WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
+    WorkspaceId,
 };
 
 use anyhow::Context;
@@ -78,7 +77,7 @@ pub fn init(cx: &mut AppContext) {
 
     register_serializable_item::<TerminalView>(cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
@@ -98,6 +97,7 @@ pub struct BlockContext<'a, 'b> {
 pub struct TerminalView {
     terminal: Model<Terminal>,
     workspace: WeakView<Workspace>,
+    project: WeakModel<Project>,
     focus_handle: FocusHandle,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
@@ -109,7 +109,7 @@ pub struct TerminalView {
     blink_epoch: usize,
     can_navigate_to_selected_word: bool,
     workspace_id: Option<WorkspaceId>,
-    show_title: bool,
+    show_breadcrumbs: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
     scroll_top: Pixels,
     _subscriptions: Vec<Subscription>,
@@ -134,32 +134,15 @@ impl TerminalView {
         cx: &mut ViewContext<Workspace>,
     ) {
         let working_directory = default_working_directory(workspace, cx);
-
-        let window = cx.window_handle();
-        let terminal = workspace
-            .project()
-            .update(cx, |project, cx| {
-                project.create_terminal(TerminalKind::Shell(working_directory), window, cx)
-            })
-            .notify_err(workspace, cx);
-
-        if let Some(terminal) = terminal {
-            let view = cx.new_view(|cx| {
-                TerminalView::new(
-                    terminal,
-                    workspace.weak_handle(),
-                    workspace.database_id(),
-                    cx,
-                )
-            });
-            workspace.add_item_to_active_pane(Box::new(view), None, true, cx);
-        }
+        TerminalPanel::add_center_terminal(workspace, TerminalKind::Shell(working_directory), cx)
+            .detach_and_log_err(cx);
     }
 
     pub fn new(
         terminal: Model<Terminal>,
         workspace: WeakView<Workspace>,
         workspace_id: Option<WorkspaceId>,
+        project: WeakModel<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let workspace_handle = workspace.clone();
@@ -179,6 +162,7 @@ impl TerminalView {
         Self {
             terminal,
             workspace: workspace_handle,
+            project,
             has_bell: false,
             focus_handle,
             context_menu: None,
@@ -189,7 +173,7 @@ impl TerminalView {
             blink_epoch: 0,
             can_navigate_to_selected_word: false,
             workspace_id,
-            show_title: TerminalSettings::get_global(cx).toolbar.title,
+            show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
             _subscriptions: vec![
@@ -259,7 +243,7 @@ impl TerminalView {
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         let settings = TerminalSettings::get_global(cx);
-        self.show_title = settings.toolbar.title;
+        self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
         let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
         let old_cursor_shape = self.cursor_shape;
@@ -798,7 +782,6 @@ fn possible_open_paths_metadata(
     cx.background_executor().spawn(async move {
         let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
 
-        #[cfg(not(target_os = "windows"))]
         let mut fetch_metadata_tasks = potential_paths
             .into_iter()
             .map(|potential_path| async {
@@ -811,20 +794,6 @@ fn possible_open_paths_metadata(
                     },
                     metadata,
                 )
-            })
-            .collect::<FuturesUnordered<_>>();
-
-        #[cfg(target_os = "windows")]
-        let mut fetch_metadata_tasks = potential_paths
-            .iter()
-            .map(|potential_path| async {
-                let metadata = fs.metadata(potential_path).await.ok().flatten();
-                let path = PathBuf::from(
-                    potential_path
-                        .to_string_lossy()
-                        .trim_start_matches("\\\\?\\"),
-                );
-                (PathWithPosition { path, row, column }, metadata)
             })
             .collect::<FuturesUnordered<_>>();
 
@@ -1018,7 +987,7 @@ impl Render for TerminalView {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::AnchorCorner::TopLeft)
+                        .anchor(gpui::Corner::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -1044,16 +1013,22 @@ impl Item for TerminalView {
                 .shape(ui::IconButtonShape::Square)
                 .tooltip(|cx| Tooltip::text("Rerun task", cx))
                 .on_click(move |_, cx| {
-                    cx.dispatch_action(Box::new(tasks_ui::Rerun {
-                        task_id: Some(task_id.clone()),
-                        ..tasks_ui::Rerun::default()
+                    cx.dispatch_action(Box::new(zed_actions::Rerun {
+                        task_id: Some(task_id.0.clone()),
+                        allow_concurrent_runs: Some(true),
+                        use_new_terminal: Some(false),
+                        reevaluate_context: false,
                     }));
                 })
         };
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Running => (IconName::Play, Color::Disabled, None),
+                TaskStatus::Running => (
+                    IconName::Play,
+                    Color::Disabled,
+                    Some(rerun_button(terminal_task.id.clone())),
+                ),
                 TaskStatus::Unknown => (
                     IconName::Warning,
                     Color::Warning,
@@ -1103,21 +1078,37 @@ impl Item for TerminalView {
 
     fn clone_on_split(
         &self,
-        _workspace_id: Option<WorkspaceId>,
-        _cx: &mut ViewContext<Self>,
+        workspace_id: Option<WorkspaceId>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        //From what I can tell, there's no  way to tell the current working
-        //Directory of the terminal from outside the shell. There might be
-        //solutions to this, but they are non-trivial and require more IPC
+        let window = cx.window_handle();
+        let terminal = self
+            .project
+            .update(cx, |project, cx| {
+                let terminal = self.terminal().read(cx);
+                let working_directory = terminal
+                    .working_directory()
+                    .or_else(|| Some(project.active_project_directory(cx)?.to_path_buf()));
+                let python_venv_directory = terminal.python_venv_directory.clone();
+                project.create_terminal_with_venv(
+                    TerminalKind::Shell(working_directory),
+                    python_venv_directory,
+                    window,
+                    cx,
+                )
+            })
+            .ok()?
+            .log_err()?;
 
-        // Some(TerminalContainer::new(
-        //     Err(anyhow::anyhow!("failed to instantiate terminal")),
-        //     workspace_id,
-        //     cx,
-        // ))
-
-        // TODO
-        None
+        Some(cx.new_view(|cx| {
+            TerminalView::new(
+                terminal,
+                self.workspace.clone(),
+                workspace_id,
+                self.project.clone(),
+                cx,
+            )
+        }))
     }
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
@@ -1139,8 +1130,8 @@ impl Item for TerminalView {
         Some(Box::new(handle.clone()))
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        if self.show_title {
+    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
+        if self.show_breadcrumbs && !self.terminal().read(cx).breadcrumb_text.trim().is_empty() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
@@ -1216,10 +1207,10 @@ impl SerializableItem for TerminalView {
         workspace: WeakView<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
-        cx: &mut ViewContext<Pane>,
+        cx: &mut WindowContext,
     ) -> Task<anyhow::Result<View<Self>>> {
         let window = cx.window_handle();
-        cx.spawn(|pane, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let cwd = cx
                 .update(|cx| {
                     let from_db = TERMINAL_DB
@@ -1240,11 +1231,21 @@ impl SerializableItem for TerminalView {
                 .ok()
                 .flatten();
 
-            let terminal = project.update(&mut cx, |project, cx| {
-                project.create_terminal(TerminalKind::Shell(cwd), window, cx)
-            })??;
-            pane.update(&mut cx, |_, cx| {
-                cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
+            let terminal = project
+                .update(&mut cx, |project, cx| {
+                    project.create_terminal(TerminalKind::Shell(cwd), window, cx)
+                })?
+                .await?;
+            cx.update(|cx| {
+                cx.new_view(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        workspace,
+                        Some(workspace_id),
+                        project.downgrade(),
+                        cx,
+                    )
+                })
             })
         })
     }
@@ -1371,11 +1372,14 @@ impl SearchableItem for TerminalView {
 
 ///Gets the working directory for the given workspace, respecting the user's settings.
 /// None implies "~" on whichever machine we end up on.
-pub fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+pub(crate) fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
     match &TerminalSettings::get_global(cx).working_directory {
-        WorkingDirectory::CurrentProjectDirectory => {
-            workspace.project().read(cx).active_project_directory(cx)
-        }
+        WorkingDirectory::CurrentProjectDirectory => workspace
+            .project()
+            .read(cx)
+            .active_project_directory(cx)
+            .as_deref()
+            .map(Path::to_path_buf),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } => {
@@ -1465,7 +1469,7 @@ mod tests {
         });
     }
 
-    // Active entry with a work tree, worktree is a file -> home_dir()
+    // Active entry with a work tree, worktree is a file -> worktree_folder()
     #[gpui::test]
     async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
         let (project, workspace) = init_test(cx).await;
@@ -1481,7 +1485,7 @@ mod tests {
             assert!(active_entry.is_some());
 
             let res = default_working_directory(workspace, cx);
-            assert_eq!(res, None);
+            assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
         });

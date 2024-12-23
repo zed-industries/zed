@@ -216,6 +216,8 @@ messages!(
     (GetImplementationResponse, Background),
     (GetLlmToken, Background),
     (GetLlmTokenResponse, Background),
+    (GetStagedText, Foreground),
+    (GetStagedTextResponse, Foreground),
     (GetUsers, Foreground),
     (Hello, Foreground),
     (IncomingCall, Foreground),
@@ -314,6 +316,8 @@ messages!(
     (UsersResponse, Foreground),
     (LspExtExpandMacro, Background),
     (LspExtExpandMacroResponse, Background),
+    (LspExtOpenDocs, Background),
+    (LspExtOpenDocsResponse, Background),
     (SetRoomParticipantRole, Foreground),
     (BlameBuffer, Foreground),
     (BlameBufferResponse, Foreground),
@@ -366,6 +370,10 @@ messages!(
     (GetPanicFiles, Background),
     (GetPanicFilesResponse, Background),
     (CancelLanguageServerWork, Foreground),
+    (SyncExtensions, Background),
+    (SyncExtensionsResponse, Background),
+    (InstallExtension, Background),
+    (RegisterBufferWithLanguageServers, Background),
 );
 
 request_messages!(
@@ -406,6 +414,7 @@ request_messages!(
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
     (GetSignatureHelp, GetSignatureHelpResponse),
+    (GetStagedText, GetStagedTextResponse),
     (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
@@ -464,6 +473,7 @@ request_messages!(
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
+    (LspExtOpenDocs, LspExtOpenDocsResponse),
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
@@ -488,6 +498,9 @@ request_messages!(
     (GetPathMetadata, GetPathMetadataResponse),
     (GetPanicFiles, GetPanicFilesResponse),
     (CancelLanguageServerWork, Ack),
+    (SyncExtensions, SyncExtensionsResponse),
+    (InstallExtension, Ack),
+    (RegisterBufferWithLanguageServers, Ack),
 );
 
 entity_messages!(
@@ -517,6 +530,7 @@ entity_messages!(
     GetProjectSymbols,
     GetReferences,
     GetSignatureHelp,
+    GetStagedText,
     GetTypeDefinition,
     InlayHints,
     JoinProject,
@@ -552,6 +566,7 @@ entity_messages!(
     UpdateWorktree,
     UpdateWorktreeSettings,
     LspExtExpandMacro,
+    LspExtOpenDocs,
     AdvertiseContexts,
     OpenContext,
     CreateContext,
@@ -571,6 +586,7 @@ entity_messages!(
     ActiveToolchain,
     GetPathMetadata,
     CancelLanguageServerWork,
+    RegisterBufferWithLanguageServers,
 );
 
 entity_messages!(

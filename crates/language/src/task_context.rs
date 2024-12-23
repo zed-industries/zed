@@ -1,10 +1,10 @@
 use std::{ops::Range, sync::Arc};
 
-use crate::{Location, Runnable};
+use crate::{LanguageToolchainStore, Location, Runnable};
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui::AppContext;
+use gpui::{AppContext, Task};
 use task::{TaskTemplates, TaskVariables};
 use text::BufferId;
 
@@ -25,10 +25,11 @@ pub trait ContextProvider: Send + Sync {
         &self,
         _variables: &TaskVariables,
         _location: &Location,
-        _project_env: Option<&HashMap<String, String>>,
+        _project_env: Option<HashMap<String, String>>,
+        _toolchains: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AppContext,
-    ) -> Result<TaskVariables> {
-        Ok(TaskVariables::default())
+    ) -> Task<Result<TaskVariables>> {
+        Task::ready(Ok(TaskVariables::default()))
     }
 
     /// Provides all tasks, associated with the current language.

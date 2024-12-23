@@ -80,7 +80,7 @@ impl RenderOnce for List {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         v_flex()
             .w_full()
-            .py(Spacing::Small.rems(cx))
+            .py(DynamicSpacing::Base04.rems(cx))
             .children(self.header)
             .map(|this| match (self.children.is_empty(), self.toggle) {
                 (false, _) => this.children(self.children),

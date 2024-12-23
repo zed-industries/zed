@@ -35,7 +35,7 @@ impl Vim {
         cx: &mut ViewContext<Self>,
     ) {
         self.stop_recording(cx);
-        let count = self.take_count(cx);
+        let count = Vim::take_count(cx);
         let mode = self.mode;
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
@@ -119,9 +119,7 @@ impl Vim {
                     }
                 }
 
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                });
+                editor.edit(edits, cx);
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     if mode == Mode::VisualBlock {
@@ -220,9 +218,7 @@ impl Vim {
                     s.select_ranges(anchors);
                 });
                 edits.sort_by_key(|(range, _)| range.start);
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                });
+                editor.edit(edits, cx);
                 editor.set_clip_at_line_ends(true, cx);
             });
         });
@@ -320,9 +316,7 @@ impl Vim {
                         })
                         .collect::<Vec<_>>();
                     edits.sort_by_key(|(range, _)| range.start);
-                    editor.buffer().update(cx, |buffer, cx| {
-                        buffer.edit(edits, None, cx);
-                    });
+                    editor.edit(edits, cx);
                     editor.set_clip_at_line_ends(true, cx);
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_anchor_ranges(stable_anchors);

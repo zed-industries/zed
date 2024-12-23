@@ -7,9 +7,8 @@ use gpui::{
     InteractiveElement as _, Model, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement, Styled, Transformation, View, ViewContext, VisualContext as _,
 };
-use language::{
-    LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId, LanguageServerName,
-};
+use language::{LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId};
+use lsp::LanguageServerName;
 use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
@@ -494,7 +493,7 @@ impl Render for ActivityIndicator {
                             }),
                     ),
                 )
-                .anchor(gpui::AnchorCorner::BottomLeft)
+                .anchor(gpui::Corner::BottomLeft)
                 .menu(move |cx| {
                     let strong_this = this.upgrade()?;
                     let mut has_work = false;

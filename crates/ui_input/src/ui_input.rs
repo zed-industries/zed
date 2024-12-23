@@ -5,11 +5,11 @@
 //! It can't be located in the `ui` crate because it depends on `editor`.
 //!
 
-use editor::*;
-use gpui::*;
+use editor::{Editor, EditorElement, EditorStyle};
+use gpui::{AppContext, FocusHandle, FocusableView, FontStyle, Hsla, TextStyle, View};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::*;
+use ui::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FieldLabelLayout {

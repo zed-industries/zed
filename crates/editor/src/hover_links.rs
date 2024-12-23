@@ -1,8 +1,9 @@
 use crate::{
+    editor_settings::MultiCursorModifier,
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
-    Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition,
-    GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
+    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
+    GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
 };
 use gpui::{px, AppContext, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
@@ -12,6 +13,7 @@ use project::{
     HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink, Project,
     ResolveState, ResolvedPath,
 };
+use settings::Settings;
 use std::ops::Range;
 use theme::ActiveTheme as _;
 use util::{maybe, ResultExt, TryFutureExt as _};
@@ -117,7 +119,12 @@ impl Editor {
         modifiers: Modifiers,
         cx: &mut ViewContext<Self>,
     ) {
-        if !modifiers.secondary() || self.has_pending_selection() {
+        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+        let hovered_link_modifier = match multi_cursor_setting {
+            MultiCursorModifier::Alt => modifiers.secondary(),
+            MultiCursorModifier::CmdOrCtrl => modifiers.alt,
+        };
+        if !hovered_link_modifier || self.has_pending_selection() {
             self.hide_hovered_link(cx);
             return;
         }
@@ -137,7 +144,7 @@ impl Editor {
                     snapshot,
                     point_for_position,
                     self,
-                    modifiers.secondary(),
+                    hovered_link_modifier,
                     modifiers.shift,
                     cx,
                 );
@@ -684,6 +691,65 @@ pub(crate) fn find_url(
             return Some((range, link.as_str().to_string()));
         }
     }
+    None
+}
+
+pub(crate) fn find_url_from_range(
+    buffer: &Model<language::Buffer>,
+    range: Range<text::Anchor>,
+    mut cx: AsyncWindowContext,
+) -> Option<String> {
+    const LIMIT: usize = 2048;
+
+    let Ok(snapshot) = buffer.update(&mut cx, |buffer, _| buffer.snapshot()) else {
+        return None;
+    };
+
+    let start_offset = range.start.to_offset(&snapshot);
+    let end_offset = range.end.to_offset(&snapshot);
+
+    let mut token_start = start_offset.min(end_offset);
+    let mut token_end = start_offset.max(end_offset);
+
+    let range_len = token_end - token_start;
+
+    if range_len >= LIMIT {
+        return None;
+    }
+
+    // Skip leading whitespace
+    for ch in snapshot.chars_at(token_start).take(range_len) {
+        if !ch.is_whitespace() {
+            break;
+        }
+        token_start += ch.len_utf8();
+    }
+
+    // Skip trailing whitespace
+    for ch in snapshot.reversed_chars_at(token_end).take(range_len) {
+        if !ch.is_whitespace() {
+            break;
+        }
+        token_end -= ch.len_utf8();
+    }
+
+    if token_start >= token_end {
+        return None;
+    }
+
+    let text = snapshot
+        .text_for_range(token_start..token_end)
+        .collect::<String>();
+
+    let mut finder = LinkFinder::new();
+    finder.kinds(&[LinkKind::Url]);
+
+    if let Some(link) = finder.links(&text).next() {
+        if link.start() == 0 && link.end() == text.len() {
+            return Some(link.as_str().to_string());
+        }
+    }
+
     None
 }
 

@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
-use assistant_slash_command::SlashCommandRegistry;
-
 use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger};
+use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip};
 
 use crate::assistant_panel::ContextEditor;
+use crate::SlashCommandWorkingSet;
 
 #[derive(IntoElement)]
 pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
-    registry: Arc<SlashCommandRegistry>,
+    working_set: Arc<SlashCommandWorkingSet>,
     active_context_editor: WeakView<ContextEditor>,
     trigger: T,
 }
@@ -51,12 +50,12 @@ pub(crate) struct SlashCommandDelegate {
 
 impl<T: PopoverTrigger> SlashCommandSelector<T> {
     pub(crate) fn new(
-        registry: Arc<SlashCommandRegistry>,
+        working_set: Arc<SlashCommandWorkingSet>,
         active_context_editor: WeakView<ContextEditor>,
         trigger: T,
     ) -> Self {
         SlashCommandSelector {
-            registry,
+            working_set,
             active_context_editor,
             trigger,
         }
@@ -177,12 +176,18 @@ impl PickerDelegate for SlashCommandDelegate {
                 ListItem::new(ix)
                     .inset(true)
                     .spacing(ListItemSpacing::Dense)
-                    .selected(selected)
+                    .toggle_state(selected)
+                    .tooltip({
+                        let description = info.description.clone();
+                        move |cx| cx.new_view(|_| Tooltip::new(description.clone())).into()
+                    })
                     .child(
                         v_flex()
                             .group(format!("command-entry-label-{ix}"))
                             .w_full()
+                            .py_0p5()
                             .min_w(px(250.))
+                            .max_w(px(400.))
                             .child(
                                 h_flex()
                                     .gap_1p5()
@@ -193,7 +198,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                         {
                                             label.push_str(&args);
                                         }
-                                        Label::new(label).size(LabelSize::Small)
+                                        Label::new(label).single_line().size(LabelSize::Small)
                                     }))
                                     .children(info.args.clone().filter(|_| !selected).map(
                                         |args| {
@@ -201,6 +206,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                                 .font_buffer(cx)
                                                 .child(
                                                     Label::new(args)
+                                                        .single_line()
                                                         .size(LabelSize::Small)
                                                         .color(Color::Muted),
                                                 )
@@ -213,7 +219,8 @@ impl PickerDelegate for SlashCommandDelegate {
                             .child(
                                 Label::new(info.description.clone())
                                     .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                    .color(Color::Muted)
+                                    .text_ellipsis(),
                             ),
                     ),
             ),
@@ -221,7 +228,7 @@ impl PickerDelegate for SlashCommandDelegate {
                 ListItem::new(ix)
                     .inset(true)
                     .spacing(ListItemSpacing::Dense)
-                    .selected(selected)
+                    .toggle_state(selected)
                     .child(renderer(cx)),
             ),
         }
@@ -231,11 +238,11 @@ impl PickerDelegate for SlashCommandDelegate {
 impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let all_models = self
-            .registry
-            .featured_command_names()
+            .working_set
+            .featured_command_names(cx)
             .into_iter()
             .filter_map(|command_name| {
-                let command = self.registry.command(&command_name)?;
+                let command = self.working_set.command(&command_name, cx)?;
                 let menu_text = SharedString::from(Arc::from(command.menu_text()));
                 let label = command.label(cx);
                 let args = label.filter_range.end.ne(&label.text.len()).then(|| {
@@ -309,8 +316,8 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
         PopoverMenu::new("model-switcher")
             .menu(move |_cx| Some(picker_view.clone()))
             .trigger(self.trigger)
-            .attach(gpui::AnchorCorner::TopLeft)
-            .anchor(gpui::AnchorCorner::BottomLeft)
+            .attach(gpui::Corner::TopLeft)
+            .anchor(gpui::Corner::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-16.0),

@@ -1,6 +1,19 @@
+; Identifier naming conventions; these "soft conventions" should stay at the top of the file as they're often overridden
+
+; CamelCase for classes
+((identifier) @type.class
+  (#match? @type.class "^_*[A-Z][A-Za-z0-9_]*$"))
+
+; ALL_CAPS for constants:
+((identifier) @constant
+  (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
+
 (attribute attribute: (identifier) @property)
 (type (identifier) @type)
 (generic_type (identifier) @type)
+(comment) @comment
+(string) @string
+(escape_sequence) @string.escape
 
 ; Type alias
 (type_alias_statement "type" @keyword)
@@ -10,29 +23,43 @@
   (tuple (identifier) @type)
 )
 
+; Forward references
+(type
+  (string) @type
+)
+
+
 ; Function calls
 
-(decorator) @function
-
 (call
-  function: (attribute attribute: (identifier) @function.method))
+  function: (attribute attribute: (identifier) @function.method.call))
 (call
-  function: (identifier) @function)
+  function: (identifier) @function.call)
 
-; Function definitions
+(decorator
+  "@" @punctuation.special
+  [
+    (identifier) @function.decorator
+    (attribute attribute: (identifier) @function.decorator)
+    (call function: (identifier) @function.decorator.call)
+    (call (attribute attribute: (identifier) @function.decorator.call))
+  ])
+
+; Function and class definitions
 
 (function_definition
-  name: (identifier) @function)
+  name: (identifier) @function.definition)
 
-; Identifier naming conventions
+; Class definitions and calling: needs to come after the regex matching above
 
-((identifier) @type
- (#match? @type "^[A-Z]"))
+(class_definition
+  name: (identifier) @type.class.definition)
 
-((identifier) @constant
- (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+(call
+  function: (identifier) @type.class.call
+  (#match? @type.class.call "^_*[A-Z][A-Za-z0-9_]*$"))
 
-; Builtin functions
+; Builtins
 
 ((call
   function: (identifier) @function.builtin)
@@ -40,12 +67,16 @@
    @function.builtin
    "^(abs|all|any|ascii|bin|bool|breakpoint|bytearray|bytes|callable|chr|classmethod|compile|complex|delattr|dict|dir|divmod|enumerate|eval|exec|filter|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|id|input|int|isinstance|issubclass|iter|len|list|locals|map|max|memoryview|min|next|object|oct|open|ord|pow|print|property|range|repr|reversed|round|set|setattr|slice|sorted|staticmethod|str|sum|super|tuple|type|vars|zip|__import__)$"))
 
+((identifier) @type.builtin
+    (#any-of? @type.builtin "int" "float" "complex" "bool" "list" "tuple" "range" "str" "bytes" "bytearray" "memoryview" "set" "frozenset" "dict"))
+    
 ; Literals
 
 [
   (none)
   (true)
   (false)
+  (ellipsis)
 ] @constant.builtin
 
 [
@@ -58,12 +89,8 @@
 [
   (parameters (identifier) @variable.special)
   (attribute (identifier) @variable.special)
-  (#match? @variable.special "^self$")
+  (#match? @variable.special "^self|cls$")
 ]
-
-(comment) @comment
-(string) @string
-(escape_sequence) @string.escape
 
 [
   "("
@@ -84,7 +111,38 @@
   "def"
   name: (_)
   (parameters)?
-  body: (block (expression_statement (string) @string.doc)))
+  body: (block . (expression_statement (string) @string.doc)))
+
+(class_definition
+  body: (block
+    . (comment) @comment*
+    . (expression_statement (string) @string.doc)))
+
+(module
+  . (comment) @comment*
+  . (expression_statement (string) @string.doc))
+
+(module
+  [
+    (expression_statement (assignment))
+    (type_alias_statement)
+  ]
+  . (expression_statement (string) @string.doc))
+
+(class_definition
+  body: (block
+    (expression_statement (assignment))
+    . (expression_statement (string) @string.doc)))
+
+(class_definition
+  body: (block
+    (function_definition
+      name: (identifier) @function.method.constructor
+      (#eq? @function.method.constructor "__init__")
+      body: (block
+        (expression_statement (assignment))
+        . (expression_statement (string) @string.doc)))))
+
 
 [
   "-"
@@ -117,6 +175,9 @@
   ">>"
   "|"
   "~"
+] @operator
+
+[
   "and"
   "in"
   "is"
@@ -124,7 +185,7 @@
   "or"
   "is not"
   "not in"
-] @operator
+] @keyword.operator
 
 [
   "as"
@@ -139,6 +200,7 @@
   "elif"
   "else"
   "except"
+  "except*"
   "exec"
   "finally"
   "for"

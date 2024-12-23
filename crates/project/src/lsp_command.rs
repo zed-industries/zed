@@ -1,9 +1,10 @@
 mod signature_help;
 
 use crate::{
-    lsp_store::LspStore, CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
-    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
-    InlayHintTooltip, Location, LocationLink, MarkupContent, ProjectTransaction, ResolveState,
+    lsp_store::{LocalLspStore, LspStore},
+    CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
+    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
+    LocationLink, MarkupContent, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -348,7 +349,7 @@ impl LspCommand for PerformRename {
         if let Some(edit) = message {
             let (lsp_adapter, lsp_server) =
                 language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
-            LspStore::deserialize_workspace_edit(
+            LocalLspStore::deserialize_workspace_edit(
                 lsp_store,
                 edit,
                 self.push_to_history,
@@ -837,7 +838,7 @@ fn language_server_for_buffer(
     lsp_store
         .update(cx, |lsp_store, cx| {
             lsp_store
-                .language_server_for_buffer(buffer.read(cx), server_id, cx)
+                .language_server_for_local_buffer(buffer.read(cx), server_id, cx)
                 .map(|(adapter, server)| (adapter.clone(), server.clone()))
         })?
         .ok_or_else(|| anyhow!("no language server found for buffer"))
@@ -1775,21 +1776,54 @@ impl LspCommand for GetCompletions {
         if let Some(item_defaults) = item_defaults {
             let default_data = item_defaults.data.as_ref();
             let default_commit_characters = item_defaults.commit_characters.as_ref();
+            let default_edit_range = item_defaults.edit_range.as_ref();
+            let default_insert_text_format = item_defaults.insert_text_format.as_ref();
             let default_insert_text_mode = item_defaults.insert_text_mode.as_ref();
 
             if default_data.is_some()
                 || default_commit_characters.is_some()
+                || default_edit_range.is_some()
+                || default_insert_text_format.is_some()
                 || default_insert_text_mode.is_some()
             {
                 for item in completions.iter_mut() {
-                    if let Some(data) = default_data {
-                        item.data = Some(data.clone())
+                    if item.data.is_none() && default_data.is_some() {
+                        item.data = default_data.cloned()
                     }
-                    if let Some(characters) = default_commit_characters {
-                        item.commit_characters = Some(characters.clone())
+                    if item.commit_characters.is_none() && default_commit_characters.is_some() {
+                        item.commit_characters = default_commit_characters.cloned()
                     }
-                    if let Some(text_mode) = default_insert_text_mode {
-                        item.insert_text_mode = Some(*text_mode)
+                    if item.text_edit.is_none() {
+                        if let Some(default_edit_range) = default_edit_range {
+                            match default_edit_range {
+                                CompletionListItemDefaultsEditRange::Range(range) => {
+                                    item.text_edit =
+                                        Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                            range: *range,
+                                            new_text: item.label.clone(),
+                                        }))
+                                }
+                                CompletionListItemDefaultsEditRange::InsertAndReplace {
+                                    insert,
+                                    replace,
+                                } => {
+                                    item.text_edit =
+                                        Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                            lsp::InsertReplaceEdit {
+                                                new_text: item.label.clone(),
+                                                insert: *insert,
+                                                replace: *replace,
+                                            },
+                                        ))
+                                }
+                            }
+                        }
+                    }
+                    if item.insert_text_format.is_none() && default_insert_text_format.is_some() {
+                        item.insert_text_format = default_insert_text_format.cloned()
+                    }
+                    if item.insert_text_mode.is_none() && default_insert_text_mode.is_some() {
+                        item.insert_text_mode = default_insert_text_mode.cloned()
                     }
                 }
             }
@@ -2090,19 +2124,33 @@ impl LspCommand for GetCodeActions {
         server_id: LanguageServerId,
         _: AsyncAppContext,
     ) -> Result<Vec<CodeAction>> {
+        let requested_kinds_set = if let Some(kinds) = self.kinds {
+            Some(kinds.into_iter().collect::<HashSet<_>>())
+        } else {
+            None
+        };
+
         Ok(actions
             .unwrap_or_default()
             .into_iter()
             .filter_map(|entry| {
-                if let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry {
-                    Some(CodeAction {
-                        server_id,
-                        range: self.range.clone(),
-                        lsp_action,
-                    })
-                } else {
-                    None
+                let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry else {
+                    return None;
+                };
+
+                if let Some((requested_kinds, kind)) =
+                    requested_kinds_set.as_ref().zip(lsp_action.kind.as_ref())
+                {
+                    if !requested_kinds.contains(kind) {
+                        return None;
+                    }
                 }
+
+                Some(CodeAction {
+                    server_id,
+                    range: self.range.clone(),
+                    lsp_action,
+                })
             })
             .collect())
     }
@@ -2259,7 +2307,7 @@ impl LspCommand for OnTypeFormatting {
         if let Some(edits) = message {
             let (lsp_adapter, lsp_server) =
                 language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
-            LspStore::deserialize_text_edits(
+            LocalLspStore::deserialize_text_edits(
                 lsp_store,
                 buffer,
                 edits,

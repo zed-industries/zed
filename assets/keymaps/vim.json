@@ -32,6 +32,18 @@
       "(": "vim::SentenceBackward",
       ")": "vim::SentenceForward",
       "|": "vim::GoToColumn",
+      "] ]": "vim::NextSectionStart",
+      "] [": "vim::NextSectionEnd",
+      "[ [": "vim::PreviousSectionStart",
+      "[ ]": "vim::PreviousSectionEnd",
+      "] m": "vim::NextMethodStart",
+      "] M": "vim::NextMethodEnd",
+      "[ m": "vim::PreviousMethodStart",
+      "[ M": "vim::PreviousMethodEnd",
+      "[ *": "vim::PreviousComment",
+      "[ /": "vim::PreviousComment",
+      "] *": "vim::NextComment",
+      "] /": "vim::NextComment",
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
@@ -54,6 +66,10 @@
       "n": "vim::MoveToNextMatch",
       "shift-n": "vim::MoveToPrevMatch",
       "%": "vim::Matching",
+      "] }": ["vim::UnmatchedForward", { "char": "}" }],
+      "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
+      "] )": ["vim::UnmatchedForward", { "char": ")" }],
+      "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
       "f": ["vim::PushOperator", { "FindForward": { "before": false } }],
       "t": ["vim::PushOperator", { "FindForward": { "before": true } }],
       "shift-f": ["vim::PushOperator", { "FindBackward": { "after": false } }],
@@ -127,6 +143,9 @@
       "shift-h": "vim::WindowTop",
       "shift-m": "vim::WindowMiddle",
       "shift-l": "vim::WindowBottom",
+      "q": "vim::ToggleRecord",
+      "shift-q": "vim::ReplayLastRecording",
+      "@": ["vim::PushOperator", "ReplayRegister"],
       // z commands
       "z enter": ["workspace::SendKeystrokes", "z t ^"],
       "z -": ["workspace::SendKeystrokes", "z b ^"],
@@ -137,14 +156,14 @@
       "z .": ["workspace::SendKeystrokes", "z z ^"],
       "z b": "editor::ScrollCursorBottom",
       "z a": "editor::ToggleFold",
-      "z A": "editor::ToggleFoldRecursive",
+      "z shift-a": "editor::ToggleFoldRecursive",
       "z c": "editor::Fold",
-      "z C": "editor::FoldRecursive",
+      "z shift-c": "editor::FoldRecursive",
       "z o": "editor::UnfoldLines",
-      "z O": "editor::UnfoldRecursive",
+      "z shift-o": "editor::UnfoldRecursive",
       "z f": "editor::FoldSelectedRanges",
-      "z M": "editor::FoldAll",
-      "z R": "editor::UnfoldAll",
+      "z shift-m": "editor::FoldAll",
+      "z shift-r": "editor::UnfoldAll",
       "shift-z shift-q": ["pane::CloseActiveItem", { "saveIntent": "skip" }],
       "shift-z shift-z": ["pane::CloseActiveItem", { "saveIntent": "saveAll" }],
       // Count support
@@ -200,21 +219,19 @@
       "shift-s": "vim::SubstituteLine",
       ">": ["vim::PushOperator", "Indent"],
       "<": ["vim::PushOperator", "Outdent"],
+      "=": ["vim::PushOperator", "AutoIndent"],
       "g u": ["vim::PushOperator", "Lowercase"],
       "g shift-u": ["vim::PushOperator", "Uppercase"],
       "g ~": ["vim::PushOperator", "OppositeCase"],
       "\"": ["vim::PushOperator", "Register"],
       "g q": ["vim::PushOperator", "Rewrap"],
       "g w": ["vim::PushOperator", "Rewrap"],
-      "q": "vim::ToggleRecord",
-      "shift-q": "vim::ReplayLastRecording",
-      "@": ["vim::PushOperator", "ReplayRegister"],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       "insert": "vim::InsertBefore",
       // tree-sitter related commands
-      "[ x": "editor::SelectLargerSyntaxNode",
-      "] x": "editor::SelectSmallerSyntaxNode",
+      "[ x": "vim::SelectLargerSyntaxNode",
+      "] x": "vim::SelectSmallerSyntaxNode",
       "] d": "editor::GoToDiagnostic",
       "[ d": "editor::GoToPrevDiagnostic",
       "] c": "editor::GoToHunk",
@@ -234,7 +251,7 @@
     "bindings": {
       ":": "vim::VisualCommand",
       "u": "vim::ConvertToLowerCase",
-      "U": "vim::ConvertToUpperCase",
+      "shift-u": "vim::ConvertToUpperCase",
       "o": "vim::OtherEnd",
       "shift-o": "vim::OtherEnd",
       "d": "vim::VisualDelete",
@@ -258,8 +275,8 @@
       "g ctrl-x": ["vim::Decrement", { "step": true }],
       "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
-      "g I": "vim::VisualInsertFirstNonWhiteSpace",
-      "g A": "vim::VisualInsertEndOfLine",
+      "g shift-i": "vim::VisualInsertFirstNonWhiteSpace",
+      "g shift-a": "vim::VisualInsertEndOfLine",
       "shift-j": "vim::JoinLines",
       "r": ["vim::PushOperator", "Replace"],
       "ctrl-c": ["vim::SwitchMode", "Normal"],
@@ -267,6 +284,7 @@
       "ctrl-[": ["vim::SwitchMode", "Normal"],
       ">": "vim::Indent",
       "<": "vim::Outdent",
+      "=": "vim::AutoIndent",
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
       "g c": "vim::ToggleComments",
@@ -299,9 +317,27 @@
       "ctrl-q": ["vim::PushOperator", { "Literal": {} }],
       "ctrl-shift-q": ["vim::PushOperator", { "Literal": {} }],
       "ctrl-r": ["vim::PushOperator", "Register"],
-      "insert": "vim::ToggleReplace"
+      "insert": "vim::ToggleReplace",
+      "ctrl-o": "vim::TemporaryNormal"
     }
   },
+  {
+    "context": "vim_mode == helix_normal",
+    "bindings": {
+      "i": "vim::InsertBefore",
+      "a": "vim::InsertAfter",
+      "d": "vim::HelixDelete",
+      "w": "vim::NextWordStart",
+      "e": "vim::NextWordEnd",
+      "b": "vim::PreviousWordStart",
+
+      "h": "vim::Left",
+      "j": "vim::Down",
+      "k": "vim::Up",
+      "l": "vim::Right"
+    }
+  },
+
   {
     "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
     "bindings": {
@@ -344,7 +380,8 @@
     "bindings": {
       "escape": "vim::ClearOperators",
       "ctrl-c": "vim::ClearOperators",
-      "ctrl-[": "vim::ClearOperators"
+      "ctrl-[": "vim::ClearOperators",
+      "g c": "vim::Comment"
     }
   },
   {
@@ -370,8 +407,11 @@
       "shift-b": "vim::CurlyBrackets",
       "<": "vim::AngleBrackets",
       ">": "vim::AngleBrackets",
-      "a": "vim::AngleBrackets",
-      "g": "vim::Argument"
+      "a": "vim::Argument",
+      "i": "vim::IndentObj",
+      "shift-i": ["vim::IndentObj", { "includeBelow": true }],
+      "f": "vim::Method",
+      "c": "vim::Class"
     }
   },
   {
@@ -444,6 +484,12 @@
     "context": "vim_operator == <",
     "bindings": {
       "<": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == eq",
+    "bindings": {
+      "=": "vim::CurrentLine"
     }
   },
   {
@@ -527,6 +573,12 @@
       "ctrl-w shift-l": ["workspace::SwapPaneInDirection", "Right"],
       "ctrl-w shift-k": ["workspace::SwapPaneInDirection", "Up"],
       "ctrl-w shift-j": ["workspace::SwapPaneInDirection", "Down"],
+      "ctrl-w >": ["vim::ResizePane", "Widen"],
+      "ctrl-w <": ["vim::ResizePane", "Narrow"],
+      "ctrl-w -": ["vim::ResizePane", "Shorten"],
+      "ctrl-w +": ["vim::ResizePane", "Lengthen"],
+      "ctrl-w _": "vim::MaximizePane",
+      "ctrl-w =": "vim::ResetPaneSizes",
       "ctrl-w g t": "pane::ActivateNextItem",
       "ctrl-w ctrl-g t": "pane::ActivateNextItem",
       "ctrl-w g shift-t": "pane::ActivatePrevItem",
@@ -553,7 +605,7 @@
     }
   },
   {
-    "context": "EmptyPane || SharedScreen || MarkdownPreview || KeyContextView",
+    "context": "EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
     "bindings": {
       ":": "command_palette::Toggle",
       "g /": "pane::DeploySearch"
@@ -581,6 +633,12 @@
       "p": "project_panel::Open",
       "x": "project_panel::RevealInFileManager",
       "s": "project_panel::OpenWithSystem",
+      "] c": "project_panel::SelectNextGitEntry",
+      "[ c": "project_panel::SelectPrevGitEntry",
+      "] d": "project_panel::SelectNextDiagnostic",
+      "[ d": "project_panel::SelectPrevDiagnostic",
+      "}": "project_panel::SelectNextDirectory",
+      "{": "project_panel::SelectPrevDirectory",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
       "-": "project_panel::SelectParent",

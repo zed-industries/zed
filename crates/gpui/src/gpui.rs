@@ -56,7 +56,7 @@
 //!   and [`test`] modules for more details.
 //!
 //! Currently, the best way to learn about these APIs is to read the Zed source code, ask us about it at a fireside hack, or drop
-//! a question in the [Zed Discord](https://discord.gg/zed-community). We're working on improving the documentation, creating more examples,
+//! a question in the [Zed Discord](https://zed.dev/community-links). We're working on improving the documentation, creating more examples,
 //! and will be publishing more guides to GPUI on our [blog](https://zed.dev/blog).
 
 #![deny(missing_docs)]
@@ -344,15 +344,15 @@ impl<T> Flatten<T> for Result<T> {
     }
 }
 
+/// Information about the GPU GPUI is running on.
 #[derive(Default, Debug)]
-/// Information about the GPU GPUI is running on
-pub struct GPUSpecs {
-    /// true if the GPU is really a fake (like llvmpipe) running on the CPU
+pub struct GpuSpecs {
+    /// Whether the GPU is really a fake (like `llvmpipe`) running on the CPU.
     pub is_software_emulated: bool,
-    /// Name of the device as reported by vulkan
+    /// The name of the device, as reported by Vulkan.
     pub device_name: String,
-    /// Name of the driver as reported by vulkan
+    /// The name of the driver, as reported by Vulkan.
     pub driver_name: String,
-    /// Further driver info as reported by vulkan
+    /// Further information about the driver, as reported by Vulkan.
     pub driver_info: String,
 }

@@ -5,7 +5,10 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{atomic::Ordering::SeqCst, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -16,6 +19,7 @@ use futures::{
     future::{LocalBoxFuture, Shared},
     Future, FutureExt,
 };
+use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
@@ -30,11 +34,12 @@ use util::ResultExt;
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
     Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
-    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor, Global, KeyBinding, Keymap,
+    Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
+    WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -242,7 +247,9 @@ pub struct AppContext {
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
+    pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
+    pub(crate) keyboard_layout: SharedString,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -252,6 +259,7 @@ pub struct AppContext {
     // TypeId is the type of the event that the listener callback expects
     pub(crate) event_listeners: SubscriberSet<EntityId, (TypeId, Listener)>,
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
+    pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -279,6 +287,7 @@ impl AppContext {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
+        let keyboard_layout = SharedString::from(platform.keyboard_layout());
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
@@ -299,9 +308,11 @@ impl AppContext {
                 entities,
                 new_view_observers: SubscriberSet::new(),
                 new_model_observers: SubscriberSet::new(),
-                window_handles: FxHashMap::default(),
                 windows: SlotMap::with_key(),
+                window_handles: FxHashMap::default(),
+                focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
+                keyboard_layout,
                 global_action_listeners: FxHashMap::default(),
                 pending_effects: VecDeque::new(),
                 pending_notifications: FxHashSet::default(),
@@ -310,6 +321,7 @@ impl AppContext {
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
+                keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
@@ -322,6 +334,19 @@ impl AppContext {
         });
 
         init_app_menus(platform.as_ref(), &mut app.borrow_mut());
+
+        platform.on_keyboard_layout_change(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let cx = &mut app.borrow_mut();
+                    cx.keyboard_layout = SharedString::from(cx.platform.keyboard_layout());
+                    cx.keyboard_layout_observers
+                        .clone()
+                        .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
 
         platform.on_quit(Box::new({
             let cx = app.clone();
@@ -354,6 +379,27 @@ impl AppContext {
         {
             log::error!("timed out waiting on app_will_quit");
         }
+    }
+
+    /// Get the id of the current keyboard layout
+    pub fn keyboard_layout(&self) -> &SharedString {
+        &self.keyboard_layout
+    }
+
+    /// Invokes a handler when the current keyboard layout changes
+    pub fn on_keyboard_layout_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut AppContext),
+    {
+        let (subscription, activate) = self.keyboard_layout_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Gracefully quit the application via the platform's standard routine.
@@ -400,6 +446,7 @@ impl AppContext {
         self.defer(move |_| activate());
         subscription
     }
+
     pub(crate) fn observe_internal<W, E>(
         &mut self,
         entity: &E,
@@ -530,6 +577,12 @@ impl AppContext {
         })
     }
 
+    /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
+    /// for elements rendered within this window.
+    pub fn focus_handle(&self) -> FocusHandle {
+        FocusHandle::new(&self.focus_handles)
+    }
+
     /// Instructs the platform to activate the application by bringing it to the foreground.
     pub fn activate(&self, ignoring_other_apps: bool) {
         self.platform.activate(ignoring_other_apps);
@@ -560,6 +613,13 @@ impl AppContext {
         self.platform.primary_display()
     }
 
+    /// Returns a list of available screen capture sources.
+    pub fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        self.platform.screen_capture_sources()
+    }
+
     /// Returns the display with the given ID, if one exists.
     pub fn find_display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         self.displays()
@@ -575,7 +635,7 @@ impl AppContext {
 
     /// Writes data to the primary selection buffer.
     /// Only available on Linux.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub fn write_to_primary(&self, item: ClipboardItem) {
         self.platform.write_to_primary(item)
     }
@@ -587,7 +647,7 @@ impl AppContext {
 
     /// Reads data from the primary selection buffer.
     /// Only available on Linux.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub fn read_from_primary(&self) -> Option<ClipboardItem> {
         self.platform.read_from_primary()
     }
@@ -701,7 +761,7 @@ impl AppContext {
     }
 
     /// Returns the SVG renderer GPUI uses
-    pub(crate) fn svg_renderer(&self) -> SvgRenderer {
+    pub fn svg_renderer(&self) -> SvgRenderer {
         self.svg_renderer.clone()
     }
 
@@ -798,28 +858,25 @@ impl AppContext {
 
     /// Repeatedly called during `flush_effects` to handle a focused handle being dropped.
     fn release_dropped_focus_handles(&mut self) {
-        for window_handle in self.windows() {
-            window_handle
-                .update(self, |_, cx| {
-                    let mut blur_window = false;
-                    let focus = cx.window.focus;
-                    cx.window.focus_handles.write().retain(|handle_id, count| {
-                        if count.load(SeqCst) == 0 {
-                            if focus == Some(handle_id) {
-                                blur_window = true;
-                            }
-                            false
-                        } else {
-                            true
-                        }
-                    });
-
-                    if blur_window {
-                        cx.blur();
+        self.focus_handles
+            .clone()
+            .write()
+            .retain(|handle_id, count| {
+                if count.load(SeqCst) == 0 {
+                    for window_handle in self.windows() {
+                        window_handle
+                            .update(self, |_, cx| {
+                                if cx.window.focus == Some(handle_id) {
+                                    cx.blur();
+                                }
+                            })
+                            .unwrap();
                     }
-                })
-                .unwrap();
-        }
+                    false
+                } else {
+                    true
+                }
+            });
     }
 
     fn apply_notify_effect(&mut self, emitter: EntityId) {
@@ -1323,7 +1380,7 @@ impl AppContext {
     }
 
     /// Remove an asset from GPUI's cache
-    pub fn remove_cached_asset<A: Asset + 'static>(&mut self, source: &A::Source) {
+    pub fn remove_asset<A: Asset>(&mut self, source: &A::Source) {
         let asset_id = (TypeId::of::<A>(), hash(source));
         self.loading_assets.remove(&asset_id);
     }
@@ -1332,12 +1389,7 @@ impl AppContext {
     ///
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
     /// time, and the results of this call will be cached
-    ///
-    /// This asset will not be cached by default, see [Self::use_cached_asset]
-    pub fn fetch_asset<A: Asset + 'static>(
-        &mut self,
-        source: &A::Source,
-    ) -> (Shared<Task<A::Output>>, bool) {
+    pub fn fetch_asset<A: Asset>(&mut self, source: &A::Source) -> (Shared<Task<A::Output>>, bool) {
         let asset_id = (TypeId::of::<A>(), hash(source));
         let mut is_first = false;
         let task = self
@@ -1544,7 +1596,7 @@ pub struct AnyDrag {
     pub view: AnyView,
 
     /// The value of the dragged item, to be dropped
-    pub value: Box<dyn Any>,
+    pub value: Arc<dyn Any>,
 
     /// This is used to render the dragged item in the same place
     /// on the original element that the drag was initiated

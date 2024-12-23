@@ -4,7 +4,7 @@ use language::LanguageName;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-use crate::LanguageSelector;
+use crate::{LanguageSelector, Toggle};
 
 pub struct ActiveBufferLanguage {
     active_language: Option<Option<LanguageName>>,
@@ -54,7 +54,7 @@ impl Render for ActiveBufferLanguage {
                             });
                         }
                     }))
-                    .tooltip(|cx| Tooltip::text("Select Language", cx)),
+                    .tooltip(|cx| Tooltip::for_action("Select Language", &Toggle, cx)),
             )
         })
     }
@@ -66,7 +66,7 @@ impl StatusItemView for ActiveBufferLanguage {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self._observe_active_editor = Some(cx.observe(&editor, Self::update_language));
             self.update_language(editor, cx);
         } else {

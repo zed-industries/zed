@@ -112,6 +112,9 @@ pub struct LanguageSettings {
     /// Controls whether inline completions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     pub show_inline_completions: bool,
+    /// Controls whether inline completions are shown in the given language
+    /// scopes.
+    pub inline_completions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
@@ -135,6 +138,12 @@ pub struct LanguageSettings {
     pub linked_edits: bool,
     /// Task configuration for this language.
     pub tasks: LanguageTaskConfig,
+    /// Whether to pop the completions menu while typing in an editor without
+    /// explicitly requesting it.
+    pub show_completions_on_input: bool,
+    /// Whether to display inline and alongside documentation for items in the
+    /// completions menu.
+    pub show_completion_documentation: bool,
 }
 
 impl LanguageSettings {
@@ -194,6 +203,7 @@ pub enum InlineCompletionProvider {
     #[default]
     Copilot,
     Supermaven,
+    Zeta,
 }
 
 /// The settings for inline completions, such as [GitHub Copilot](https://github.com/features/copilot)
@@ -318,6 +328,14 @@ pub struct LanguageSettingsContent {
     /// Default: true
     #[serde(default)]
     pub show_inline_completions: Option<bool>,
+    /// Controls whether inline completions are shown in the given language
+    /// scopes.
+    ///
+    /// Example: ["string", "comment"]
+    ///
+    /// Default: []
+    #[serde(default)]
+    pub inline_completions_disabled_in: Option<Vec<String>>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
@@ -370,6 +388,16 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: {}
     pub tasks: Option<LanguageTaskConfig>,
+    /// Whether to pop the completions menu while typing in an editor without
+    /// explicitly requesting it.
+    ///
+    /// Default: true
+    pub show_completions_on_input: Option<bool>,
+    /// Whether to display inline and alongside documentation for items in the
+    /// completions menu.
+    ///
+    /// Default: true
+    pub show_completion_documentation: Option<bool>,
 }
 
 /// The contents of the inline completion settings.
@@ -1164,12 +1192,24 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         &mut settings.show_inline_completions,
         src.show_inline_completions,
     );
+    merge(
+        &mut settings.inline_completions_disabled_in,
+        src.inline_completions_disabled_in.clone(),
+    );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
     merge(
         &mut settings.extend_comment_on_newline,
         src.extend_comment_on_newline,
     );
     merge(&mut settings.inlay_hints, src.inlay_hints);
+    merge(
+        &mut settings.show_completions_on_input,
+        src.show_completions_on_input,
+    );
+    merge(
+        &mut settings.show_completion_documentation,
+        src.show_completion_documentation,
+    );
 }
 
 /// Allows to enable/disable formatting with Prettier

@@ -889,7 +889,7 @@ impl Client {
         cx: &AsyncAppContext,
     ) -> Result<()> {
         let executor = cx.background_executor();
-        log::info!("add connection to peer");
+        log::debug!("add connection to peer");
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn, {
             let executor = executor.clone();
             move |duration| executor.timer(duration)
@@ -897,12 +897,12 @@ impl Client {
         let handle_io = executor.spawn(handle_io);
 
         let peer_id = async {
-            log::info!("waiting for server hello");
+            log::debug!("waiting for server hello");
             let message = incoming
                 .next()
                 .await
                 .ok_or_else(|| anyhow!("no hello message received"))?;
-            log::info!("got server hello");
+            log::debug!("got server hello");
             let hello_message_type_name = message.payload_type_name().to_string();
             let hello = message
                 .into_any()
@@ -928,7 +928,7 @@ impl Client {
             }
         };
 
-        log::info!(
+        log::debug!(
             "set status to connected (connection id: {:?}, peer id: {:?})",
             connection_id,
             peer_id
@@ -1067,6 +1067,8 @@ impl Client {
         let proxy = http.proxy().cloned();
         let credentials = credentials.clone();
         let rpc_url = self.rpc_url(http, release_channel);
+        let system_id = self.telemetry.system_id();
+        let metrics_id = self.telemetry.metrics_id();
         cx.background_executor().spawn(async move {
             use HttpOrHttps::*;
 
@@ -1118,6 +1120,12 @@ impl Client {
                 "x-zed-release-channel",
                 HeaderValue::from_str(release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
             );
+            if let Some(system_id) = system_id {
+                request_headers.insert("x-zed-system-id", HeaderValue::from_str(&system_id)?);
+            }
+            if let Some(metrics_id) = metrics_id {
+                request_headers.insert("x-zed-metrics-id", HeaderValue::from_str(&metrics_id)?);
+            }
 
             match url_scheme {
                 Https => {
@@ -1780,7 +1788,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -1821,7 +1829,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -1900,7 +1908,7 @@ mod tests {
         let dropped_auth_count = Arc::new(Mutex::new(0));
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -1943,7 +1951,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -2003,7 +2011,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
@@ -2038,7 +2046,7 @@ mod tests {
         let user_id = 5;
         let client = cx.update(|cx| {
             Client::new(
-                Arc::new(FakeSystemClock::default()),
+                Arc::new(FakeSystemClock::new()),
                 FakeHttpClient::with_404_response(),
                 cx,
             )
