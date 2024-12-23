@@ -143,32 +143,45 @@ fn handle_size_msg(
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
 
-    // Don't resize the renderer when the window is minimized, but record that it was minimized so
-    // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
-    if wparam.0 == SIZE_MINIMIZED as usize {
-        lock.is_minimized = Some(true);
-        return Some(0);
-    }
-    let may_have_been_minimized = lock.is_minimized.unwrap_or(true);
-    lock.is_minimized = Some(false);
-
+    let is_minimized = wparam.0 == SIZE_MINIMIZED as usize;
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
     let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    if may_have_been_minimized {
+
+    // Update minimized state
+    let was_minimized = lock.is_minimized.unwrap_or(false);
+    lock.is_minimized = Some(is_minimized);
+
+    // When window is being minimized, we need to update the renderer state
+    // but skip the resize callback to prevent potential errors
+    if is_minimized {
+        lock.renderer
+            .update_drawable_size_even_if_unchanged(new_size);
+        return Some(0);
+    }
+
+    // Update renderer state based on previous window state
+    if was_minimized {
+        // Force update when restoring from minimized state
         lock.renderer
             .update_drawable_size_even_if_unchanged(new_size);
     } else {
+        // Normal resize update
         lock.renderer.update_drawable_size(new_size);
     }
-    let new_size = new_size.to_pixels(scale_factor);
-    lock.logical_size = new_size;
+
+    // Update logical size
+    let new_logical_size = new_size.to_pixels(scale_factor);
+    lock.logical_size = new_logical_size;
+
+    // Handle resize callback
     if let Some(mut callback) = lock.callbacks.resize.take() {
         drop(lock);
-        callback(new_size, scale_factor);
+        callback(new_logical_size, scale_factor);
         state_ptr.state.borrow_mut().callbacks.resize = Some(callback);
     }
+
     Some(0)
 }
 
