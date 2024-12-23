@@ -32,7 +32,7 @@ use crate::{
 pub use block_map::{
     Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap,
     BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
-    TopExcerptInfo,
+    StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
@@ -1106,8 +1106,8 @@ impl DisplaySnapshot {
             .map(|(row, block)| (DisplayRow(row), block))
     }
 
-    pub fn top_excerpt(&self, row: DisplayRow) -> Option<TopExcerptInfo<'_>> {
-        self.block_snapshot.top_excerpt(row.0)
+    pub fn sticky_header_excerpt(&self, row: DisplayRow) -> Option<StickyHeaderExcerpt<'_>> {
+        self.block_snapshot.sticky_header_excerpt(row.0)
     }
 
     pub fn block_for_id(&self, id: BlockId) -> Option<Block> {

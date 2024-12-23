@@ -22,7 +22,7 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
     LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SoftWrap, ToPoint, ToggleFold, TopExcerptInfo, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
     MULTI_BUFFER_EXCERPT_HEADER_PADDING,
 };
@@ -2210,7 +2210,7 @@ impl EditorElement {
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
         selections: &[Selection<Point>],
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
-        top_excerpt_id: Option<ExcerptId>,
+        sticky_header_excerpt_id: Option<ExcerptId>,
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let mut element = match block {
@@ -2340,7 +2340,7 @@ impl EditorElement {
                 if let Some(next_excerpt) = next_excerpt {
                     let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt, cx);
                     if *starts_new_buffer {
-                        if top_excerpt_id != Some(next_excerpt.id) {
+                        if sticky_header_excerpt_id != Some(next_excerpt.id) {
                             result = result.child(self.render_buffer_header(
                                 next_excerpt,
                                 false,
@@ -2683,7 +2683,7 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         selections: &[Selection<Point>],
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
-        top_excerpt_id: Option<ExcerptId>,
+        sticky_header_excerpt_id: Option<ExcerptId>,
         cx: &mut WindowContext,
     ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
@@ -2722,7 +2722,7 @@ impl EditorElement {
                 &mut resized_blocks,
                 selections,
                 is_row_soft_wrapped,
-                top_excerpt_id,
+                sticky_header_excerpt_id,
                 cx,
             );
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
@@ -2770,7 +2770,7 @@ impl EditorElement {
                 &mut resized_blocks,
                 selections,
                 is_row_soft_wrapped,
-                top_excerpt_id,
+                sticky_header_excerpt_id,
                 cx,
             );
 
@@ -2818,7 +2818,7 @@ impl EditorElement {
                             &mut resized_blocks,
                             selections,
                             is_row_soft_wrapped,
-                            top_excerpt_id,
+                            sticky_header_excerpt_id,
                             cx,
                         );
 
@@ -2887,11 +2887,11 @@ impl EditorElement {
 
     fn layout_sticky_buffer_header(
         &self,
-        TopExcerptInfo {
+        StickyHeaderExcerpt {
             excerpt,
             next_excerpt_controls_present,
             next_buffer_row,
-        }: TopExcerptInfo<'_>,
+        }: StickyHeaderExcerpt<'_>,
         scroll_position: f32,
         line_height: Pixels,
         snapshot: &EditorSnapshot,
@@ -6116,12 +6116,13 @@ impl Element for EditorElement {
                     let scroll_range_bounds = scrollbar_range_data.scroll_range;
                     let mut scroll_width = scroll_range_bounds.size.width;
 
-                    let top_excerpt = if snapshot.buffer_snapshot.show_headers() {
-                        snapshot.top_excerpt(start_row)
+                    let sticky_header_excerpt = if snapshot.buffer_snapshot.show_headers() {
+                        snapshot.sticky_header_excerpt(start_row)
                     } else {
                         None
                     };
-                    let top_excerpt_id = top_excerpt.as_ref().map(|top| top.excerpt.id);
+                    let sticky_header_excerpt_id =
+                        sticky_header_excerpt.as_ref().map(|top| top.excerpt.id);
 
                     let blocks = cx.with_element_namespace("blocks", |cx| {
                         self.render_blocks(
@@ -6138,7 +6139,7 @@ impl Element for EditorElement {
                             &line_layouts,
                             &local_selections,
                             is_row_soft_wrapped,
-                            top_excerpt_id,
+                            sticky_header_excerpt_id,
                             cx,
                         )
                     });
@@ -6152,10 +6153,10 @@ impl Element for EditorElement {
                         }
                     };
 
-                    let sticky_buffer_header = top_excerpt.map(|top_excerpt| {
+                    let sticky_buffer_header = sticky_header_excerpt.map(|sticky_header_excerpt| {
                         cx.with_element_namespace("blocks", |cx| {
                             self.layout_sticky_buffer_header(
-                                top_excerpt,
+                                sticky_header_excerpt,
                                 scroll_position.y,
                                 line_height,
                                 &snapshot,
