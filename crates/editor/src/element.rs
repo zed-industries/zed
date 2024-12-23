@@ -509,7 +509,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
-        line_numbers: &HashMap<MultiBufferRow, (ShapedLine, Hitbox)>,
+        line_numbers: &HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>,
         cx: &mut ViewContext<Editor>,
     ) {
         if cx.default_prevented() {
@@ -599,7 +599,7 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_point(DisplayPoint::new(DisplayRow(display_row), 0), Bias::Right)
                 .row;
-            if let Some((_, hitbox)) = line_numbers.get(&MultiBufferRow(multi_buffer_row)) {
+            if let Some((_, Some(hitbox))) = line_numbers.get(&MultiBufferRow(multi_buffer_row)) {
                 if hitbox.contains(&event.position) {
                     editor.open_excerpts_common(
                         Some(JumpData::MultiBufferRow(MultiBufferRow(multi_buffer_row))),
@@ -2000,7 +2000,7 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn layout_line_numbers(
         &self,
-        gutter_hitbox: &Hitbox,
+        gutter_hitbox: Option<&Hitbox>,
         gutter_dimensions: GutterDimensions,
         line_height: Pixels,
         scroll_position: gpui::Point<f32>,
@@ -2010,7 +2010,7 @@ impl EditorElement {
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
-    ) -> Arc<HashMap<MultiBufferRow, (ShapedLine, Hitbox)>> {
+    ) -> Arc<HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>> {
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
         });
@@ -2065,18 +2065,26 @@ impl EditorElement {
                     .shape_line_number(SharedString::from(&line_number), color, false, cx)
                     .log_err()?;
                 let scroll_top = scroll_position.y * line_height;
-                let line_origin = gutter_hitbox.origin
-                    + point(
-                        gutter_hitbox.size.width
-                            - shaped_line.width
-                            - gutter_dimensions.right_padding,
-                        ix as f32 * line_height - (scroll_top % line_height),
-                    );
+                let line_origin = gutter_hitbox.map(|hitbox| {
+                    hitbox.origin
+                        + point(
+                            hitbox.size.width - shaped_line.width - gutter_dimensions.right_padding,
+                            ix as f32 * line_height - (scroll_top % line_height),
+                        )
+                });
 
-                let hitbox = cx.insert_hitbox(
-                    Bounds::new(line_origin, size(shaped_line.width, line_height)),
-                    false,
-                );
+                #[cfg(not(test))]
+                let hitbox = line_origin.map(|line_origin| {
+                    cx.insert_hitbox(
+                        Bounds::new(line_origin, size(shaped_line.width, line_height)),
+                        false,
+                    )
+                });
+                #[cfg(test)]
+                let hitbox = {
+                    let _ = line_origin;
+                    None
+                };
 
                 let multi_buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
                 let multi_buffer_row = MultiBufferRow(multi_buffer_row);
@@ -3823,6 +3831,9 @@ impl EditorElement {
         cx.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
         for (_, (line, hitbox)) in layout.line_numbers.iter() {
+            let Some(hitbox) = hitbox else {
+                continue;
+            };
             let Some(line) = self
                 .shape_line_number(
                     line.text.clone(),
@@ -6081,7 +6092,7 @@ impl Element for EditorElement {
                     );
 
                     let line_numbers = self.layout_line_numbers(
-                        &gutter_hitbox,
+                        Some(&gutter_hitbox),
                         gutter_dimensions,
                         line_height,
                         scroll_position,
@@ -6765,7 +6776,7 @@ pub struct EditorLayout {
     active_rows: BTreeMap<DisplayRow, bool>,
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
     line_elements: SmallVec<[AnyElement; 1]>,
-    line_numbers: Arc<HashMap<MultiBufferRow, (ShapedLine, Hitbox)>>,
+    line_numbers: Arc<HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
@@ -7422,10 +7433,7 @@ mod tests {
         let layouts = cx
             .update_window(*window, |_, cx| {
                 element.layout_line_numbers(
-                    &cx.insert_hitbox(
-                        Bounds::new(gpui::Point::default(), size(px(100.0), px(30.0))),
-                        false,
-                    ),
+                    None,
                     GutterDimensions {
                         left_padding: Pixels::ZERO,
                         right_padding: Pixels::ZERO,

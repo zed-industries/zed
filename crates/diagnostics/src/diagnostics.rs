@@ -839,6 +839,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
         let highlight_style: HighlightStyle = color.text_accent.into();
 
         h_flex()
+            .id(DIAGNOSTIC_HEADER)
             .w_full()
             .relative()
             .child(
@@ -851,7 +852,6 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             )
             .child(
                 h_flex()
-                    .id(DIAGNOSTIC_HEADER)
                     .block_mouse_down()
                     .h(2. * cx.line_height())
                     .pl_10()
