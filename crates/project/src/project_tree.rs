@@ -8,9 +8,8 @@ mod toolchain_tree;
 
 use std::{
     borrow::Borrow,
-    collections::{btree_map::Entry as TreeEntry, hash_map::Entry, BTreeMap},
+    collections::{hash_map::Entry, BTreeMap},
     ops::ControlFlow,
-    path::Path,
     sync::Arc,
 };
 
@@ -28,13 +27,11 @@ use crate::{
 };
 
 pub(crate) use server_tree::LanguageServerTree;
-type IsRoot = bool;
 
 struct WorktreeRoots {
-    _roots: RootPathTrie<LanguageServerName>,
-    roots: BTreeMap<Arc<Path>, BTreeMap<LanguageServerName, IsRoot>>,
+    roots: RootPathTrie<LanguageServerName>,
     worktree_store: Model<WorktreeStore>,
-    worktree_subscription: Subscription,
+    _worktree_subscription: Subscription,
 }
 
 impl WorktreeRoots {
@@ -44,16 +41,16 @@ impl WorktreeRoots {
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx| Self {
-            _roots: RootPathTrie::new(),
-            roots: Default::default(),
+            roots: RootPathTrie::new(),
             worktree_store,
-            worktree_subscription: cx.subscribe(&worktree, |this: &mut Self, _, event, cx| {
+            _worktree_subscription: cx.subscribe(&worktree, |this: &mut Self, _, event, cx| {
                 match event {
                     WorktreeEvent::UpdatedEntries(changes) => {
                         for (path, _, kind) in changes.iter() {
                             match kind {
                                 worktree::PathChange::Removed => {
-                                    this.roots.remove(path);
+                                    let path = TriePath::from(path.as_ref());
+                                    this.roots.remove(&path);
                                 }
                                 _ => {}
                             }
@@ -65,7 +62,8 @@ impl WorktreeRoots {
                         else {
                             return;
                         };
-                        this.roots.remove(&entry.path);
+                        let path = TriePath::from(entry.path.as_ref());
+                        this.roots.remove(&path);
                     }
                 }
             }),
@@ -150,11 +148,11 @@ impl ProjectTree {
 
         let key = TriePath::from(&*path);
 
-        let mut roots = worktree_roots.update(cx, |this, _| {
-            this._roots.walk(&key, &mut |path, labels| {
-                for label in labels {
+        worktree_roots.update(cx, |this, _| {
+            this.roots.walk(&key, &mut |path, labels| {
+                for (label, presence) in labels {
                     if let Some(slot) = roots.get_mut(label) {
-                        debug_assert_eq!(slot, &mut None, "For a given path to a root of a worktree there should be at most project root");
+                        debug_assert_eq!(slot, &mut None, "For a given path to a root of a worktree there should be at most project root of {label:?} kind");
                         let _ = slot.insert(ProjectPath {
                             worktree_id,
                             path: path.clone(),
@@ -168,7 +166,6 @@ impl ProjectTree {
                     ControlFlow::Continue(())
                 }
             });
-            roots
         });
 
         // for ancestor in path.ancestors().skip(1) {
