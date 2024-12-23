@@ -56,7 +56,7 @@ impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut buttons = Vec::new();
 
-        let spacing = match &self.mode {
+        let left_gutter_spacing = match &self.mode {
             PromptEditorMode::Buffer {
                 id: _,
                 codegen,
@@ -74,8 +74,13 @@ impl<T: 'static> Render for PromptEditor<T> {
             }
             PromptEditorMode::Terminal { .. } => {
                 // Give the equivalent of the same left-padding that we're using on the right
-                Pixels::from(24.0)
+                Pixels::from(40.0)
             }
+        };
+
+        let bottom_padding = match &self.mode {
+            PromptEditorMode::Buffer { .. } => Pixels::from(0.),
+            PromptEditorMode::Terminal { .. } => Pixels::from(8.0),
         };
 
         buttons.extend(self.render_buttons(cx));
@@ -89,6 +94,7 @@ impl<T: 'static> Render for PromptEditor<T> {
             .border_color(cx.theme().status().info_border)
             .size_full()
             .pt_0p5()
+            .pb(bottom_padding)
             .pr_6()
             .child(
                 h_flex()
@@ -105,7 +111,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                     .child(
                         h_flex()
                             .h_full()
-                            .w(spacing)
+                            .w(left_gutter_spacing)
                             .justify_center()
                             .gap_2()
                             .child(self.render_close_button(cx))
@@ -169,7 +175,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                     ),
             )
             .child(
-                h_flex().child(div().w(spacing)).child(
+                h_flex().child(div().w(left_gutter_spacing)).child(
                     h_flex()
                         .w_full()
                         .pl_1()
@@ -406,7 +412,7 @@ impl<T: 'static> PromptEditor<T> {
                 vec![Button::new("start", mode.start_label())
                     .label_size(LabelSize::Small)
                     .icon(IconName::Return)
-                    .icon_size(IconSize::Small)
+                    .icon_size(IconSize::XSmall)
                     .icon_color(Color::Muted)
                     .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)))
                     .into_any_element()]
