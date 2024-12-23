@@ -591,7 +591,6 @@ impl EditorElement {
             }
             cx.stop_propagation();
         } else {
-            // TODO kb extract common code around this module into method/function
             let display_row = (((event.position - gutter_hitbox.bounds.origin).y
                 + position_map.scroll_pixel_position.y)
                 / position_map.line_height) as u32;
@@ -2035,7 +2034,6 @@ impl EditorElement {
             let is_relative = editor.should_use_relative_line_numbers(cx);
             (newest_selection_head, is_relative)
         });
-        let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
 
         let relative_to = if is_relative {
             Some(newest_selection_head.row())
@@ -2061,19 +2059,10 @@ impl EditorElement {
                     .get(&DisplayRow(ix as u32 + rows.start.0))
                     .unwrap_or(&default_number);
                 write!(&mut line_number, "{number}").unwrap();
-                // TODO kb underline hovered lines
-                let run = TextRun {
-                    len: line_number.len(),
-                    font: self.style.text.font(),
-                    color,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                };
-                let shaped_line = cx
-                    .text_system()
-                    .shape_line(SharedString::from(&line_number), font_size, &[run])
-                    .unwrap();
+
+                let shaped_line = self
+                    .shape_line_number(SharedString::from(&line_number), color, false, cx)
+                    .log_err()?;
                 let scroll_top = scroll_position.y * line_height;
                 let line_origin = gutter_hitbox.origin
                     + point(
@@ -3833,7 +3822,20 @@ impl EditorElement {
         cx.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
         for (_, (line, hitbox)) in layout.line_numbers.iter() {
-            line.paint(hitbox.origin, line_height, cx).log_err();
+            let Some(line) = self
+                .shape_line_number(
+                    line.text.clone(),
+                    cx.theme().colors().editor_active_line_number,
+                    hitbox.is_hovered(cx),
+                    cx,
+                )
+                .log_err()
+            else {
+                continue;
+            };
+            let Some(()) = line.paint(hitbox.origin, line_height, cx).log_err() else {
+                continue;
+            };
             cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
         }
     }
@@ -4942,6 +4944,35 @@ impl EditorElement {
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
         let digit_count = (snapshot.widest_line_number() as f32).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
+    }
+
+    fn shape_line_number(
+        &self,
+        text: SharedString,
+        color: Hsla,
+        hovered: bool,
+        cx: &WindowContext,
+    ) -> anyhow::Result<ShapedLine> {
+        let run = TextRun {
+            len: text.len(),
+            font: self.style.text.font(),
+            color,
+            background_color: None,
+            underline: if hovered {
+                Some(UnderlineStyle {
+                    thickness: px(1.0),
+                    ..UnderlineStyle::default()
+                })
+            } else {
+                None
+            },
+            strikethrough: None,
+        };
+        cx.text_system().shape_line(
+            text,
+            self.style.text.font_size.to_pixels(cx.rem_size()),
+            &[run],
+        )
     }
 }
 
