@@ -508,6 +508,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
+        line_numbers_hitboxes: &[Hitbox],
         cx: &mut ViewContext<Editor>,
     ) {
         if cx.default_prevented() {
@@ -544,6 +545,24 @@ impl EditorElement {
                     }
                 }
             }
+        }
+
+        let editor_snapshot = &position_map.snapshot;
+        if line_numbers_hitboxes
+            .iter()
+            .any(|hitbox| hitbox.bounds.contains(&event.position))
+        {
+            let multi_buffer_row = editor_snapshot
+                .display_point_to_point(
+                    DisplayPoint::new(DisplayRow(event.position.y.0 as u32), 0),
+                    Bias::Right,
+                )
+                .row;
+            editor.open_excerpts_common(
+                Some(JumpData::MultiBufferRow(MultiBufferRow(multi_buffer_row))),
+                modifiers.alt == true,
+                cx,
+            );
         }
 
         let point_for_position =
@@ -1971,15 +1990,20 @@ impl EditorElement {
         relative_rows
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_line_numbers(
         &self,
+        gutter_hitbox: &Hitbox,
+        gutter_dimensions: GutterDimensions,
+        line_height: Pixels,
+        scroll_position: gpui::Point<f32>,
         rows: Range<DisplayRow>,
         buffer_rows: impl Iterator<Item = Option<MultiBufferRow>>,
         active_rows: &BTreeMap<DisplayRow, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
-    ) -> Vec<Option<ShapedLine>> {
+    ) -> Vec<Option<(ShapedLine, Hitbox)>> {
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
         });
@@ -2042,7 +2066,21 @@ impl EditorElement {
                     .text_system()
                     .shape_line(line_number.clone().into(), font_size, &[run])
                     .unwrap();
-                Some(shaped_line)
+                let scroll_top = scroll_position.y * line_height;
+                let line_origin = gutter_hitbox.origin
+                    + point(
+                        gutter_hitbox.size.width
+                            - shaped_line.width
+                            - gutter_dimensions.right_padding,
+                        ix as f32 * line_height - (scroll_top % line_height),
+                    );
+
+                let hitbox = cx.insert_hitbox(
+                    Bounds::new(line_origin, size(shaped_line.width, line_height)),
+                    false,
+                );
+
+                Some((shaped_line, hitbox))
             })
             .collect()
     }
@@ -2308,7 +2346,7 @@ impl EditorElement {
                     }
                 }
 
-                let jump_data = jump_data(snapshot, block_row_start, *height, first_excerpt);
+                let jump_data = header_jump_data(snapshot, block_row_start, *height, first_excerpt);
                 result
                     .child(self.render_buffer_header(
                         first_excerpt,
@@ -2389,7 +2427,8 @@ impl EditorElement {
                 }
 
                 if let Some(next_excerpt) = next_excerpt {
-                    let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt);
+                    let jump_data =
+                        header_jump_data(snapshot, block_row_start, *height, next_excerpt);
 
                     if *starts_new_buffer {
                         result = result.child(self.render_buffer_header(
@@ -3780,22 +3819,17 @@ impl EditorElement {
 
     fn paint_line_numbers(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         let line_height = layout.position_map.line_height;
-        let scroll_position = layout.position_map.snapshot.scroll_position();
-        let scroll_top = scroll_position.y * line_height;
-
         cx.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
-        for (ix, line) in layout.line_numbers.iter().enumerate() {
-            if let Some(line) = line {
-                let line_origin = layout.gutter_hitbox.origin
-                    + point(
-                        layout.gutter_hitbox.size.width
-                            - line.width
-                            - layout.gutter_dimensions.right_padding,
-                        ix as f32 * line_height - (scroll_top % line_height),
-                    );
-
-                line.paint(line_origin, line_height, cx).log_err();
+        for line in &layout.line_numbers {
+            if let Some((line, hitbox)) = line {
+                line.paint(hitbox.origin, line_height, cx).log_err();
+                cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
+                // TODO kb
+                // .on_click(move |_, cx| {
+                //     cx.stop_propagation();
+                //     cx.open_url(url.as_str())
+                // })
             }
         }
     }
@@ -4795,6 +4829,12 @@ impl EditorElement {
             let editor = self.editor.clone();
             let text_hitbox = layout.text_hitbox.clone();
             let gutter_hitbox = layout.gutter_hitbox.clone();
+            let line_numbers_hitboxes = layout
+                .line_numbers
+                .iter()
+                .flatten()
+                .map(|(_, hitbox)| hitbox.clone())
+                .collect::<Vec<_>>();
 
             move |event: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
@@ -4807,6 +4847,7 @@ impl EditorElement {
                                 &position_map,
                                 &text_hitbox,
                                 &gutter_hitbox,
+                                &line_numbers_hitboxes,
                                 cx,
                             );
                         }),
@@ -4905,7 +4946,7 @@ impl EditorElement {
     }
 }
 
-fn jump_data(
+fn header_jump_data(
     snapshot: &EditorSnapshot,
     block_row_start: DisplayRow,
     height: u32,
@@ -4931,7 +4972,7 @@ fn jump_data(
             .scroll_anchor
             .scroll_position(&snapshot.display_snapshot)
             .y as u32;
-    JumpData {
+    JumpData::MultiBufferPoint {
         excerpt_id: for_excerpt.id,
         anchor: jump_anchor,
         position: language::ToPoint::to_point(&jump_anchor, buffer),
@@ -6009,6 +6050,10 @@ impl Element for EditorElement {
                     );
 
                     let line_numbers = self.layout_line_numbers(
+                        &gutter_hitbox,
+                        gutter_dimensions,
+                        line_height,
+                        scroll_position,
                         start_row..end_row,
                         buffer_rows.iter().copied(),
                         &active_rows,
@@ -6497,7 +6542,6 @@ impl Element for EditorElement {
                         hitbox,
                         text_hitbox,
                         gutter_hitbox,
-                        gutter_dimensions,
                         display_hunks,
                         content_origin,
                         scrollbars_layout,
@@ -6681,7 +6725,6 @@ pub struct EditorLayout {
     hitbox: Hitbox,
     text_hitbox: Hitbox,
     gutter_hitbox: Hitbox,
-    gutter_dimensions: GutterDimensions,
     content_origin: gpui::Point<Pixels>,
     scrollbars_layout: AxisPair<Option<ScrollbarLayout>>,
     mode: EditorMode,
@@ -6691,7 +6734,7 @@ pub struct EditorLayout {
     active_rows: BTreeMap<DisplayRow, bool>,
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
     line_elements: SmallVec<[AnyElement; 1]>,
-    line_numbers: Vec<Option<ShapedLine>>,
+    line_numbers: Vec<Option<(ShapedLine, Hitbox)>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
@@ -7338,12 +7381,28 @@ mod tests {
 
         let editor = window.root(cx).unwrap();
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let line_height = window
+            .update(cx, |_, cx| style.text.line_height_in_pixels(cx.rem_size()))
+            .unwrap();
         let element = EditorElement::new(&editor, style);
         let snapshot = window.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
 
         let layouts = cx
             .update_window(*window, |_, cx| {
                 element.layout_line_numbers(
+                    &cx.insert_hitbox(
+                        Bounds::new(gpui::Point::default(), size(px(100.0), px(30.0))),
+                        false,
+                    ),
+                    GutterDimensions {
+                        left_padding: Pixels::ZERO,
+                        right_padding: Pixels::ZERO,
+                        width: px(30.0),
+                        margin: Pixels::ZERO,
+                        git_blame_entries_width: None,
+                    },
+                    line_height,
+                    gpui::Point::default(),
                     DisplayRow(0)..DisplayRow(6),
                     (0..6).map(MultiBufferRow).map(Some),
                     &Default::default(),
