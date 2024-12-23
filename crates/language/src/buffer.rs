@@ -589,7 +589,6 @@ impl<'a> RainbowBracketsHighlighter<'a> {
 }
 impl<'a> Highlighter<'a> for RainbowBracketsHighlighter<'a> {
     fn narrow(&mut self, range: Range<usize>) {
-        dbg!(&range, &self.colors);
         self.colors
             .retain(|(start, end), _| range.contains(start) || range.contains(end));
         // if let Some(capture) = self.matches.peek() {
@@ -609,36 +608,41 @@ impl<'a> Highlighter<'a> for RainbowBracketsHighlighter<'a> {
     fn seek_next_capture_offset(&mut self, current_offset: usize) -> usize {
         // First let's fetch captures up until the opening brace is past the current_offset
         // The ending brace might fall within visible range.
-        dbg!(current_offset);
         let mut next_capture_start = usize::MAX;
-        while let Some(matches) = self.matches.peek() {
-            let [start, end] = matches.captures else {
-                break;
-            };
-            dbg!(start.node.start_byte(), end.node.start_byte());
-            let start_byte = start.node.start_byte();
-            if start_byte > current_offset {
-                break;
-            }
-            let highlight_id = Self::next_highlight_id(&self.palette, &mut self.palette_index);
-            let end_byte = end.node.end_byte();
-
-            self.colors.insert((start_byte, end_byte), highlight_id);
-            let start_byte = end.node.start_byte();
-            let end_byte = end.node.end_byte();
-            self.colors.insert((start_byte, end_byte), highlight_id);
-            if !self.matches.advance() {
-                break;
+        if self
+            .colors
+            .iter()
+            .next()
+            .map_or(true, |((start_byte, _), _)| *start_byte < current_offset)
+        {
+            while let Some(matches) = self.matches.peek() {
+                let [start, end] = matches.captures else {
+                    break;
+                };
+                let start_byte;
+                let highlight_id = Self::next_highlight_id(&self.palette, &mut self.palette_index);
+                {
+                    let Range { start, end } = start.node.byte_range();
+                    start_byte = start;
+                    self.colors.insert((start, end), highlight_id);
+                }
+                let Range { start, end } = end.node.byte_range();
+                self.colors.insert((start, end), highlight_id);
+                if !self.matches.advance() {
+                    break;
+                }
+                if start_byte > current_offset {
+                    break;
+                }
             }
         }
+
         // Now let's throw away anything that starts before current_offset
-        dbg!(&self.colors);
         self.colors
-            .retain(|(start, end), _| *start >= current_offset || *end > current_offset);
+            .retain(|(start, end), _| *start > current_offset || *end > current_offset);
         if let Some(((start_offset, _), _)) = self.colors.iter().next() {
             next_capture_start = *start_offset.max(&current_offset);
         }
-
         next_capture_start
     }
     fn set_byte_range(&mut self, range: Range<usize>) {
@@ -4287,7 +4291,7 @@ impl<'a> BufferChunks<'a> {
                 RainbowBracketsHighlighter::new(highlighter, matches)
                     .map(|brackets| Box::new(brackets) as Box<dyn Highlighter>)
             }));
-            dbg!(highlighters.len());
+
             highlights = Some(BufferChunkHighlights::new(highlighters));
         }
 
@@ -4439,7 +4443,7 @@ impl<'a> Iterator for BufferChunks<'a> {
 
         if let Some(chunk) = self.chunks.peek() {
             let chunk_start = self.range.start;
-            dbg!(next_capture_start);
+
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
@@ -4453,7 +4457,6 @@ impl<'a> Iterator for BufferChunks<'a> {
                 }
             }
 
-            dbg!(chunk_end, self.chunks.offset());
             let slice =
                 &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
             self.range.start = chunk_end;
