@@ -91,8 +91,8 @@ impl ActiveThread {
         let theme_settings = ThemeSettings::get_global(cx);
         let ui_font_size = TextSize::Default.rems(cx);
         let buffer_font_size = TextSize::Small.rems(cx);
-
         let mut text_style = cx.text_style();
+
         text_style.refine(&TextStyleRefinement {
             font_family: Some(theme_settings.ui_font.family.clone()),
             font_size: Some(ui_font_size.into()),
@@ -106,6 +106,10 @@ impl ActiveThread {
             selection_background_color: cx.theme().players().local().selection,
             code_block: StyleRefinement {
                 background: Some(cx.theme().colors().editor_foreground.opacity(0.01).into()),
+                overflow: gpui::PointRefinement {
+                    x: Some(gpui::Overflow::Scroll),
+                    y: Some(gpui::Overflow::Visible),
+                },
                 margin: gpui::EdgesRefinement {
                     top: Some(gpui::Length::Definite(rems(0.5).into())),
                     left: Some(gpui::Length::Definite(rems(0.).into())),
@@ -126,6 +130,7 @@ impl ActiveThread {
                         gpui::AbsoluteLength::Pixels(gpui::Pixels(8.)),
                     )),
                 },
+                border_color: Some(cx.theme().colors().border_variant.opacity(0.25)),
                 border_widths: gpui::EdgesRefinement {
                     top: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(1.0))),
                     left: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(1.))),
@@ -138,10 +143,10 @@ impl ActiveThread {
                     bottom_right: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(2.))),
                     bottom_left: Some(gpui::AbsoluteLength::Pixels(gpui::Pixels(2.))),
                 },
-                border_color: Some(cx.theme().colors().border_variant.opacity(0.5)),
                 text: Some(TextStyleRefinement {
                     font_family: Some(theme_settings.buffer_font.family.clone()),
                     font_size: Some(buffer_font_size.into()),
+                    white_space: Some(gpui::WhiteSpace::Nowrap),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -238,6 +243,7 @@ impl ActiveThread {
         };
 
         let context = self.thread.read(cx).context_for_message(message_id);
+        let colors = cx.theme().colors();
 
         let (role_icon, role_name, role_color) = match message.role {
             Role::User => (IconName::Person, "You", Color::Muted),
@@ -252,15 +258,15 @@ impl ActiveThread {
             .child(
                 v_flex()
                     .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .bg(cx.theme().colors().editor_background)
+                    .border_color(colors.border_variant)
+                    .bg(colors.editor_background)
                     .rounded_md()
                     .child(
                         h_flex()
                             .py_2()
-                            .px_3()
+                            .px_2p5()
                             .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
+                            .border_color(colors.border_variant)
                             .justify_between()
                             .child(
                                 h_flex()
@@ -277,14 +283,19 @@ impl ActiveThread {
                                     ),
                             ),
                     )
-                    .child(v_flex().p_3().text_ui(cx).child(markdown.clone()))
+                    .child(v_flex().p_2p5().text_ui(cx).child(markdown.clone()))
                     .when_some(context, |parent, context| {
                         parent.child(
-                            h_flex().flex_wrap().gap_2().p_1p5().children(
-                                context
-                                    .iter()
-                                    .map(|context| ContextPill::new(context.clone())),
-                            ),
+                            h_flex()
+                                .debug_bg_red()
+                                .flex_wrap()
+                                .gap_2()
+                                .p_1p5()
+                                .children(
+                                    context
+                                        .iter()
+                                        .map(|context| ContextPill::new(context.clone())),
+                                ),
                         )
                     }),
             )
