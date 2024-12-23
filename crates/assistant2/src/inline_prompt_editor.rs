@@ -84,13 +84,15 @@ impl<T: 'static> Render for PromptEditor<T> {
             .key_context("PromptEditor")
             .bg(cx.theme().colors().editor_background)
             .block_mouse_down()
+            .gap_0p5()
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
-            .pt_1()
-            .pb_2()
+            .pt_0p5()
+            .pr_6()
             .child(
                 h_flex()
+                    .items_start()
                     .cursor(CursorStyle::Arrow)
                     .on_action(cx.listener(Self::toggle_context_picker))
                     .on_action(cx.listener(Self::toggle_model_selector))
@@ -102,6 +104,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                     .capture_action(cx.listener(Self::cycle_next))
                     .child(
                         h_flex()
+                            .h_full()
                             .w(spacing)
                             .justify_center()
                             .gap_2()
@@ -162,21 +165,19 @@ impl<T: 'static> Render for PromptEditor<T> {
                             .w_full()
                             .justify_between()
                             .child(div().flex_1().child(self.render_editor(cx)))
-                            .child(h_flex().gap_2().pr_6().children(buttons)),
+                            .child(h_flex().gap_1().children(buttons)),
                     ),
             )
             .child(
-                h_flex()
-                    .child(h_flex().w(spacing).justify_between().gap_2())
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .pl_1()
-                            .pr_6()
-                            .justify_between()
-                            .child(div().pl_1().child(self.context_strip.clone()))
-                            .child(self.model_selector.clone()),
-                    ),
+                h_flex().child(div().w(spacing)).child(
+                    h_flex()
+                        .w_full()
+                        .pl_1()
+                        .items_start()
+                        .justify_between()
+                        .child(self.context_strip.clone())
+                        .child(self.model_selector.clone()),
+                ),
             )
     }
 }
@@ -403,8 +404,9 @@ impl<T: 'static> PromptEditor<T> {
         match codegen_status {
             CodegenStatus::Idle => {
                 vec![Button::new("start", mode.start_label())
-                    .icon(IconName::Return)
                     .label_size(LabelSize::Small)
+                    .icon(IconName::Return)
+                    .icon_size(IconSize::Small)
                     .icon_color(Color::Muted)
                     .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)))
                     .into_any_element()]
@@ -671,20 +673,18 @@ impl<T: 'static> PromptEditor<T> {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
 
-        v_flex()
+        div()
             .key_context("MessageEditor")
             .size_full()
-            .gap_2()
             .p_2()
             .bg(cx.theme().colors().editor_background)
             .child({
                 let settings = ThemeSettings::get_global(cx);
                 let text_style = TextStyle {
                     color: cx.theme().colors().editor_foreground,
-                    font_family: settings.ui_font.family.clone(),
-                    font_features: settings.ui_font.features.clone(),
+                    font_family: settings.buffer_font.family.clone(),
+                    font_features: settings.buffer_font.features.clone(),
                     font_size: font_size.into(),
-                    font_weight: settings.ui_font.weight,
                     line_height: line_height.into(),
                     ..Default::default()
                 };
