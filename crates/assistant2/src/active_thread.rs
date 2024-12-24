@@ -3,9 +3,9 @@ use std::sync::Arc;
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, AbsoluteLength, AnyElement, AppContext, CornersRefinement, DefiniteLength,
-    EdgesRefinement, Empty, Length, ListAlignment, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, View, WeakView,
+    list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
+    ListAlignment, ListState, Model, StyleRefinement, Subscription, TextStyleRefinement, View,
+    WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -108,7 +108,7 @@ impl ActiveThread {
             selection_background_color: cx.theme().players().local().selection,
             code_block: StyleRefinement {
                 margin: EdgesRefinement {
-                    top: Some(Length::Definite(rems(0.5).into())),
+                    top: Some(Length::Definite(rems(1.0).into())),
                     left: Some(Length::Definite(rems(0.).into())),
                     right: Some(Length::Definite(rems(0.).into())),
                     bottom: Some(Length::Definite(rems(1.).into())),
@@ -120,18 +120,12 @@ impl ActiveThread {
                     bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                 },
                 background: Some(colors.editor_foreground.opacity(0.01).into()),
-                border_color: Some(colors.border_variant.opacity(0.25)),
+                border_color: Some(colors.border_variant.opacity(0.3)),
                 border_widths: EdgesRefinement {
                     top: Some(AbsoluteLength::Pixels(Pixels(1.0))),
                     left: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     right: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                },
-                corner_radii: CornersRefinement {
-                    top_left: Some(AbsoluteLength::Pixels(Pixels(2.))),
-                    top_right: Some(AbsoluteLength::Pixels(Pixels(2.))),
-                    bottom_right: Some(AbsoluteLength::Pixels(Pixels(2.))),
-                    bottom_left: Some(AbsoluteLength::Pixels(Pixels(2.))),
                 },
                 text: Some(TextStyleRefinement {
                     font_family: Some(theme_settings.buffer_font.family.clone()),
@@ -272,7 +266,7 @@ impl ActiveThread {
                                     ),
                             ),
                     )
-                    .child(v_flex().p_2p5().text_ui(cx).child(markdown.clone()))
+                    .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
                     .when_some(context, |parent, context| {
                         if !context.is_empty() {
                             parent.child(

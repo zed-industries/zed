@@ -220,67 +220,73 @@ impl Render for MessageEditor {
             .p_2()
             .bg(bg_color)
             .child(self.context_strip.clone())
-            .child({
-                let settings = ThemeSettings::get_global(cx);
-                let text_style = TextStyle {
-                    color: cx.theme().colors().editor_foreground,
-                    font_family: settings.ui_font.family.clone(),
-                    font_features: settings.ui_font.features.clone(),
-                    font_size: font_size.into(),
-                    font_weight: settings.ui_font.weight,
-                    line_height: line_height.into(),
-                    ..Default::default()
-                };
+            .child(
+                v_flex()
+                    .gap_4()
+                    .child({
+                        let settings = ThemeSettings::get_global(cx);
+                        let text_style = TextStyle {
+                            color: cx.theme().colors().text,
+                            font_family: settings.ui_font.family.clone(),
+                            font_features: settings.ui_font.features.clone(),
+                            font_size: font_size.into(),
+                            font_weight: settings.ui_font.weight,
+                            line_height: line_height.into(),
+                            ..Default::default()
+                        };
 
-                EditorElement::new(
-                    &self.editor,
-                    EditorStyle {
-                        background: bg_color,
-                        local_player: cx.theme().players().local(),
-                        text: text_style,
-                        ..Default::default()
-                    },
-                )
-            })
-            .child(
-                PopoverMenu::new("inline-context-picker")
-                    .menu(move |_cx| Some(inline_context_picker.clone()))
-                    .attach(gpui::Corner::TopLeft)
-                    .anchor(gpui::Corner::BottomLeft)
-                    .offset(gpui::Point {
-                        x: px(0.0),
-                        y: px(-16.0),
+                        EditorElement::new(
+                            &self.editor,
+                            EditorStyle {
+                                background: bg_color,
+                                local_player: cx.theme().players().local(),
+                                text: text_style,
+                                ..Default::default()
+                            },
+                        )
                     })
-                    .with_handle(self.inline_context_picker_menu_handle.clone()),
-            )
-            .child(
-                h_flex()
-                    .justify_between()
-                    .child(SwitchWithLabel::new(
-                        "use-tools",
-                        Label::new("Tools"),
-                        self.use_tools.into(),
-                        cx.listener(|this, selection, _cx| {
-                            this.use_tools = match selection {
-                                ToggleState::Selected => true,
-                                ToggleState::Unselected | ToggleState::Indeterminate => false,
-                            };
-                        }),
-                    ))
                     .child(
-                        h_flex().gap_1().child(self.model_selector.clone()).child(
-                            ButtonLike::new("chat")
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .child(Label::new("Submit"))
-                                .children(
-                                    KeyBinding::for_action_in(&Chat, &focus_handle, cx)
-                                        .map(|binding| binding.into_any_element()),
-                                )
-                                .on_click(move |_event, cx| {
-                                    focus_handle.dispatch_action(&Chat, cx);
+                        PopoverMenu::new("inline-context-picker")
+                            .menu(move |_cx| Some(inline_context_picker.clone()))
+                            .attach(gpui::Corner::TopLeft)
+                            .anchor(gpui::Corner::BottomLeft)
+                            .offset(gpui::Point {
+                                x: px(0.0),
+                                y: px(-16.0),
+                            })
+                            .with_handle(self.inline_context_picker_menu_handle.clone()),
+                    )
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(SwitchWithLabel::new(
+                                "use-tools",
+                                Label::new("Tools"),
+                                self.use_tools.into(),
+                                cx.listener(|this, selection, _cx| {
+                                    this.use_tools = match selection {
+                                        ToggleState::Selected => true,
+                                        ToggleState::Unselected | ToggleState::Indeterminate => {
+                                            false
+                                        }
+                                    };
                                 }),
-                        ),
+                            ))
+                            .child(
+                                h_flex().gap_1().child(self.model_selector.clone()).child(
+                                    ButtonLike::new("chat")
+                                        .style(ButtonStyle::Filled)
+                                        .layer(ElevationIndex::ModalSurface)
+                                        .child(Label::new("Submit"))
+                                        .children(
+                                            KeyBinding::for_action_in(&Chat, &focus_handle, cx)
+                                                .map(|binding| binding.into_any_element()),
+                                        )
+                                        .on_click(move |_event, cx| {
+                                            focus_handle.dispatch_action(&Chat, cx);
+                                        }),
+                                ),
+                            ),
                     ),
             )
     }
