@@ -1,6 +1,7 @@
 use gpui::SharedString;
 use language_model::{LanguageModelRequestMessage, MessageContent};
 use serde::{Deserialize, Serialize};
+use ui::prelude::*;
 use util::post_inc;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -19,6 +20,7 @@ pub struct Context {
     pub name: SharedString,
     pub kind: ContextKind,
     pub text: SharedString,
+    pub icon: IconName,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -27,6 +29,17 @@ pub enum ContextKind {
     Directory,
     FetchedUrl,
     Thread,
+}
+
+impl ContextKind {
+    pub fn icon(&self) -> IconName {
+        match self {
+            ContextKind::File => IconName::File,
+            ContextKind::Directory => IconName::Folder,
+            ContextKind::FetchedUrl => IconName::Globe,
+            ContextKind::Thread => IconName::MessageCircle,
+        }
+    }
 }
 
 pub fn attach_context_to_message(
