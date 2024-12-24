@@ -36,6 +36,11 @@ impl RenderOnce for ContextPill {
             .border_color(cx.theme().colors().border.opacity(0.5))
             .bg(cx.theme().colors().element_background)
             .rounded_md()
+            .child(
+                Icon::new(self.context.icon)
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
+            )
             .child(Label::new(self.context.name.clone()).size(LabelSize::Small))
             .when_some(self.on_remove, |parent, on_remove| {
                 parent.child(

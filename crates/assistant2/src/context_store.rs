@@ -36,8 +36,9 @@ impl ContextStore {
         self.context.push(Context {
             id: self.next_context_id.post_inc(),
             name: name.into(),
-            kind,
+            kind: kind.clone(),
             text: text.into(),
+            icon: kind.icon(),
         });
     }
 
