@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::ClickEvent;
 use ui::{prelude::*, IconButtonShape};
 
-use crate::context::Context;
+use crate::context::{Context, ContextKind};
 
 #[derive(IntoElement)]
 pub struct ContextPill {
@@ -32,6 +32,12 @@ impl RenderOnce for ContextPill {
         } else {
             px(4.)
         };
+        let icon = match self.context.kind {
+            ContextKind::File => IconName::File,
+            ContextKind::Directory => IconName::Folder,
+            ContextKind::FetchedUrl => IconName::Globe,
+            ContextKind::Thread => IconName::MessageCircle,
+        };
 
         h_flex()
             .gap_1()
@@ -42,11 +48,7 @@ impl RenderOnce for ContextPill {
             .border_color(cx.theme().colors().border.opacity(0.5))
             .bg(cx.theme().colors().element_background)
             .rounded_md()
-            .child(
-                Icon::new(self.context.icon)
-                    .size(IconSize::XSmall)
-                    .color(Color::Muted),
-            )
+            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
             .child(Label::new(self.context.name.clone()).size(LabelSize::Small))
             .when_some(self.on_remove, |parent, on_remove| {
                 parent.child(
