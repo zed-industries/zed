@@ -22,7 +22,7 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
     LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SoftWrap, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -30,14 +30,14 @@ use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
-    anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnyElement, AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem,
-    ContentMask, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler,
-    Entity, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, View,
-    ViewContext, WeakView, WindowContext,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
+    relative, size, svg, transparent_black, Action, AnyElement, AvailableSpace, Axis, Bounds,
+    ClickEvent, ClipboardItem, ContentMask, Corner, Corners, CursorStyle, DispatchPhase, Edges,
+    Element, ElementInputHandler, Entity, FontId, GlobalElementId, Hitbox, Hsla,
+    InteractiveElement, IntoElement, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent,
+    ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription,
+    TextRun, TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -2210,9 +2210,9 @@ impl EditorElement {
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
         selections: &[Selection<Point>],
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+        sticky_header_excerpt_id: Option<ExcerptId>,
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
-        let header_padding = px(6.0);
         let mut element = match block {
             Block::Custom(block) => {
                 let block_start = block.start().to_point(&snapshot.buffer_snapshot);
@@ -2305,14 +2305,7 @@ impl EditorElement {
 
                 let jump_data = jump_data(snapshot, block_row_start, *height, first_excerpt, cx);
                 result
-                    .child(self.render_buffer_header(
-                        first_excerpt,
-                        header_padding,
-                        true,
-                        selected,
-                        jump_data,
-                        cx,
-                    ))
+                    .child(self.render_buffer_header(first_excerpt, true, selected, jump_data, cx))
                     .into_any_element()
             }
             Block::ExcerptBoundary {
@@ -2347,14 +2340,19 @@ impl EditorElement {
                 if let Some(next_excerpt) = next_excerpt {
                     let jump_data = jump_data(snapshot, block_row_start, *height, next_excerpt, cx);
                     if *starts_new_buffer {
-                        result = result.child(self.render_buffer_header(
-                            next_excerpt,
-                            header_padding,
-                            false,
-                            false,
-                            jump_data,
-                            cx,
-                        ));
+                        if sticky_header_excerpt_id != Some(next_excerpt.id) {
+                            result = result.child(self.render_buffer_header(
+                                next_excerpt,
+                                false,
+                                false,
+                                jump_data,
+                                cx,
+                            ));
+                        } else {
+                            result =
+                                result.child(div().h(FILE_HEADER_HEIGHT as f32 * cx.line_height()));
+                        }
+
                         if *show_excerpt_controls {
                             result = result.child(
                                 h_flex()
@@ -2507,7 +2505,6 @@ impl EditorElement {
     fn render_buffer_header(
         &self,
         for_excerpt: &ExcerptInfo,
-        header_padding: Pixels,
         is_folded: bool,
         is_selected: bool,
         jump_data: JumpData,
@@ -2531,8 +2528,8 @@ impl EditorElement {
         let focus_handle = self.editor.focus_handle(cx);
 
         div()
-            .px(header_padding)
-            .pt(header_padding)
+            .px_2()
+            .pt_2()
             .w_full()
             .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
             .child(
@@ -2686,6 +2683,7 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         selections: &[Selection<Point>],
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+        sticky_header_excerpt_id: Option<ExcerptId>,
         cx: &mut WindowContext,
     ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
@@ -2724,6 +2722,7 @@ impl EditorElement {
                 &mut resized_blocks,
                 selections,
                 is_row_soft_wrapped,
+                sticky_header_excerpt_id,
                 cx,
             );
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
@@ -2735,6 +2734,7 @@ impl EditorElement {
                 style: BlockStyle::Fixed,
             });
         }
+
         for (row, block) in non_fixed_blocks {
             let style = block.style();
             let width = match style {
@@ -2770,6 +2770,7 @@ impl EditorElement {
                 &mut resized_blocks,
                 selections,
                 is_row_soft_wrapped,
+                sticky_header_excerpt_id,
                 cx,
             );
 
@@ -2817,6 +2818,7 @@ impl EditorElement {
                             &mut resized_blocks,
                             selections,
                             is_row_soft_wrapped,
+                            sticky_header_excerpt_id,
                             cx,
                         );
 
@@ -2881,6 +2883,71 @@ impl EditorElement {
                 });
             }
         }
+    }
+
+    fn layout_sticky_buffer_header(
+        &self,
+        StickyHeaderExcerpt {
+            excerpt,
+            next_excerpt_controls_present,
+            next_buffer_row,
+        }: StickyHeaderExcerpt<'_>,
+        scroll_position: f32,
+        line_height: Pixels,
+        snapshot: &EditorSnapshot,
+        hitbox: &Hitbox,
+        cx: &mut WindowContext,
+    ) -> AnyElement {
+        let jump_data = jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt, cx);
+
+        let editor_bg_color = cx.theme().colors().editor_background;
+
+        let mut header = v_flex()
+            .relative()
+            .child(
+                div()
+                    .w(hitbox.bounds.size.width)
+                    .h(FILE_HEADER_HEIGHT as f32 * line_height)
+                    .bg(linear_gradient(
+                        0.,
+                        linear_color_stop(editor_bg_color.opacity(0.), 0.),
+                        linear_color_stop(editor_bg_color, 0.6),
+                    ))
+                    .absolute()
+                    .top_0(),
+            )
+            .child(
+                self.render_buffer_header(excerpt, false, false, jump_data, cx)
+                    .into_any_element(),
+            )
+            .into_any_element();
+
+        let mut origin = hitbox.origin;
+
+        if let Some(next_buffer_row) = next_buffer_row {
+            // Push up the sticky header when the excerpt is getting close to the top of the viewport
+
+            let mut max_row = next_buffer_row - FILE_HEADER_HEIGHT * 2;
+
+            if next_excerpt_controls_present {
+                max_row -= MULTI_BUFFER_EXCERPT_HEADER_HEIGHT;
+            }
+
+            let offset = scroll_position - max_row as f32;
+
+            if offset > 0.0 {
+                origin.y -= Pixels(offset) * line_height;
+            }
+        }
+
+        let size = size(
+            AvailableSpace::Definite(hitbox.size.width),
+            AvailableSpace::MinContent,
+        );
+
+        header.prepaint_as_root(origin, size, cx);
+
+        header
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4945,11 +5012,14 @@ fn jump_data(
         let excerpt_start_row = language::ToPoint::to_point(&jump_anchor, buffer).row;
         jump_position.row - excerpt_start_row
     };
-    let line_offset_from_top = block_row_start.0 + height + offset_from_excerpt_start
-        - snapshot
-            .scroll_anchor
-            .scroll_position(&snapshot.display_snapshot)
-            .y as u32;
+    let line_offset_from_top = block_row_start.0
+        + height
+        + offset_from_excerpt_start.saturating_sub(
+            snapshot
+                .scroll_anchor
+                .scroll_position(&snapshot.display_snapshot)
+                .y as u32,
+        );
     JumpData {
         excerpt_id: for_excerpt.id,
         anchor: jump_anchor,
@@ -6096,6 +6166,14 @@ impl Element for EditorElement {
                     let scroll_range_bounds = scrollbar_range_data.scroll_range;
                     let mut scroll_width = scroll_range_bounds.size.width;
 
+                    let sticky_header_excerpt = if snapshot.buffer_snapshot.show_headers() {
+                        snapshot.sticky_header_excerpt(start_row)
+                    } else {
+                        None
+                    };
+                    let sticky_header_excerpt_id =
+                        sticky_header_excerpt.as_ref().map(|top| top.excerpt.id);
+
                     let blocks = cx.with_element_namespace("blocks", |cx| {
                         self.render_blocks(
                             start_row..end_row,
@@ -6111,6 +6189,7 @@ impl Element for EditorElement {
                             &line_layouts,
                             &local_selections,
                             is_row_soft_wrapped,
+                            sticky_header_excerpt_id,
                             cx,
                         )
                     });
@@ -6123,6 +6202,19 @@ impl Element for EditorElement {
                             return self.prepaint(None, bounds, &mut (), cx);
                         }
                     };
+
+                    let sticky_buffer_header = sticky_header_excerpt.map(|sticky_header_excerpt| {
+                        cx.with_element_namespace("blocks", |cx| {
+                            self.layout_sticky_buffer_header(
+                                sticky_header_excerpt,
+                                scroll_position.y,
+                                line_height,
+                                &snapshot,
+                                &hitbox,
+                                cx,
+                            )
+                        })
+                    });
 
                     let start_buffer_row =
                         MultiBufferRow(start_anchor.to_point(&snapshot.buffer_snapshot).row);
@@ -6251,6 +6343,7 @@ impl Element for EditorElement {
                     );
 
                     let mut block_start_rows = HashSet::default();
+
                     cx.with_element_namespace("blocks", |cx| {
                         self.layout_blocks(
                             &mut blocks,
@@ -6542,6 +6635,7 @@ impl Element for EditorElement {
                         crease_trailers,
                         tab_invisible,
                         space_invisible,
+                        sticky_buffer_header,
                     }
                 })
             })
@@ -6622,6 +6716,12 @@ impl Element for EditorElement {
                             self.paint_blocks(layout, cx);
                         });
                     }
+
+                    cx.with_element_namespace("blocks", |cx| {
+                        if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
+                            sticky_header.paint(cx)
+                        }
+                    });
 
                     self.paint_scrollbars(layout, cx);
                     self.paint_inline_completion_popover(layout, cx);
@@ -6730,6 +6830,7 @@ pub struct EditorLayout {
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
+    sticky_buffer_header: Option<AnyElement>,
 }
 
 impl EditorLayout {

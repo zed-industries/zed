@@ -166,7 +166,7 @@ impl ProjectDiagnosticsEditor {
         let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
         let editor = cx.new_view(|cx| {
             let mut editor =
-                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), false, cx);
+                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), true, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
