@@ -24,21 +24,20 @@ use crate::{
     LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
     SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
-    MULTI_BUFFER_EXCERPT_HEADER_PADDING,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
-    anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnyElement, AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem,
-    ContentMask, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler,
-    Entity, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, View,
-    ViewContext, WeakView, WindowContext,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
+    relative, size, svg, transparent_black, Action, AnyElement, AvailableSpace, Axis, Bounds,
+    ClickEvent, ClipboardItem, ContentMask, Corner, Corners, CursorStyle, DispatchPhase, Edges,
+    Element, ElementInputHandler, Entity, FontId, GlobalElementId, Hitbox, Hsla,
+    InteractiveElement, IntoElement, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent,
+    ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription,
+    TextRun, TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -2528,8 +2527,8 @@ impl EditorElement {
         let focus_handle = self.editor.focus_handle(cx);
 
         div()
-            .px(MULTI_BUFFER_EXCERPT_HEADER_PADDING)
-            .pt(MULTI_BUFFER_EXCERPT_HEADER_PADDING)
+            .px_2()
+            .pt_2()
             .w_full()
             .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
             .child(
@@ -2900,8 +2899,26 @@ impl EditorElement {
     ) -> AnyElement {
         let jump_data = jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt, cx);
 
-        let mut header = self
-            .render_buffer_header(excerpt, false, false, jump_data, cx)
+        let editor_bg_color = cx.theme().colors().editor_background;
+
+        let mut header = v_flex()
+            .relative()
+            .child(
+                div()
+                    .w(hitbox.bounds.size.width)
+                    .h(FILE_HEADER_HEIGHT as f32 * line_height)
+                    .bg(linear_gradient(
+                        0.,
+                        linear_color_stop(editor_bg_color.opacity(0.), 0.),
+                        linear_color_stop(editor_bg_color, 0.6),
+                    ))
+                    .absolute()
+                    .top_0(),
+            )
+            .child(
+                self.render_buffer_header(excerpt, false, false, jump_data, cx)
+                    .into_any_element(),
+            )
             .into_any_element();
 
         let mut origin = hitbox.origin;
