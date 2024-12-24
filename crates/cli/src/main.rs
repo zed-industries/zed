@@ -18,6 +18,12 @@ use std::{
 use tempfile::NamedTempFile;
 use util::paths::PathWithPosition;
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use {
+    std::io::IsTerminal,
+    util::{load_login_shell_environment, load_shell_from_passwd, ResultExt},
+};
+
 struct Detect;
 
 trait InstalledApp {
@@ -161,7 +167,16 @@ fn main() -> Result<()> {
         None
     };
 
+    // On Linux, desktop entry uses `cli` to spawn `zed`, so we need to load env vars from the shell
+    // since it doesn't inherit env vars from the terminal.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    if !std::io::stdout().is_terminal() {
+        load_shell_from_passwd().log_err();
+        load_login_shell_environment().log_err();
+    }
+
     let env = Some(std::env::vars().collect::<HashMap<_, _>>());
+
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
     let mut urls = vec![];
