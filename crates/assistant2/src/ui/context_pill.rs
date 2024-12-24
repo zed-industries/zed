@@ -27,10 +27,16 @@ impl ContextPill {
 
 impl RenderOnce for ContextPill {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let padding_right = if self.on_remove.is_some() {
+            px(2.)
+        } else {
+            px(4.)
+        };
+
         h_flex()
             .gap_1()
-            .pl_1p5()
-            .pr_0p5()
+            .pl_1()
+            .pr(padding_right)
             .pb(px(1.))
             .border_1()
             .border_color(cx.theme().colors().border.opacity(0.5))
