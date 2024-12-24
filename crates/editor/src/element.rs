@@ -5461,13 +5461,21 @@ impl LineWithInvisibles {
                                             let is_whitespace =
                                                 (*line_byte as char).is_whitespace();
                                             non_whitespace_added |= !is_whitespace;
-                                            is_whitespace
-                                                && (non_whitespace_added || !is_soft_wrapped)
+                                            match *line_byte as char {
+                                                '\u{a0}' => false,
+                                                _ if is_whitespace
+                                                    && (non_whitespace_added
+                                                        || !is_soft_wrapped) =>
+                                                {
+                                                    true
+                                                }
+                                                _ => false,
+                                            }
                                         })
                                         .map(|(whitespace_index, _)| Invisible::Whitespace {
                                             line_offset: line.len() + whitespace_index,
                                         }),
-                                )
+                                );
                             }
                         }
 
