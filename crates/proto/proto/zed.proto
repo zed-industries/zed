@@ -787,13 +787,16 @@ message GitInit {
 }
 
 message LspDiagnosticRelatedInformation {
-    string location = 1;
-    string message = 2;
+    optional string location_url = 1;
+    PointUtf16 location_range_start = 2;
+    PointUtf16 location_range_end = 3;
+    string message = 4;
 }
 
-message LspDiagnosticTag {
-    string name = 1;
-    optional string value = 2;
+enum LspDiagnosticTag {
+    None = 0;
+    Unnecessary = 1;
+    Deprecated = 2;
 }
 
 message LspDiagnostic {
@@ -801,11 +804,11 @@ message LspDiagnostic {
     PointUtf16 end = 2;
     Severity severity = 3;
     optional string code = 4;
-    // optional string code_description = 5;
+    optional string code_description = 5;
     optional string source = 6;
     string message = 7;
-    // repeated LspDiagnosticRelatedInformation related_information = 8;
-    // repeated LspDiagnosticTag tags = 9;
+    repeated LspDiagnosticRelatedInformation related_information = 8;
+    repeated LspDiagnosticTag tags = 9;
     optional string data = 10;
 
     enum Severity {

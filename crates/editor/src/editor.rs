@@ -1630,6 +1630,9 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
+                        project::Event::LanguageServerAdded | project::Event::LanguageServerRemoved( => {
+                            editor.tasks_pull_diagnostics_task = Some(editor.refresh_diagnostics(cx));
+                        }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
                                 let focus_handle = editor.focus_handle(cx);
