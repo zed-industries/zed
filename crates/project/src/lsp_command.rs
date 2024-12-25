@@ -3835,36 +3835,60 @@ impl LspCommand for GetDocumentDiagnostics {
     async fn response_from_lsp(
         self,
         message: lsp::DocumentDiagnosticReportResult,
-        _: Model<LspStore>,
+        lsp_store: Model<LspStore>,
         buffer: Model<Buffer>,
         server_id: LanguageServerId,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
         let uri = buffer.read_with(&cx, |buffer, cx| {
-            let file = buffer.file().and_then(|file| file.as_local())?;
-            Some(lsp::Url::from_file_path(file.abs_path(cx).clone()).unwrap())
+            buffer
+                .file()
+                .and_then(|file| file.as_local())
+                .map(|file| lsp::Url::from_file_path(file.abs_path(cx).clone()).unwrap())
         })?;
 
-        if uri.is_none() {
+        let Some(uri) = uri else {
             return Ok(None);
-        }
+        };
 
         match message {
             lsp::DocumentDiagnosticReportResult::Report(report) => match report {
-                lsp::DocumentDiagnosticReport::Full(report) => Ok(Some(LspDiagnostics {
-                    server_id,
-                    uri,
-                    diagnostics: Some(report.full_document_diagnostic_report.items.clone()),
-                })),
+                lsp::DocumentDiagnosticReport::Full(report) => {
+                    lsp_store.update(&mut cx, |store, cx| {
+                        for (uri, report) in report.related_documents.into_iter().flatten() {
+                            match report {
+                                lsp::DocumentDiagnosticReportKind::Full(report) => {
+                                    store.update_diagnostics(
+                                        server_id,
+                                        lsp::PublishDiagnosticsParams {
+                                            diagnostics: report.items.clone(),
+                                            uri,
+                                            version: None,
+                                        },
+                                        &[],
+                                        cx,
+                                    ).expect("Failed to update diagnostics for the related document");
+                                }
+                                lsp::DocumentDiagnosticReportKind::Unchanged(_) => (),
+                            }
+                        }
+                    }).expect("Failed to update diagnostics for related documents");
+
+                    Ok(Some(LspDiagnostics {
+                        server_id,
+                        uri: Some(uri),
+                        diagnostics: Some(report.full_document_diagnostic_report.items.clone()),
+                    }))
+                }
                 lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(Some(LspDiagnostics {
                     server_id,
-                    uri,
+                    uri: Some(uri),
                     diagnostics: None,
                 })),
             },
             lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(Some(LspDiagnostics {
                 server_id,
-                uri,
+                uri: Some(uri),
                 diagnostics: None,
             })),
         }
