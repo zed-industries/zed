@@ -9,7 +9,7 @@ use theme::ActiveTheme;
 use ui::{prelude::*, ButtonLike, ButtonStyle, Label, Tooltip};
 use workspace::{
     item::{BreadcrumbText, ItemEvent, ItemHandle},
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
 };
 
 pub struct Breadcrumbs {
@@ -90,14 +90,13 @@ impl Render for Breadcrumbs {
         });
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
-
+        let indicator = pane::render_item_indicator(active_item.boxed_clone(), cx);
         match active_item
             .downcast::<Editor>()
             .map(|editor| editor.downgrade())
         {
             Some(editor) => element.child(
                 ButtonLike::new("toggle outline view")
-                    .child(breadcrumbs_stack)
                     .style(ButtonStyle::Transparent)
                     .on_click({
                         let editor = editor.clone();
@@ -123,7 +122,19 @@ impl Render for Breadcrumbs {
                                 cx,
                             )
                         }
-                    }),
+                    })
+                    .children(
+                        indicator
+                            .map(|item| {
+                                h_flex()
+                                    .size_3()
+                                    .justify_center()
+                                    .child(item)
+                                    .into_any_element()
+                            })
+                            .into_iter()
+                            .chain([breadcrumbs_stack.into_any_element()]),
+                    ),
             ),
             None => element
                 // Match the height of the `ButtonLike` in the other arm.
