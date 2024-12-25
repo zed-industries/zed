@@ -277,6 +277,7 @@ mod linux {
         os::unix::net::{SocketAddr, UnixDatagram},
         path::{Path, PathBuf},
         process::{self, ExitStatus},
+        sync::LazyLock,
         thread,
         time::Duration,
     };
@@ -284,12 +285,11 @@ mod linux {
     use anyhow::anyhow;
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
-    use once_cell::sync::Lazy;
 
     use crate::{Detect, InstalledApp};
 
-    static RELEASE_CHANNEL: Lazy<String> =
-        Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
+    static RELEASE_CHANNEL: LazyLock<String> =
+        LazyLock::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
 
     struct App(PathBuf);
 

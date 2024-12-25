@@ -25,7 +25,6 @@ anyhow.workspace = true
 clap.workspace = true
 collections.workspace = true
 ipc-channel = "0.19"
-once_cell.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 release_channel.workspace = true
