@@ -146,7 +146,7 @@ fn handle_size_msg(
     // Don't resize the renderer when the window is minimized, but record that it was minimized so
     // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
     if wparam.0 == SIZE_MINIMIZED as usize {
-        lock.restore_from_minimized = true;
+        lock.restore_from_minimized = lock.callbacks.request_frame.take();
         return Some(0);
     }
 
@@ -154,10 +154,10 @@ fn handle_size_msg(
     let height = lparam.hiword().max(1) as i32;
     let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    if lock.restore_from_minimized {
+    if lock.restore_from_minimized.is_some() {
         lock.renderer
             .update_drawable_size_even_if_unchanged(new_size);
-        lock.restore_from_minimized = false;
+        lock.callbacks.request_frame = lock.restore_from_minimized.take();
     } else {
         lock.renderer.update_drawable_size(new_size);
     }
@@ -207,10 +207,6 @@ fn handle_timer_msg(
 }
 
 fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    if unsafe { IsIconic(handle).as_bool() } {
-        return Some(0);
-    }
-
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
         drop(lock);
