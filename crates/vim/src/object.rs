@@ -261,30 +261,25 @@ impl Object {
             }
             Object::AnyQuotes => {
                 let multiline = self.is_multiline();
+                let relative_offset = relative_to.to_offset(map, Bias::Left) as isize;
+                let quote_types = ['\'', '"', '`'];
 
-                // Collect ranges for all quote types
-                let candidates = vec![
-                    surrounding_markers(map, relative_to, around, multiline, '\'', '\''),
-                    surrounding_markers(map, relative_to, around, multiline, '"', '"'),
-                    surrounding_markers(map, relative_to, around, multiline, '`', '`'),
-                ];
-
-                // Find the closest matching quote range based on proximity
-                candidates
-                    .into_iter()
-                    .flatten() // Remove `None` values
+                let closest_range = quote_types
+                    .iter()
+                    .flat_map(|&quote| {
+                        surrounding_markers(map, relative_to, around, multiline, quote, quote)
+                    })
                     .min_by_key(|range| {
-                        // Calculate proximity by comparing distances to the range's start and end
-                        let start_distance = (relative_to.to_offset(map, Bias::Left) as isize
+                        let start_distance = (relative_offset
                             - range.start.to_offset(map, Bias::Left) as isize)
                             .abs();
-                        let end_distance = (relative_to.to_offset(map, Bias::Left) as isize
+                        let end_distance = (relative_offset
                             - range.end.to_offset(map, Bias::Right) as isize)
                             .abs();
-
-                        // Use the sum of start and end distances as the proximity metric
                         start_distance + end_distance
-                    })
+                    });
+
+                closest_range
             }
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
