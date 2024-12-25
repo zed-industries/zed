@@ -83,8 +83,9 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.24.1-dev"
-source = "git+https://github.com/alacritty/alacritty?rev=91d034ff8b53867143c005acfaa14609147c9a2c#91d034ff8b53867143c005acfaa14609147c9a2c"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52b9241459831fee2f22fcda52ddaf9e449b6627334a0f40f13a1b3344018060"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.6.0",
@@ -493,6 +494,7 @@ dependencies = [
  "project",
  "proto",
  "rand 0.8.5",
+ "release_channel",
  "rope",
  "schemars",
  "serde",
@@ -2482,7 +2484,6 @@ dependencies = [
  "exec",
  "fork",
  "ipc-channel",
- "once_cell",
  "parking_lot",
  "paths",
  "plist",
@@ -2509,7 +2510,6 @@ dependencies = [
  "gpui",
  "http_client",
  "log",
- "once_cell",
  "parking_lot",
  "paths",
  "postage",
@@ -3680,6 +3680,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger 0.11.5",
+ "feature_flags",
  "gpui",
  "language",
  "log",
@@ -5167,8 +5168,12 @@ dependencies = [
  "anyhow",
  "collections",
  "db",
+ "editor",
+ "futures 0.3.31",
  "git",
  "gpui",
+ "language",
+ "menu",
  "project",
  "schemars",
  "serde",
@@ -6982,7 +6987,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -7695,6 +7700,7 @@ dependencies = [
  "sum_tree",
  "text",
  "theme",
+ "tree-sitter",
  "util",
 ]
 
@@ -10258,7 +10264,6 @@ name = "release_channel"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "once_cell",
 ]
 
 [[package]]
@@ -13975,6 +13980,8 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
+ "itertools 0.13.0",
+ "libc",
  "log",
  "rand 0.8.5",
  "regex",
@@ -14979,7 +14986,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

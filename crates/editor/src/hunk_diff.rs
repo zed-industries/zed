@@ -1155,6 +1155,11 @@ fn editor_with_deleted_text(
         editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
         editor.set_show_wrap_guides(false, cx);
         editor.set_show_gutter(false, cx);
+        editor.set_show_line_numbers(false, cx);
+        editor.set_show_scrollbars(false, cx);
+        editor.set_show_runnables(false, cx);
+        editor.set_show_git_diff_gutter(false, cx);
+        editor.set_show_code_actions(false, cx);
         editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_read_only(true);
         editor.set_show_inline_completions(Some(false), cx);
@@ -1166,7 +1171,7 @@ fn editor_with_deleted_text(
             false,
             cx,
         );
-        editor.set_current_line_highlight(Some(CurrentLineHighlight::None)); //
+        editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
         editor
             ._subscriptions
             .extend([cx.on_blur(&editor.focus_handle, |editor, cx| {

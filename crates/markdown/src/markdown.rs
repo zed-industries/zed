@@ -614,11 +614,11 @@ impl Element for MarkdownElement {
                             };
                             builder.push_div(
                                 div()
+                                    .mb_1()
                                     .h_flex()
-                                    .mb_2()
-                                    .line_height(rems(1.3))
                                     .items_start()
                                     .gap_1()
+                                    .line_height(rems(1.3))
                                     .child(bullet),
                                 range,
                                 markdown_end,

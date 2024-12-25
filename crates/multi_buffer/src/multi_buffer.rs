@@ -3920,15 +3920,16 @@ impl MultiBufferSnapshot {
             })
     }
 
-    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
+    pub fn syntax_ancestor<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<(tree_sitter::Node, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let excerpt = self.excerpt_containing(range.clone())?;
-
-        let ancestor_buffer_range = excerpt
+        let node = excerpt
             .buffer()
-            .range_for_syntax_ancestor(excerpt.map_range_to_buffer(range))?;
-
-        Some(excerpt.map_range_from_buffer(ancestor_buffer_range))
+            .syntax_ancestor(excerpt.map_range_to_buffer(range))?;
+        Some((node, excerpt.map_range_from_buffer(node.byte_range())))
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
