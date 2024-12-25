@@ -1228,7 +1228,11 @@ impl Editor {
                         if let project::Event::RefreshInlayHints = event {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
-                        } else if let project::Event::SnippetEdit(id, snippet_edits) = event {
+                        } else if let project::Event::LanguageServerAdded(_, _, _) = event {
+                            editor.tasks_pull_diagnostics_task = Some(editor.refresh_diagnostics(cx));
+                        } else if let project::Event::LanguageServerRemoved(_) = event {
+                            editor.tasks_pull_diagnostics_task = Some(editor.refresh_diagnostics(cx));
+                        }  else if let project::Event::SnippetEdit(id, snippet_edits) = event {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
                                 let focus_handle = editor.focus_handle(cx);
                                 if focus_handle.is_focused(window) {
