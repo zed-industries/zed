@@ -2484,7 +2484,6 @@ dependencies = [
  "exec",
  "fork",
  "ipc-channel",
- "once_cell",
  "parking_lot",
  "paths",
  "plist",
@@ -2511,7 +2510,6 @@ dependencies = [
  "gpui",
  "http_client",
  "log",
- "once_cell",
  "parking_lot",
  "paths",
  "postage",
@@ -10266,7 +10264,6 @@ name = "release_channel"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "once_cell",
 ]
 
 [[package]]

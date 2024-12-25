@@ -8,7 +8,6 @@ use futures::channel::mpsc;
 use futures::{Future, StreamExt};
 use gpui::{AppContext, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
@@ -16,7 +15,12 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::Write;
 use std::time::Instant;
-use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    env, mem,
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use telemetry_events::{
     AppEvent, AssistantEvent, CallEvent, EditEvent, Event, EventRequestBody, EventWrapper,
     InlineCompletionEvent,
@@ -84,7 +88,7 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
-static ZED_CLIENT_CHECKSUM_SEED: Lazy<Option<Vec<u8>>> = Lazy::new(|| {
+static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
     option_env!("ZED_CLIENT_CHECKSUM_SEED")
         .map(|s| s.as_bytes().into())
         .or_else(|| {
