@@ -207,12 +207,11 @@ fn handle_timer_msg(
 }
 
 fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(is_minimized) = lock.restore_from_minimized {
-        if is_minimized {
-            return Some(0);
-        }
+    if unsafe { IsIconic(handle).as_bool() } {
+        return Some(0);
     }
+
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
         drop(lock);
         request_frame(Default::default());
