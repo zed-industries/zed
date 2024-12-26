@@ -388,7 +388,7 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -2141,7 +2141,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "io-lifetimes 2.0.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2169,7 +2169,7 @@ dependencies = [
  "ipnet",
  "maybe-owned",
  "rustix 0.38.42",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "winx",
 ]
 
@@ -2652,7 +2652,7 @@ dependencies = [
  "dashmap 6.1.0",
  "derive_more",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "envy",
  "extension",
  "file_finder",
@@ -2808,7 +2808,7 @@ dependencies = [
  "command_palette_hooks",
  "ctor",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "fuzzy",
  "go_to_line",
  "gpui",
@@ -3679,7 +3679,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "feature_flags",
  "gpui",
  "language",
@@ -3884,7 +3884,7 @@ dependencies = [
  "ctor",
  "db",
  "emojis",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "feature_flags",
  "file_icons",
  "fs",
@@ -4081,9 +4081,9 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
-version = "0.11.5"
+version = "0.11.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13fa619b91fb2381732789fc5de83b45675e882f66623b7d8cb4f643017018d"
+checksum = "dcaee3d8e3cfc3fd92428d477bc97fc29ec8716d180c0d74c643bb26166660e0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -4135,7 +4135,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4187,7 +4187,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "feature_flags",
  "fs",
  "git",
@@ -4303,7 +4303,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "extension",
  "fs",
  "language",
@@ -4331,7 +4331,7 @@ dependencies = [
  "collections",
  "context_server_settings",
  "ctor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -4524,7 +4524,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "file_icons",
  "futures 0.3.31",
  "fuzzy",
@@ -4802,7 +4802,7 @@ checksum = "5e2e6123af26f0f2c51cc66869137080199406754903cc926a7690401ce09cb4"
 dependencies = [
  "io-lifetimes 2.0.4",
  "rustix 0.38.42",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5325,7 +5325,7 @@ dependencies = [
  "ctor",
  "derive_more",
  "embed-resource",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "etagere",
  "filedescriptor",
  "flume",
@@ -6376,7 +6376,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2285ddfe3054097ef4b2fe909ef8c3bcd1ea52a8f0d274416caebeef39f04a65"
 dependencies = [
  "io-lifetimes 2.0.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6679,7 +6679,7 @@ dependencies = [
  "collections",
  "ctor",
  "ec4rs",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -6846,7 +6846,7 @@ dependencies = [
  "collections",
  "copilot",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "futures 0.3.31",
  "gpui",
  "itertools 0.13.0",
@@ -6987,7 +6987,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -7319,7 +7319,7 @@ dependencies = [
  "async-pipe",
  "collections",
  "ctor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "futures 0.3.31",
  "gpui",
  "log",
@@ -7382,7 +7382,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "futures 0.3.31",
  "gpui",
  "language",
@@ -7497,7 +7497,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "elasticlunr-rs",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "futures-util",
  "handlebars 6.2.0",
  "ignore",
@@ -7686,7 +7686,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "futures 0.3.31",
  "gpui",
  "itertools 0.13.0",
@@ -9192,7 +9192,7 @@ dependencies = [
  "anyhow",
  "ctor",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "gpui",
  "menu",
  "serde",
@@ -9549,7 +9549,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "fancy-regex 0.14.0",
  "fs",
  "futures 0.3.31",
@@ -9931,7 +9931,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.8",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10305,7 +10305,7 @@ dependencies = [
  "clap",
  "client",
  "clock",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "extension",
  "extension_host",
  "fork",
@@ -10364,7 +10364,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "feature_flags",
  "file_icons",
  "futures 0.3.31",
@@ -10639,7 +10639,7 @@ dependencies = [
  "arrayvec",
  "criterion",
  "ctor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "gpui",
  "log",
  "rand 0.8.5",
@@ -10665,7 +10665,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "collections",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "futures 0.3.31",
  "gpui",
  "parking_lot",
@@ -10831,7 +10831,7 @@ dependencies = [
  "libc",
  "linux-raw-sys 0.4.14",
  "once_cell",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11249,7 +11249,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -12251,7 +12251,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ctor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "log",
  "rand 0.8.5",
  "rayon",
@@ -12265,7 +12265,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -12551,7 +12551,7 @@ dependencies = [
  "fd-lock",
  "io-lifetimes 2.0.4",
  "rustix 0.38.42",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "winx",
 ]
 
@@ -12563,7 +12563,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "gpui",
  "language",
  "menu",
@@ -12683,7 +12683,7 @@ dependencies = [
  "fastrand 2.3.0",
  "once_cell",
  "rustix 0.38.42",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12784,7 +12784,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "gpui",
  "http_client",
  "log",
@@ -14986,7 +14986,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -15435,7 +15435,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3fd376f71958b862e7afb20cfe5a22830e1963462f3a17f49d82a6c1d1f42d"
 dependencies = [
  "bitflags 2.6.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -15583,7 +15583,7 @@ dependencies = [
  "collections",
  "db",
  "derive_more",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -15619,7 +15619,7 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -16016,7 +16016,7 @@ dependencies = [
  "db",
  "diagnostics",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "extension",
  "extension_host",
  "extensions_ui",
@@ -16442,7 +16442,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.5",
+ "env_logger 0.11.6",
  "futures 0.3.31",
  "gpui",
  "http_client",
