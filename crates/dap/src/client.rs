@@ -271,6 +271,17 @@ impl DebugAdapterClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub async fn fake_reverse_request<R: dap_types::requests::Request>(&self, args: R::Arguments) {
+        self.send_message(Message::Request(dap_types::messages::Request {
+            seq: self.sequence_count.load(Ordering::Relaxed),
+            command: R::COMMAND.into(),
+            arguments: serde_json::to_value(args).ok(),
+        }))
+        .await
+        .unwrap();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn fake_event(&self, event: dap_types::messages::Events) {
         self.send_message(Message::Event(Box::new(event)))
             .await
@@ -285,10 +296,13 @@ mod tests {
         adapters::FakeAdapter, client::DebugAdapterClient, debugger_settings::DebuggerSettings,
     };
     use dap_types::{
-        messages::Events, requests::Initialize, Capabilities, InitializeRequestArguments,
-        InitializeRequestArgumentsPathFormat,
+        messages::Events,
+        requests::{Initialize, Request, RunInTerminal},
+        Capabilities, InitializeRequestArguments, InitializeRequestArgumentsPathFormat,
+        RunInTerminalRequestArguments,
     };
     use gpui::TestAppContext;
+    use serde_json::json;
     use settings::{Settings, SettingsStore};
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -419,6 +433,73 @@ mod tests {
 
         client
             .fake_event(Events::Initialized(Some(Capabilities::default())))
+            .await;
+
+        cx.run_until_parked();
+
+        assert!(
+            called_event_handler.load(std::sync::atomic::Ordering::SeqCst),
+            "Event handler was not called"
+        );
+
+        client.shutdown().await.unwrap();
+    }
+
+    #[gpui::test]
+    pub async fn test_calls_event_handler_for_reverse_request(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let adapter = Arc::new(FakeAdapter::new());
+        let called_event_handler = Arc::new(AtomicBool::new(false));
+
+        let mut client = DebugAdapterClient::new(
+            crate::client::DebugAdapterClientId(1),
+            adapter,
+            DebugAdapterBinary {
+                command: "command".into(),
+                arguments: Default::default(),
+                envs: Default::default(),
+                cwd: None,
+            },
+            &mut cx.to_async(),
+        );
+
+        client
+            .start(
+                {
+                    let called_event_handler = called_event_handler.clone();
+                    move |event, _| {
+                        called_event_handler.store(true, Ordering::SeqCst);
+
+                        assert_eq!(
+                            Message::Request(dap_types::messages::Request {
+                                seq: 1,
+                                command: RunInTerminal::COMMAND.into(),
+                                arguments: Some(json!({
+                                    "cwd": "/project/path/src",
+                                    "args": ["node", "test.js"],
+                                }))
+                            }),
+                            event
+                        );
+                    }
+                },
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        client
+            .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
+                kind: None,
+                title: None,
+                cwd: "/project/path/src".into(),
+                args: vec!["node".into(), "test.js".into()],
+                env: None,
+                args_can_be_interpreted_by_shell: None,
+            })
             .await;
 
         cx.run_until_parked();
