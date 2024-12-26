@@ -327,6 +327,8 @@
       "cmd-w": "pane::CloseActiveItem",
       "alt-cmd-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
+      "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
+      "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "cmd-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
       "cmd-k cmd-w": ["pane::CloseAllItems", { "close_pinned": false }],
       "cmd-f": "project_search::ToggleFocus",
