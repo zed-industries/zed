@@ -17,7 +17,10 @@ use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
     FontWeight, Model, Subscription, Task, View, ViewContext, WeakView,
 };
-use project::{dap_store::DapStore, terminals::TerminalKind};
+use project::{
+    dap_store::{DapStore, DapStoreEvent},
+    terminals::TerminalKind,
+};
 use rpc::proto::{SetDebuggerPanelItem, UpdateDebugAdapter};
 use serde_json::Value;
 use settings::Settings;
@@ -25,6 +28,7 @@ use std::{any::TypeId, collections::VecDeque, path::PathBuf, u64};
 use task::DebugRequestType;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::prelude::*;
+use util::ResultExt as _;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     pane, Continue, Disconnect, Pane, Pause, Restart, Start, StepBack, StepInto, StepOut, StepOver,
@@ -457,7 +461,16 @@ impl DebugPanel {
             let (success, pid) = match terminal_task {
                 Ok(pid_task) => match pid_task.await {
                     Ok(pid) => (true, pid),
-                    Err(_) => (false, None),
+                    Err(error) => {
+                        this.update(&mut cx, |this, cx| {
+                            this.dap_store.update(cx, |_, cx| {
+                                cx.emit(DapStoreEvent::Notification(error.to_string()));
+                            })
+                        })
+                        .log_err();
+
+                        (false, None)
+                    }
                 },
                 Err(_) => (false, None),
             };
