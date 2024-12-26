@@ -12,11 +12,11 @@ use std::{
     sync::Arc,
 };
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{CachedLspAdapter, LanguageName, LanguageRegistry};
 use lsp::LanguageServerName;
-use path_trie::{RootPathTrie, TriePath};
+use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::WorktreeId;
 use worktree::{Event as WorktreeEvent, Worktree};
 
@@ -146,19 +146,27 @@ impl ProjectTree {
         };
 
         let key = TriePath::from(&*path);
+        let mut known_missing = HashSet::default();
 
         worktree_roots.update(cx, |this, _| {
             this.roots.walk(&key, &mut |path, labels| {
                 for (label, presence) in labels {
-                    if let Some(slot) = roots.get_mut(label) {
-                        debug_assert_eq!(slot, &mut None, "For a given path to a root of a worktree there should be at most project root of {label:?} kind");
-                        let _ = slot.insert(ProjectPath {
-                            worktree_id,
-                            path: path.clone(),
-                        });
+                    if *presence == LabelPresence::Present {
+                        known_missing.remove(label);
+                        if let Some(slot) = roots.get_mut(label) {
+                            debug_assert_eq!(slot, &mut None, "For a given path to a root of a worktree there should be at most project root of {label:?} kind");
+                            let _ = slot.insert(ProjectPath {
+                                worktree_id,
+                                path: path.clone(),
+                            });
+                        }
+                    } else {
+                        known_missing.insert(label.clone());
                     }
                 }
-                if roots.values().all(|v| v.is_some()) {
+                // If all language adapters either have a rooting point or are known missing, we don't need to look further
+                // down into the tree.
+                if roots.values().filter(|v| v.is_some()).count() + known_missing.len() == roots.len() {
                     // Stop recursing downwards as we've already found all the project roots we're interested in.
                     ControlFlow::Break(())
                 } else {
@@ -167,6 +175,29 @@ impl ProjectTree {
             });
         });
 
+        for (adapter, maybe_known_root) in &mut roots {
+            if maybe_known_root.is_some() {
+                continue;
+            }
+            let root = adapter
+                .0
+                .find_closest_project_root(worktree_id, path.clone());
+            match root {
+                Some(known_root) => worktree_roots.update(cx, |this, _| {
+                    let root = TriePath::from(&*known_root);
+                    this.roots
+                        .insert(&root, adapter.0.name(), LabelPresence::Present);
+                    let _ = maybe_known_root.insert(ProjectPath {
+                        worktree_id,
+                        path: known_root,
+                    });
+                }),
+                None => worktree_roots.update(cx, |this, _| {
+                    this.roots
+                        .insert(&key, adapter.0.name(), LabelPresence::KnownAbsent);
+                }),
+            }
+        }
         // for ancestor in path.ancestors().skip(1) {
         //     worktree_roots.update(cx, |this, _| {
         //         let adapter_roots = this.roots.entry(ancestor.into()).or_default();
