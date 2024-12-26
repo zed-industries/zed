@@ -2460,8 +2460,6 @@ impl EditorElement {
                                                 .flex_none()
                                                 .justify_end()
                                                 .child(self.render_expand_excerpt_button(
-                                                    // next_excerpt.id,
-                                                    // ExpandExcerptDirection::Up,
                                                     IconName::ArrowUpFromLine,
                                                     Some(group_name.to_string()),
                                                     cx,
@@ -2597,7 +2595,6 @@ impl EditorElement {
         let parent_path = path
             .as_ref()
             .and_then(|path| Some(path.parent()?.to_string_lossy().to_string() + "/"));
-
         let focus_handle = self.editor.focus_handle(cx);
 
         div()
@@ -2963,7 +2960,6 @@ impl EditorElement {
         hitbox: &Hitbox,
         cx: &mut WindowContext,
     ) -> AnyElement {
-        // let jump_data = jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt, cx);
         let jump_data = header_jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt);
 
         let editor_bg_color = cx.theme().colors().editor_background;
