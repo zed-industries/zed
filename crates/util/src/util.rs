@@ -6,10 +6,12 @@ pub mod serde;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use anyhow::{anyhow, Context as _, Result};
 use futures::Future;
 
+use itertools::Either;
 use regex::Regex;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -109,6 +111,106 @@ where
     }
 }
 
+#[cfg(unix)]
+pub fn load_shell_from_passwd() -> Result<()> {
+    let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
+        n if n < 0 => 1024,
+        n => n as usize,
+    };
+    let mut buffer = Vec::with_capacity(buflen);
+
+    let mut pwd: std::mem::MaybeUninit<libc::passwd> = std::mem::MaybeUninit::uninit();
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+
+    let uid = unsafe { libc::getuid() };
+    let status = unsafe {
+        libc::getpwuid_r(
+            uid,
+            pwd.as_mut_ptr(),
+            buffer.as_mut_ptr() as *mut libc::c_char,
+            buflen,
+            &mut result,
+        )
+    };
+    let entry = unsafe { pwd.assume_init() };
+
+    anyhow::ensure!(
+        status == 0,
+        "call to getpwuid_r failed. uid: {}, status: {}",
+        uid,
+        status
+    );
+    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
+    anyhow::ensure!(
+        entry.pw_uid == uid,
+        "passwd entry has different uid ({}) than getuid ({}) returned",
+        entry.pw_uid,
+        uid,
+    );
+
+    let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
+    if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
+        log::info!(
+            "updating SHELL environment variable to value from passwd entry: {:?}",
+            shell,
+        );
+        env::set_var("SHELL", shell);
+    }
+
+    Ok(())
+}
+
+pub fn load_login_shell_environment() -> Result<()> {
+    let marker = "ZED_LOGIN_SHELL_START";
+    let shell = env::var("SHELL").context(
+        "SHELL environment variable is not assigned so we can't source login environment variables",
+    )?;
+
+    // If possible, we want to `cd` in the user's `$HOME` to trigger programs
+    // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
+    // into shell's `cd` command (and hooks) to manipulate env.
+    // We do this so that we get the env a user would have when spawning a shell
+    // in home directory.
+    let shell_cmd_prefix = std::env::var_os("HOME")
+        .and_then(|home| home.into_string().ok())
+        .map(|home| format!("cd '{home}';"));
+
+    // The `exit 0` is the result of hours of debugging, trying to find out
+    // why running this command here, without `exit 0`, would mess
+    // up signal process for our process so that `ctrl-c` doesn't work
+    // anymore.
+    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
+    // do that, but it does, and `exit 0` helps.
+    let shell_cmd = format!(
+        "{}printf '%s' {marker}; /usr/bin/env; exit 0;",
+        shell_cmd_prefix.as_deref().unwrap_or("")
+    );
+
+    let output = std::process::Command::new(&shell)
+        .args(["-l", "-i", "-c", &shell_cmd])
+        .output()
+        .context("failed to spawn login shell to source login environment variables")?;
+    if !output.status.success() {
+        Err(anyhow!("login shell exited with error"))?;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    if let Some(env_output_start) = stdout.find(marker) {
+        let env_output = &stdout[env_output_start + marker.len()..];
+
+        parse_env_output(env_output, |key, value| env::set_var(key, value));
+
+        log::info!(
+            "set environment variables from shell:{}, path:{}",
+            shell,
+            env::var("PATH").unwrap_or_default(),
+        );
+    }
+
+    Ok(())
+}
+
 /// Parse the result of calling `usr/bin/env` with no arguments
 pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
     let mut current_key: Option<String> = None;
@@ -196,6 +298,35 @@ pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
         result
     } else {
         f()
+    }
+}
+
+pub fn iterate_expanded_and_wrapped_usize_range(
+    range: Range<usize>,
+    additional_before: usize,
+    additional_after: usize,
+    wrap_length: usize,
+) -> impl Iterator<Item = usize> {
+    let start_wraps = range.start < additional_before;
+    let end_wraps = wrap_length < range.end + additional_after;
+    if start_wraps && end_wraps {
+        Either::Left(0..wrap_length)
+    } else if start_wraps {
+        let wrapped_start = (range.start + wrap_length).saturating_sub(additional_before);
+        if wrapped_start <= range.end {
+            Either::Left(0..wrap_length)
+        } else {
+            Either::Right((0..range.end + additional_after).chain(wrapped_start..wrap_length))
+        }
+    } else if end_wraps {
+        let wrapped_end = range.end + additional_after - wrap_length;
+        if range.start <= wrapped_end {
+            Either::Left(0..wrap_length)
+        } else {
+            Either::Right((0..wrapped_end).chain(range.start - additional_before..wrap_length))
+        }
+    } else {
+        Either::Left((range.start - additional_before)..(range.end + additional_after))
     }
 }
 
@@ -567,8 +698,9 @@ impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
 }
 
 fn emoji_regex() -> &'static Regex {
-    static EMOJI_REGEX: OnceLock<Regex> = OnceLock::new();
-    EMOJI_REGEX.get_or_init(|| Regex::new("(\\p{Emoji}|\u{200D})").unwrap())
+    static EMOJI_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new("(\\p{Emoji}|\u{200D})").unwrap());
+    &EMOJI_REGEX
 }
 
 /// Returns true if the given string consists of emojis only.
@@ -731,6 +863,50 @@ Line 2
             r#"Line 1
 Line 2
 Line 3"#
+        );
+    }
+
+    #[test]
+    fn test_iterate_expanded_and_wrapped_usize_range() {
+        // Neither wrap
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
+            (1..5).collect::<Vec<usize>>()
+        );
+        // Start wraps
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
+            ((0..5).chain(7..8)).collect::<Vec<usize>>()
+        );
+        // Start wraps all the way around
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // Start wraps all the way around and past 0
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // End wraps
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
+            (0..1).chain(2..8).collect::<Vec<usize>>()
+        );
+        // End wraps all the way around
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // End wraps all the way around and past the end
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
+        );
+        // Both start and end wrap
+        assert_eq!(
+            iterate_expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
+            (0..8).collect::<Vec<usize>>()
         );
     }
 }

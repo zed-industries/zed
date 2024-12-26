@@ -134,10 +134,20 @@ impl Render for TitleBar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .when_some(self.application_menu.clone(), |this, menu| this.child(menu))
-                            .children(self.render_project_host(cx))
-                            .child(self.render_project_name(cx))
-                            .children(self.render_project_branch(cx))
+                            .map(|title_bar| {
+                                let mut render_project_items = true;
+                                title_bar
+                                    .when_some(self.application_menu.clone(), |title_bar, menu| {
+                                        render_project_items = !menu.read(cx).is_any_deployed();
+                                        title_bar.child(menu)
+                                    })
+                                    .when(render_project_items, |title_bar| {
+                                        title_bar
+                                            .children(self.render_project_host(cx))
+                                            .child(self.render_project_name(cx))
+                                            .children(self.render_project_branch(cx))
+                                    })
+                            })
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(cx))
@@ -216,7 +226,13 @@ impl TitleBar {
 
         let platform_style = PlatformStyle::platform();
         let application_menu = match platform_style {
-            PlatformStyle::Mac => None,
+            PlatformStyle::Mac => {
+                if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
+                    Some(cx.new_view(ApplicationMenu::new))
+                } else {
+                    None
+                }
+            }
             PlatformStyle::Linux | PlatformStyle::Windows => {
                 Some(cx.new_view(ApplicationMenu::new))
             }
@@ -303,21 +319,24 @@ impl TitleBar {
         Some(
             ButtonLike::new("ssh-server-icon")
                 .child(
-                    IconWithIndicator::new(
-                        Icon::new(IconName::Server)
-                            .size(IconSize::XSmall)
-                            .color(icon_color),
-                        Some(Indicator::dot().color(indicator_color)),
-                    )
-                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                    .into_any_element(),
-                )
-                .child(
-                    div()
+                    h_flex()
+                        .gap_2()
                         .max_w_32()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .child(Label::new(nickname.clone()).size(LabelSize::Small)),
+                        .child(
+                            IconWithIndicator::new(
+                                Icon::new(IconName::Server)
+                                    .size(IconSize::XSmall)
+                                    .color(icon_color),
+                                Some(Indicator::dot().color(indicator_color)),
+                            )
+                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                            .into_any_element(),
+                        )
+                        .child(
+                            Label::new(nickname.clone())
+                                .size(LabelSize::Small)
+                                .text_ellipsis(),
+                        ),
                 )
                 .tooltip(move |cx| {
                     Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)

@@ -306,7 +306,6 @@ fn show_software_emulation_warning_if_needed(
 }
 
 fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Workspace>) {
-    let release_channel = ReleaseChannel::global(cx);
     let assistant2_feature_flag = cx.wait_for_flag::<feature_flags::Assistant2FeatureFlag>();
     let git_ui_feature_flag = cx.wait_for_flag::<feature_flags::GitUiFeatureFlag>();
 
@@ -372,7 +371,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             }
         })?;
 
-        let is_assistant2_enabled = if cfg!(test) || release_channel != ReleaseChannel::Dev {
+        let is_assistant2_enabled = if cfg!(test) {
             false
         } else {
             assistant2_feature_flag.await

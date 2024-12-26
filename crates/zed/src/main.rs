@@ -10,6 +10,7 @@ use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
+use collections::HashMap;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
@@ -37,18 +38,17 @@ use settings::{
     handle_settings_file_changes, watch_config_file, InvalidSettingsError, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
-use smol::process::Command;
 use std::{
     env,
     fs::OpenOptions,
-    io::{IsTerminal, Write},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process,
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use time::UtcOffset;
-use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
+use util::{load_login_shell_environment, maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{
@@ -63,26 +63,66 @@ use zed::{
 
 use crate::zed::inline_completion_registry;
 
+#[cfg(unix)]
+use util::load_shell_from_passwd;
+
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-fn fail_to_launch(e: anyhow::Error) {
-    eprintln!("Zed failed to launch: {e:?}");
-    App::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |cx| cx.new_view(|_| gpui::Empty)) {
-            window.update(cx, |_, cx| {
-                let response = cx.prompt(gpui::PromptLevel::Critical, "Zed failed to launch", Some(&format!("{e}\n\nFor help resolving this, please open an issue on https://github.com/zed-industries/zed")), &["Exit"]);
+fn files_not_createad_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
+    let message = "Zed failed to launch";
+    let error_details = errors
+        .into_iter()
+        .flat_map(|(kind, paths)| {
+            #[allow(unused_mut)] // for non-unix platforms
+            let mut error_kind_details = match paths.len() {
+                0 => return None,
+                1 => format!(
+                    "{kind} when creating directory {:?}",
+                    paths.first().expect("match arm checks for a single entry")
+                ),
+                _many => format!("{kind} when creating directories {paths:?}"),
+            };
 
-                cx.spawn(|_, mut cx| async move {
-                    response.await?;
-                    cx.update(|cx| {
-                        cx.quit()
+            #[cfg(unix)]
+            {
+                match kind {
+                    io::ErrorKind::PermissionDenied => {
+                        error_kind_details.push_str("\n\nConsider using chown and chmod tools for altering the directories permissions if your user has corresponding rights.\
+                            \nFor example, `sudo chown $(whoami):staff ~/.config` and `chmod +uwrx ~/.config`");
+                    }
+                    _ => {}
+                }
+            }
+
+            Some(error_kind_details)
+        })
+        .collect::<Vec<_>>().join("\n\n");
+
+    eprintln!("{message}: {error_details}");
+    App::new().run(move |cx| {
+        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |cx| {
+            cx.new_view(|_| gpui::Empty)
+        }) {
+            window
+                .update(cx, |_, cx| {
+                    let response = cx.prompt(
+                        gpui::PromptLevel::Critical,
+                        message,
+                        Some(&error_details),
+                        &["Exit"],
+                    );
+
+                    cx.spawn(|_, mut cx| async move {
+                        response.await?;
+                        cx.update(|cx| cx.quit())
                     })
-                }).detach_and_log_err(cx);
-            }).log_err();
+                    .detach_and_log_err(cx);
+                })
+                .log_err();
         } else {
-            fail_to_open_window(e, cx)
+            fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
         }
     })
 }
@@ -137,8 +177,9 @@ fn main() {
     menu::init();
     zed_actions::init();
 
-    if let Err(e) = init_paths() {
-        fail_to_launch(e);
+    let file_errors = init_paths();
+    if !file_errors.is_empty() {
+        files_not_createad_on_launch(file_errors);
         return;
     }
 
@@ -219,9 +260,9 @@ fn main() {
             .spawn(async {
                 #[cfg(unix)]
                 {
-                    load_shell_from_passwd().await.log_err();
+                    load_shell_from_passwd().log_err();
                 }
-                load_login_shell_environment().await.log_err();
+                load_login_shell_environment().log_err();
             })
             .detach()
     };
@@ -907,8 +948,8 @@ pub(crate) async fn restorable_workspace_locations(
     }
 }
 
-fn init_paths() -> anyhow::Result<()> {
-    for path in [
+fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
+    [
         paths::config_dir(),
         paths::extensions_dir(),
         paths::languages_dir(),
@@ -916,12 +957,13 @@ fn init_paths() -> anyhow::Result<()> {
         paths::logs_dir(),
         paths::temp_dir(),
     ]
-    .iter()
-    {
-        std::fs::create_dir_all(path)
-            .map_err(|e| anyhow!("Could not create directory {:?}: {}", path, e))?;
-    }
-    Ok(())
+    .into_iter()
+    .fold(HashMap::default(), |mut errors, path| {
+        if let Err(e) = std::fs::create_dir_all(path) {
+            errors.entry(e.kind()).or_insert_with(Vec::new).push(path);
+        }
+        errors
+    })
 }
 
 fn init_logger() {
@@ -1000,109 +1042,8 @@ fn init_stdout_logger() {
         .init();
 }
 
-#[cfg(unix)]
-async fn load_shell_from_passwd() -> Result<()> {
-    let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
-        n if n < 0 => 1024,
-        n => n as usize,
-    };
-    let mut buffer = Vec::with_capacity(buflen);
-
-    let mut pwd: std::mem::MaybeUninit<libc::passwd> = std::mem::MaybeUninit::uninit();
-    let mut result: *mut libc::passwd = std::ptr::null_mut();
-
-    let uid = unsafe { libc::getuid() };
-    let status = unsafe {
-        libc::getpwuid_r(
-            uid,
-            pwd.as_mut_ptr(),
-            buffer.as_mut_ptr() as *mut libc::c_char,
-            buflen,
-            &mut result,
-        )
-    };
-    let entry = unsafe { pwd.assume_init() };
-
-    anyhow::ensure!(
-        status == 0,
-        "call to getpwuid_r failed. uid: {}, status: {}",
-        uid,
-        status
-    );
-    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
-    anyhow::ensure!(
-        entry.pw_uid == uid,
-        "passwd entry has different uid ({}) than getuid ({}) returned",
-        entry.pw_uid,
-        uid,
-    );
-
-    let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
-    if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
-        log::info!(
-            "updating SHELL environment variable to value from passwd entry: {:?}",
-            shell,
-        );
-        env::set_var("SHELL", shell);
-    }
-
-    Ok(())
-}
-
-async fn load_login_shell_environment() -> Result<()> {
-    let marker = "ZED_LOGIN_SHELL_START";
-    let shell = env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
-
-    // If possible, we want to `cd` in the user's `$HOME` to trigger programs
-    // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
-    // into shell's `cd` command (and hooks) to manipulate env.
-    // We do this so that we get the env a user would have when spawning a shell
-    // in home directory.
-    let shell_cmd_prefix = std::env::var_os("HOME")
-        .and_then(|home| home.into_string().ok())
-        .map(|home| format!("cd '{home}';"));
-
-    // The `exit 0` is the result of hours of debugging, trying to find out
-    // why running this command here, without `exit 0`, would mess
-    // up signal process for our process so that `ctrl-c` doesn't work
-    // anymore.
-    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-    // do that, but it does, and `exit 0` helps.
-    let shell_cmd = format!(
-        "{}printf '%s' {marker}; /usr/bin/env; exit 0;",
-        shell_cmd_prefix.as_deref().unwrap_or("")
-    );
-
-    let output = Command::new(&shell)
-        .args(["-l", "-i", "-c", &shell_cmd])
-        .output()
-        .await
-        .context("failed to spawn login shell to source login environment variables")?;
-    if !output.status.success() {
-        Err(anyhow!("login shell exited with error"))?;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    if let Some(env_output_start) = stdout.find(marker) {
-        let env_output = &stdout[env_output_start + marker.len()..];
-
-        parse_env_output(env_output, |key, value| env::set_var(key, value));
-
-        log::info!(
-            "set environment variables from shell:{}, path:{}",
-            shell,
-            env::var("PATH").unwrap_or_default(),
-        );
-    }
-
-    Ok(())
-}
-
 fn stdout_is_a_pty() -> bool {
-    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
+    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
 }
 
 #[derive(Parser, Debug)]

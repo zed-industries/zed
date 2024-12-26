@@ -429,7 +429,7 @@ fn show_hover(
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot;
-                        let offset_range = snapshot.range_for_syntax_ancestor(anchor..anchor)?;
+                        let offset_range = snapshot.syntax_ancestor(anchor..anchor)?.1;
                         Some(
                             snapshot.anchor_before(offset_range.start)
                                 ..snapshot.anchor_after(offset_range.end),

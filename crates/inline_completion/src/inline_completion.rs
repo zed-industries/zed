@@ -20,6 +20,7 @@ pub struct InlineCompletion {
 pub trait InlineCompletionProvider: 'static + Sized {
     fn name() -> &'static str;
     fn display_name() -> &'static str;
+    fn show_completions_in_menu() -> bool;
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -59,6 +60,7 @@ pub trait InlineCompletionProviderHandle {
         cursor_position: language::Anchor,
         cx: &AppContext,
     ) -> bool;
+    fn show_completions_in_menu(&self) -> bool;
     fn refresh(
         &self,
         buffer: Model<Buffer>,
@@ -93,6 +95,10 @@ where
 
     fn display_name(&self) -> &'static str {
         T::display_name()
+    }
+
+    fn show_completions_in_menu(&self) -> bool {
+        T::show_completions_in_menu()
     }
 
     fn is_enabled(

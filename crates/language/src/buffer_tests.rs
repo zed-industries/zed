@@ -1104,20 +1104,32 @@ fn test_range_for_syntax_ancestor(cx: &mut AppContext) {
         let snapshot = buffer.snapshot();
 
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(empty_range_at(text, "|")),
-            Some(range_of(text, "|"))
+            snapshot
+                .syntax_ancestor(empty_range_at(text, "|"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "|")
         );
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(range_of(text, "|")),
-            Some(range_of(text, "|c|"))
+            snapshot
+                .syntax_ancestor(range_of(text, "|"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "|c|")
         );
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(range_of(text, "|c|")),
-            Some(range_of(text, "|c| {}"))
+            snapshot
+                .syntax_ancestor(range_of(text, "|c|"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "|c| {}")
         );
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(range_of(text, "|c| {}")),
-            Some(range_of(text, "(|c| {})"))
+            snapshot
+                .syntax_ancestor(range_of(text, "|c| {}"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "(|c| {})")
         );
 
         buffer

@@ -1526,13 +1526,6 @@ impl Project {
                 .await
                 .unwrap();
 
-            project.update(cx, |project, cx| {
-                let tree_id = tree.read(cx).id();
-                project.environment.update(cx, |environment, _| {
-                    environment.set_cached(&[(tree_id, HashMap::default())])
-                });
-            });
-
             tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .await;
         }

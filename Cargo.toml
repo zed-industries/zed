@@ -345,7 +345,7 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "91d034ff8b53867143c005acfaa14609147c9a2c" }
+alacritty_terminal = "0.24"
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -363,13 +363,13 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
-cargo_toml = "0.20"
+cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
@@ -393,7 +393,7 @@ futures-lite = "1.13"
 git2 = { version = "0.19", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
-heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
+heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 hyper = "0.14"
@@ -416,7 +416,6 @@ nanoid = "0.4"
 nbformat = { version = "0.9.0" }
 nix = "0.29"
 num-format = "0.4.4"
-once_cell = "1.19.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
@@ -480,7 +479,7 @@ sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
-tiktoken-rs = "0.5.9"
+tiktoken-rs = "0.6.0"
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -506,7 +505,7 @@ tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex",
 tree-sitter-diff = "0.1.0"
 tree-sitter-html = "0.20"
 tree-sitter-jsdoc = "0.23"
-tree-sitter-json = "0.23"
+tree-sitter-json = "0.24"
 tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
 tree-sitter-python = "0.23"
 tree-sitter-regex = "0.23"
@@ -533,6 +532,12 @@ wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
 zstd = "0.11"
+# Custom metal-rs is only needed for "macos-blade" feature of GPUI
+#TODO: switch to crates once these are published:
+# - https://github.com/gfx-rs/metal-rs/pull/335
+# - https://github.com/gfx-rs/metal-rs/pull/336
+# - https://github.com/gfx-rs/metal-rs/pull/337
+metal = { git = "https://github.com/gfx-rs/metal-rs", rev = "ef768ff9d742ae6a0f4e83ddc8031264e7d460c4" }
 
 [workspace.dependencies.async-stripe]
 git = "https://github.com/zed-industries/async-stripe"

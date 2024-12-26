@@ -1,11 +1,8 @@
-use std::cell::RefCell;
-use std::{cmp::Reverse, ops::Range, rc::Rc};
-
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
-    Model, ScrollStrategy, SharedString, StrikethroughStyle, StyledText, UniformListScrollHandle,
-    ViewContext, WeakView,
+    Model, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
+    UniformListScrollHandle, ViewContext, WeakView,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -13,6 +10,13 @@ use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::{CodeAction, Completion, TaskSourceKind};
+use std::{
+    cell::RefCell,
+    cmp::{min, Reverse},
+    iter,
+    ops::Range,
+    rc::Rc,
+};
 use task::ResolvedTask;
 use ui::{prelude::*, Color, IntoElement, ListItem, Pixels, Popover, Styled};
 use util::ResultExt;
@@ -26,7 +30,10 @@ use crate::{
 };
 use crate::{AcceptInlineCompletion, InlineCompletionMenuHint, InlineCompletionText};
 
-pub const MAX_COMPLETIONS_ASIDE_WIDTH: Pixels = px(500.);
+pub const MENU_GAP: Pixels = px(4.);
+pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
+pub const MENU_ASIDE_MIN_WIDTH: Pixels = px(260.);
+pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
 
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
@@ -127,14 +134,12 @@ impl CodeContextMenu {
     pub fn render_aside(
         &self,
         style: &EditorStyle,
-        max_height: Pixels,
+        max_size: Size<Pixels>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<AnyElement> {
         match self {
-            CodeContextMenu::Completions(menu) => {
-                menu.render_aside(style, max_height, workspace, cx)
-            }
+            CodeContextMenu::Completions(menu) => menu.render_aside(style, max_size, workspace, cx),
             CodeContextMenu::CodeActions(_) => None,
         }
     }
@@ -158,6 +163,7 @@ pub struct CompletionsMenu {
     scroll_handle: UniformListScrollHandle,
     resolve_completions: bool,
     show_completion_documentation: bool,
+    last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -193,6 +199,7 @@ impl CompletionsMenu {
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
+            last_rendered_range: RefCell::new(None).into(),
         }
     }
 
@@ -249,6 +256,7 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: false,
             show_completion_documentation: false,
+            last_rendered_range: RefCell::new(None).into(),
         }
     }
 
@@ -257,11 +265,7 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.selected_item = 0;
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.resolve_selected_completion(provider, cx);
-        cx.notify();
+        self.update_selection_index(0, provider, cx);
     }
 
     fn select_prev(
@@ -269,15 +273,7 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        if self.selected_item > 0 {
-            self.selected_item -= 1;
-        } else {
-            self.selected_item = self.entries.len() - 1;
-        }
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.resolve_selected_completion(provider, cx);
-        cx.notify();
+        self.update_selection_index(self.prev_match_index(), provider, cx);
     }
 
     fn select_next(
@@ -285,15 +281,7 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        if self.selected_item + 1 < self.entries.len() {
-            self.selected_item += 1;
-        } else {
-            self.selected_item = 0;
-        }
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.resolve_selected_completion(provider, cx);
-        cx.notify();
+        self.update_selection_index(self.next_match_index(), provider, cx);
     }
 
     fn select_last(
@@ -301,11 +289,38 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.selected_item = self.entries.len() - 1;
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        self.resolve_selected_completion(provider, cx);
-        cx.notify();
+        self.update_selection_index(self.entries.len() - 1, provider, cx);
+    }
+
+    fn update_selection_index(
+        &mut self,
+        match_index: usize,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        if self.selected_item != match_index {
+            self.selected_item = match_index;
+            self.scroll_handle
+                .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+            self.resolve_visible_completions(provider, cx);
+            cx.notify();
+        }
+    }
+
+    fn prev_match_index(&self) -> usize {
+        if self.selected_item > 0 {
+            self.selected_item - 1
+        } else {
+            self.entries.len() - 1
+        }
+    }
+
+    fn next_match_index(&self) -> usize {
+        if self.selected_item + 1 < self.entries.len() {
+            self.selected_item + 1
+        } else {
+            0
+        }
     }
 
     pub fn show_inline_completion_hint(&mut self, hint: InlineCompletionMenuHint) {
@@ -325,10 +340,12 @@ impl CompletionsMenu {
             }
         }
         .into();
-        self.selected_item = 0;
+        if self.selected_item != 0 && self.selected_item + 1 < self.entries.len() {
+            self.selected_item += 1;
+        }
     }
 
-    pub fn resolve_selected_completion(
+    pub fn resolve_visible_completions(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
@@ -340,24 +357,76 @@ impl CompletionsMenu {
             return;
         };
 
-        match &self.entries[self.selected_item] {
-            CompletionEntry::Match(entry) => {
-                let completion_index = entry.candidate_id;
-                let resolve_task = provider.resolve_completions(
-                    self.buffer.clone(),
-                    vec![completion_index],
-                    self.completions.clone(),
-                    cx,
-                );
+        // Attempt to resolve completions for every item that will be displayed. This matters
+        // because single line documentation may be displayed inline with the completion.
+        //
+        // When navigating to the very beginning or end of completions, `last_rendered_range` may
+        // have no overlap with the completions that will be displayed, so instead use a range based
+        // on the last rendered count.
+        const APPROXIMATE_VISIBLE_COUNT: usize = 12;
+        let last_rendered_range = self.last_rendered_range.borrow().clone();
+        let visible_count = last_rendered_range
+            .clone()
+            .map_or(APPROXIMATE_VISIBLE_COUNT, |range| range.count());
+        let entry_range = if self.selected_item == 0 {
+            0..min(visible_count, self.entries.len())
+        } else if self.selected_item == self.entries.len() - 1 {
+            self.entries.len().saturating_sub(visible_count)..self.entries.len()
+        } else {
+            last_rendered_range.map_or(0..0, |range| {
+                min(range.start, self.entries.len())..min(range.end, self.entries.len())
+            })
+        };
 
-                cx.spawn(move |editor, mut cx| async move {
-                    if let Some(true) = resolve_task.await.log_err() {
-                        editor.update(&mut cx, |_, cx| cx.notify()).ok();
-                    }
-                })
-                .detach();
+        // Expand the range to resolve more completions than are predicted to be visible, to reduce
+        // jank on navigation.
+        const EXTRA_TO_RESOLVE: usize = 4;
+        let entry_indices = util::iterate_expanded_and_wrapped_usize_range(
+            entry_range.clone(),
+            EXTRA_TO_RESOLVE,
+            EXTRA_TO_RESOLVE,
+            self.entries.len(),
+        );
+
+        // Avoid work by sometimes filtering out completions that already have documentation.
+        // This filtering doesn't happen if the completions are currently being updated.
+        let completions = self.completions.borrow();
+        let candidate_ids = entry_indices
+            .flat_map(|i| Self::entry_candidate_id(&self.entries[i]))
+            .filter(|i| completions[*i].documentation.is_none());
+
+        // Current selection is always resolved even if it already has documentation, to handle
+        // out-of-spec language servers that return more results later.
+        let candidate_ids = match Self::entry_candidate_id(&self.entries[self.selected_item]) {
+            None => candidate_ids.collect::<Vec<usize>>(),
+            Some(selected_candidate_id) => iter::once(selected_candidate_id)
+                .chain(candidate_ids.filter(|id| *id != selected_candidate_id))
+                .collect::<Vec<usize>>(),
+        };
+
+        if candidate_ids.is_empty() {
+            return;
+        }
+
+        let resolve_task = provider.resolve_completions(
+            self.buffer.clone(),
+            candidate_ids,
+            self.completions.clone(),
+            cx,
+        );
+
+        cx.spawn(move |editor, mut cx| async move {
+            if let Some(true) = resolve_task.await.log_err() {
+                editor.update(&mut cx, |_, cx| cx.notify()).ok();
             }
-            CompletionEntry::InlineCompletionHint { .. } => {}
+        })
+        .detach();
+    }
+
+    fn entry_candidate_id(entry: &CompletionEntry) -> Option<usize> {
+        match entry {
+            CompletionEntry::Match(entry) => Some(entry.candidate_id),
+            CompletionEntry::InlineCompletionHint { .. } => None,
         }
     }
 
@@ -406,12 +475,14 @@ impl CompletionsMenu {
         let selected_item = self.selected_item;
         let completions = self.completions.clone();
         let matches = self.entries.clone();
+        let last_rendered_range = self.last_rendered_range.clone();
         let style = style.clone();
         let list = uniform_list(
             cx.view().clone(),
             "completions",
             matches.len(),
             move |_editor, range, cx| {
+                last_rendered_range.borrow_mut().replace(range.clone());
                 let start_ix = range.start;
                 let completions_guard = completions.borrow_mut();
 
@@ -543,7 +614,7 @@ impl CompletionsMenu {
     fn render_aside(
         &self,
         style: &EditorStyle,
-        max_height: Pixels,
+        max_size: Size<Pixels>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<AnyElement> {
@@ -575,7 +646,7 @@ impl CompletionsMenu {
             }
             CompletionEntry::InlineCompletionHint(hint) => match &hint.text {
                 InlineCompletionText::Edit { text, highlights } => div()
-                    .my_1()
+                    .mx_1()
                     .rounded(px(6.))
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
@@ -593,10 +664,9 @@ impl CompletionsMenu {
                 .child(
                     multiline_docs
                         .id("multiline_docs")
-                        .max_h(max_height)
-                        .px_0p5()
-                        .min_w(px(260.))
-                        .max_w(MAX_COMPLETIONS_ASIDE_WIDTH)
+                        .px(MENU_ASIDE_X_PADDING / 2.)
+                        .max_w(max_size.width)
+                        .max_h(max_size.height)
                         .overflow_y_scroll()
                         .occlude(),
                 )

@@ -131,6 +131,7 @@ use multi_buffer::{
 use parking_lot::Mutex;
 use project::{
     dap_store::{Breakpoint, BreakpointKind, DapStore},
+    buffer_store::BufferChangeSet,
     lsp_store::{FormatTarget, FormatTrigger, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
@@ -610,6 +611,7 @@ pub struct Editor {
     mode: EditorMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
+    show_scrollbars: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -1251,6 +1253,7 @@ impl Editor {
             project,
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
+            show_scrollbars: true,
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
@@ -2494,7 +2497,7 @@ impl Editor {
         }
 
         if self.hide_context_menu(cx).is_some() {
-            if self.has_active_inline_completion() {
+            if self.show_inline_completions_in_menu(cx) && self.has_active_inline_completion() {
                 self.update_visible_inline_completion(cx);
             }
             return true;
@@ -2877,6 +2880,7 @@ impl Editor {
                 );
             }
 
+            let had_active_inline_completion = this.has_active_inline_completion();
             this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
                 s.select(new_selections)
             });
@@ -2897,7 +2901,9 @@ impl Editor {
                 this.show_signature_help(&ShowSignatureHelp, cx);
             }
 
-            this.trigger_completion_on_input(&text, true, cx);
+            let trigger_in_words =
+                this.show_inline_completions_in_menu(cx) || !had_active_inline_completion;
+            this.trigger_completion_on_input(&text, trigger_in_words, cx);
             linked_editing_ranges::refresh_linked_ranges(this, cx);
             this.refresh_inline_completion(true, false, cx);
         });
@@ -3760,11 +3766,14 @@ impl Editor {
 
                     if editor.focus_handle.is_focused(cx) && menu.is_some() {
                         let mut menu = menu.unwrap();
-                        menu.resolve_selected_completion(editor.completion_provider.as_deref(), cx);
+                        menu.resolve_visible_completions(editor.completion_provider.as_deref(), cx);
 
-                        if let Some(hint) = editor.inline_completion_menu_hint(cx) {
-                            editor.hide_active_inline_completion(cx);
-                            menu.show_inline_completion_hint(hint);
+                        if editor.show_inline_completions_in_menu(cx) {
+                            if let Some(hint) = editor.inline_completion_menu_hint(cx) {
+                                menu.show_inline_completion_hint(hint);
+                            }
+                        } else {
+                            editor.discard_inline_completion(false, cx);
                         }
 
                         *editor.context_menu.borrow_mut() =
@@ -3773,9 +3782,14 @@ impl Editor {
                         cx.notify();
                     } else if editor.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
-                        // empty, we should hide it. If it was already hidden, we should
-                        // also show the copilot completion when available.
-                        editor.hide_context_menu(cx);
+                        // empty, we should hide it.
+                        let was_hidden = editor.hide_context_menu(cx).is_none();
+                        // If it was already hidden and we don't show inline
+                        // completions in the menu, we should also show the
+                        // inline-completion when available.
+                        if was_hidden && editor.show_inline_completions_in_menu(cx) {
+                            editor.update_visible_inline_completion(cx);
+                        }
                     }
                 })?;
 
@@ -3829,7 +3843,9 @@ impl Editor {
                 return Some(Task::ready(Ok(())));
             }
             CompletionEntry::Match(mat) => {
-                self.discard_inline_completion(true, cx);
+                if self.show_inline_completions_in_menu(cx) {
+                    self.discard_inline_completion(true, cx);
+                }
                 mat
             }
         };
@@ -4567,7 +4583,9 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        self.hide_context_menu(cx);
+        if self.show_inline_completions_in_menu(cx) {
+            self.hide_context_menu(cx);
+        }
 
         let Some(active_inline_completion) = self.active_inline_completion.as_ref() else {
             return;
@@ -4716,17 +4734,6 @@ impl Editor {
         Some(active_inline_completion.completion)
     }
 
-    fn hide_active_inline_completion(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(active_inline_completion) = self.active_inline_completion.as_ref() {
-            self.splice_inlays(
-                active_inline_completion.inlay_ids.clone(),
-                Default::default(),
-                cx,
-            );
-            self.clear_highlights::<InlineCompletionHighlight>(cx);
-        }
-    }
-
     fn update_visible_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
@@ -4734,7 +4741,11 @@ impl Editor {
         let offset_selection = selection.map(|endpoint| endpoint.to_offset(&multibuffer));
         let excerpt_id = cursor.excerpt_id;
 
-        if !offset_selection.is_empty()
+        let completions_menu_has_precedence = !self.show_inline_completions_in_menu(cx)
+            && (self.context_menu.borrow().is_some()
+                || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion()));
+        if completions_menu_has_precedence
+            || !offset_selection.is_empty()
             || self
                 .active_inline_completion
                 .as_ref()
@@ -4792,34 +4803,32 @@ impl Editor {
             invalidation_row_range = edit_start_row..cursor_row;
             completion = InlineCompletion::Move(first_edit_start);
         } else {
-            if !self.has_active_completions_menu() {
-                if edits
-                    .iter()
-                    .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
-                {
-                    let mut inlays = Vec::new();
-                    for (range, new_text) in &edits {
-                        let inlay = Inlay::inline_completion(
-                            post_inc(&mut self.next_inlay_id),
-                            range.start,
-                            new_text.as_str(),
-                        );
-                        inlay_ids.push(inlay.id);
-                        inlays.push(inlay);
-                    }
-
-                    self.splice_inlays(vec![], inlays, cx);
-                } else {
-                    let background_color = cx.theme().status().deleted_background;
-                    self.highlight_text::<InlineCompletionHighlight>(
-                        edits.iter().map(|(range, _)| range.clone()).collect(),
-                        HighlightStyle {
-                            background_color: Some(background_color),
-                            ..Default::default()
-                        },
-                        cx,
+            if edits
+                .iter()
+                .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
+            {
+                let mut inlays = Vec::new();
+                for (range, new_text) in &edits {
+                    let inlay = Inlay::inline_completion(
+                        post_inc(&mut self.next_inlay_id),
+                        range.start,
+                        new_text.as_str(),
                     );
+                    inlay_ids.push(inlay.id);
+                    inlays.push(inlay);
                 }
+
+                self.splice_inlays(vec![], inlays, cx);
+            } else {
+                let background_color = cx.theme().status().deleted_background;
+                self.highlight_text::<InlineCompletionHighlight>(
+                    edits.iter().map(|(range, _)| range.clone()).collect(),
+                    HighlightStyle {
+                        background_color: Some(background_color),
+                        ..Default::default()
+                    },
+                    cx,
+                );
             }
 
             invalidation_row_range = edit_start_row..edit_end_row;
@@ -4839,7 +4848,7 @@ impl Editor {
             invalidation_range,
         });
 
-        if self.has_active_completions_menu() {
+        if self.show_inline_completions_in_menu(cx) && self.has_active_completions_menu() {
             if let Some(hint) = self.inline_completion_menu_hint(cx) {
                 match self.context_menu.borrow_mut().as_mut() {
                     Some(CodeContextMenu::Completions(menu)) => {
@@ -4865,7 +4874,7 @@ impl Editor {
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
                 InlineCompletion::Edit(edits) => {
-                    inline_completion_edit_text(&editor_snapshot, edits, cx)
+                    inline_completion_edit_text(&editor_snapshot, edits, true, cx)
                 }
                 InlineCompletion::Move(target) => {
                     let target_point =
@@ -4888,6 +4897,13 @@ impl Editor {
 
     fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
         Some(self.inline_completion_provider.as_ref()?.provider.clone())
+    }
+
+    fn show_inline_completions_in_menu(&self, cx: &AppContext) -> bool {
+        EditorSettings::get_global(cx).show_inline_completions_in_menu
+            && self
+                .inline_completion_provider()
+                .map_or(false, |provider| provider.show_completions_in_menu())
     }
 
     fn render_code_actions_indicator(
@@ -5434,14 +5450,14 @@ impl Editor {
     fn render_context_menu_aside(
         &self,
         style: &EditorStyle,
-        max_height: Pixels,
+        max_size: Size<Pixels>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<AnyElement> {
         self.context_menu.borrow().as_ref().and_then(|menu| {
             if menu.visible() {
                 menu.render_aside(
                     style,
-                    max_height,
+                    max_size,
                     self.workspace.as_ref().map(|(w, _)| w.clone()),
                     cx,
                 )
@@ -5454,7 +5470,11 @@ impl Editor {
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<CodeContextMenu> {
         cx.notify();
         self.completion_tasks.clear();
-        self.context_menu.borrow_mut().take()
+        let context_menu = self.context_menu.borrow_mut().take();
+        if context_menu.is_some() && !self.show_inline_completions_in_menu(cx) {
+            self.update_visible_inline_completion(cx);
+        }
+        context_menu
     }
 
     fn show_snippet_choices(
@@ -9170,15 +9190,27 @@ impl Editor {
             .map(|selection| {
                 let old_range = selection.start..selection.end;
                 let mut new_range = old_range.clone();
-                while let Some(containing_range) =
-                    buffer.range_for_syntax_ancestor(new_range.clone())
+                let mut new_node = None;
+                while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
                 {
+                    new_node = Some(node);
                     new_range = containing_range;
                     if !display_map.intersects_fold(new_range.start)
                         && !display_map.intersects_fold(new_range.end)
                     {
                         break;
                     }
+                }
+
+                if let Some(node) = new_node {
+                    // Log the ancestor, to support using this action as a way to explore TreeSitter
+                    // nodes. Parent and grandparent are also logged because this operation will not
+                    // visit nodes that have the same range as their parent.
+                    log::info!("Node: {node:?}");
+                    let parent = node.parent();
+                    log::info!("Parent: {parent:?}");
+                    let grandparent = parent.and_then(|x| x.parent());
+                    log::info!("Grandparent: {grandparent:?}");
                 }
 
                 selected_larger_node |= new_range != old_range;
@@ -10820,7 +10852,7 @@ impl Editor {
         self.end_transaction_at(Instant::now(), cx)
     }
 
-    fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
+    pub fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
         self.end_selection(cx);
         if let Some(tx_id) = self
             .buffer
@@ -10834,7 +10866,7 @@ impl Editor {
         }
     }
 
-    fn end_transaction_at(
+    pub fn end_transaction_at(
         &mut self,
         now: Instant,
         cx: &mut ViewContext<Self>,
@@ -11665,6 +11697,11 @@ impl Editor {
 
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
         self.show_gutter = show_gutter;
+        cx.notify();
+    }
+
+    pub fn set_show_scrollbars(&mut self, show_scrollbars: bool, cx: &mut ViewContext<Self>) {
+        self.show_scrollbars = show_scrollbars;
         cx.notify();
     }
 
@@ -13392,6 +13429,14 @@ impl Editor {
             .and_then(|item| item.to_any().downcast_ref::<T>())
     }
 
+    pub fn add_change_set(
+        &mut self,
+        change_set: Model<BufferChangeSet>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.diff_map.add_change_set(change_set, cx);
+    }
+
     fn character_size(&self, cx: &mut ViewContext<Self>) -> gpui::Point<Pixels> {
         let text_layout_details = self.text_layout_details(cx);
         let style = &text_layout_details.editor_style;
@@ -15070,6 +15115,7 @@ pub fn diagnostic_block_renderer(
 fn inline_completion_edit_text(
     editor_snapshot: &EditorSnapshot,
     edits: &Vec<(Range<Anchor>, String)>,
+    include_deletions: bool,
     cx: &WindowContext,
 ) -> InlineCompletionText {
     let edit_start = edits
@@ -15093,12 +15139,24 @@ fn inline_completion_edit_text(
         offset = old_offset_range.end;
 
         let start = text.len();
-        text.push_str(new_text);
+        let color = if include_deletions && new_text.is_empty() {
+            text.extend(
+                editor_snapshot
+                    .buffer_snapshot
+                    .chunks(old_offset_range.start..offset, false)
+                    .map(|chunk| chunk.text),
+            );
+            cx.theme().status().deleted_background
+        } else {
+            text.push_str(new_text);
+            cx.theme().status().created_background
+        };
         let end = text.len();
+
         highlights.push((
             start..end,
             HighlightStyle {
-                background_color: Some(cx.theme().status().created_background),
+                background_color: Some(color),
                 ..Default::default()
             },
         ));

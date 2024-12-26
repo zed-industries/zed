@@ -35,6 +35,7 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
+    pub show_inline_completions_in_menu: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -299,6 +300,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
+
+    /// Whether to show the inline completions next to the completions provided by a language server.
+    /// Only has an effect if inline completion provider supports it.
+    ///
+    /// Default: true
+    pub show_inline_completions_in_menu: Option<bool>,
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,

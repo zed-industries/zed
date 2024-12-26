@@ -260,6 +260,8 @@
       "ctrl-f4": "pane::CloseActiveItem",
       "alt-ctrl-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
       "alt-ctrl-shift-w": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
+      "ctrl-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "ctrl-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
       "ctrl-k w": ["pane::CloseAllItems", { "close_pinned": false }],
       "ctrl-shift-f": "project_search::ToggleFocus",
