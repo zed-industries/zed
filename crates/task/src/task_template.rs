@@ -113,6 +113,7 @@ mod deserialization_tests {
             initialize_args: None,
         };
         let json = json!({
+            "label": "test config",
             "type": "debug",
             "adapter": "python",
             "program": "main"
