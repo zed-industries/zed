@@ -14,11 +14,10 @@ use std::{
     hash::Hash,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     time::Duration,
 };
-use task::{DebugAdapterConfig, DebugRequestType};
 
 #[cfg(debug_assertions)]
 const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -47,13 +46,11 @@ pub struct DebugAdapterClient {
     executor: BackgroundExecutor,
     adapter: Arc<dyn DebugAdapter>,
     transport_delegate: TransportDelegate,
-    config: Arc<Mutex<DebugAdapterConfig>>,
 }
 
 impl DebugAdapterClient {
     pub fn new(
         id: DebugAdapterClientId,
-        config: DebugAdapterConfig,
         adapter: Arc<dyn DebugAdapter>,
         binary: DebugAdapterBinary,
         cx: &AsyncAppContext,
@@ -66,7 +63,6 @@ impl DebugAdapterClient {
             adapter,
             transport_delegate,
             sequence_count: AtomicU64::new(1),
-            config: Arc::new(Mutex::new(config)),
             executor: cx.background_executor().clone(),
         }
     }
@@ -78,13 +74,21 @@ impl DebugAdapterClient {
         let (server_rx, server_tx) = self.transport_delegate.reconnect(cx).await?;
         log::info!("Successfully reconnected to debug adapter");
 
+        let client_id = self.id;
+
         // start handling events/reverse requests
         cx.update(|cx| {
             cx.spawn({
                 let server_tx = server_tx.clone();
                 |mut cx| async move {
-                    Self::handle_receive_messages(server_rx, server_tx, message_handler, &mut cx)
-                        .await
+                    Self::handle_receive_messages(
+                        client_id,
+                        server_rx,
+                        server_tx,
+                        message_handler,
+                        &mut cx,
+                    )
+                    .await
                 }
             })
             .detach_and_log_err(cx);
@@ -98,13 +102,21 @@ impl DebugAdapterClient {
         let (server_rx, server_tx) = self.transport_delegate.start(&self.binary, cx).await?;
         log::info!("Successfully connected to debug adapter");
 
+        let client_id = self.id;
+
         // start handling events/reverse requests
         cx.update(|cx| {
             cx.spawn({
                 let server_tx = server_tx.clone();
                 |mut cx| async move {
-                    Self::handle_receive_messages(server_rx, server_tx, message_handler, &mut cx)
-                        .await
+                    Self::handle_receive_messages(
+                        client_id,
+                        server_rx,
+                        server_tx,
+                        message_handler,
+                        &mut cx,
+                    )
+                    .await
                 }
             })
             .detach_and_log_err(cx);
@@ -112,6 +124,7 @@ impl DebugAdapterClient {
     }
 
     async fn handle_receive_messages<F>(
+        client_id: DebugAdapterClientId,
         server_rx: Receiver<Message>,
         client_tx: Sender<Message>,
         mut event_handler: F,
@@ -128,7 +141,7 @@ impl DebugAdapterClient {
 
             if let Err(e) = match message {
                 Message::Event(ev) => {
-                    log::debug!("Received event `{}`", &ev);
+                    log::debug!("Client {} received event `{}`", client_id.0, &ev);
 
                     cx.update(|cx| event_handler(Message::Event(ev), cx))
                 }
@@ -172,18 +185,13 @@ impl DebugAdapterClient {
             .await;
 
         log::debug!(
-            "Send `{}` request with sequence_id: {}",
+            "Client {} send `{}` request with sequence_id: {}",
+            self.id.0,
             R::COMMAND.to_string(),
             sequence_id
         );
 
         self.send_message(Message::Request(request)).await?;
-
-        log::debug!(
-            "Start receiving response for: `{}` sequence_id: {}",
-            R::COMMAND.to_string(),
-            sequence_id
-        );
 
         let mut timeout = self.executor.timer(DAP_REQUEST_TIMEOUT).fuse();
         let command = R::COMMAND.to_string();
@@ -191,7 +199,8 @@ impl DebugAdapterClient {
         select! {
             response = callback_rx.fuse() => {
                 log::debug!(
-                    "Received response for: `{}` sequence_id: {}",
+                    "Client {} received response for: `{}` sequence_id: {}",
+                    self.id.0,
                     command,
                     sequence_id
                 );
@@ -219,10 +228,6 @@ impl DebugAdapterClient {
         self.id
     }
 
-    pub fn config(&self) -> DebugAdapterConfig {
-        self.config.lock().unwrap().clone()
-    }
-
     pub fn adapter(&self) -> &Arc<dyn DebugAdapter> {
         &self.adapter
     }
@@ -233,14 +238,6 @@ impl DebugAdapterClient {
 
     pub fn adapter_id(&self) -> String {
         self.adapter.name().to_string()
-    }
-
-    pub fn set_process_id(&self, process_id: u32) {
-        let mut config = self.config.lock().unwrap();
-
-        config.request = DebugRequestType::Attach(task::AttachConfig {
-            process_id: Some(process_id),
-        });
     }
 
     /// Get the next sequence id to be used in a request
@@ -294,7 +291,6 @@ mod tests {
     use gpui::TestAppContext;
     use settings::{Settings, SettingsStore};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use task::DebugAdapterConfig;
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
         if std::env::var("RUST_LOG").is_ok() {
@@ -316,14 +312,6 @@ mod tests {
 
         let mut client = DebugAdapterClient::new(
             crate::client::DebugAdapterClientId(1),
-            DebugAdapterConfig {
-                label: "test config".into(),
-                kind: task::DebugAdapterKind::Fake,
-                request: task::DebugRequestType::Launch,
-                program: None,
-                cwd: None,
-                initialize_args: None,
-            },
             adapter,
             DebugAdapterBinary {
                 command: "command".into(),
@@ -397,14 +385,6 @@ mod tests {
 
         let mut client = DebugAdapterClient::new(
             crate::client::DebugAdapterClientId(1),
-            DebugAdapterConfig {
-                label: "test config".into(),
-                kind: task::DebugAdapterKind::Fake,
-                request: task::DebugRequestType::Launch,
-                program: None,
-                cwd: None,
-                initialize_args: None,
-            },
             adapter,
             DebugAdapterBinary {
                 command: "command".into(),

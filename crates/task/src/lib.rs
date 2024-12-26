@@ -106,16 +106,12 @@ impl ResolvedTask {
         match self.original_task.task_type.clone() {
             TaskType::Script => None,
             TaskType::Debug(mut adapter_config) => {
-                let (cwd, program) = match &self.resolved {
-                    None => (adapter_config.cwd, adapter_config.program),
-                    Some(spawn_in_terminal) => (
-                        spawn_in_terminal.cwd.clone(),
-                        spawn_in_terminal.program.clone(),
-                    ),
-                };
+                if let Some(resolved) = &self.resolved {
+                    adapter_config.label = resolved.label.clone();
+                    adapter_config.program = resolved.program.clone().or(adapter_config.program);
+                    adapter_config.cwd = resolved.cwd.clone().or(adapter_config.cwd);
+                }
 
-                adapter_config.program = program;
-                adapter_config.cwd = cwd;
                 Some(adapter_config)
             }
         }

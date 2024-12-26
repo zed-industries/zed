@@ -351,9 +351,11 @@ pub fn capabilities_from_proto(payload: &SetDebugClientCapabilities) -> Capabili
 pub fn capabilities_to_proto(
     capabilities: &Capabilities,
     project_id: u64,
+    session_id: u64,
     client_id: u64,
 ) -> SetDebugClientCapabilities {
     SetDebugClientCapabilities {
+        session_id,
         client_id,
         project_id,
         supports_loaded_sources_request: capabilities

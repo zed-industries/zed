@@ -2420,21 +2420,23 @@ enum BreakpointKind {
 }
 
 message ShutdownDebugClient {
-    uint64 client_id = 1;
-    uint64 project_id = 2;
+    uint64 session_id = 1;
+    uint64 client_id = 2;
+    uint64 project_id = 3;
 }
 
 message SetDebugClientCapabilities {
-uint64 client_id = 1;
-uint64 project_id = 2;
-bool supports_loaded_sources_request = 3;
-bool supports_modules_request = 4;
-bool supports_restart_request = 5;
-bool supports_set_expression = 6;
-bool supports_single_thread_execution_requests = 7;
-bool supports_step_back = 8;
-bool supports_stepping_granularity = 9;
-bool supports_terminate_threads_request = 10;
+    uint64 session_id = 1;
+    uint64 client_id = 2;
+    uint64 project_id = 3;
+    bool supports_loaded_sources_request = 4;
+    bool supports_modules_request = 5;
+    bool supports_restart_request = 6;
+    bool supports_set_expression = 7;
+    bool supports_single_thread_execution_requests = 8;
+    bool supports_step_back = 9;
+    bool supports_stepping_granularity = 10;
+    bool supports_terminate_threads_request = 11;
 }
 
 message Breakpoint {
@@ -2601,16 +2603,17 @@ message DebuggerModuleList {
 
 message SetDebuggerPanelItem {
     uint64 project_id = 1;
-    uint64 client_id = 2;
-    uint64 thread_id = 3;
-    DebuggerConsole console = 4;
-    DebuggerModuleList module_list = 5;
-    DebuggerThreadItem active_thread_item = 6;
-    DebuggerThreadState thread_state = 7;
-    DebuggerVariableList variable_list = 8;
-    DebuggerStackFrameList stack_frame_list = 9;
-    DebuggerLoadedSourceList loaded_source_list = 10;
-    string client_name = 11;
+    uint64 session_id = 2;
+    uint64 client_id = 3;
+    uint64 thread_id = 4;
+    string session_name = 5;
+    DebuggerConsole console = 6;
+    DebuggerModuleList module_list = 7;
+    DebuggerThreadItem active_thread_item = 8;
+    DebuggerThreadState thread_state = 9;
+    DebuggerVariableList variable_list = 10;
+    DebuggerStackFrameList stack_frame_list = 11;
+    DebuggerLoadedSourceList loaded_source_list = 12;
 }
 
 message UpdateDebugAdapter {

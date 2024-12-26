@@ -221,13 +221,13 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
             return Task::ready(Ok(Vec::new()));
         };
 
-        let support_completions = console.update(cx, |this, cx| {
-            this.dap_store
-                .read(cx)
-                .capabilities_by_id(&this.client_id)
-                .supports_completions_request
-                .unwrap_or_default()
-        });
+        let support_completions = console
+            .read(cx)
+            .dap_store
+            .read(cx)
+            .capabilities_by_id(&console.read(cx).client_id)
+            .supports_completions_request
+            .unwrap_or_default();
 
         if support_completions {
             self.client_completions(&console, buffer, buffer_position, cx)

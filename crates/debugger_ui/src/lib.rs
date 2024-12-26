@@ -38,7 +38,7 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(|workspace: &mut Workspace, _: &ShutdownDebugAdapters, cx| {
                     workspace.project().update(cx, |project, cx| {
                         project.dap_store().update(cx, |store, cx| {
-                            store.shutdown_clients(cx).detach();
+                            store.shutdown_sessions(cx).detach();
                         })
                     })
                 })

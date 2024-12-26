@@ -1,4 +1,5 @@
 use dap::client::DebugAdapterClientId;
+use dap::session::DebugSessionId;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{DismissEvent, EventEmitter, FocusableView, Render, View};
 use gpui::{Model, Subscription};
@@ -20,6 +21,7 @@ struct Candidate {
 struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
+    session_id: DebugSessionId,
     placeholder_text: Arc<str>,
     dap_store: Model<DapStore>,
     client_id: DebugAdapterClientId,
@@ -27,10 +29,15 @@ struct AttachModalDelegate {
 }
 
 impl AttachModalDelegate {
-    pub fn new(client_id: DebugAdapterClientId, dap_store: Model<DapStore>) -> Self {
+    pub fn new(
+        session_id: DebugSessionId,
+        client_id: DebugAdapterClientId,
+        dap_store: Model<DapStore>,
+    ) -> Self {
         Self {
             client_id,
             dap_store,
+            session_id,
             candidates: None,
             selected_index: 0,
             matches: Vec::default(),
@@ -46,12 +53,16 @@ pub(crate) struct AttachModal {
 
 impl AttachModal {
     pub fn new(
+        session_id: &DebugSessionId,
         client_id: &DebugAdapterClientId,
         dap_store: Model<DapStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let picker = cx.new_view(|cx| {
-            Picker::uniform_list(AttachModalDelegate::new(*client_id, dap_store), cx)
+            Picker::uniform_list(
+                AttachModalDelegate::new(*session_id, *client_id, dap_store),
+                cx,
+            )
         });
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
@@ -112,12 +123,9 @@ impl PickerDelegate for AttachModalDelegate {
                     if let Some(processes) = this.delegate.candidates.clone() {
                         processes
                     } else {
-                        let Some(client) = this
-                            .delegate
-                            .dap_store
-                            .read(cx)
-                            .client_by_id(&this.delegate.client_id)
-                        else {
+                        let Some((_, client)) = this.delegate.dap_store.update(cx, |store, cx| {
+                            store.client_by_id(&this.delegate.client_id, cx)
+                        }) else {
                             return Vec::new();
                         };
 
@@ -203,7 +211,7 @@ impl PickerDelegate for AttachModalDelegate {
 
         self.dap_store.update(cx, |store, cx| {
             store
-                .attach(&self.client_id, candidate.pid, cx)
+                .attach(&self.session_id, &self.client_id, candidate.pid, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -215,7 +223,7 @@ impl PickerDelegate for AttachModalDelegate {
         self.candidates.take();
 
         self.dap_store.update(cx, |store, cx| {
-            store.shutdown_client(&self.client_id, cx).detach();
+            store.shutdown_session(&self.session_id, cx).detach();
         });
 
         cx.emit(DismissEvent);

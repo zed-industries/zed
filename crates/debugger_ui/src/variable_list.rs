@@ -831,12 +831,12 @@ impl VariableList {
     ) {
         let this = cx.view().clone();
 
-        let support_set_variable = self.dap_store.read_with(cx, |store, _| {
-            store
-                .capabilities_by_id(&self.client_id)
-                .supports_set_variable
-                .unwrap_or_default()
-        });
+        let support_set_variable = self
+            .dap_store
+            .read(cx)
+            .capabilities_by_id(&self.client_id)
+            .supports_set_variable
+            .unwrap_or_default();
 
         let context_menu = ContextMenu::build(cx, |menu, cx| {
             menu.entry(
