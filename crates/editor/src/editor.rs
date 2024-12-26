@@ -130,8 +130,8 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use project::{
-    dap_store::{Breakpoint, BreakpointKind, DapStore},
     buffer_store::BufferChangeSet,
+    dap_store::{Breakpoint, BreakpointKind, DapStore},
     lsp_store::{FormatTarget, FormatTrigger, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
