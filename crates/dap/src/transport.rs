@@ -753,8 +753,14 @@ type RequestHandler = Box<
 >;
 
 #[cfg(any(test, feature = "test-support"))]
+type ResponseHandler = Box<dyn Send + Fn(Response)>;
+
+#[cfg(any(test, feature = "test-support"))]
 pub struct FakeTransport {
+    // for sending fake response back from adapter side
     request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
+    // for reverse request responses
+    response_handlers: Arc<Mutex<HashMap<&'static str, ResponseHandler>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -762,6 +768,7 @@ impl FakeTransport {
     pub fn new() -> Self {
         Self {
             request_handlers: Arc::new(Mutex::new(HashMap::default())),
+            response_handlers: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 
@@ -799,6 +806,16 @@ impl FakeTransport {
             ),
         );
     }
+
+    pub async fn on_response<R: dap_types::requests::Request, F>(&self, handler: F)
+    where
+        F: 'static + Send + Fn(Response),
+    {
+        self.response_handlers
+            .lock()
+            .await
+            .insert(R::COMMAND, Box::new(handler));
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -815,7 +832,8 @@ impl Transport for FakeTransport {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
 
-        let handlers = self.request_handlers.clone();
+        let request_handlers = self.request_handlers.clone();
+        let response_handlers = self.response_handlers.clone();
         let stdout_writer = Arc::new(Mutex::new(stdout_writer));
 
         cx.background_executor()
@@ -833,13 +851,48 @@ impl Transport for FakeTransport {
                             break anyhow!(error);
                         }
                         Ok(message) => {
-                            if let Message::Request(request) = message {
-                                // redirect reverse requests to stdout writer/reader
-                                if request.command == RunInTerminal::COMMAND
-                                    || request.command == StartDebugging::COMMAND
-                                {
+                            match message {
+                                Message::Request(request) => {
+                                    // redirect reverse requests to stdout writer/reader
+                                    if request.command == RunInTerminal::COMMAND
+                                        || request.command == StartDebugging::COMMAND
+                                    {
+                                        let message =
+                                            serde_json::to_string(&Message::Request(request))
+                                                .unwrap();
+
+                                        let mut writer = stdout_writer.lock().await;
+                                        writer
+                                            .write_all(
+                                                TransportDelegate::build_rpc_message(message)
+                                                    .as_bytes(),
+                                            )
+                                            .await
+                                            .unwrap();
+                                        writer.flush().await.unwrap();
+                                    } else {
+                                        if let Some(handle) = request_handlers
+                                            .lock()
+                                            .await
+                                            .get_mut(request.command.as_str())
+                                        {
+                                            handle(
+                                                request.seq,
+                                                request.arguments.unwrap_or(json!({})),
+                                                stdout_writer.clone(),
+                                            )
+                                            .await;
+                                        } else {
+                                            log::error!(
+                                                "No request handler for {}",
+                                                request.command
+                                            );
+                                        }
+                                    }
+                                }
+                                Message::Event(event) => {
                                     let message =
-                                        serde_json::to_string(&Message::Request(request)).unwrap();
+                                        serde_json::to_string(&Message::Event(event)).unwrap();
 
                                     let mut writer = stdout_writer.lock().await;
                                     writer
@@ -850,31 +903,18 @@ impl Transport for FakeTransport {
                                         .await
                                         .unwrap();
                                     writer.flush().await.unwrap();
-                                } else {
-                                    if let Some(handle) =
-                                        handlers.lock().await.get_mut(request.command.as_str())
+                                }
+                                Message::Response(response) => {
+                                    if let Some(handle) = response_handlers
+                                        .lock()
+                                        .await
+                                        .get(response.command.as_str())
                                     {
-                                        handle(
-                                            request.seq,
-                                            request.arguments.unwrap_or(json!({})),
-                                            stdout_writer.clone(),
-                                        )
-                                        .await;
+                                        handle(response);
                                     } else {
-                                        log::debug!("No handler for {}", request.command);
+                                        log::error!("No response handler for {}", response.command);
                                     }
                                 }
-                            } else if let Message::Event(event) = message {
-                                let message = serde_json::to_string(&Message::Event(event)).unwrap();
-
-                                let mut writer = stdout_writer.lock().await;
-                                writer
-                                    .write_all(TransportDelegate::build_rpc_message(message).as_bytes())
-                                    .await
-                                    .unwrap();
-                                writer.flush().await.unwrap();
-                            } else {
-                                unreachable!("You can only send a request and an event that is redirected to the output reader")
                             }
                         }
                     }

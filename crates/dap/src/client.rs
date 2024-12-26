@@ -282,6 +282,16 @@ impl DebugAdapterClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub async fn on_response<R: dap_types::requests::Request, F>(&self, handler: F)
+    where
+        F: 'static + Send + Fn(Response),
+    {
+        let transport = self.transport_delegate.transport();
+
+        transport.as_fake().on_response::<R, F>(handler).await;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn fake_event(&self, event: dap_types::messages::Events) {
         self.send_message(Message::Event(Box::new(event)))
             .await

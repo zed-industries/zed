@@ -10,7 +10,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use tests::{add_debugger_panel, init_test};
+use tests::{init_test, init_test_workspace};
 use unindent::Unindent as _;
 use variable_list::{VariableContainer, VariableListEntry};
 
@@ -45,7 +45,7 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
     .await;
 
     let project = Project::test(fs, ["/project".as_ref()], cx).await;
-    let workspace = add_debugger_panel(&project, cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
@@ -453,11 +453,11 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
         "Expected evaluate request to be called"
     );
 
-    let shutdown_client = project.update(cx, |project, cx| {
+    let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
             dap_store.shutdown_session(&session.read(cx).id(), cx)
         })
     });
 
-    shutdown_client.await.unwrap();
+    shutdown_session.await.unwrap();
 }
