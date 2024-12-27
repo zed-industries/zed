@@ -66,6 +66,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
+use text::BufferId;
 use theme::{ActiveTheme, Appearance, PlayerColor};
 use ui::{
     prelude::*, ButtonLike, ButtonStyle, ContextMenu, KeyBinding, Tooltip, POPOVER_Y_PADDING,
@@ -2253,6 +2254,7 @@ impl EditorElement {
         scroll_width: &mut Pixels,
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
         selections: &[Selection<Point>],
+        selected_buffer_ids: &Vec<BufferId>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
         cx: &mut WindowContext,
@@ -2312,19 +2314,7 @@ impl EditorElement {
                 show_excerpt_controls,
                 height,
             } => {
-                let block_start = DisplayPoint::new(block_row_start, 0).to_point(snapshot);
-                let block_end = DisplayPoint::new(block_row_start + *height, 0).to_point(snapshot);
-                let selected = selections
-                    .binary_search_by(|selection| {
-                        if selection.end <= block_start {
-                            Ordering::Less
-                        } else if selection.start >= block_end {
-                            Ordering::Greater
-                        } else {
-                            Ordering::Equal
-                        }
-                    })
-                    .is_ok();
+                let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
                 let mut result = v_flex().id(block_id).w_full();
@@ -2434,25 +2424,7 @@ impl EditorElement {
 
                     if *starts_new_buffer {
                         if sticky_header_excerpt_id != Some(next_excerpt.id) {
-                            let block_start =
-                                DisplayPoint::new(block_row_start, 0).to_point(snapshot);
-                            let excerpt_end = DisplayPoint::new(
-                                block_row_start + *height + next_excerpt.text_summary.lines.row + 1,
-                                0,
-                            )
-                            .to_point(snapshot);
-
-                            let selected = selections
-                                .binary_search_by(|selection| {
-                                    if selection.end < block_start {
-                                        Ordering::Less
-                                    } else if selection.start > excerpt_end {
-                                        Ordering::Greater
-                                    } else {
-                                        Ordering::Equal
-                                    }
-                                })
-                                .is_ok();
+                            let selected = selected_buffer_ids.contains(&next_excerpt.buffer_id);
 
                             result = result.child(self.render_buffer_header(
                                 next_excerpt,
@@ -2762,6 +2734,7 @@ impl EditorElement {
         line_height: Pixels,
         line_layouts: &[LineWithInvisibles],
         selections: &[Selection<Point>],
+        selected_buffer_ids: &Vec<BufferId>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
         cx: &mut WindowContext,
@@ -2801,6 +2774,7 @@ impl EditorElement {
                 scroll_width,
                 &mut resized_blocks,
                 selections,
+                selected_buffer_ids,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
                 cx,
@@ -2849,6 +2823,7 @@ impl EditorElement {
                 scroll_width,
                 &mut resized_blocks,
                 selections,
+                selected_buffer_ids,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
                 cx,
@@ -2897,6 +2872,7 @@ impl EditorElement {
                             scroll_width,
                             &mut resized_blocks,
                             selections,
+                            selected_buffer_ids,
                             is_row_soft_wrapped,
                             sticky_header_excerpt_id,
                             cx,
@@ -2976,28 +2952,14 @@ impl EditorElement {
         line_height: Pixels,
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
-        selections: &[Selection<Point>],
+        selected_buffer_ids: &Vec<BufferId>,
         cx: &mut WindowContext,
     ) -> AnyElement {
         let jump_data = header_jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt);
 
         let editor_bg_color = cx.theme().colors().editor_background;
 
-        let block_start = DisplayPoint::new(DisplayRow(0), 0).to_point(snapshot);
-        let excerpt_end =
-            DisplayPoint::new(DisplayRow(next_buffer_row.unwrap_or(0)), 0).to_point(snapshot);
-
-        let selected = selections
-            .binary_search_by(|selection| {
-                if selection.end < block_start {
-                    Ordering::Less
-                } else if selection.start > excerpt_end {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                }
-            })
-            .is_ok();
+        let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
         let mut header = v_flex()
             .relative()
@@ -6199,14 +6161,31 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let local_selections: Vec<Selection<Point>> =
-                        self.editor.update(cx, |editor, cx| {
-                            let mut selections = editor
-                                .selections
-                                .disjoint_in_range(start_anchor..end_anchor, cx);
-                            selections.extend(editor.selections.pending(cx));
-                            selections
-                        });
+                    let (local_selections, selected_buffer_ids): (
+                        Vec<Selection<Point>>,
+                        Vec<BufferId>,
+                    ) = self.editor.update(cx, |editor, cx| {
+                        let all_selections = editor.selections.all::<usize>(cx);
+                        let mut selected_buffer_ids = Vec::with_capacity(all_selections.len());
+
+                        for selection in all_selections {
+                            for buffer_id in snapshot
+                                .buffer_snapshot
+                                .buffer_ids_for_range(selection.range())
+                            {
+                                if selected_buffer_ids.last() != Some(&buffer_id) {
+                                    selected_buffer_ids.push(buffer_id);
+                                }
+                            }
+                        }
+
+                        let mut selections = editor
+                            .selections
+                            .disjoint_in_range(start_anchor..end_anchor, cx);
+                        selections.extend(editor.selections.pending(cx));
+
+                        (selections, selected_buffer_ids)
+                    });
 
                     let (selections, active_rows, newest_selection_head) = self.layout_selections(
                         start_anchor,
@@ -6312,6 +6291,7 @@ impl Element for EditorElement {
                             line_height,
                             &line_layouts,
                             &local_selections,
+                            &selected_buffer_ids,
                             is_row_soft_wrapped,
                             sticky_header_excerpt_id,
                             cx,
@@ -6335,7 +6315,7 @@ impl Element for EditorElement {
                                 line_height,
                                 &snapshot,
                                 &hitbox,
-                                &local_selections,
+                                &selected_buffer_ids,
                                 cx,
                             )
                         })

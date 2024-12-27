@@ -3449,6 +3449,26 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn buffer_ids_for_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = BufferId> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
+        cursor.seek(&range.start, Bias::Left, &());
+        cursor.prev(&());
+
+        iter::from_fn(move || {
+            cursor.next(&());
+            if cursor.start().0 < range.end {
+                cursor.item().map(|item| item.buffer_id)
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn excerpts(
         &self,
     ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, ExcerptRange<text::Anchor>)> {
