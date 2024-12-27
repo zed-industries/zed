@@ -4180,13 +4180,13 @@ impl Project {
         self.lsp_store.read(cx).language_server_for_id(id)
     }
 
-    pub fn for_language_servers_for_local_buffer<'a, R: 'static>(
+    pub fn for_language_servers_for_local_buffer<R: 'static>(
         &self,
         buffer: &Buffer,
         callback: impl FnOnce(
             Box<dyn Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> + '_>,
         ) -> R,
-        cx: &'a mut AppContext,
+        cx: &mut AppContext,
     ) -> R {
         self.lsp_store.update(cx, |this, cx| {
             callback(Box::new(this.language_servers_for_local_buffer(buffer, cx)))
