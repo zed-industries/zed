@@ -8402,7 +8402,6 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
         additional edit
     "});
 
-    handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 
     update_test_language_settings(&mut cx, |settings| {
@@ -10698,10 +10697,14 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
         ..lsp::CompletionItem::default()
     };
 
-    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    let item1 = item1.clone();
+    cx.handle_request::<lsp::request::Completion, _, _>({
         let item1 = item1.clone();
-        let item2 = item2.clone();
-        async move { Ok(Some(lsp::CompletionResponse::Array(vec![item1, item2]))) }
+        move |_, _, _| {
+            let item1 = item1.clone();
+            let item2 = item2.clone();
+            async move { Ok(Some(lsp::CompletionResponse::Array(vec![item1, item2]))) }
+        }
     })
     .next()
     .await;
@@ -10728,42 +10731,40 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
         }
     });
 
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| async move {
-        Ok(lsp::CompletionItem {
-            label: "method id()".to_string(),
-            filter_text: Some("id".to_string()),
-            detail: Some("Now resolved!".to_string()),
-            documentation: Some(lsp::Documentation::String("Docs".to_string())),
-            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-                new_text: ".id".to_string(),
-            })),
-            ..lsp::CompletionItem::default()
-        })
+    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>({
+        let item1 = item1.clone();
+        move |_, item_to_resolve, _| {
+            let item1 = item1.clone();
+            async move {
+                if item1 == item_to_resolve {
+                    Ok(lsp::CompletionItem {
+                        label: "method id()".to_string(),
+                        filter_text: Some("id".to_string()),
+                        detail: Some("Now resolved!".to_string()),
+                        documentation: Some(lsp::Documentation::String("Docs".to_string())),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 22),
+                                lsp::Position::new(0, 22),
+                            ),
+                            new_text: ".id".to_string(),
+                        })),
+                        ..lsp::CompletionItem::default()
+                    })
+                } else {
+                    Ok(item_to_resolve)
+                }
+            }
+        }
     })
     .next()
-    .await;
+    .await
+    .unwrap();
     cx.run_until_parked();
 
     cx.update_editor(|editor, cx| {
         editor.context_menu_next(&Default::default(), cx);
     });
-
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| async move {
-        Ok(lsp::CompletionItem {
-            label: "invalid changed label".to_string(),
-            detail: Some("Now resolved!".to_string()),
-            documentation: Some(lsp::Documentation::String("Docs".to_string())),
-            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-                new_text: ".id".to_string(),
-            })),
-            ..lsp::CompletionItem::default()
-        })
-    })
-    .next()
-    .await;
-    cx.run_until_parked();
 
     cx.update_editor(|editor, _| {
         let context_menu = editor.context_menu.borrow_mut();
@@ -11116,15 +11117,10 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
     // Completions that have already been resolved are skipped.
     assert_eq!(
         *resolved_items.lock(),
-        [
-            // Selected item is always resolved even if it was resolved before.
-            &items_out[items_out.len() - 1..items_out.len()],
-            &items_out[items_out.len() - 16..items_out.len() - 4]
-        ]
-        .concat()
-        .iter()
-        .cloned()
-        .collect::<Vec<lsp::CompletionItem>>()
+        items_out[items_out.len() - 16..items_out.len() - 4]
+            .iter()
+            .cloned()
+            .collect::<Vec<lsp::CompletionItem>>()
     );
     resolved_items.lock().clear();
 }
