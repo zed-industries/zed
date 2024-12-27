@@ -249,7 +249,8 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
     fn apply_additional_edits_for_completion(
         &self,
         _buffer: Model<Buffer>,
-        _completion: project::Completion,
+        _completions: Rc<RefCell<Box<[Completion]>>>,
+        _completion_index: usize,
         _push_to_history: bool,
         _cx: &mut ViewContext<Editor>,
     ) -> gpui::Task<gpui::Result<Option<language::Transaction>>> {
@@ -336,6 +337,7 @@ impl ConsoleQueryBarCompletionProvider {
                         documentation: None,
                         lsp_completion: Default::default(),
                         confirm: None,
+                        resolved: true,
                     })
                 })
                 .collect())
@@ -381,6 +383,7 @@ impl ConsoleQueryBarCompletionProvider {
                     documentation: None,
                     lsp_completion: Default::default(),
                     confirm: None,
+                    resolved: true,
                 })
                 .collect())
         })
