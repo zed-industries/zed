@@ -4435,7 +4435,9 @@ impl LspStore {
                     .as_ref()
                     .and_then(|options| options.resolve_provider)
                     .unwrap_or(false);
-                let additional_text_edits = if can_resolve {
+                let additional_text_edits = if can_resolve
+                    && completion.lsp_completion.additional_text_edits.is_none()
+                {
                     lang_server
                         .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
                         .await?
