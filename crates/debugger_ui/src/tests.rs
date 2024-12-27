@@ -6,6 +6,7 @@ use workspace::Workspace;
 
 use crate::debugger_panel::DebugPanel;
 
+mod attach_modal;
 mod console;
 mod debugger_panel;
 mod stack_frame_list;
