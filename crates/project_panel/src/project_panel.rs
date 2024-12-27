@@ -1995,8 +1995,8 @@ impl ProjectPanel {
     }
 
     fn remove_from_project(&mut self, _: &RemoveFromProject, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, _)) = self.selected_sub_entry(cx) {
-            let worktree_id = worktree.read(cx).id();
+        for entry in self.effective_entries().iter() {
+            let worktree_id = entry.worktree_id;
             self.project
                 .update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         }
