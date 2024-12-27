@@ -988,11 +988,12 @@ impl DapStore {
                     success,
                     command: RunInTerminal::COMMAND.to_string(),
                     body: match success {
-                        true => Some(serde_json::to_value(RunInTerminalResponse {
+                        true => serde_json::to_value(RunInTerminalResponse {
                             process_id: Some(std::process::id() as u64),
                             shell_process_id: shell_pid,
-                        })?),
-                        false => Some(serde_json::to_value(ErrorResponse { error: None })?),
+                        })
+                        .ok(),
+                        false => serde_json::to_value(ErrorResponse { error: None }).ok(),
                     },
                 }))
                 .await
