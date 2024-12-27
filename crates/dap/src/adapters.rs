@@ -389,6 +389,11 @@ impl DebugAdapter for FakeAdapter {
         &self,
         processes: &'a HashMap<Pid, Process>,
     ) -> Option<Vec<(&'a Pid, &'a Process)>> {
-        Some(processes.iter().collect::<Vec<_>>())
+        Some(
+            processes
+                .iter()
+                .filter(|(pid, _)| pid.as_u32() == std::process::id())
+                .collect::<Vec<_>>(),
+        )
     }
 }

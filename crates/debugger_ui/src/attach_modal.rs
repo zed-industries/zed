@@ -18,7 +18,7 @@ struct Candidate {
     command: String,
 }
 
-struct AttachModalDelegate {
+pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
     session_id: DebugSessionId,
@@ -48,7 +48,7 @@ impl AttachModalDelegate {
 
 pub(crate) struct AttachModal {
     _subscription: Subscription,
-    picker: View<Picker<AttachModalDelegate>>,
+    pub(crate) picker: View<Picker<AttachModalDelegate>>,
 }
 
 impl AttachModal {
@@ -256,4 +256,20 @@ impl PickerDelegate for AttachModalDelegate {
                 ),
         )
     }
+}
+
+#[allow(dead_code)]
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn procss_names(
+    modal: &AttachModal,
+    cx: &mut gpui::ViewContext<AttachModal>,
+) -> Vec<String> {
+    modal.picker.update(cx, |picker, _| {
+        picker
+            .delegate
+            .matches
+            .iter()
+            .map(|hit| hit.string.clone())
+            .collect::<Vec<_>>()
+    })
 }
