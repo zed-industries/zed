@@ -3235,7 +3235,6 @@ impl LspStore {
                             cx,
                         )
                         .collect::<Vec<_>>();
-                    println!("{}", buffs.len());
                     Some(())
                 });
             });
