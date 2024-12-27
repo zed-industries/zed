@@ -2944,6 +2944,7 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_sticky_buffer_header(
         &self,
         StickyHeaderExcerpt {
@@ -3921,11 +3922,7 @@ impl EditorElement {
         }
     }
 
-    fn paint_line_numbers(
-        &mut self,
-        layout: &mut EditorLayout,
-        cx: &mut WindowContext,
-    ) {
+    fn paint_line_numbers(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         let is_singleton = self.editor.read(cx).is_singleton(cx);
 
         let line_height = layout.position_map.line_height;
@@ -6770,9 +6767,7 @@ impl Element for EditorElement {
         cx: &mut WindowContext,
     ) {
         let focus_handle = self.editor.focus_handle(cx);
-        let key_context = self.editor.update(cx, |editor, cx| {
-            editor.key_context(cx)
-        });
+        let key_context = self.editor.update(cx, |editor, cx| editor.key_context(cx));
 
         cx.set_key_context(key_context);
         cx.handle_input(
