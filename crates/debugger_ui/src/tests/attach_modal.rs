@@ -142,7 +142,7 @@ async fn test_show_attach_modal_and_select_process(
                 assert_eq!(
                     json!({
                         "request": "attach",
-                        // note we filterd out all processes in FakeAdapter::attach_processes,
+                        // note we filtered out all processes in FakeAdapter::attach_processes,
                         // that is not equal to the current process id
                         "process_id": std::process::id(),
                     }),
@@ -165,7 +165,7 @@ async fn test_show_attach_modal_and_select_process(
 
             let names = attach_modal.update(cx, |modal, cx| attach_modal::procss_names(&modal, cx));
 
-            // we filterd out all processes that are not the current process(zed itself)
+            // we filtered out all processes that are not the current process(zed itself)
             assert_eq!(1, names.len());
         })
         .unwrap();
