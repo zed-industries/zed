@@ -10820,7 +10820,7 @@ async fn test_completions_resolve_happens_once(cx: &mut gpui::TestAppContext) {
     };
     let resolved_item_1 = lsp::CompletionItem {
         additional_text_edits: Some(vec![lsp::TextEdit {
-            range: lsp::Range::new(lsp::Position::new(0, 23), lsp::Position::new(0, 23)),
+            range: lsp::Range::new(lsp::Position::new(0, 20), lsp::Position::new(0, 22)),
             new_text: "!!".to_string(),
         }]),
         ..unresolved_item_1.clone()
@@ -10838,7 +10838,7 @@ async fn test_completions_resolve_happens_once(cx: &mut gpui::TestAppContext) {
     };
     let resolved_item_2 = lsp::CompletionItem {
         additional_text_edits: Some(vec![lsp::TextEdit {
-            range: lsp::Range::new(lsp::Position::new(0, 23), lsp::Position::new(0, 23)),
+            range: lsp::Range::new(lsp::Position::new(0, 20), lsp::Position::new(0, 22)),
             new_text: "??".to_string(),
         }]),
         ..unresolved_item_2.clone()
@@ -10935,12 +10935,21 @@ async fn test_completions_resolve_happens_once(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     cx.update_editor(|editor, cx| {
-        // TODO kb
-        dbg!((
-            editor.text(cx),
+        assert_eq!(
             resolve_requests_1.load(atomic::Ordering::Acquire),
-            resolve_requests_2.load(atomic::Ordering::Acquire)
-        ));
+            1,
+            "Should always resolve once despite multiple selections"
+        );
+        assert_eq!(
+            resolve_requests_2.load(atomic::Ordering::Acquire),
+            1,
+            "Should always resolve once after multiple selections and applying the completion"
+        );
+        assert_eq!(
+            editor.text(cx),
+            "fn main() { let a = ??.other; }",
+            "Should use resolved data when applying the completion"
+        );
     });
 }
 

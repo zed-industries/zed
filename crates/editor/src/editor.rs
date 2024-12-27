@@ -3830,8 +3830,13 @@ impl Editor {
         };
 
         let buffer_handle = completions_menu.buffer;
-        let completions = completions_menu.completions.borrow_mut();
-        let completion = completions.get(mat.candidate_id)?;
+        let completion = {
+            completions_menu
+                .completions
+                .borrow()
+                .get(mat.candidate_id)?
+                .clone()
+        };
         cx.stop_propagation();
 
         let snippet;
@@ -3977,7 +3982,8 @@ impl Editor {
         let provider = self.completion_provider.as_ref()?;
         let apply_edits = provider.apply_additional_edits_for_completion(
             buffer_handle,
-            completion.clone(),
+            completions_menu.completions.clone(),
+            mat.candidate_id,
             true,
             cx,
         );
@@ -13447,11 +13453,14 @@ pub trait CompletionProvider {
 
     fn apply_additional_edits_for_completion(
         &self,
-        buffer: Model<Buffer>,
-        completion: Completion,
-        push_to_history: bool,
-        cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<Option<language::Transaction>>>;
+        _buffer: Model<Buffer>,
+        _completions: Rc<RefCell<Box<[Completion]>>>,
+        _completion_index: usize,
+        _push_to_history: bool,
+        _cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Option<language::Transaction>>> {
+        Task::ready(Ok(None))
+    }
 
     fn is_completion_trigger(
         &self,
@@ -13610,6 +13619,7 @@ fn snippet_completions(
                 Some(Completion {
                     old_range: range,
                     new_text: snippet.body.clone(),
+                    resolved: false,
                     label: CodeLabel {
                         text: matching_prefix.clone(),
                         runs: vec![],
@@ -13675,19 +13685,30 @@ impl CompletionProvider for Model<Project> {
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>> {
         self.update(cx, |project, cx| {
-            project.resolve_completions(buffer, completion_indices, completions, cx)
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store.resolve_completions(buffer, completion_indices, completions, cx)
+            })
         })
     }
 
     fn apply_additional_edits_for_completion(
         &self,
         buffer: Model<Buffer>,
-        completion: Completion,
+        completions: Rc<RefCell<Box<[Completion]>>>,
+        completion_index: usize,
         push_to_history: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         self.update(cx, |project, cx| {
-            project.apply_additional_edits_for_completion(buffer, completion, push_to_history, cx)
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store.apply_additional_edits_for_completion(
+                    buffer,
+                    completions,
+                    completion_index,
+                    push_to_history,
+                    cx,
+                )
+            })
         })
     }
 
