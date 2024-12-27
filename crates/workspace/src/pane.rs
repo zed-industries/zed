@@ -1234,12 +1234,13 @@ impl Pane {
         }
         let active_item_id = self.items[self.active_item_index].item_id();
         let non_closeable_items = self.get_non_closeable_item_ids(action.close_pinned);
-        Some(self.close_items_to_the_left_by_id(active_item_id, non_closeable_items, cx))
+        Some(self.close_items_to_the_left_by_id(active_item_id, action, non_closeable_items, cx))
     }
 
     pub fn close_items_to_the_left_by_id(
         &mut self,
         item_id: EntityId,
+        action: &CloseItemsToTheLeft,
         non_closeable_items: Vec<EntityId>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -1249,7 +1250,9 @@ impl Pane {
             .map(|item| item.item_id())
             .collect();
         self.close_items(cx, SaveIntent::Close, move |item_id| {
-            item_ids.contains(&item_id) && !non_closeable_items.contains(&item_id)
+            item_ids.contains(&item_id)
+                && !action.close_pinned
+                && !non_closeable_items.contains(&item_id)
         })
     }
 
@@ -1263,12 +1266,13 @@ impl Pane {
         }
         let active_item_id = self.items[self.active_item_index].item_id();
         let non_closeable_items = self.get_non_closeable_item_ids(action.close_pinned);
-        Some(self.close_items_to_the_right_by_id(active_item_id, non_closeable_items, cx))
+        Some(self.close_items_to_the_right_by_id(active_item_id, action, non_closeable_items, cx))
     }
 
     pub fn close_items_to_the_right_by_id(
         &mut self,
         item_id: EntityId,
+        action: &CloseItemsToTheRight,
         non_closeable_items: Vec<EntityId>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -1279,7 +1283,9 @@ impl Pane {
             .map(|item| item.item_id())
             .collect();
         self.close_items(cx, SaveIntent::Close, move |item_id| {
-            item_ids.contains(&item_id) && !non_closeable_items.contains(&item_id)
+            item_ids.contains(&item_id)
+                && !action.close_pinned
+                && !non_closeable_items.contains(&item_id)
         })
     }
 
@@ -2244,6 +2250,9 @@ impl Pane {
                             cx.handler_for(&pane, move |pane, cx| {
                                 pane.close_items_to_the_left_by_id(
                                     item_id,
+                                    &CloseItemsToTheLeft {
+                                        close_pinned: false,
+                                    },
                                     pane.get_non_closeable_item_ids(false),
                                     cx,
                                 )
@@ -2258,6 +2267,9 @@ impl Pane {
                             cx.handler_for(&pane, move |pane, cx| {
                                 pane.close_items_to_the_right_by_id(
                                     item_id,
+                                    &CloseItemsToTheRight {
+                                        close_pinned: false,
+                                    },
                                     pane.get_non_closeable_item_ids(false),
                                     cx,
                                 )
