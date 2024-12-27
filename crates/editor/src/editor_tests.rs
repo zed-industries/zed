@@ -8402,7 +8402,6 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
         additional edit
     "});
 
-    handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 
     update_test_language_settings(&mut cx, |settings| {
