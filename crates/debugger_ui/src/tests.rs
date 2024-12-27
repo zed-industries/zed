@@ -8,7 +8,6 @@ use crate::debugger_panel::DebugPanel;
 
 mod console;
 mod debugger_panel;
-mod run_in_terminal;
 mod stack_frame_list;
 mod variable_list;
 
