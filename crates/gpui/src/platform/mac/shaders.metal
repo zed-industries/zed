@@ -227,21 +227,31 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
     }
   }
 
-  // The signal is only non-zero in a limited range, so don't waste samples
-  float low = point.y - half_size.y;
-  float high = point.y + half_size.y;
-  float start = clamp(-3. * shadow.blur_radius, low, high);
-  float end = clamp(3. * shadow.blur_radius, low, high);
+  float alpha;
+  if (shadow.blur_radius == 0.) {
+    // For zero blur, just check if the point is inside the shadow shape
+    float2 rounded_edge_to_point = abs(point) - half_size + corner_radius;
+    float distance = length(max(float2(0., 0.), rounded_edge_to_point)) +
+                     min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) -
+                     corner_radius;
+    alpha = distance <= 0. ? 1. : 0.;
+  } else {
+    // The signal is only non-zero in a limited range, so don't waste samples
+    float low = point.y - half_size.y;
+    float high = point.y + half_size.y;
+    float start = clamp(-3. * shadow.blur_radius, low, high);
+    float end = clamp(3. * shadow.blur_radius, low, high);
 
-  // Accumulate samples (we can get away with surprisingly few samples)
-  float step = (end - start) / 4.;
-  float y = start + step * 0.5;
-  float alpha = 0.;
-  for (int i = 0; i < 4; i++) {
-    alpha += blur_along_x(point.x, point.y - y, shadow.blur_radius,
-                          corner_radius, half_size) *
-             gaussian(y, shadow.blur_radius) * step;
-    y += step;
+    // Accumulate samples (we can get away with surprisingly few samples)
+    float step = (end - start) / 4.;
+    float y = start + step * 0.5;
+    alpha = 0.;
+    for (int i = 0; i < 4; i++) {
+      alpha += blur_along_x(point.x, point.y - y, shadow.blur_radius,
+                            corner_radius, half_size) *
+               gaussian(y, shadow.blur_radius) * step;
+      y += step;
+    }
   }
 
   return input.color * float4(1., 1., 1., alpha);
