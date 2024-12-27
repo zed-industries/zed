@@ -3830,13 +3830,11 @@ impl Editor {
         };
 
         let buffer_handle = completions_menu.buffer;
-        let completion = {
-            completions_menu
-                .completions
-                .borrow()
-                .get(mat.candidate_id)?
-                .clone()
-        };
+        let completion = completions_menu
+            .completions
+            .borrow()
+            .get(mat.candidate_id)?
+            .clone();
         cx.stop_propagation();
 
         let snippet;
@@ -3980,6 +3978,7 @@ impl Editor {
         }
 
         let provider = self.completion_provider.as_ref()?;
+        drop(completion);
         let apply_edits = provider.apply_additional_edits_for_completion(
             buffer_handle,
             completions_menu.completions.clone(),
