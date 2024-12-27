@@ -551,48 +551,45 @@ impl EditorElement {
             }
         }
 
-        if is_singleton {
-            let point_for_position =
-                position_map.point_for_position(text_hitbox.bounds, event.position);
-            let position = point_for_position.previous_valid;
-            if modifiers.shift && modifiers.alt {
-                editor.select(
-                    SelectPhase::BeginColumnar {
-                        position,
-                        reset: false,
-                        goal_column: point_for_position.exact_unclipped.column(),
-                    },
-                    cx,
-                );
-            } else if modifiers.shift
-                && !modifiers.control
-                && !modifiers.alt
-                && !modifiers.secondary()
-            {
-                editor.select(
-                    SelectPhase::Extend {
-                        position,
-                        click_count,
-                    },
-                    cx,
-                );
-            } else {
-                let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-                let multi_cursor_modifier = match multi_cursor_setting {
-                    MultiCursorModifier::Alt => modifiers.alt,
-                    MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
-                };
-                editor.select(
-                    SelectPhase::Begin {
-                        position,
-                        add: multi_cursor_modifier,
-                        click_count,
-                    },
-                    cx,
-                );
-            }
-            cx.stop_propagation();
+        let point_for_position =
+            position_map.point_for_position(text_hitbox.bounds, event.position);
+        let position = point_for_position.previous_valid;
+        if modifiers.shift && modifiers.alt {
+            editor.select(
+                SelectPhase::BeginColumnar {
+                    position,
+                    reset: false,
+                    goal_column: point_for_position.exact_unclipped.column(),
+                },
+                cx,
+            );
+        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.secondary()
+        {
+            editor.select(
+                SelectPhase::Extend {
+                    position,
+                    click_count,
+                },
+                cx,
+            );
         } else {
+            let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+            let multi_cursor_modifier = match multi_cursor_setting {
+                MultiCursorModifier::Alt => modifiers.alt,
+                MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
+            };
+            editor.select(
+                SelectPhase::Begin {
+                    position,
+                    add: multi_cursor_modifier,
+                    click_count,
+                },
+                cx,
+            );
+        }
+        cx.stop_propagation();
+
+        if !is_singleton {
             let display_row = (((event.position - gutter_hitbox.bounds.origin).y
                 + position_map.scroll_pixel_position.y)
                 / position_map.line_height) as u32;
@@ -2673,15 +2670,21 @@ impl EditorElement {
                                         then.child(div().child(path).text_color(colors.text_muted))
                                     }),
                             )
-                            .when(is_selected, |_cx| {
-                                h_flex()
-                                    .id("jump-to-file-button")
-                                    .gap_2p5()
-                                    .child(Label::new("Jump To File"))
-                                    .children(
-                                        KeyBinding::for_action_in(&OpenExcerpts, &focus_handle, cx)
+                            .when(is_selected, |el| {
+                                el.child(
+                                    h_flex()
+                                        .id("jump-to-file-button")
+                                        .gap_2p5()
+                                        .child(Label::new("Jump To File"))
+                                        .children(
+                                            KeyBinding::for_action_in(
+                                                &OpenExcerpts,
+                                                &focus_handle,
+                                                cx,
+                                            )
                                             .map(|binding| binding.into_any_element()),
-                                    )
+                                        ),
+                                )
                             })
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                             .on_click(cx.listener_for(&self.editor, {
