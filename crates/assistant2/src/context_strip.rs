@@ -47,7 +47,6 @@ impl ContextStrip {
 impl Render for ContextStrip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let context = self.context_store.read(cx).context().clone();
-        let context_store = self.context_store.clone();
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
@@ -83,10 +82,10 @@ impl Render for ContextStrip {
                     parent.child(
                         h_flex()
                             .id("no-content-info")
-                            .ml_2()
+                            .ml_1p5()
                             .gap_2()
                             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                            .text_size(TextSize::XSmall.rems(cx))
+                            .text_size(TextSize::Small.rems(cx))
                             .text_color(cx.theme().colors().text_muted)
                             .child("Add Context")
                             .children(
@@ -96,38 +95,38 @@ impl Render for ContextStrip {
                                     cx,
                                 )
                                 .map(|binding| binding.into_any_element()),
-                            ),
+                            )
+                            .opacity(0.5),
                     )
                 }
             })
-        // .children(context.iter().map({
-        //     let context_store = context_store.clone();
-        //     move |context| {
-        //         ContextPill::new(context.clone()).on_remove({
-        //             let context = context.clone();
-        //             let context_store = context_store.clone();
-        //             move |_event, cx| {
-        //                 context_store.update(cx, |this, _cx| {
-        //                     this.remove_context(&context.id);
-        //                 });
-        //                 cx.notify();
-        //             }
-        //         })
-        //     }
-        // }))
-        // .when(!context.is_empty(), {
-        //     let context_store = context_store.clone();
-        //     move |parent| {
-        //         parent.child(
-        //             IconButton::new("remove-all-context", IconName::Eraser)
-        //                 .icon_size(IconSize::Small)
-        //                 .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
-        //                 .on_click(move |_event, cx| {
-        //                     context_store.update(cx, |this, _cx| this.clear());
-        //                     cx.notify();
-        //                 }),
-        //         )
-        //     }
-        // })
+            .children(context.iter().map(|context| {
+                ContextPill::new(context.clone()).on_remove({
+                    let context = context.clone();
+                    let context_store = self.context_store.clone();
+                    Rc::new(cx.listener(move |_this, _event, cx| {
+                        context_store.update(cx, |this, _cx| {
+                            this.remove_context(&context.id);
+                        });
+                        cx.notify();
+                    }))
+                })
+            }))
+            .when(!context.is_empty(), {
+                move |parent| {
+                    parent.child(
+                        IconButton::new("remove-all-context", IconName::Eraser)
+                            .icon_size(IconSize::Small)
+                            .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
+                            .on_click({
+                                let context_store = self.context_store.clone();
+                                cx.listener(move |_this, _event, cx| {
+                                    context_store.update(cx, |this, _cx| this.clear());
+                                    cx.notify();
+                                })
+                            }),
+                    )
+                }
+            })
     }
 }
