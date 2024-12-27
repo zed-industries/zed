@@ -9,6 +9,7 @@ use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 use crate::ToggleContextPicker;
+use settings::Settings;
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
@@ -45,7 +46,8 @@ impl ContextStrip {
 
 impl Render for ContextStrip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let context = self.context_store.read(cx).context();
+        let context = self.context_store.read(cx).context().clone();
+        let context_store = self.context_store.clone();
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
@@ -76,31 +78,56 @@ impl Render for ContextStrip {
                     })
                     .with_handle(self.context_picker_menu_handle.clone()),
             )
-            .children(context.iter().map(|context| {
-                ContextPill::new(context.clone()).on_remove({
-                    let context = context.clone();
-                    let context_store = self.context_store.clone();
-                    Rc::new(cx.listener(move |_this, _event, cx| {
-                        context_store.update(cx, |this, _cx| {
-                            this.remove_context(&context.id);
-                        });
-                        cx.notify();
-                    }))
-                })
-            }))
-            .when(!context.is_empty(), |parent| {
-                parent.child(
-                    IconButton::new("remove-all-context", IconName::Eraser)
-                        .icon_size(IconSize::Small)
-                        .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
-                        .on_click({
-                            let context_store = self.context_store.clone();
-                            cx.listener(move |_this, _event, cx| {
-                                context_store.update(cx, |this, _cx| this.clear());
-                                cx.notify();
-                            })
-                        }),
-                )
+            .when(context.is_empty(), {
+                |parent| {
+                    parent.child(
+                        h_flex()
+                            .id("no-content-info")
+                            .ml_2()
+                            .gap_2()
+                            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                            .text_size(TextSize::XSmall.rems(cx))
+                            .text_color(cx.theme().colors().text_muted)
+                            .child("Add Context")
+                            .children(
+                                ui::KeyBinding::for_action_in(
+                                    &ToggleContextPicker,
+                                    &self.focus_handle,
+                                    cx,
+                                )
+                                .map(|binding| binding.into_any_element()),
+                            ),
+                    )
+                }
             })
+        // .children(context.iter().map({
+        //     let context_store = context_store.clone();
+        //     move |context| {
+        //         ContextPill::new(context.clone()).on_remove({
+        //             let context = context.clone();
+        //             let context_store = context_store.clone();
+        //             move |_event, cx| {
+        //                 context_store.update(cx, |this, _cx| {
+        //                     this.remove_context(&context.id);
+        //                 });
+        //                 cx.notify();
+        //             }
+        //         })
+        //     }
+        // }))
+        // .when(!context.is_empty(), {
+        //     let context_store = context_store.clone();
+        //     move |parent| {
+        //         parent.child(
+        //             IconButton::new("remove-all-context", IconName::Eraser)
+        //                 .icon_size(IconSize::Small)
+        //                 .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
+        //                 .on_click(move |_event, cx| {
+        //                     context_store.update(cx, |this, _cx| this.clear());
+        //                     cx.notify();
+        //                 }),
+        //         )
+        //     }
+        // })
     }
 }
