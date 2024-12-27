@@ -4152,38 +4152,27 @@ impl LspStore {
             let mut did_resolve = false;
             if let Some((client, project_id)) = client {
                 for completion_index in completion_indices {
-                    let (server_id, completion) = {
-                        let completions = completions.borrow_mut();
-                        let completion = &completions[completion_index];
-                        did_resolve = true;
-                        let server_id = completion.server_id;
-                        let completion = completion.lsp_completion.clone();
+                    let server_id = completions.borrow()[completion_index].server_id;
 
-                        (server_id, completion)
-                    };
-
-                    Self::resolve_completion_remote(
+                    if Self::resolve_completion_remote(
                         project_id,
                         server_id,
                         buffer_id,
                         completions.clone(),
                         completion_index,
-                        completion,
                         client.clone(),
                         language_registry.clone(),
                     )
-                    .await;
+                    .await
+                    .log_err()
+                    .is_some()
+                    {
+                        did_resolve = true;
+                    }
                 }
             } else {
                 for completion_index in completion_indices {
-                    let (server_id, completion) = {
-                        let completions = completions.borrow_mut();
-                        let completion = &completions[completion_index];
-                        let server_id = completion.server_id;
-                        let completion = completion.lsp_completion.clone();
-
-                        (server_id, completion)
-                    };
+                    let server_id = completions.borrow()[completion_index].server_id;
 
                     let server_and_adapter = this
                         .read_with(&cx, |lsp_store, _| {
@@ -4198,17 +4187,27 @@ impl LspStore {
                         continue;
                     };
 
-                    did_resolve = true;
-                    Self::resolve_completion_local(
+                    let resolved = Self::resolve_completion_local(
                         server,
-                        adapter,
                         &buffer_snapshot,
                         completions.clone(),
                         completion_index,
-                        completion,
-                        language_registry.clone(),
                     )
-                    .await;
+                    .await
+                    .log_err()
+                    .is_some();
+                    if resolved {
+                        Self::regenerate_completion_labels(
+                            adapter,
+                            &buffer_snapshot,
+                            completions.clone(),
+                            completion_index,
+                            language_registry.clone(),
+                        )
+                        .await
+                        .log_err();
+                        did_resolve = true;
+                    }
                 }
             }
 
@@ -4218,13 +4217,10 @@ impl LspStore {
 
     async fn resolve_completion_local(
         server: Arc<lsp::LanguageServer>,
-        adapter: Arc<CachedLspAdapter>,
         snapshot: &BufferSnapshot,
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
-        completion: lsp::CompletionItem,
-        language_registry: Arc<LanguageRegistry>,
-    ) {
+    ) -> Result<()> {
         let can_resolve = server
             .capabilities()
             .completion_provider
@@ -4232,30 +4228,17 @@ impl LspStore {
             .and_then(|options| options.resolve_provider)
             .unwrap_or(false);
         if !can_resolve {
-            return;
+            return Ok(());
         }
 
-        let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-        let Some(completion_item) = request.await.log_err() else {
-            return;
+        let request = {
+            let completion = &completions.borrow()[completion_index];
+            if completion.resolved {
+                return Ok(());
+            }
+            server.request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion.clone())
         };
-
-        if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
-            let documentation = language::prepare_completion_documentation(
-                lsp_documentation,
-                &language_registry,
-                snapshot.language().cloned(),
-            )
-            .await;
-
-            let mut completions = completions.borrow_mut();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(documentation);
-        } else {
-            let mut completions = completions.borrow_mut();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
+        let completion_item = request.await?;
 
         if let Some(text_edit) = completion_item.text_edit.as_ref() {
             // Technically we don't have to parse the whole `text_edit`, since the only
@@ -4283,28 +4266,61 @@ impl LspStore {
             }
         }
 
+        let mut completions = completions.borrow_mut();
+        let completion = &mut completions[completion_index];
+        completion.lsp_completion = completion_item;
+        completion.resolved = true;
+        Ok(())
+    }
+
+    async fn regenerate_completion_labels(
+        adapter: Arc<CachedLspAdapter>,
+        snapshot: &BufferSnapshot,
+        completions: Rc<RefCell<Box<[Completion]>>>,
+        completion_index: usize,
+        language_registry: Arc<LanguageRegistry>,
+    ) -> Result<()> {
+        let completion_item = completions.borrow()[completion_index]
+            .lsp_completion
+            .clone();
+        if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
+            let documentation = language::prepare_completion_documentation(
+                lsp_documentation,
+                &language_registry,
+                snapshot.language().cloned(),
+            )
+            .await;
+
+            let mut completions = completions.borrow_mut();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(documentation);
+        } else {
+            let mut completions = completions.borrow_mut();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(Documentation::Undocumented);
+        }
+
         // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
         // So we have to update the label here anyway...
         let new_label = match snapshot.language() {
-            Some(language) => adapter
-                .labels_for_completions(&[completion_item.clone()], language)
-                .await
-                .log_err()
-                .unwrap_or_default(),
+            Some(language) => {
+                adapter
+                    .labels_for_completions(&[completion_item.clone()], language)
+                    .await?
+            }
             None => Vec::new(),
         }
         .pop()
         .flatten()
         .unwrap_or_else(|| {
             CodeLabel::plain(
-                completion_item.label.clone(),
+                completion_item.label,
                 completion_item.filter_text.as_deref(),
             )
         });
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
-        completion.lsp_completion = completion_item;
         if completion.label.filter_text() == new_label.filter_text() {
             completion.label = new_label;
         } else {
@@ -4317,6 +4333,8 @@ impl LspStore {
                 new_label.filter_text()
             );
         }
+
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4326,29 +4344,30 @@ impl LspStore {
         buffer_id: BufferId,
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
-        completion: lsp::CompletionItem,
         client: AnyProtoClient,
         language_registry: Arc<LanguageRegistry>,
-    ) {
+    ) -> Result<()> {
+        let lsp_completion = {
+            let completion = &completions.borrow()[completion_index];
+            if completion.resolved {
+                return Ok(());
+            }
+            serde_json::to_string(&completion.lsp_completion)
+                .unwrap()
+                .into_bytes()
+        };
         let request = proto::ResolveCompletionDocumentation {
             project_id,
             language_server_id: server_id.0 as u64,
-            lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+            lsp_completion,
             buffer_id: buffer_id.into(),
         };
 
-        let Some(response) = client
+        let response = client
             .request(request)
             .await
-            .context("completion documentation resolve proto request")
-            .log_err()
-        else {
-            return;
-        };
-        let Some(lsp_completion) = serde_json::from_slice(&response.lsp_completion).log_err()
-        else {
-            return;
-        };
+            .context("completion documentation resolve proto request")?;
+        let lsp_completion = serde_json::from_slice(&response.lsp_completion)?;
 
         let documentation = if response.documentation.is_empty() {
             Documentation::Undocumented
@@ -4366,6 +4385,7 @@ impl LspStore {
         let completion = &mut completions[completion_index];
         completion.documentation = Some(documentation);
         completion.lsp_completion = lsp_completion;
+        completion.resolved = true;
 
         let old_range = response
             .old_start
@@ -4377,12 +4397,15 @@ impl LspStore {
                 completion.old_range = old_start..old_end;
             }
         }
+
+        Ok(())
     }
 
     pub fn apply_additional_edits_for_completion(
         &self,
         buffer_handle: Model<Buffer>,
-        completion: Completion,
+        completions: Rc<RefCell<Box<[Completion]>>>,
+        completion_index: usize,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
@@ -4391,8 +4414,9 @@ impl LspStore {
 
         if let Some((client, project_id)) = self.upstream_client() {
             cx.spawn(move |_, mut cx| async move {
-                let response = client
-                    .request(proto::ApplyCompletionAdditionalEdits {
+                let request = {
+                    let completion = completions.borrow()[completion_index].clone();
+                    proto::ApplyCompletionAdditionalEdits {
                         project_id,
                         buffer_id: buffer_id.into(),
                         completion: Some(Self::serialize_completion(&CoreCompletion {
@@ -4400,9 +4424,13 @@ impl LspStore {
                             new_text: completion.new_text,
                             server_id: completion.server_id,
                             lsp_completion: completion.lsp_completion,
+                            resolved: completion.resolved,
                         })),
-                    })
-                    .await?;
+                    }
+                };
+
+                let response = client.request(request).await?;
+                completions.borrow_mut()[completion_index].resolved = true;
 
                 if let Some(transaction) = response.transaction {
                     let transaction = language::proto::deserialize_transaction(transaction)?;
@@ -4422,34 +4450,31 @@ impl LspStore {
                 }
             })
         } else {
-            let server_id = completion.server_id;
-            let lang_server = match self.language_server_for_local_buffer(buffer, server_id, cx) {
+            let server_id = completions.borrow()[completion_index].server_id;
+            let server = match self.language_server_for_local_buffer(buffer, server_id, cx) {
                 Some((_, server)) => server.clone(),
-                _ => return Task::ready(Ok(Default::default())),
+                _ => return Task::ready(Ok(None)),
             };
+            let snapshot = buffer_handle.read(&cx).snapshot();
 
             cx.spawn(move |this, mut cx| async move {
-                let can_resolve = lang_server
-                    .capabilities()
-                    .completion_provider
-                    .as_ref()
-                    .and_then(|options| options.resolve_provider)
-                    .unwrap_or(false);
-                let additional_text_edits = if can_resolve {
-                    lang_server
-                        .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
-                        .await?
-                        .additional_text_edits
-                } else {
-                    completion.lsp_completion.additional_text_edits
-                };
+                Self::resolve_completion_local(
+                    server.clone(),
+                    &snapshot,
+                    completions.clone(),
+                    completion_index,
+                )
+                .await
+                .context("resolving completion")?;
+                let completion = completions.borrow()[completion_index].clone();
+                let additional_text_edits = completion.lsp_completion.additional_text_edits;
                 if let Some(edits) = additional_text_edits {
                     let edits = this
                         .update(&mut cx, |this, cx| {
                             this.as_local_mut().unwrap().edits_from_lsp(
                                 &buffer_handle,
                                 edits,
-                                lang_server.server_id(),
+                                server.server_id(),
                                 None,
                                 cx,
                             )
@@ -6803,7 +6828,7 @@ impl LspStore {
         let apply_additional_edits = this.update(&mut cx, |this, cx| {
             this.apply_additional_edits_for_completion(
                 buffer,
-                Completion {
+                Rc::new(RefCell::new(Box::new([Completion {
                     old_range: completion.old_range,
                     new_text: completion.new_text,
                     lsp_completion: completion.lsp_completion,
@@ -6815,7 +6840,9 @@ impl LspStore {
                         filter_range: Default::default(),
                     },
                     confirm: None,
-                },
+                    resolved: completion.resolved,
+                }]))),
+                0,
                 false,
                 cx,
             )
@@ -7780,6 +7807,7 @@ impl LspStore {
             new_text: completion.new_text.clone(),
             server_id: completion.server_id.0 as u64,
             lsp_completion: serde_json::to_vec(&completion.lsp_completion).unwrap(),
+            resolved: completion.resolved,
         }
     }
 
@@ -7799,6 +7827,7 @@ impl LspStore {
             new_text: completion.new_text,
             server_id: LanguageServerId(completion.server_id as usize),
             lsp_completion,
+            resolved: completion.resolved,
         })
     }
 
@@ -7900,6 +7929,7 @@ async fn populate_labels_for_completions(
             documentation,
             lsp_completion,
             confirm: None,
+            resolved: false,
         })
     }
 }
