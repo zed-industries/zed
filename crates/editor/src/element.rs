@@ -3921,7 +3921,13 @@ impl EditorElement {
         }
     }
 
-    fn paint_line_numbers(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
+    fn paint_line_numbers(
+        &mut self,
+        layout: &mut EditorLayout,
+        cx: &mut WindowContext,
+    ) {
+        let is_singleton = self.editor.read(cx).is_singleton(cx);
+
         let line_height = layout.position_map.line_height;
         cx.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
@@ -3929,7 +3935,7 @@ impl EditorElement {
             let Some(hitbox) = hitbox else {
                 continue;
             };
-            let color = if hitbox.is_hovered(cx) {
+            let color = if !is_singleton && hitbox.is_hovered(cx) {
                 cx.theme().colors().editor_active_line_number
             } else {
                 cx.theme().colors().editor_line_number
@@ -6169,18 +6175,24 @@ impl Element for EditorElement {
                         Vec<BufferId>,
                     ) = self.editor.update(cx, |editor, cx| {
                         let all_selections = editor.selections.all::<usize>(cx);
-                        let mut selected_buffer_ids = Vec::with_capacity(all_selections.len());
+                        let selected_buffer_ids = if editor.is_singleton(cx) {
+                            Vec::new()
+                        } else {
+                            let mut selected_buffer_ids = Vec::with_capacity(all_selections.len());
 
-                        for selection in all_selections {
-                            for buffer_id in snapshot
-                                .buffer_snapshot
-                                .buffer_ids_for_range(selection.range())
-                            {
-                                if selected_buffer_ids.last() != Some(&buffer_id) {
-                                    selected_buffer_ids.push(buffer_id);
+                            for selection in all_selections {
+                                for buffer_id in snapshot
+                                    .buffer_snapshot
+                                    .buffer_ids_for_range(selection.range())
+                                {
+                                    if selected_buffer_ids.last() != Some(&buffer_id) {
+                                        selected_buffer_ids.push(buffer_id);
+                                    }
                                 }
                             }
-                        }
+
+                            selected_buffer_ids
+                        };
 
                         let mut selections = editor
                             .selections
@@ -6758,7 +6770,10 @@ impl Element for EditorElement {
         cx: &mut WindowContext,
     ) {
         let focus_handle = self.editor.focus_handle(cx);
-        let key_context = self.editor.update(cx, |editor, cx| editor.key_context(cx));
+        let key_context = self.editor.update(cx, |editor, cx| {
+            editor.key_context(cx)
+        });
+
         cx.set_key_context(key_context);
         cx.handle_input(
             &focus_handle,
