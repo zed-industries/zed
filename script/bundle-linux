@@ -72,7 +72,7 @@ objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_serv
 gzip "${target_dir}/${target_triple}/release/zed.dbg"
 gzip "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
 
-if [[ -n "${DIGITALOCEAN_SPACES_SECRET_KEY}" && -n "${DIGITALOCEAN_SPACES_ACCESS_KEY}" ]]; then
+if [[ -n "${DIGITALOCEAN_SPACES_SECRET_KEY:-}" && -n "${DIGITALOCEAN_SPACES_ACCESS_KEY:-}" ]]; then
     upload_to_blob_store_public \
         "zed-debug-symbols" \
         "${target_dir}/${target_triple}/release/zed.dbg.gz" \
