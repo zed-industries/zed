@@ -107,7 +107,7 @@ pub struct GitPanel {
     // not hidden by folding or such
     visible_entries: Vec<WorktreeEntries>,
     width: Option<Pixels>,
-    git_diff_editor: View<Editor>,
+    git_diff_editor: Option<View<Editor>>,
     git_diff_editor_updates: Task<()>,
     reveal_in_editor: Task<()>,
 }
@@ -149,11 +149,7 @@ impl GitPanel {
         workspace: WeakView<Workspace>,
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
-        cx.spawn(|mut cx| async move {
-            // Clippy incorrectly classifies this as a redundant closure
-            #[allow(clippy::redundant_closure)]
-            workspace.update(&mut cx, |workspace, cx| Self::new(workspace, cx))
-        })
+        cx.spawn(|mut cx| async move { workspace.update(&mut cx, Self::new) })
     }
 
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
@@ -168,7 +164,7 @@ impl GitPanel {
                 this.hide_scrollbar(cx);
             })
             .detach();
-            cx.subscribe(&project, |this, project, event, cx| match event {
+            cx.subscribe(&project, |this, _, event, cx| match event {
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
                     this.update_visible_entries(None, None, cx);
@@ -186,9 +182,10 @@ impl GitPanel {
                 }
                 project::Event::Closed => {
                     this.git_diff_editor_updates = Task::ready(());
+                    this.reveal_in_editor = Task::ready(());
                     this.expanded_dir_ids.clear();
                     this.visible_entries.clear();
-                    this.git_diff_editor = diff_display_editor(project.clone(), cx);
+                    this.git_diff_editor = None;
                 }
                 _ => {}
             })
@@ -196,7 +193,7 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            let mut this = Self {
+            let mut git_panel = Self {
                 workspace: weak_workspace,
                 focus_handle: cx.focus_handle(),
                 fs,
@@ -211,13 +208,13 @@ impl GitPanel {
                 selected_item: None,
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
-                git_diff_editor: diff_display_editor(project.clone(), cx),
+                git_diff_editor: Some(diff_display_editor(cx)),
                 git_diff_editor_updates: Task::ready(()),
                 reveal_in_editor: Task::ready(()),
                 project,
             };
-            this.update_visible_entries(None, None, cx);
-            this
+            git_panel.update_visible_entries(None, None, cx);
+            git_panel
         });
 
         git_panel
@@ -602,7 +599,7 @@ impl GitPanel {
             );
         }
 
-        let project = self.project.clone();
+        let project = self.project.downgrade();
         self.git_diff_editor_updates = cx.spawn(|git_panel, mut cx| async move {
             cx.background_executor()
                 .timer(UPDATE_DEBOUNCE)
@@ -610,7 +607,7 @@ impl GitPanel {
             let Some(project_buffers) = git_panel
                 .update(&mut cx, |git_panel, cx| {
                     futures::future::join_all(git_panel.visible_entries.iter_mut().flat_map(
-                        move |worktree_entries| {
+                        |worktree_entries| {
                             worktree_entries
                                 .visible_entries
                                 .iter()
@@ -694,7 +691,7 @@ impl GitPanel {
                                                     anyhow::Ok((buffer, unstaged_changes, hunks))
                                                 });
                                             Some((entry_path, unstaged_changes_task))
-                                        })?;
+                                        }).ok()??;
                                     Some((entry_path, unstaged_changes_task))
                                 })
                                 .map(|(entry_path, open_task)| async move {
@@ -716,7 +713,7 @@ impl GitPanel {
             let mut change_sets = Vec::with_capacity(project_buffers.len());
             if let Some(buffer_update_task) = git_panel
                 .update(&mut cx, |git_panel, cx| {
-                    let editor = git_panel.git_diff_editor.clone();
+                    let editor = git_panel.git_diff_editor.clone()?;
                     let multi_buffer = editor.read(cx).buffer().clone();
                     let mut buffers_with_ranges = Vec::with_capacity(project_buffers.len());
                     for (buffer_path, open_result) in project_buffers {
@@ -735,25 +732,27 @@ impl GitPanel {
                         }
                     }
 
-                    multi_buffer.update(cx, |multi_buffer, cx| {
+                    Some(multi_buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.clear(cx);
                         multi_buffer.push_multiple_excerpts_with_context_lines(
                             buffers_with_ranges,
                             DEFAULT_MULTIBUFFER_CONTEXT,
                             cx,
                         )
-                    })
+                    }))
                 })
-                .ok()
+                .ok().flatten()
             {
                 buffer_update_task.await;
                 git_panel
                     .update(&mut cx, |git_panel, cx| {
-                        git_panel.git_diff_editor.update(cx, |editor, cx| {
-                            for change_set in change_sets {
-                                editor.add_change_set(change_set, cx);
-                            }
-                        })
+                        if let Some(diff_editor) = git_panel.git_diff_editor.as_ref() {
+                            diff_editor.update(cx, |editor, cx| {
+                                for change_set in change_sets {
+                                    editor.add_change_set(change_set, cx);
+                                }
+                            });
+                        }
                     })
                     .ok();
             }
@@ -1001,7 +1000,7 @@ impl GitPanel {
         let id = id.to_proto() as usize;
         let checkbox_id = ElementId::Name(format!("checkbox_{}", id).into());
         let is_staged = ToggleState::Selected;
-        let handle = cx.view().clone();
+        let handle = cx.view().downgrade();
 
         h_flex()
             .id(id)
@@ -1024,16 +1023,18 @@ impl GitPanel {
                     .toggle_state(selected)
                     .child(h_flex().gap_1p5().child(details.display_name.clone()))
                     .on_click(move |e, cx| {
-                        handle.update(cx, |git_panel, cx| {
-                            git_panel.selected_item = Some(details.index);
-                            let change_focus = e.down.click_count > 1;
-                            git_panel.reveal_entry_in_git_editor(
-                                details.hunks.clone(),
-                                change_focus,
-                                None,
-                                cx,
-                            );
-                        });
+                        handle
+                            .update(cx, |git_panel, cx| {
+                                git_panel.selected_item = Some(details.index);
+                                let change_focus = e.down.click_count > 1;
+                                git_panel.reveal_entry_in_git_editor(
+                                    details.hunks.clone(),
+                                    change_focus,
+                                    None,
+                                    cx,
+                                );
+                            })
+                            .ok();
                     }),
             )
     }
@@ -1046,7 +1047,9 @@ impl GitPanel {
         cx: &mut ViewContext<'_, Self>,
     ) {
         let workspace = self.workspace.clone();
-        let diff_editor = self.git_diff_editor.clone();
+        let Some(diff_editor) = self.git_diff_editor.clone() else {
+            return;
+        };
         self.reveal_in_editor = cx.spawn(|_, mut cx| async move {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -1236,12 +1239,12 @@ impl Panel for GitPanel {
     }
 }
 
-fn diff_display_editor(project: Model<Project>, cx: &mut WindowContext) -> View<Editor> {
+fn diff_display_editor(cx: &mut WindowContext) -> View<Editor> {
     cx.new_view(|cx| {
-        let multi_buffer = cx.new_model(|cx| {
-            MultiBuffer::new(project.read(cx).capability()).with_title("Project diff".to_string())
+        let multi_buffer = cx.new_model(|_| {
+            MultiBuffer::new(language::Capability::ReadWrite).with_title("Project diff".to_string())
         });
-        let mut editor = Editor::for_multibuffer(multi_buffer, Some(project), true, cx);
+        let mut editor = Editor::for_multibuffer(multi_buffer, None, true, cx);
         editor.set_expand_all_diff_hunks();
         editor
     })
