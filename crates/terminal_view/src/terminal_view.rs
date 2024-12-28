@@ -420,7 +420,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    pub fn should_show_cursor(&self, focused: bool, cx: &mut gpui::ViewContext<Self>) -> bool {
+    pub fn should_show_cursor(&self, focused: bool, cx: &mut ViewContext<Self>) -> bool {
         //Don't blink the cursor when not focused, blinking is disabled, or paused
         if !focused
             || self.blinking_paused

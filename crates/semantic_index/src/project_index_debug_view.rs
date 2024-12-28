@@ -196,7 +196,7 @@ impl ProjectIndexDebugView {
 }
 
 impl Render for ProjectIndexDebugView {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(selected_path) = self.selected_path.as_ref() {
             v_flex()
                 .child(
