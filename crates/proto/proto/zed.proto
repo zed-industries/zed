@@ -927,6 +927,7 @@ message Completion {
     string new_text = 3;
     uint64 server_id = 4;
     bytes lsp_completion = 5;
+    bool resolved = 6;
 }
 
 message GetCodeActions {

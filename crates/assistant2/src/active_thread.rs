@@ -4,8 +4,8 @@ use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
     list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
-    ListAlignment, ListState, Model, StyleRefinement, Subscription, TextStyleRefinement, View,
-    WeakView,
+    ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
+    TextStyleRefinement, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -153,6 +153,10 @@ impl ActiveThread {
             )
         });
         self.rendered_messages_by_id.insert(*id, markdown);
+        self.list_state.scroll_to(ListOffset {
+            item_ix: old_len,
+            offset_in_item: Pixels(0.0),
+        });
     }
 
     fn handle_thread_event(

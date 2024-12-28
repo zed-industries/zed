@@ -224,6 +224,7 @@ impl CompletionsMenu {
                 documentation: None,
                 lsp_completion: Default::default(),
                 confirm: None,
+                resolved: true,
             })
             .collect();
 
