@@ -1942,7 +1942,7 @@ impl Pane {
         }
     }
 
-    fn toggle_pin_tab(&mut self, _: &TogglePinTab, cx: &mut ViewContext<'_, Self>) {
+    fn toggle_pin_tab(&mut self, _: &TogglePinTab, cx: &mut ViewContext<Self>) {
         if self.items.is_empty() {
             return;
         }
@@ -1954,7 +1954,7 @@ impl Pane {
         }
     }
 
-    fn pin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
+    fn pin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
         maybe!({
             let pane = cx.view().clone();
             let destination_index = self.pinned_tab_count.min(ix);
@@ -1971,7 +1971,7 @@ impl Pane {
         });
     }
 
-    fn unpin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
+    fn unpin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
         maybe!({
             let pane = cx.view().clone();
             self.pinned_tab_count = self.pinned_tab_count.checked_sub(1)?;
@@ -2003,7 +2003,7 @@ impl Pane {
         item: &dyn ItemHandle,
         detail: usize,
         focus_handle: &FocusHandle,
-        cx: &mut ViewContext<'_, Pane>,
+        cx: &mut ViewContext<Pane>,
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
         let is_preview = self
@@ -2416,7 +2416,7 @@ impl Pane {
         })
     }
 
-    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
+    fn render_tab_bar(&mut self, cx: &mut ViewContext<Pane>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
@@ -2592,12 +2592,7 @@ impl Pane {
         }
     }
 
-    fn handle_tab_drop(
-        &mut self,
-        dragged_tab: &DraggedTab,
-        ix: usize,
-        cx: &mut ViewContext<'_, Self>,
-    ) {
+    fn handle_tab_drop(&mut self, dragged_tab: &DraggedTab, ix: usize, cx: &mut ViewContext<Self>) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, dragged_tab, cx) {
                 return;
@@ -2663,7 +2658,7 @@ impl Pane {
         &mut self,
         dragged_selection: &DraggedSelection,
         dragged_onto: Option<usize>,
-        cx: &mut ViewContext<'_, Self>,
+        cx: &mut ViewContext<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, dragged_selection, cx) {
@@ -2681,7 +2676,7 @@ impl Pane {
         &mut self,
         project_entry_id: &ProjectEntryId,
         target: Option<usize>,
-        cx: &mut ViewContext<'_, Self>,
+        cx: &mut ViewContext<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, project_entry_id, cx) {
@@ -2746,11 +2741,7 @@ impl Pane {
             .log_err();
     }
 
-    fn handle_external_paths_drop(
-        &mut self,
-        paths: &ExternalPaths,
-        cx: &mut ViewContext<'_, Self>,
-    ) {
+    fn handle_external_paths_drop(&mut self, paths: &ExternalPaths, cx: &mut ViewContext<Self>) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, paths, cx) {
                 return;

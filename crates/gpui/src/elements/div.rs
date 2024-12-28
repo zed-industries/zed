@@ -2499,7 +2499,7 @@ impl ScrollAnchor {
         }
     }
     /// Request scroll to this item on the next frame.
-    pub fn scroll_to(&self, cx: &mut WindowContext<'_>) {
+    pub fn scroll_to(&self, cx: &mut WindowContext) {
         let this = self.clone();
 
         cx.on_next_frame(move |_| {
