@@ -2603,7 +2603,7 @@ impl EditorElement {
                     .shadow_md()
                     .border_1()
                     .map(|div| {
-                        let border_color = if is_selected {
+                        let border_color = if is_selected && is_folded {
                             colors.border_focused
                         } else {
                             colors.border
