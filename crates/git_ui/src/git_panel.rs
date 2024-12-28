@@ -1199,7 +1199,7 @@ impl Panel for GitPanel {
         "GitPanel"
     }
 
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         GitPanelSettings::get_global(cx).dock
     }
 
@@ -1215,7 +1215,7 @@ impl Panel for GitPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| GitPanelSettings::get_global(cx).default_width)
     }

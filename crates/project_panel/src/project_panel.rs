@@ -3810,7 +3810,7 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
 }
 
 impl Render for ProjectPanel {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
         let indent_size = ProjectPanelSettings::get_global(cx).indent_size;

@@ -273,7 +273,7 @@ impl SyntaxTreeView {
 }
 
 impl Render for SyntaxTreeView {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut rendered = div().flex_1();
 
         if let Some(layer) = self

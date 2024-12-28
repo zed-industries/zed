@@ -2719,7 +2719,7 @@ impl Render for CollabPanel {
 impl EventEmitter<PanelEvent> for CollabPanel {}
 
 impl Panel for CollabPanel {
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         CollaborationPanelSettings::get_global(cx).dock
     }
 
@@ -2735,7 +2735,7 @@ impl Panel for CollabPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| CollaborationPanelSettings::get_global(cx).default_width)
     }
@@ -2746,7 +2746,7 @@ impl Panel for CollabPanel {
         cx.notify();
     }
 
-    fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::IconName> {
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
         CollaborationPanelSettings::get_global(cx)
             .button
             .then_some(ui::IconName::UserGroup)
