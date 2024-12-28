@@ -1044,7 +1044,7 @@ impl GitPanel {
         hunks: Rc<OnceCell<Vec<DiffHunk>>>,
         change_focus: bool,
         debounce: Option<Duration>,
-        cx: &mut ViewContext<'_, Self>,
+        cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace.clone();
         let Some(diff_editor) = self.git_diff_editor.clone() else {
