@@ -70,16 +70,18 @@ objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
 objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
 
 gzip "${target_dir}/${target_triple}/release/zed.dbg"
-upload_to_blob_store_public \
-    "zed-debug-symbols" \
-    "${target_dir}/${target_triple}/release/zed.dbg.gz" \
-    "$channel/zed-$version-${target_triple}.dbg.gz"
-
 gzip "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
-upload_to_blob_store_public \
-    "zed-debug-symbols" \
-    "${target_dir}/${remote_server_triple}/release/remote_server.dbg.gz" \
-    "$channel/remote_server-$version-${remote_server_triple}.dbg.gz"
+
+if [[ -n "${DIGITALOCEAN_SPACES_SECRET_KEY}" && -n "${DIGITALOCEAN_SPACES_ACCESS_KEY}" ]]; then
+    upload_to_blob_store_public \
+        "zed-debug-symbols" \
+        "${target_dir}/${target_triple}/release/zed.dbg.gz" \
+        "$channel/zed-$version-${target_triple}.dbg.gz"
+    upload_to_blob_store_public \
+        "zed-debug-symbols" \
+        "${target_dir}/${remote_server_triple}/release/remote_server.dbg.gz" \
+        "$channel/remote_server-$version-${remote_server_triple}.dbg.gz"
+fi
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
 if ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'; then
