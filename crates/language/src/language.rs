@@ -268,7 +268,7 @@ impl CachedLspAdapter {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Attach {
     /// Create a single language server instance per subproject root.
     InstancePerRoot,
