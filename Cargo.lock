@@ -2928,7 +2928,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "ui",
  "url",
  "util",
  "workspace",
