@@ -18,8 +18,8 @@ use gpui::{
     AsyncWindowContext, ClickEvent, ClipboardItem, Corner, Div, DragMoveEvent, EntityId,
     EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
     MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
-    WindowContext,
+    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakModel,
+    WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -286,7 +286,7 @@ pub struct Pane {
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
     pub(crate) workspace: WeakView<Workspace>,
-    project: Model<Project>,
+    project: WeakModel<Project>,
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
     custom_drop_handle:
@@ -411,7 +411,7 @@ impl Pane {
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
             workspace,
-            project,
+            project: project.downgrade(),
             can_drop_predicate,
             custom_drop_handle: None,
             can_split_predicate: None,
@@ -622,9 +622,12 @@ impl Pane {
     }
 
     fn update_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
         let show_diagnostics = ItemSettings::get_global(cx).show_diagnostics;
         self.diagnostics = if show_diagnostics != ShowDiagnostics::Off {
-            self.project
+            project
                 .read(cx)
                 .diagnostic_summaries(false, cx)
                 .filter_map(|(project_path, _, diagnostic_summary)| {
@@ -638,9 +641,9 @@ impl Pane {
                         None
                     }
                 })
-                .collect::<HashMap<_, _>>()
+                .collect()
         } else {
-            Default::default()
+            HashMap::default()
         }
     }
 
@@ -900,7 +903,10 @@ impl Pane {
 
         if item.is_singleton(cx) {
             if let Some(&entry_id) = item.project_entry_ids(cx).first() {
-                let project = self.project.read(cx);
+                let Some(project) = self.project.upgrade() else {
+                    return;
+                };
+                let project = project.read(cx);
                 if let Some(project_path) = project.path_for_entry(entry_id, cx) {
                     let abs_path = project.absolute_path(&project_path, cx);
                     self.nav_history
@@ -2377,11 +2383,13 @@ impl Pane {
                                     entry_id: Some(entry_id),
                                 })),
                                 cx.handler_for(&pane, move |pane, cx| {
-                                    pane.project.update(cx, |_, cx| {
-                                        cx.emit(project::Event::RevealInProjectPanel(
-                                            ProjectEntryId::from_proto(entry_id),
-                                        ))
-                                    });
+                                    pane.project
+                                        .update(cx, |_, cx| {
+                                            cx.emit(project::Event::RevealInProjectPanel(
+                                                ProjectEntryId::from_proto(entry_id),
+                                            ))
+                                        })
+                                        .ok();
                                 }),
                             )
                             .when_some(parent_abs_path, |menu, parent_abs_path| {
@@ -2862,7 +2870,10 @@ impl Render for Pane {
 
         let should_display_tab_bar = self.should_display_tab_bar.clone();
         let display_tab_bar = should_display_tab_bar(cx);
-        let is_local = self.project.read(cx).is_local();
+        let Some(project) = self.project.upgrade() else {
+            return div().track_focus(&self.focus_handle(cx));
+        };
+        let is_local = project.read(cx).is_local();
 
         v_flex()
             .key_context(key_context)
@@ -2972,9 +2983,11 @@ impl Render for Pane {
                         .map(ProjectEntryId::from_proto)
                         .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
                     if let Some(entry_id) = entry_id {
-                        pane.project.update(cx, |_, cx| {
-                            cx.emit(project::Event::RevealInProjectPanel(entry_id))
-                        });
+                        pane.project
+                            .update(cx, |_, cx| {
+                                cx.emit(project::Event::RevealInProjectPanel(entry_id))
+                            })
+                            .ok();
                     }
                 }),
             )
@@ -2982,7 +2995,7 @@ impl Render for Pane {
                 pane.child(self.render_tab_bar(cx))
             })
             .child({
-                let has_worktrees = self.project.read(cx).worktrees(cx).next().is_some();
+                let has_worktrees = project.read(cx).worktrees(cx).next().is_some();
                 // main content
                 div()
                     .flex_1()
