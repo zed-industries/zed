@@ -6172,6 +6172,7 @@ dependencies = [
  "anyhow",
  "db",
  "file_icons",
+ "fs",
  "gpui",
  "image",
  "project",

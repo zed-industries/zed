@@ -24,3 +24,4 @@ ui.workspace = true
 util.workspace = true
 image.workspace = true
 workspace.workspace = true
+fs.workspace = true

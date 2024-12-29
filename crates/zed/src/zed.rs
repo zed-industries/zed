@@ -26,7 +26,7 @@ use gpui::{
     PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
     VisualContext, WindowKind, WindowOptions,
 };
-use image_viewer::image_info;
+use image_viewer::image_info::ImageInfo;
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
@@ -212,7 +212,7 @@ pub fn initialize_workspace(
         let vim_mode_indicator = cx.new_view(vim::ModeIndicator::new);
         let cursor_position =
             cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
-        let image_metadata = cx.new_view(|_| image_info::ImageInfoView::new(workspace));
+        let image_metadata = cx.new_view(|_| ImageInfo::new(workspace));
 
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);

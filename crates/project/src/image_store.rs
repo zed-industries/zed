@@ -4,7 +4,6 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
-use fs::Fs;
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
     hash, prelude::*, AppContext, EventEmitter, Img, Model, ModelContext, Subscription, Task,
@@ -76,11 +75,11 @@ fn image_color_type_description(color_type: ColorType) -> &'static str {
 }
 
 impl ImageItem {
-    async fn image_info<F: Fs>(
+    async fn image_info(
         image: &ImageItem,
         project: &Project,
         cx: &AppContext,
-        fs: &F,
+        fs: Arc<dyn fs::Fs>,
     ) -> Result<(u32, u32, u64, &'static str), String> {
         let worktree = project
             .worktree_for_id(image.project_path(cx).worktree_id, cx)
@@ -112,15 +111,6 @@ impl ImageItem {
         Ok((dimensions.0, dimensions.1, file_size, img_color_type))
     }
 
-    pub async fn try_open<F: Fs>(
-        &self,
-        project: &Project,
-        cx: &AppContext,
-        fs: &F,
-    ) -> Result<(u32, u32, u64, &'static str), String> {
-        Self::image_info(self, project, cx, fs).await
-    }
-
     pub fn project_path(&self, cx: &AppContext) -> ProjectPath {
         ProjectPath {
             worktree_id: self.file.worktree_id(cx),
@@ -132,22 +122,20 @@ impl ImageItem {
         self.file.path()
     }
 
-    pub async fn load_metadata<F: Fs>(
+    pub async fn load_metadata(
         &mut self,
         project: &Project,
         cx: &AppContext,
-        fs: &F,
-    ) -> Result<(), String> {
-        println!("Loading metadata for image: {:?}", self.path());
-
-        match Self::try_open(self, project, cx, fs).await {
+        fs: Arc<dyn fs::Fs>,
+    ) -> Result<(u32, u32, u64, &'static str), String> {
+        match Self::image_info(self, project, cx, fs).await {
             Ok(metadata) => {
                 self.width = Some(metadata.0);
                 self.height = Some(metadata.1);
                 self.file_size = Some(metadata.2);
                 self.color_type = Some(metadata.3);
-                println!("Metadata loaded: {:?}", metadata);
-                Ok(())
+
+                Ok(metadata)
             }
             Err(err) => {
                 println!("Failed to load metadata: {}", err);
@@ -212,7 +200,6 @@ impl ProjectItem for ImageItem {
     ) -> Option<Task<gpui::Result<Model<Self>>>> {
         let path = path.clone();
         let project = project.clone();
-
         let ext = path
             .path
             .extension()
@@ -225,9 +212,31 @@ impl ProjectItem for ImageItem {
         // Since we do not have a way to toggle to an editor
         if Img::extensions().contains(&ext) && !ext.contains("svg") {
             Some(cx.spawn(|mut cx| async move {
-                project
+                let image_model = project
                     .update(&mut cx, |project, cx| project.open_image(path, cx))?
-                    .await
+                    .await?;
+
+                let fs = Arc::new(fs::RealFs::default());
+                let project_clone = project.clone();
+
+                if let Ok(()) = image_model.update(&mut cx, |image, cx| {
+                    let project_ref = project_clone.read(cx);
+
+                    if let Ok(metadata) = futures::executor::block_on(image.load_metadata(
+                        &project_ref,
+                        cx,
+                        fs.clone(),
+                    )) {
+                        image.width = Some(metadata.0);
+                        image.height = Some(metadata.1);
+                        image.file_size = Some(metadata.2);
+                        image.color_type = Some(metadata.3);
+                    }
+                }) {
+                    // image metadata should be avialable now
+                }
+
+                Ok(image_model)
             }))
         } else {
             None

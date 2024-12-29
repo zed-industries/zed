@@ -1,81 +1,95 @@
-use gpui::{div, prelude::*, Model, Render, ViewContext, WeakView};
-use project::ImageItem;
+use crate::ImageView;
+use gpui::{div, IntoElement, ParentElement, Render, Subscription, View, ViewContext};
+use ui::{prelude::*, Button, LabelSize};
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
-pub struct ImageInfoView {
-    workspace: WeakView<Workspace>,
+pub struct ImageInfo {
     width: Option<u32>,
     height: Option<u32>,
     file_size: Option<u64>,
-    color_type: Option<&'static str>,
+    color_type: Option<String>,
+    _observe_active_image: Option<Subscription>,
 }
 
-impl ImageInfoView {
-    pub fn new(workspace: &Workspace) -> Self {
+impl ImageInfo {
+    pub fn new(_workspace: &Workspace) -> Self {
         Self {
-            workspace: workspace.weak_handle(),
             width: None,
             height: None,
             file_size: None,
             color_type: None,
+            _observe_active_image: None,
         }
     }
 
-    fn format_file_size(&self) -> String {
-        self.file_size.map_or("--".to_string(), |size| {
-            if size < 1024 {
-                format!("{} B", size)
-            } else if size < 1024 * 1024 {
-                format!("{:.1} KB", size as f64 / 1024.0)
-            } else {
-                format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+    fn update_metadata(&mut self, image_view: &View<ImageView>, cx: &mut ViewContext<Self>) {
+        let image_item = image_view.read(cx).image_item.read(cx);
+
+        self.width = image_item.width;
+        self.height = image_item.height;
+        self.file_size = image_item.file_size;
+        self.color_type = image_item.color_type.map(String::from);
+
+        cx.notify();
+    }
+
+    fn format_file_size(size: u64) -> String {
+        if size < 1024 {
+            format!("{}B", size)
+        } else if size < 1024 * 1024 {
+            format!("{:.1}KB", size as f64 / 1024.0)
+        } else {
+            format!("{:.1}MB", size as f64 / (1024.0 * 1024.0))
+        }
+    }
+}
+
+impl Render for ImageInfo {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let mut text = String::new();
+
+        if let (Some(width), Some(height)) = (self.width, self.height) {
+            text.push_str(&format!("{}×{}", width, height));
+        }
+
+        if let Some(size) = self.file_size {
+            if !text.is_empty() {
+                text.push_str(" • ");
             }
+            text.push_str(&Self::format_file_size(size));
+        }
+
+        if let Some(color_type) = &self.color_type {
+            if !text.is_empty() {
+                text.push_str(" • ");
+            }
+            text.push_str(color_type);
+        }
+
+        div().when(!text.is_empty(), |el| {
+            el.child(Button::new("image-metadata", text).label_size(LabelSize::Small))
         })
     }
 }
 
-impl Render for ImageInfoView {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if self.width.is_some()
-            || self.height.is_some()
-            || self.file_size.is_some()
-            || self.color_type.is_some()
-        {
-            div().flex().items_center().gap_2().text_xs().child(format!(
-                "Whole image {} × {}  {}  {}",
-                self.width.map_or("--".to_string(), |w| w.to_string()),
-                self.height.map_or("--".to_string(), |h| h.to_string()),
-                self.format_file_size(),
-                self.color_type.as_deref().unwrap_or("")
-            ))
-        } else {
-            div()
-        }
-    }
-}
-
-impl StatusItemView for ImageInfoView {
+impl StatusItemView for ImageInfo {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.width = None;
-        self.height = None;
-        self.file_size = None;
-        self.color_type = None;
-
-        if let Some(item) = active_pane_item {
-            if let Some(image_model) = item.downcast::<Model<ImageItem>>() {
-                let image_item = image_model.read(cx);
-
-                self.width = image_item.read(cx).width;
-                self.height = image_item.read(cx).height;
-                self.file_size = image_item.read(cx).file_size;
-                self.color_type = image_item.read(cx).color_type;
-            }
+        if let Some(image_view) = active_pane_item.and_then(|item| item.act_as::<ImageView>(cx)) {
+            self.update_metadata(&image_view, cx);
+            self._observe_active_image = Some(cx.observe(&image_view, |this, view, cx| {
+                this.update_metadata(&view, cx);
+            }));
+        } else {
+            self.width = None;
+            self.height = None;
+            self.file_size = None;
+            self.color_type = None;
+            self._observe_active_image = None;
         }
-
         cx.notify();
     }
 }
