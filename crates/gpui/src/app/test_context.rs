@@ -4,8 +4,8 @@ use crate::{
     Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, View, ViewContext,
-    VisualContext, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, View, VisualContext, Window,
+    WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -179,7 +179,7 @@ impl TestAppContext {
     /// can be retrieved with `self.test_window(handle)`
     pub fn add_window<F, V>(&mut self, build_window: F) -> WindowHandle<V>
     where
-        F: FnOnce(&mut ViewContext<V>) -> V,
+        F: FnOnce(&mut Window, &mut ModelContext<V>) -> V,
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
@@ -206,7 +206,7 @@ impl TestAppContext {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |cx| cx.new_view(|_| Empty),
+                |cx| cx.new_view(|_, _| Empty),
             )
             .unwrap();
         drop(cx);
@@ -220,7 +220,7 @@ impl TestAppContext {
     /// the returned one. `let (view, cx) = cx.add_window_view(...);`
     pub fn add_window_view<F, V>(&mut self, build_root_view: F) -> (View<V>, &mut VisualTestContext)
     where
-        F: FnOnce(&mut ViewContext<V>) -> V,
+        F: FnOnce(&mut Window, &mut ModelContext<V>) -> V,
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
@@ -936,7 +936,7 @@ impl Context for VisualTestContext {
 impl VisualContext for VisualTestContext {
     fn new_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
+        build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Render,
@@ -949,7 +949,7 @@ impl VisualContext for VisualTestContext {
     fn update_view<V: 'static, R>(
         &mut self,
         view: &View<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
+        update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
     ) -> Self::Result<R> {
         self.window
             .update(&mut self.cx, |_, cx| cx.update_view(view, update))
@@ -958,7 +958,7 @@ impl VisualContext for VisualTestContext {
 
     fn replace_root_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
+        build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Render,
@@ -982,7 +982,7 @@ impl VisualContext for VisualTestContext {
     {
         self.window
             .update(&mut self.cx, |_, cx| {
-                view.update(cx, |_, cx| cx.emit(crate::DismissEvent))
+                view.update(cx, |_, window, cx| cx.emit(crate::DismissEvent))
             })
             .unwrap()
     }
@@ -993,7 +993,7 @@ impl AnyWindowHandle {
     pub fn build_view<V: Render + 'static>(
         &self,
         cx: &mut TestAppContext,
-        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
+        build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
     ) -> View<V> {
         self.update(cx, |_, cx| cx.new_view(build_view)).unwrap()
     }

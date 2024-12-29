@@ -4,9 +4,11 @@ use futures::channel::oneshot;
 
 use crate::{
     div, opaque_grey, white, AnyView, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, ParentElement, PromptLevel, Render, StatefulInteractiveElement, Styled, View,
-    ViewContext, VisualContext, WindowContext,
+    IntoElement, ModelContext, ParentElement, PromptLevel, Render, StatefulInteractiveElement,
+    Styled, View, VisualContext, WindowContext,
 };
+
+use super::Window;
 
 /// The event emitted when a prompt's option is selected.
 /// The usize is the index of the selected option, from the actions
@@ -71,7 +73,7 @@ pub fn fallback_prompt_renderer(
     cx: &mut WindowContext,
 ) -> RenderablePromptHandle {
     let renderer = cx.new_view({
-        |cx| FallbackPromptRenderer {
+        |window, cx| FallbackPromptRenderer {
             _level: level,
             message: message.to_string(),
             detail: detail.map(ToString::to_string),
@@ -93,7 +95,7 @@ pub struct FallbackPromptRenderer {
 }
 
 impl Render for FallbackPromptRenderer {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let prompt = div()
             .cursor_default()
             .track_focus(&self.focus)

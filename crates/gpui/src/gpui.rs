@@ -231,7 +231,7 @@ pub trait VisualContext: Context {
     /// Construct a new view in the window referenced by this context.
     fn new_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
+        build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Render;
@@ -240,13 +240,13 @@ pub trait VisualContext: Context {
     fn update_view<V: 'static, R>(
         &mut self,
         view: &View<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
+        update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
     ) -> Self::Result<R>;
 
     /// Replace the root view of a window with a new view.
     fn replace_root_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
+        build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Render;

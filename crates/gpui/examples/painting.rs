@@ -1,6 +1,6 @@
 use gpui::{
-    canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, MouseDownEvent, Path,
-    Pixels, Point, Render, ViewContext, WindowOptions,
+    canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, ModelContext,
+    MouseDownEvent, Path, Pixels, Point, Render, WindowOptions,
 };
 struct PaintingViewer {
     default_lines: Vec<Path<Pixels>>,

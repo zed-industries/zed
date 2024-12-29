@@ -6,8 +6,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use gpui::{
     actions, div, img, prelude::*, px, rgb, size, App, AppContext, AssetSource, Bounds,
-    ImageSource, KeyBinding, Menu, MenuItem, Point, SharedString, SharedUri, TitlebarOptions,
-    ViewContext, WindowBounds, WindowContext, WindowOptions,
+    ImageSource, KeyBinding, Menu, MenuItem, ModelContext, Point, SharedString, SharedUri,
+    TitlebarOptions, WindowBounds, WindowContext, WindowOptions,
 };
 
 struct Assets {

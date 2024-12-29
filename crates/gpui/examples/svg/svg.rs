@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use gpui::{
-    div, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds, SharedString,
-    ViewContext, WindowBounds, WindowOptions,
+    div, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds, ModelContext,
+    SharedString, WindowBounds, WindowOptions,
 };
 
 struct Assets {

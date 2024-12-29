@@ -38,8 +38,8 @@ use crate::{
     Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
-    WindowContext, WindowHandle, WindowId,
+    Subscription, SvgRenderer, Task, TextSystem, View, Window, WindowAppearance, WindowContext,
+    WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -1081,7 +1081,7 @@ impl AppContext {
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_views<V: 'static>(
         &self,
-        on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
+        on_new: impl 'static + Fn(&mut V, &mut Window, &mut ModelContext<V>),
     ) -> Subscription {
         self.new_view_observer(
             TypeId::of::<V>(),
@@ -1089,8 +1089,8 @@ impl AppContext {
                 any_view
                     .downcast::<V>()
                     .unwrap()
-                    .update(cx, |view_state, cx| {
-                        on_new(view_state, cx);
+                    .update(cx, |view_state, window, cx| {
+                        on_new(view_state, window, cx);
                     })
             }),
         )

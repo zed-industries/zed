@@ -1,7 +1,7 @@
 use gpui::{
     black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black, white, App,
-    AppContext, Bounds, CursorStyle, Decorations, Hsla, MouseButton, Pixels, Point, ResizeEdge,
-    Size, ViewContext, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowOptions,
+    AppContext, Bounds, CursorStyle, Decorations, Hsla, ModelContext, MouseButton, Pixels, Point,
+    ResizeEdge, Size, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowOptions,
 };
 
 struct WindowShadow {}

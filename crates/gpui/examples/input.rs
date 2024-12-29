@@ -4,8 +4,8 @@ use gpui::{
     actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative, rgb, rgba, size,
     white, yellow, App, AppContext, Bounds, ClipboardItem, CursorStyle, ElementId,
     ElementInputHandler, FocusHandle, FocusableView, GlobalElementId, KeyBinding, Keystroke,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, View, ViewContext,
+    LayoutId, ModelContext, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, View,
     ViewInputHandler, WindowBounds, WindowContext, WindowOptions,
 };
 use unicode_segmentation::*;

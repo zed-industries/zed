@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use gpui::{
     black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
     AppContext, Asset, AssetLogger, AssetSource, Bounds, Hsla, ImageAssetLoader, ImageCacheError,
-    ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString, ViewContext,
+    ImgResourceLoader, Length, ModelContext, Pixels, RenderImage, Resource, SharedString,
     WindowBounds, WindowContext, WindowOptions, LOADING_DELAY,
 };
 

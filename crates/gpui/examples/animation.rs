@@ -3,8 +3,8 @@ use std::time::Duration;
 use anyhow::Result;
 use gpui::{
     black, bounce, div, ease_in_out, percentage, prelude::*, px, rgb, size, svg, Animation,
-    AnimationExt as _, App, AppContext, AssetSource, Bounds, SharedString, Transformation,
-    ViewContext, WindowBounds, WindowOptions,
+    AnimationExt as _, App, AppContext, AssetSource, Bounds, ModelContext, SharedString,
+    Transformation, WindowBounds, WindowOptions,
 };
 
 struct Assets {}

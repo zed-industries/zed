@@ -1,10 +1,10 @@
-use crate::Empty;
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
     ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, GlobalElementId, IntoElement,
-    LayoutId, Model, PaintIndex, Pixels, PrepaintStateIndex, Render, Style, StyleRefinement,
-    TextStyle, ViewContext, VisualContext, WeakModel, WindowContext,
+    LayoutId, Model, ModelContext, PaintIndex, Pixels, PrepaintStateIndex, Render, Style,
+    StyleRefinement, TextStyle, VisualContext, WeakModel, WindowContext,
 };
+use crate::{Empty, Window};
 use anyhow::{Context, Result};
 use refineable::Refineable;
 use std::mem;
@@ -69,7 +69,7 @@ impl<V: 'static> View<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        f: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
+        f: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
     ) -> C::Result<R>
     where
         C: VisualContext,
@@ -104,7 +104,9 @@ impl<V: Render> Element for View<V> {
         _id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
+        let mut element = self.update(cx, |view, window, cx| {
+            view.render(window, cx).into_any_element()
+        });
         let layout_id = element.request_layout(cx);
         (layout_id, element)
     }
@@ -183,7 +185,7 @@ impl<V: 'static> WeakView<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        f: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
+        f: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
     ) -> Result<R>
     where
         C: VisualContext,
@@ -468,7 +470,9 @@ mod any_view {
         cx: &mut WindowContext,
     ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
-        view.update(cx, |view, cx| view.render(cx).into_any_element())
+        view.update(cx, |view, window, cx| {
+            view.render(window, cx).into_any_element()
+        })
     }
 }
 
@@ -476,7 +480,7 @@ mod any_view {
 pub struct EmptyView;
 
 impl Render for EmptyView {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         Empty
     }
 }

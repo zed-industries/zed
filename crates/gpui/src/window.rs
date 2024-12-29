@@ -3128,7 +3128,7 @@ impl<'a> WindowContext<'a> {
                     if self.active_drag.is_none() {
                         self.active_drag = Some(AnyDrag {
                             value: Arc::new(paths.clone()),
-                            view: self.new_view(|_| paths).into(),
+                            view: self.new_view(|_, _| paths).into(),
                             cursor_offset: position,
                         });
                     }
@@ -3760,11 +3760,12 @@ impl<'a> WindowContext<'a> {
     pub fn listener_for<V: Render, E>(
         &self,
         view: &View<V>,
-        f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
+        f: impl Fn(&mut V, &E, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> impl Fn(&E, &mut WindowContext) + 'static {
         let view = view.downgrade();
         move |e: &E, cx: &mut WindowContext| {
-            view.update(cx, |view, cx| f(view, e, cx)).ok();
+            view.update(cx, |view, window, cx| f(view, e, window, cx))
+                .ok();
         }
     }
 
@@ -3772,11 +3773,11 @@ impl<'a> WindowContext<'a> {
     pub fn handler_for<V: Render>(
         &self,
         view: &View<V>,
-        f: impl Fn(&mut V, &mut ViewContext<V>) + 'static,
+        f: impl Fn(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> impl Fn(&mut WindowContext) {
         let view = view.downgrade();
         move |cx: &mut WindowContext| {
-            view.update(cx, |view, cx| f(view, cx)).ok();
+            view.update(cx, |view, window, cx| f(view, window, cx)).ok();
         }
     }
 
@@ -3909,7 +3910,7 @@ impl Context for WindowContext<'_> {
 impl VisualContext for WindowContext<'_> {
     fn new_view<V>(
         &mut self,
-        build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+        build_view_state: impl FnOnce(&mut Window, &mut ModelContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Render,
@@ -3919,7 +3920,7 @@ impl VisualContext for WindowContext<'_> {
             model: slot.clone(),
         };
         let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
-        let entity = build_view_state(&mut cx);
+        let entity = build_view_state(&mut *self.window, todo!());
         cx.entities.insert(slot, entity);
 
         // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
@@ -3939,18 +3940,19 @@ impl VisualContext for WindowContext<'_> {
     fn update_view<T: 'static, R>(
         &mut self,
         view: &View<T>,
-        update: impl FnOnce(&mut T, &mut ViewContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Window, &mut ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
-        let mut lease = self.app.entities.lease(&view.model);
-        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, view);
-        let result = update(&mut *lease, &mut cx);
-        cx.app.entities.end_lease(lease);
-        result
+        todo!()
+        // let mut lease = self.app.entities.lease(&view.model);
+        // let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, view);
+        // let result = update(&mut *lease, todo!());
+        // cx.app.entities.end_lease(lease);
+        // result
     }
 
     fn replace_root_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut Window, &mut ModelContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Render,
@@ -3962,8 +3964,9 @@ impl VisualContext for WindowContext<'_> {
     }
 
     fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
-        self.update_view(view, |view, cx| {
-            view.focus_handle(cx).clone().focus(cx);
+        self.update_view(view, |view, window, cx| {
+            todo!()
+            // view.focus_handle(cx).clone().focus(cx);
         })
     }
 
@@ -3971,7 +3974,8 @@ impl VisualContext for WindowContext<'_> {
     where
         V: ManagedView,
     {
-        self.update_view(view, |_, cx| cx.emit(DismissEvent))
+        todo!()
+        // self.update_view(view, |_, cx| cx.emit(DismissEvent))
     }
 }
 
@@ -4100,7 +4104,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Sets a given callback to be run on the next frame.
-    pub fn on_next_frame(&self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)
+    pub fn on_next_frame(&self, f: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) + 'static)
     where
         V: 'static,
     {
@@ -4110,7 +4114,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
-    pub fn defer(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static) {
+    pub fn defer(&mut self, f: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) + 'static) {
         let view = self.view().downgrade();
         self.window_cx.defer(move |cx| {
             view.update(cx, f).ok();
@@ -4121,7 +4125,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn observe<V2, E>(
         &mut self,
         entity: &E,
-        mut on_notify: impl FnMut(&mut V, E, &mut ViewContext<'_, V>) + 'static,
+        mut on_notify: impl FnMut(&mut V, E, &mut Window, &mut ModelContext<'_, V>) + 'static,
     ) -> Subscription
     where
         V2: 'static,
@@ -4138,7 +4142,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 window_handle
                     .update(cx, |_, cx| {
                         if let Some(handle) = E::upgrade_from(&entity) {
-                            view.update(cx, |this, cx| on_notify(this, handle, cx))
+                            view.update(cx, |this, window, cx| on_notify(this, handle, window, cx))
                                 .is_ok()
                         } else {
                             false
@@ -4155,7 +4159,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn subscribe<V2, E, Evt>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(&mut V, E, &Evt, &mut ViewContext<'_, V>) + 'static,
+        mut on_event: impl FnMut(&mut V, E, &Evt, &mut Window, &mut ModelContext<'_, V>) + 'static,
     ) -> Subscription
     where
         V2: EventEmitter<Evt>,
@@ -4175,8 +4179,10 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                         .update(cx, |_, cx| {
                             if let Some(handle) = E::upgrade_from(&handle) {
                                 let event = event.downcast_ref().expect("invalid event type");
-                                view.update(cx, |this, cx| on_event(this, handle, event, cx))
-                                    .is_ok()
+                                view.update(cx, |this, window, cx| {
+                                    on_event(this, handle, event, window, cx)
+                                })
+                                .is_ok()
                             } else {
                                 false
                             }
@@ -4211,7 +4217,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn observe_release<V2, E>(
         &self,
         entity: &E,
-        mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, V>) + 'static,
+        mut on_release: impl FnMut(&mut V, &mut V2, &mut Window, &mut ModelContext<'_, V>) + 'static,
     ) -> Subscription
     where
         V: 'static,
@@ -4226,7 +4232,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
                 let _ = window_handle.update(cx, |_, cx| {
-                    view.update(cx, |this, cx| on_release(this, entity, cx))
+                    view.update(cx, |this, window, cx| on_release(this, entity, window, cx))
                 });
             }),
         );
@@ -4243,12 +4249,15 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Register a callback to be invoked when the window is resized.
     pub fn observe_window_bounds(
         &self,
-        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let (subscription, activate) = self.window.bounds_observers.insert(
             (),
-            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+            Box::new(move |cx| {
+                view.update(cx, |view, window, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
         );
         activate();
         subscription
@@ -4257,12 +4266,15 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Register a callback to be invoked when the window is activated or deactivated.
     pub fn observe_window_activation(
         &self,
-        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let (subscription, activate) = self.window.activation_observers.insert(
             (),
-            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+            Box::new(move |cx| {
+                view.update(cx, |view, window, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
         );
         activate();
         subscription
@@ -4271,12 +4283,15 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Registers a callback to be invoked when the window appearance changes.
     pub fn observe_window_appearance(
         &self,
-        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let (subscription, activate) = self.window.appearance_observers.insert(
             (),
-            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+            Box::new(move |cx| {
+                view.update(cx, |view, window, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
         );
         activate();
         subscription
@@ -4287,7 +4302,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
-        mut f: impl FnMut(&mut V, &KeystrokeEvent, &mut ViewContext<V>) + 'static,
+        mut f: impl FnMut(&mut V, &KeystrokeEvent, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> Subscription {
         fn inner(
             keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
@@ -4303,7 +4318,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             &mut self.keystroke_observers,
             Box::new(move |event, cx| {
                 if let Some(view) = view.upgrade() {
-                    view.update(cx, |view, cx| f(view, event, cx));
+                    view.update(cx, |view, window, cx| f(view, event, window, cx));
                     true
                 } else {
                     false
@@ -4315,12 +4330,15 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Register a callback to be invoked when the window's pending input changes.
     pub fn observe_pending_input(
         &self,
-        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let (subscription, activate) = self.window.pending_input_observers.insert(
             (),
-            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+            Box::new(move |cx| {
+                view.update(cx, |view, window, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
         );
         activate();
         subscription
@@ -4331,17 +4349,17 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_focus(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
         let (subscription, activate) =
             self.window.new_focus_listener(Box::new(move |event, cx| {
-                view.update(cx, |view, cx| {
+                view.update(cx, |view, window, cx| {
                     if event.previous_focus_path.last() != Some(&focus_id)
                         && event.current_focus_path.last() == Some(&focus_id)
                     {
-                        listener(view, cx)
+                        listener(view, window, cx)
                     }
                 })
                 .is_ok()
@@ -4356,15 +4374,15 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_focus_in(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
         let (subscription, activate) =
             self.window.new_focus_listener(Box::new(move |event, cx| {
-                view.update(cx, |view, cx| {
+                view.update(cx, |view, window, cx| {
                     if event.is_focus_in(focus_id) {
-                        listener(view, cx)
+                        listener(view, window, cx)
                     }
                 })
                 .is_ok()
@@ -4378,17 +4396,17 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_blur(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
         let (subscription, activate) =
             self.window.new_focus_listener(Box::new(move |event, cx| {
-                view.update(cx, |view, cx| {
+                view.update(cx, |view, window, cx| {
                     if event.previous_focus_path.last() == Some(&focus_id)
                         && event.current_focus_path.last() != Some(&focus_id)
                     {
-                        listener(view, cx)
+                        listener(view, window, cx)
                     }
                 })
                 .is_ok()
@@ -4403,12 +4421,15 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus_lost(
         &self,
-        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let (subscription, activate) = self.window.focus_lost_listeners.insert(
             (),
-            Box::new(move |cx| view.update(cx, |view, cx| listener(view, cx)).is_ok()),
+            Box::new(move |cx| {
+                view.update(cx, |view, window, cx| listener(view, window, cx))
+                    .is_ok()
+            }),
         );
         activate();
         subscription
@@ -4419,29 +4440,30 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_focus_out(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, FocusOutEvent, &mut ViewContext<V>) + 'static,
+        mut listener: impl FnMut(&mut V, FocusOutEvent, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> Subscription {
-        let view = self.view.downgrade();
-        let focus_id = handle.id;
-        let (subscription, activate) =
-            self.window.new_focus_listener(Box::new(move |event, cx| {
-                view.update(cx, |view, cx| {
-                    if let Some(blurred_id) = event.previous_focus_path.last().copied() {
-                        if event.is_focus_out(focus_id) {
-                            let event = FocusOutEvent {
-                                blurred: WeakFocusHandle {
-                                    id: blurred_id,
-                                    handles: Arc::downgrade(&cx.app.focus_handles),
-                                },
-                            };
-                            listener(view, event, cx)
-                        }
-                    }
-                })
-                .is_ok()
-            }));
-        self.app.defer(move |_| activate());
-        subscription
+        todo!()
+        // let view = self.view.downgrade();
+        // let focus_id = handle.id;
+        // let (subscription, activate) =
+        //     self.window.new_focus_listener(Box::new(move |event, cx| {
+        //         view.update(cx, |view, window, cx| {
+        //             if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+        //                 if event.is_focus_out(focus_id) {
+        //                     let event = FocusOutEvent {
+        //                         blurred: WeakFocusHandle {
+        //                             id: blurred_id,
+        //                             handles: Arc::downgrade(&cx.app.focus_handles),
+        //                         },
+        //                     };
+        //                     listener(view, event, window, cx)
+        //                 }
+        //             }
+        //         })
+        //         .is_ok()
+        //     }));
+        // self.app.defer(move |_| activate());
+        // subscription
     }
 
     /// Schedule a future to be run asynchronously.
@@ -4460,7 +4482,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Register a callback to be invoked when the given global state changes.
     pub fn observe_global<G: Global>(
         &mut self,
-        mut f: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
+        mut f: impl FnMut(&mut V, &mut Window, &mut ModelContext<'_, V>) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         let view = self.view().downgrade();
@@ -4468,7 +4490,10 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             TypeId::of::<G>(),
             Box::new(move |cx| {
                 window_handle
-                    .update(cx, |_, cx| view.update(cx, |view, cx| f(view, cx)).is_ok())
+                    .update(cx, |_, cx| {
+                        view.update(cx, |view, window, cx| f(view, window, cx))
+                            .is_ok()
+                    })
                     .unwrap_or(false)
             }),
         );
@@ -4480,13 +4505,13 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_action(
         &mut self,
         action_type: TypeId,
-        listener: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut Window, &mut ModelContext<V>) + 'static,
     ) {
         let handle = self.view().clone();
         self.window_cx
             .on_action(action_type, move |action, phase, cx| {
-                handle.update(cx, |view, cx| {
-                    listener(view, action, phase, cx);
+                handle.update(cx, |view, window, cx| {
+                    listener(view, action, phase, window, cx);
                 })
             });
     }
@@ -4510,7 +4535,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     where
         V: FocusableView,
     {
-        self.defer(|view, cx| view.focus_handle(cx).focus(cx))
+        todo!()
+        // self.defer(|view, window, cx| view.focus_handle(cx).focus(cx))
     }
 
     /// Convenience method for accessing view state in an event callback.
@@ -4520,11 +4546,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// callbacks. This method provides a convenient way to do so.
     pub fn listener<E: ?Sized>(
         &self,
-        f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
+        f: impl Fn(&mut V, &E, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> impl Fn(&E, &mut WindowContext) + 'static {
         let view = self.view().downgrade();
         move |e: &E, cx: &mut WindowContext| {
-            view.update(cx, |view, cx| f(view, e, cx)).ok();
+            view.update(cx, |view, window, cx| f(view, e, window, cx))
+                .ok();
         }
     }
 }
@@ -4592,7 +4619,7 @@ impl<V> Context for ViewContext<'_, V> {
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
     fn new_view<W: Render + 'static>(
         &mut self,
-        build_view_state: impl FnOnce(&mut ViewContext<'_, W>) -> W,
+        build_view_state: impl FnOnce(&mut Window, &mut ModelContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {
         self.window_cx.new_view(build_view_state)
     }
@@ -4600,14 +4627,14 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
     fn update_view<V2: 'static, R>(
         &mut self,
         view: &View<V2>,
-        update: impl FnOnce(&mut V2, &mut ViewContext<'_, V2>) -> R,
+        update: impl FnOnce(&mut V2, &mut Window, &mut ModelContext<'_, V2>) -> R,
     ) -> Self::Result<R> {
         self.window_cx.update_view(view, update)
     }
 
     fn replace_root_view<W>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
+        build_view: impl FnOnce(&mut Window, &mut ModelContext<'_, W>) -> W,
     ) -> Self::Result<View<W>>
     where
         W: 'static + Render,
@@ -4700,7 +4727,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<'_, V>) -> R,
     ) -> Result<R>
     where
         C: Context,

@@ -1,5 +1,5 @@
 use gpui::{
-    div, prelude::*, px, size, App, AppContext, Bounds, ViewContext, WindowBounds, WindowOptions,
+    div, prelude::*, px, size, App, AppContext, Bounds, ModelContext, WindowBounds, WindowOptions,
 };
 
 struct HelloWorld {}

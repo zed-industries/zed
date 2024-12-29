@@ -7,8 +7,8 @@
 use crate::{
     point, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
     GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
-    ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, View,
-    ViewContext, WindowContext,
+    ListSizingBehavior, ModelContext, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled,
+    View, Window, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -24,7 +24,7 @@ pub fn uniform_list<I, R, V>(
     view: View<V>,
     id: I,
     item_count: usize,
-    f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<R>,
+    f: impl 'static + Fn(&mut V, Range<usize>, &mut Window, &mut ModelContext<V>) -> Vec<R>,
 ) -> UniformList
 where
     I: Into<ElementId>,
@@ -36,8 +36,8 @@ where
     base_style.overflow.y = Some(Overflow::Scroll);
 
     let render_range = move |range, cx: &mut WindowContext| {
-        view.update(cx, |this, cx| {
-            f(this, range, cx)
+        view.update(cx, |this, window, cx| {
+            f(this, range, window, cx)
                 .into_iter()
                 .map(|component| component.into_any_element())
                 .collect()
