@@ -561,7 +561,7 @@ async fn test_fetch_variables_for_multiple_scopes(
     shutdown_session.await.unwrap();
 }
 
-// tests that toggling a variable will fetch its children and show it
+// tests that toggling a variable will fetch its children and shows it
 #[gpui::test]
 async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
@@ -1079,6 +1079,114 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
                                     has_children: false,
                                     variable: Arc::new(nested_variables[1].clone()),
                                     container_reference: scope1_variables[0].variables_reference,
+                                },
+                                VariableListEntry::Variable {
+                                    depth: 1,
+                                    scope: Arc::new(scopes[0].clone()),
+                                    has_children: false,
+                                    variable: Arc::new(scope1_variables[1].clone()),
+                                    container_reference: scopes[0].variables_reference,
+                                },
+                                VariableListEntry::Scope(scopes[1].clone()),
+                                VariableListEntry::Variable {
+                                    depth: 1,
+                                    scope: Arc::new(scopes[1].clone()),
+                                    has_children: false,
+                                    variable: Arc::new(scope2_variables[0].clone()),
+                                    container_reference: scopes[1].variables_reference,
+                                },
+                            ],
+                            variable_list.entries().get(&1).unwrap().clone()
+                        );
+                    });
+            });
+        })
+        .unwrap();
+
+    // toggle variable that has child variables to hide variables
+    workspace
+        .update(cx, |workspace, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let active_debug_panel_item = debug_panel
+                .update(cx, |this, cx| this.active_debug_panel_item(cx))
+                .unwrap();
+
+            active_debug_panel_item.update(cx, |debug_panel_item, cx| {
+                debug_panel_item
+                    .variable_list()
+                    .update(cx, |variable_list, cx| {
+                        variable_list.toggle_entry(
+                            &crate::variable_list::OpenEntry::Variable {
+                                name: scope1_variables[0].name.clone(),
+                                depth: 1,
+                            },
+                            cx,
+                        );
+                    });
+            });
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    workspace
+        .update(cx, |workspace, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let active_debug_panel_item = debug_panel
+                .update(cx, |this, cx| this.active_debug_panel_item(cx))
+                .unwrap();
+
+            active_debug_panel_item.update(cx, |debug_panel_item, cx| {
+                debug_panel_item
+                    .variable_list()
+                    .update(cx, |variable_list, _| {
+                        // scope 1
+                        assert_eq!(
+                            vec![
+                                VariableContainer {
+                                    container_reference: scopes[0].variables_reference,
+                                    variable: scope1_variables[0].clone(),
+                                    depth: 1,
+                                },
+                                VariableContainer {
+                                    container_reference: scope1_variables[0].variables_reference,
+                                    variable: nested_variables[0].clone(),
+                                    depth: 2,
+                                },
+                                VariableContainer {
+                                    container_reference: scope1_variables[0].variables_reference,
+                                    variable: nested_variables[1].clone(),
+                                    depth: 2,
+                                },
+                                VariableContainer {
+                                    container_reference: scopes[0].variables_reference,
+                                    variable: scope1_variables[1].clone(),
+                                    depth: 1,
+                                },
+                            ],
+                            variable_list.variables_by_scope(1, 2).unwrap().variables()
+                        );
+
+                        // scope 2
+                        assert_eq!(
+                            vec![VariableContainer {
+                                container_reference: scopes[1].variables_reference,
+                                variable: scope2_variables[0].clone(),
+                                depth: 1,
+                            }],
+                            variable_list.variables_by_scope(1, 4).unwrap().variables()
+                        );
+
+                        // assert visual entries
+                        assert_eq!(
+                            vec![
+                                VariableListEntry::Scope(scopes[0].clone()),
+                                VariableListEntry::Variable {
+                                    depth: 1,
+                                    scope: Arc::new(scopes[0].clone()),
+                                    has_children: true,
+                                    variable: Arc::new(scope1_variables[0].clone()),
+                                    container_reference: scopes[0].variables_reference,
                                 },
                                 VariableListEntry::Variable {
                                     depth: 1,
