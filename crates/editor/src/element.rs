@@ -6171,7 +6171,7 @@ impl Element for EditorElement {
                         Vec<Selection<Point>>,
                         Vec<BufferId>,
                     ) = self.editor.update(cx, |editor, cx| {
-                        let all_selections = editor.selections.all::<usize>(cx);
+                        let all_selections = editor.selections.all::<Point>(cx);
                         let selected_buffer_ids = if editor.is_singleton(cx) {
                             Vec::new()
                         } else {
@@ -6180,7 +6180,7 @@ impl Element for EditorElement {
                             for selection in all_selections {
                                 for buffer_id in snapshot
                                     .buffer_snapshot
-                                    .buffer_ids_for_range(selection.range())
+                                    .buffer_ids_in_selected_rows(selection)
                                 {
                                     if selected_buffer_ids.last() != Some(&buffer_id) {
                                         selected_buffer_ids.push(buffer_id);
