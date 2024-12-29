@@ -4150,156 +4150,169 @@ impl<'a, V: 'static> ModelContext<'a, V> {
         )
     }
 
-    // /// Register a callback to be invoked when the view is released.
-    // ///
-    // /// The callback receives a handle to the view's window. This handle may be
-    // /// invalid, if the window was closed before the view was released.
-    // pub fn on_release(
-    //     &self,
-    //     on_release: impl FnOnce(&mut V, AnyWindowHandle, &mut AppContext) + 'static,
-    // ) -> Subscription {
-    //     let window_handle = self.window.handle;
-    //     let (subscription, activate) = self.app.release_listeners.insert(
-    //         self.view.model.entity_id,
-    //         Box::new(move |this, cx| {
-    //             let this = this.downcast_mut().expect("invalid entity type");
-    //             on_release(this, window_handle, cx)
-    //         }),
-    //     );
-    //     activate();
-    //     subscription
-    // }
+    /// Register a callback to be invoked when the view is released.
+    ///
+    /// The callback receives a handle to the view's window. This handle may be
+    /// invalid, if the window was closed before the view was released.
+    pub fn on_release_in(
+        &mut self,
+        window: &Window,
+        on_release: impl FnOnce(&mut V, AnyWindowHandle, &mut AppContext) + 'static,
+    ) -> Subscription {
+        let window_handle = window.handle;
+        let (subscription, activate) = self.release_listeners.insert(
+            self.entity_id(),
+            Box::new(move |this, cx| {
+                let this = this.downcast_mut().expect("invalid entity type");
+                on_release(this, window_handle, cx)
+            }),
+        );
+        activate();
+        subscription
+    }
 
-    // /// Register a callback to be invoked when the given Model or View is released.
-    // pub fn observe_release<V2, E>(
-    //     &self,
-    //     entity: &E,
-    //     mut on_release: impl FnMut(&mut V, &mut V2, &mut Window, &mut ModelContext<'_, V>) + 'static,
-    // ) -> Subscription
-    // where
-    //     V: 'static,
-    //     V2: 'static,
-    //     E: Entity<V2>,
-    // {
-    //     let view = self.view().downgrade();
-    //     let entity_id = entity.entity_id();
-    //     let window_handle = self.window.handle;
-    //     let (subscription, activate) = self.app.release_listeners.insert(
-    //         entity_id,
-    //         Box::new(move |entity, cx| {
-    //             let entity = entity.downcast_mut().expect("invalid entity type");
-    //             let _ = window_handle.update(cx, |_, cx| {
-    //                 view.update(cx, |this, window, cx| on_release(this, entity, window, cx))
-    //             });
-    //         }),
-    //     );
-    //     activate();
-    //     subscription
-    // }
+    /// Register a callback to be invoked when the given Model or View is released.
+    pub fn observe_release_in<V2>(
+        &self,
+        observed: &Model<V2>,
+        window: &Window,
+        mut on_release: impl FnMut(&mut V, &mut V2, &mut Window, &mut ModelContext<'_, V>) + 'static,
+    ) -> Subscription
+    where
+        V: 'static,
+        V2: 'static,
+    {
+        let observer = self.weak_model();
+        let window_handle = window.handle;
+        let (subscription, activate) = self.release_listeners.insert(
+            observed.entity_id(),
+            Box::new(move |observed, cx| {
+                let observed = observed
+                    .downcast_mut()
+                    .expect("invalid observed entity type");
+                let _ = window_handle.update(cx, |_, cx| {
+                    let window = &mut cx.window;
+                    observer.update(cx.app, |this, cx| on_release(this, observed, window, cx))
+                });
+            }),
+        );
+        activate();
+        subscription
+    }
 
+    // todo! Deal with notification of windows specially
     // /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     // /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     // pub fn notify(&mut self) {
     //     self.window_cx.notify(Some(self.view.entity_id()));
     // }
 
-    // /// Register a callback to be invoked when the window is resized.
-    // pub fn observe_window_bounds(
-    //     &self,
-    //     mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> Subscription {
-    //     let view = self.view.downgrade();
-    //     let (subscription, activate) = self.window.bounds_observers.insert(
-    //         (),
-    //         Box::new(move |cx| {
-    //             view.update(cx, |view, window, cx| callback(view, window, cx))
-    //                 .is_ok()
-    //         }),
-    //     );
-    //     activate();
-    //     subscription
-    // }
+    /// Register a callback to be invoked when the window is resized.
+    pub fn observe_window_bounds(
+        &self,
+        window: &mut Window,
+        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_model();
+        let (subscription, activate) = window.bounds_observers.insert(
+            (),
+            Box::new(move |cx| {
+                let window = &mut cx.window;
+                view.update(cx.app, |view, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        activate();
+        subscription
+    }
 
-    // /// Register a callback to be invoked when the window is activated or deactivated.
-    // pub fn observe_window_activation(
-    //     &self,
-    //     mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> Subscription {
-    //     let view = self.view.downgrade();
-    //     let (subscription, activate) = self.window.activation_observers.insert(
-    //         (),
-    //         Box::new(move |cx| {
-    //             view.update(cx, |view, window, cx| callback(view, window, cx))
-    //                 .is_ok()
-    //         }),
-    //     );
-    //     activate();
-    //     subscription
-    // }
+    /// Register a callback to be invoked when the window is activated or deactivated.
+    pub fn observe_window_activation(
+        &self,
+        window: &mut Window,
+        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_model();
+        let (subscription, activate) = window.activation_observers.insert(
+            (),
+            Box::new(move |cx| {
+                let window = &mut cx.window;
+                view.update(cx.app, |view, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        activate();
+        subscription
+    }
 
-    // /// Registers a callback to be invoked when the window appearance changes.
-    // pub fn observe_window_appearance(
-    //     &self,
-    //     mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> Subscription {
-    //     let view = self.view.downgrade();
-    //     let (subscription, activate) = self.window.appearance_observers.insert(
-    //         (),
-    //         Box::new(move |cx| {
-    //             view.update(cx, |view, window, cx| callback(view, window, cx))
-    //                 .is_ok()
-    //         }),
-    //     );
-    //     activate();
-    //     subscription
-    // }
+    /// Registers a callback to be invoked when the window appearance changes.
+    pub fn observe_window_appearance(
+        &self,
+        window: &mut Window,
+        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_model();
+        let (subscription, activate) = window.appearance_observers.insert(
+            (),
+            Box::new(move |cx| {
+                let window = &mut cx.window;
+                view.update(cx.app, |view, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        activate();
+        subscription
+    }
 
-    // /// Register a callback to be invoked when a keystroke is received by the application
-    // /// in any window. Note that this fires after all other action and event mechanisms have resolved
-    // /// and that this API will not be invoked if the event's propagation is stopped.
-    // pub fn observe_keystrokes(
-    //     &mut self,
-    //     mut f: impl FnMut(&mut V, &KeystrokeEvent, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> Subscription {
-    //     fn inner(
-    //         keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
-    //         handler: KeystrokeObserver,
-    //     ) -> Subscription {
-    //         let (subscription, activate) = keystroke_observers.insert((), handler);
-    //         activate();
-    //         subscription
-    //     }
+    /// Register a callback to be invoked when a keystroke is received by the application
+    /// in any window. Note that this fires after all other action and event mechanisms have resolved
+    /// and that this API will not be invoked if the event's propagation is stopped.
+    pub fn observe_keystrokes(
+        &mut self,
+        mut f: impl FnMut(&mut V, &KeystrokeEvent, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> Subscription {
+        fn inner(
+            keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
+            handler: KeystrokeObserver,
+        ) -> Subscription {
+            let (subscription, activate) = keystroke_observers.insert((), handler);
+            activate();
+            subscription
+        }
 
-    //     let view = self.view.downgrade();
-    //     inner(
-    //         &mut self.keystroke_observers,
-    //         Box::new(move |event, cx| {
-    //             if let Some(view) = view.upgrade() {
-    //                 view.update(cx, |view, window, cx| f(view, event, window, cx));
-    //                 true
-    //             } else {
-    //                 false
-    //             }
-    //         }),
-    //     )
-    // }
+        let view = self.weak_model();
+        inner(
+            &mut self.keystroke_observers,
+            Box::new(move |event, cx| {
+                if let Some(view) = view.upgrade() {
+                    let window = &mut cx.window;
+                    view.update(cx.app, |view, cx| f(view, event, window, cx));
+                    true
+                } else {
+                    false
+                }
+            }),
+        )
+    }
 
-    // /// Register a callback to be invoked when the window's pending input changes.
-    // pub fn observe_pending_input(
-    //     &self,
-    //     mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> Subscription {
-    //     let view = self.view.downgrade();
-    //     let (subscription, activate) = self.window.pending_input_observers.insert(
-    //         (),
-    //         Box::new(move |cx| {
-    //             view.update(cx, |view, window, cx| callback(view, window, cx))
-    //                 .is_ok()
-    //         }),
-    //     );
-    //     activate();
-    //     subscription
-    // }
+    /// Register a callback to be invoked when the window's pending input changes.
+    pub fn observe_pending_input(
+        &self,
+        window: &mut Window,
+        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_model();
+        let (subscription, activate) = window.pending_input_observers.insert(
+            (),
+            Box::new(move |cx| {
+                let window = &mut cx.window;
+                view.update(cx.app, |view, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        activate();
+        subscription
+    }
 
     // /// Register a listener to be called when the given focus handle receives focus.
     // /// Returns a subscription and persists until the subscription is dropped.
