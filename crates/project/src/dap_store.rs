@@ -934,7 +934,6 @@ impl DapStore {
                     Ok(task) => match task.await {
                         Ok(_) => (true, None),
                         Err(error) => {
-                            log::error!("Failed to reconnect to debug adapter client with error message: {error}");
                             this.update(&mut cx, |_, cx| {
                                 cx.emit(DapStoreEvent::Notification(error.to_string()));
                             })
