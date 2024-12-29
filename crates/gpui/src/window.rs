@@ -12,7 +12,7 @@ use crate::{
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene,
     Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription,
     TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
-    UnderlineStyle, View, VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance,
+    UnderlineStyle, View, VisualContext, WeakModel, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     SUBPIXEL_VARIANTS,
 };
@@ -4314,177 +4314,192 @@ impl<'a, V: 'static> ModelContext<'a, V> {
         subscription
     }
 
-    // /// Register a listener to be called when the given focus handle receives focus.
-    // /// Returns a subscription and persists until the subscription is dropped.
-    // pub fn on_focus(
-    //     &mut self,
-    //     handle: &FocusHandle,
-    //     mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> Subscription {
-    //     let view = self.view.downgrade();
-    //     let focus_id = handle.id;
-    //     let (subscription, activate) =
-    //         self.window.new_focus_listener(Box::new(move |event, cx| {
-    //             view.update(cx, |view, window, cx| {
-    //                 if event.previous_focus_path.last() != Some(&focus_id)
-    //                     && event.current_focus_path.last() == Some(&focus_id)
-    //                 {
-    //                     listener(view, window, cx)
-    //                 }
-    //             })
-    //             .is_ok()
-    //         }));
-    //     self.app.defer(|_| activate());
-    //     subscription
-    // }
+    /// Register a listener to be called when the given focus handle receives focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus(
+        &mut self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_model();
+        let focus_id = handle.id;
+        let (subscription, activate) = window.new_focus_listener(Box::new(move |event, cx| {
+            let window = &mut cx.window;
+            view.update(cx.app, |view, cx| {
+                if event.previous_focus_path.last() != Some(&focus_id)
+                    && event.current_focus_path.last() == Some(&focus_id)
+                {
+                    listener(view, window, cx)
+                }
+            })
+            .is_ok()
+        }));
+        self.defer(|_| activate());
+        subscription
+    }
 
-    // /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
-    // /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
-    // /// Returns a subscription and persists until the subscription is dropped.
-    // pub fn on_focus_in(
-    //     &mut self,
-    //     handle: &FocusHandle,
-    //     mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> Subscription {
-    //     let view = self.view.downgrade();
-    //     let focus_id = handle.id;
-    //     let (subscription, activate) =
-    //         self.window.new_focus_listener(Box::new(move |event, cx| {
-    //             view.update(cx, |view, window, cx| {
-    //                 if event.is_focus_in(focus_id) {
-    //                     listener(view, window, cx)
-    //                 }
-    //             })
-    //             .is_ok()
-    //         }));
-    //     self.app.defer(move |_| activate());
-    //     subscription
-    // }
+    /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_in(
+        &mut self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_model();
+        let focus_id = handle.id;
+        let (subscription, activate) = window.new_focus_listener(Box::new(move |event, cx| {
+            let window = &mut cx.window;
+            view.update(cx.app, |view, cx| {
+                if event.is_focus_in(focus_id) {
+                    listener(view, window, cx)
+                }
+            })
+            .is_ok()
+        }));
+        self.defer(|_| activate());
+        subscription
+    }
 
-    // /// Register a listener to be called when the given focus handle loses focus.
-    // /// Returns a subscription and persists until the subscription is dropped.
-    // pub fn on_blur(
-    //     &mut self,
-    //     handle: &FocusHandle,
-    //     mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> Subscription {
-    //     let view = self.view.downgrade();
-    //     let focus_id = handle.id;
-    //     let (subscription, activate) =
-    //         self.window.new_focus_listener(Box::new(move |event, cx| {
-    //             view.update(cx, |view, window, cx| {
-    //                 if event.previous_focus_path.last() == Some(&focus_id)
-    //                     && event.current_focus_path.last() != Some(&focus_id)
-    //                 {
-    //                     listener(view, window, cx)
-    //                 }
-    //             })
-    //             .is_ok()
-    //         }));
-    //     self.app.defer(move |_| activate());
-    //     subscription
-    // }
+    /// Register a listener to be called when the given focus handle loses focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_blur(
+        &mut self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_model();
+        let focus_id = handle.id;
+        let (subscription, activate) = window.new_focus_listener(Box::new(move |event, cx| {
+            let window = &mut cx.window;
+            view.update(cx.app, |view, cx| {
+                if event.previous_focus_path.last() == Some(&focus_id)
+                    && event.current_focus_path.last() != Some(&focus_id)
+                {
+                    listener(view, window, cx)
+                }
+            })
+            .is_ok()
+        }));
+        self.defer(|_| activate());
+        subscription
+    }
 
-    // /// Register a listener to be called when nothing in the window has focus.
-    // /// This typically happens when the node that was focused is removed from the tree,
-    // /// and this callback lets you chose a default place to restore the users focus.
-    // /// Returns a subscription and persists until the subscription is dropped.
-    // pub fn on_focus_lost(
-    //     &self,
-    //     mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> Subscription {
-    //     let view = self.view.downgrade();
-    //     let (subscription, activate) = self.window.focus_lost_listeners.insert(
-    //         (),
-    //         Box::new(move |cx| {
-    //             view.update(cx, |view, window, cx| listener(view, window, cx))
-    //                 .is_ok()
-    //         }),
-    //     );
-    //     activate();
-    //     subscription
-    // }
+    /// Register a listener to be called when nothing in the window has focus.
+    /// This typically happens when the node that was focused is removed from the tree,
+    /// and this callback lets you chose a default place to restore the users focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_lost(
+        &mut self,
+        window: &mut Window,
+        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_model();
+        let (subscription, activate) = window.focus_lost_listeners.insert(
+            (),
+            Box::new(move |cx| {
+                let window = &mut cx.window;
+                view.update(cx.app, |view, cx| listener(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        self.defer(|_| activate());
+        subscription
+    }
 
-    // /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
-    // /// Returns a subscription and persists until the subscription is dropped.
-    // pub fn on_focus_out(
-    //     &mut self,
-    //     handle: &FocusHandle,
-    //     mut listener: impl FnMut(&mut V, FocusOutEvent, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> Subscription {
-    //     // let view = self.view.downgrade();
-    //     // let focus_id = handle.id;
-    //     // let (subscription, activate) =
-    //     //     self.window.new_focus_listener(Box::new(move |event, cx| {
-    //     //         view.update(cx, |view, window, cx| {
-    //     //             if let Some(blurred_id) = event.previous_focus_path.last().copied() {
-    //     //                 if event.is_focus_out(focus_id) {
-    //     //                     let event = FocusOutEvent {
-    //     //                         blurred: WeakFocusHandle {
-    //     //                             id: blurred_id,
-    //     //                             handles: Arc::downgrade(&cx.app.focus_handles),
-    //     //                         },
-    //     //                     };
-    //     //                     listener(view, event, window, cx)
-    //     //                 }
-    //     //             }
-    //     //         })
-    //     //         .is_ok()
-    //     //     }));
-    //     // self.app.defer(move |_| activate());
-    //     // subscription
-    // }
+    /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_out(
+        &mut self,
+        handle: &FocusHandle,
+        window: &mut Window,
+        mut listener: impl FnMut(&mut V, FocusOutEvent, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_model();
+        let focus_id = handle.id;
+        let (subscription, activate) = window.new_focus_listener(Box::new(move |event, cx| {
+            let window = &mut cx.window;
+            view.update(cx.app, |view, cx| {
+                if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+                    if event.is_focus_out(focus_id) {
+                        let event = FocusOutEvent {
+                            blurred: WeakFocusHandle {
+                                id: blurred_id,
+                                handles: Arc::downgrade(&cx.focus_handles),
+                            },
+                        };
+                        listener(view, event, window, cx)
+                    }
+                }
+            })
+            .is_ok()
+        }));
+        self.defer(|_| activate());
+        subscription
+    }
 
-    // /// Schedule a future to be run asynchronously.
-    // /// The given callback is invoked with a [`WeakView<V>`] to avoid leaking the view for a long-running process.
-    // /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
-    // /// The returned future will be polled on the main thread.
-    // pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut) -> Task<R>
-    // where
-    //     R: 'static,
-    //     Fut: Future<Output = R> + 'static,
-    // {
-    //     let view = self.view().downgrade();
-    //     self.window_cx.spawn(|cx| f(view, cx))
-    // }
+    /// Schedule a future to be run asynchronously.
+    /// The given callback is invoked with a [`WeakView<V>`] to avoid leaking the view for a long-running process.
+    /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
+    /// The returned future will be polled on the main thread.
+    pub fn spawn_in<Fut, R>(
+        &self,
+        window: &Window,
+        f: impl FnOnce(WeakModel<V>, AsyncWindowContext) -> Fut,
+    ) -> Task<R>
+    where
+        R: 'static,
+        Fut: Future<Output = R> + 'static,
+    {
+        let view = self.weak_model();
+        window.spawn(self, |mut cx| f(view, cx))
+    }
 
-    // /// Register a callback to be invoked when the given global state changes.
-    // pub fn observe_global<G: Global>(
-    //     &mut self,
-    //     mut f: impl FnMut(&mut V, &mut Window, &mut ModelContext<'_, V>) + 'static,
-    // ) -> Subscription {
-    //     let window_handle = self.window.handle;
-    //     let view = self.view().downgrade();
-    //     let (subscription, activate) = self.global_observers.insert(
-    //         TypeId::of::<G>(),
-    //         Box::new(move |cx| {
-    //             window_handle
-    //                 .update(cx, |_, cx| {
-    //                     view.update(cx, |view, window, cx| f(view, window, cx))
-    //                         .is_ok()
-    //                 })
-    //                 .unwrap_or(false)
-    //         }),
-    //     );
-    //     self.app.defer(move |_| activate());
-    //     subscription
-    // }
+    /// Register a callback to be invoked when the given global state changes.
+    pub fn observe_global_in<G: Global>(
+        &mut self,
+        window: &Window,
+        mut f: impl FnMut(&mut V, &mut Window, &mut ModelContext<'_, V>) + 'static,
+    ) -> Subscription {
+        let window_handle = window.handle;
+        let view = self.weak_model();
+        let (subscription, activate) = self.global_observers.insert(
+            TypeId::of::<G>(),
+            Box::new(move |cx| {
+                window_handle
+                    .update(cx, |_, cx| {
+                        let window = &mut cx.window;
+                        view.update(cx.app, |view, cx| f(view, window, cx)).is_ok()
+                    })
+                    .unwrap_or(false)
+            }),
+        );
+        self.defer(move |_| activate());
+        subscription
+    }
 
-    // /// Register a callback to be invoked when the given Action type is dispatched to the window.
-    // pub fn on_action(
-    //     &mut self,
-    //     action_type: TypeId,
-    //     listener: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) {
-    //     let handle = self.view().clone();
-    //     self.window_cx
-    //         .on_action(action_type, move |action, phase, cx| {
-    //             handle.update(cx, |view, window, cx| {
-    //                 listener(view, action, phase, window, cx);
-    //             })
-    //         });
-    // }
+    /// Register a callback to be invoked when the given Action type is dispatched to the window.
+    pub fn on_action(
+        &mut self,
+        action_type: TypeId,
+        window: &mut Window,
+        listener: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut Window, &mut ModelContext<V>) + 'static,
+    ) {
+        let handle = self.weak_model();
+        window.on_action(action_type, move |action, phase, cx| {
+            let window = &mut cx.window;
+            handle
+                .update(cx.app, |view, cx| {
+                    listener(view, action, phase, window, cx);
+                })
+                .ok();
+        });
+    }
 
+    // todo!: I don't think we need this method.
     // /// Emit an event to be handled by any other views that have subscribed via [ViewContext::subscribe].
     // pub fn emit<Evt>(&mut self, event: Evt)
     // where
@@ -4492,20 +4507,21 @@ impl<'a, V: 'static> ModelContext<'a, V> {
     //     V: EventEmitter<Evt>,
     // {
     //     let emitter = self.view.model.entity_id;
-    //     self.app.push_effect(Effect::Emit {
+    //     self.push_effect(Effect::Emit {
     //         emitter,
     //         event_type: TypeId::of::<Evt>(),
     //         event: Box::new(event),
     //     });
     // }
 
-    // /// Move focus to the current view, assuming it implements [`FocusableView`].
-    // pub fn focus_self(&mut self)
-    // where
-    //     V: FocusableView,
-    // {
-    //     // self.defer(|view, window, cx| view.focus_handle(cx).focus(cx))
-    // }
+    /// Move focus to the current view, assuming it implements [`FocusableView`].
+    pub fn focus_self(&mut self, window: &mut Window)
+    where
+        V: FocusableView,
+    {
+        let view = self.model();
+        window.defer(self, move |cx| view.read(cx).focus_handle(cx).focus(cx))
+    }
 
     // /// Convenience method for accessing view state in an event callback.
     // ///
@@ -4516,10 +4532,10 @@ impl<'a, V: 'static> ModelContext<'a, V> {
     //     &self,
     //     f: impl Fn(&mut V, &E, &mut Window, &mut ModelContext<V>) + 'static,
     // ) -> impl Fn(&E, &mut WindowContext) + 'static {
-    //     let view = self.view().downgrade();
+    //     let view = self.weak_model();
     //     move |e: &E, cx: &mut WindowContext| {
-    //         view.update(cx, |view, window, cx| f(view, e, window, cx))
-    //             .ok();
+    //         let window = &mut cx.window;
+    //         view.update(cx.app, |view, cx| f(view, e, window, cx)).ok();
     //     }
     // }
 }
