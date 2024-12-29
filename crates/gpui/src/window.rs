@@ -7172,142 +7172,136 @@ impl Window {
         }
     }
 
-    // /// Register the given handler to be invoked whenever the global of the given type
-    // /// is updated.
-    // pub fn observe_global<G: Global>(
-    //     &mut self,
-    //     f: impl Fn(&mut WindowContext<'_>) + 'static,
-    // ) -> Subscription {
-    //     let window_handle = self.window.handle;
-    //     let (subscription, activate) = self.global_observers.insert(
-    //         TypeId::of::<G>(),
-    //         Box::new(move |cx| window_handle.update(cx, |_, cx| f(cx)).is_ok()),
-    //     );
-    //     self.app.defer(move |_| activate());
-    //     subscription
-    // }
+    /// Register the given handler to be invoked whenever the global of the given type
+    /// is updated.
+    pub fn observe_global<G: Global>(
+        &mut self,
+        cx: &mut AppContext,
+        f: impl Fn(&mut WindowContext<'_>) + 'static,
+    ) -> Subscription {
+        let window_handle = self.handle;
+        let (subscription, activate) = cx.global_observers.insert(
+            TypeId::of::<G>(),
+            Box::new(move |cx| window_handle.update(cx, |_, cx| f(cx)).is_ok()),
+        );
+        cx.defer(move |_| activate());
+        subscription
+    }
 
-    // /// Focus the current window and bring it to the foreground at the platform level.
-    // pub fn activate_window(&self) {
-    //     self.window.platform_window.activate();
-    // }
+    /// Focus the current window and bring it to the foreground at the platform level.
+    pub fn activate_window(&self) {
+        self.platform_window.activate();
+    }
 
-    // /// Minimize the current window at the platform level.
-    // pub fn minimize_window(&self) {
-    //     self.window.platform_window.minimize();
-    // }
+    /// Minimize the current window at the platform level.
+    pub fn minimize_window(&self) {
+        self.platform_window.minimize();
+    }
 
-    // /// Toggle full screen status on the current window at the platform level.
-    // pub fn toggle_fullscreen(&self) {
-    //     self.window.platform_window.toggle_fullscreen();
-    // }
+    /// Toggle full screen status on the current window at the platform level.
+    pub fn toggle_fullscreen(&self) {
+        self.platform_window.toggle_fullscreen();
+    }
 
-    // /// Updates the IME panel position suggestions for languages like japanese, chinese.
-    // pub fn invalidate_character_coordinates(&self) {
-    //     self.on_next_frame(|cx| {
-    //         if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
-    //             if let Some(bounds) = input_handler.selected_bounds(cx) {
-    //                 cx.window
-    //                     .platform_window
-    //                     .update_ime_position(bounds.scale(cx.scale_factor()));
-    //             }
-    //             cx.window.platform_window.set_input_handler(input_handler);
-    //         }
-    //     });
-    // }
+    /// Updates the IME panel position suggestions for languages like japanese, chinese.
+    pub fn invalidate_character_coordinates(&self) {
+        self.on_next_frame(|cx| {
+            if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
+                if let Some(bounds) = input_handler.selected_bounds(cx) {
+                    cx.window
+                        .platform_window
+                        .update_ime_position(bounds.scale(cx.scale_factor()));
+                }
+                cx.window.platform_window.set_input_handler(input_handler);
+            }
+        });
+    }
 
-    // /// Present a platform dialog.
-    // /// The provided message will be presented, along with buttons for each answer.
-    // /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
-    // pub fn prompt(
-    //     &mut self,
-    //     level: PromptLevel,
-    //     message: &str,
-    //     detail: Option<&str>,
-    //     answers: &[&str],
-    // ) -> oneshot::Receiver<usize> {
-    //     let prompt_builder = self.app.prompt_builder.take();
-    //     let Some(prompt_builder) = prompt_builder else {
-    //         unreachable!("Re-entrant window prompting is not supported by GPUI");
-    //     };
+    /// Present a platform dialog.
+    /// The provided message will be presented, along with buttons for each answer.
+    /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
+    pub fn prompt(
+        &mut self,
+        level: PromptLevel,
+        message: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+        cx: &mut AppContext,
+    ) -> oneshot::Receiver<usize> {
+        let prompt_builder = cx.prompt_builder.take();
+        let Some(prompt_builder) = prompt_builder else {
+            unreachable!("Re-entrant window prompting is not supported by GPUI");
+        };
 
-    //     let receiver = match &prompt_builder {
-    //         PromptBuilder::Default => self
-    //             .window
-    //             .platform_window
-    //             .prompt(level, message, detail, answers)
-    //             .unwrap_or_else(|| {
-    //                 self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
-    //             }),
-    //         PromptBuilder::Custom(_) => {
-    //             self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
-    //         }
-    //     };
+        let receiver = match &prompt_builder {
+            PromptBuilder::Default => self
+                .platform_window
+                .prompt(level, message, detail, answers)
+                .unwrap_or_else(|| {
+                    self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+                }),
+            PromptBuilder::Custom(_) => {
+                self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+            }
+        };
 
-    //     self.app.prompt_builder = Some(prompt_builder);
+        cx.prompt_builder = Some(prompt_builder);
 
-    //     receiver
-    // }
+        receiver
+    }
 
-    // fn build_custom_prompt(
-    //     &mut self,
-    //     prompt_builder: &PromptBuilder,
-    //     level: PromptLevel,
-    //     message: &str,
-    //     detail: Option<&str>,
-    //     answers: &[&str],
-    // ) -> oneshot::Receiver<usize> {
-    //     let (sender, receiver) = oneshot::channel();
-    //     let handle = PromptHandle::new(sender);
-    //     let handle = (prompt_builder)(level, message, detail, answers, handle, self);
-    //     self.window.prompt = Some(handle);
-    //     receiver
-    // }
+    fn build_custom_prompt(
+        &mut self,
+        prompt_builder: &PromptBuilder,
+        level: PromptLevel,
+        message: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        let (sender, receiver) = oneshot::channel();
+        let handle = PromptHandle::new(sender);
+        let handle = (prompt_builder)(level, message, detail, answers, handle, todo!());
+        self.prompt = Some(handle);
+        receiver
+    }
 
-    // /// Returns the current context stack.
-    // pub fn context_stack(&self) -> Vec<KeyContext> {
-    //     let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
-    //     let node_id = self
-    //         .window
-    //         .focus
-    //         .and_then(|focus_id| dispatch_tree.focusable_node_id(focus_id))
-    //         .unwrap_or_else(|| dispatch_tree.root_node_id());
+    /// Returns the current context stack.
+    pub fn context_stack(&self) -> Vec<KeyContext> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let node_id = self
+            .focus
+            .and_then(|focus_id| dispatch_tree.focusable_node_id(focus_id))
+            .unwrap_or_else(|| dispatch_tree.root_node_id());
 
-    //     dispatch_tree
-    //         .dispatch_path(node_id)
-    //         .iter()
-    //         .filter_map(move |&node_id| dispatch_tree.node(node_id).context.clone())
-    //         .collect()
-    // }
+        dispatch_tree
+            .dispatch_path(node_id)
+            .iter()
+            .filter_map(move |&node_id| dispatch_tree.node(node_id).context.clone())
+            .collect()
+    }
 
-    // /// Returns all available actions for the focused element.
-    // pub fn available_actions(&self) -> Vec<Box<dyn Action>> {
-    //     let node_id = self
-    //         .window
-    //         .focus
-    //         .and_then(|focus_id| {
-    //             self.window
-    //                 .rendered_frame
-    //                 .dispatch_tree
-    //                 .focusable_node_id(focus_id)
-    //         })
-    //         .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
+    /// Returns all available actions for the focused element.
+    pub fn available_actions(&self, cx: &mut AppContext) -> Vec<Box<dyn Action>> {
+        let node_id = self
+            .focus
+            .and_then(|focus_id| {
+                self.rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
 
-    //     let mut actions = self
-    //         .window
-    //         .rendered_frame
-    //         .dispatch_tree
-    //         .available_actions(node_id);
-    //     for action_type in self.global_action_listeners.keys() {
-    //         if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.as_any().type_id()) {
-    //             let action = self.actions.build_action_type(action_type).ok();
-    //             if let Some(action) = action {
-    //                 actions.insert(ix, action);
-    //             }
-    //         }
-    //     }
-    //     actions
-    // }
+        let mut actions = self.rendered_frame.dispatch_tree.available_actions(node_id);
+        for action_type in cx.global_action_listeners.keys() {
+            if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.as_any().type_id()) {
+                let action = cx.actions.build_action_type(action_type).ok();
+                if let Some(action) = action {
+                    actions.insert(ix, action);
+                }
+            }
+        }
+        actions
+    }
 
     /// Returns key bindings that invoke the given action on the currently focused element.
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
@@ -7316,86 +7310,88 @@ impl Window {
             .bindings_for_action(action, &self.rendered_frame.dispatch_tree.context_stack)
     }
 
-    // /// Returns key bindings that invoke the given action on the currently focused element.
-    // pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
-    //     RefCell::borrow(&self.keymap).all_bindings_for_input(input)
-    // }
+    /// Returns key bindings that invoke the given action on the currently focused element.
+    pub fn all_bindings_for_input(&self, input: &[Keystroke], cx: &AppContext) -> Vec<KeyBinding> {
+        RefCell::borrow(&cx.keymap).all_bindings_for_input(input)
+    }
 
-    // /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
-    // pub fn bindings_for_action_in(
-    //     &self,
-    //     action: &dyn Action,
-    //     focus_handle: &FocusHandle,
-    // ) -> Vec<KeyBinding> {
-    //     let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
+    /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
+    pub fn bindings_for_action_in(
+        &self,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
 
-    //     let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
-    //         return vec![];
-    //     };
-    //     let context_stack: Vec<_> = dispatch_tree
-    //         .dispatch_path(node_id)
-    //         .into_iter()
-    //         .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
-    //         .collect();
-    //     dispatch_tree.bindings_for_action(action, &context_stack)
-    // }
+        let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
+            return vec![];
+        };
+        let context_stack: Vec<_> = dispatch_tree
+            .dispatch_path(node_id)
+            .into_iter()
+            .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
+            .collect();
+        dispatch_tree.bindings_for_action(action, &context_stack)
+    }
 
-    // /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
-    // pub fn listener_for<V: Render, E>(
-    //     &self,
-    //     view: &View<V>,
-    //     f: impl Fn(&mut V, &E, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> impl Fn(&E, &mut WindowContext) + 'static {
-    //     let view = view.downgrade();
-    //     move |e: &E, cx: &mut WindowContext| {
-    //         view.update(cx, |view, window, cx| f(view, e, window, cx))
-    //             .ok();
-    //     }
-    // }
+    /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
+    pub fn listener_for<V: Render, E>(
+        &self,
+        view: &View<V>,
+        f: impl Fn(&mut V, &E, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> impl Fn(&E, &mut WindowContext) + 'static {
+        let view = view.downgrade();
+        move |e: &E, cx: &mut WindowContext| {
+            view.update(cx, |view, window, cx| f(view, e, window, cx))
+                .ok();
+        }
+    }
 
-    // /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
-    // pub fn handler_for<V: Render>(
-    //     &self,
-    //     view: &View<V>,
-    //     f: impl Fn(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> impl Fn(&mut WindowContext) {
-    //     let view = view.downgrade();
-    //     move |cx: &mut WindowContext| {
-    //         view.update(cx, |view, window, cx| f(view, window, cx)).ok();
-    //     }
-    // }
+    /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
+    pub fn handler_for<V: Render>(
+        &self,
+        view: &View<V>,
+        f: impl Fn(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) -> impl Fn(&mut WindowContext) {
+        let view = view.downgrade();
+        move |cx: &mut WindowContext| {
+            view.update(cx, |view, window, cx| f(view, window, cx)).ok();
+        }
+    }
 
-    // /// Register a callback that can interrupt the closing of the current window based the returned boolean.
-    // /// If the callback returns false, the window won't be closed.
-    // pub fn on_window_should_close(&self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
-    //     let mut this = self.to_async();
-    //     self.window
-    //         .platform_window
-    //         .on_should_close(Box::new(move || this.update(|cx| f(cx)).unwrap_or(true)))
-    // }
+    /// Register a callback that can interrupt the closing of the current window based the returned boolean.
+    /// If the callback returns false, the window won't be closed.
+    pub fn on_window_should_close(
+        &self,
+        cx: &AppContext,
+        f: impl Fn(&mut WindowContext) -> bool + 'static,
+    ) {
+        let mut cx = self.to_async(cx);
+        self.platform_window
+            .on_should_close(Box::new(move || cx.update(|cx| f(cx)).unwrap_or(true)))
+    }
 
-    // /// Register an action listener on the window for the next frame. The type of action
-    // /// is determined by the first parameter of the given listener. When the next frame is rendered
-    // /// the listener will be cleared.
-    // ///
-    // /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
-    // /// a specific need to register a global listener.
-    // pub fn on_action(
-    //     &mut self,
-    //     action_type: TypeId,
-    //     listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
-    // ) {
-    //     self.window
-    //         .next_frame
-    //         .dispatch_tree
-    //         .on_action(action_type, Rc::new(listener));
-    // }
+    /// Register an action listener on the window for the next frame. The type of action
+    /// is determined by the first parameter of the given listener. When the next frame is rendered
+    /// the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_action(
+        &mut self,
+        action_type: TypeId,
+        listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
+    ) {
+        self.next_frame
+            .dispatch_tree
+            .on_action(action_type, Rc::new(listener));
+    }
 
-    // /// Read information about the GPU backing this window.
-    // /// Currently returns None on Mac and Windows.
-    // pub fn gpu_specs(&self) -> Option<GpuSpecs> {
-    //     self.window.platform_window.gpu_specs()
-    // }
+    /// Read information about the GPU backing this window.
+    /// Currently returns None on Mac and Windows.
+    pub fn gpu_specs(&self) -> Option<GpuSpecs> {
+        self.platform_window.gpu_specs()
+    }
 }
 
 // #[derive(Clone, Copy, Eq, PartialEq, Hash)]
