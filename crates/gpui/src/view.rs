@@ -22,6 +22,12 @@ pub struct View<V> {
     pub model: Model<V>,
 }
 
+impl<V> From<Model<V>> for View<V> {
+    fn from(model: Model<V>) -> Self {
+        Self { model }
+    }
+}
+
 impl<V> Sealed for View<V> {}
 
 struct AnyViewState {
@@ -277,6 +283,16 @@ impl<V: Render> From<View<V>> for AnyView {
     fn from(value: View<V>) -> Self {
         AnyView {
             model: value.model.into_any(),
+            render: any_view::render::<V>,
+            cached_style: None,
+        }
+    }
+}
+
+impl<V: Render> From<Model<V>> for AnyView {
+    fn from(model: Model<V>) -> Self {
+        AnyView {
+            model: model.into_any(),
             render: any_view::render::<V>,
             cached_style: None,
         }

@@ -1,6 +1,6 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId,
-    EventEmitter, Model, Reservation, Subscription, Task, View, WeakModel, WindowContext,
+    EventEmitter, Model, Reservation, Subscription, Task, View, WeakModel, Window, WindowContext,
     WindowHandle,
 };
 use anyhow::Result;
@@ -32,7 +32,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     /// Returns a handle to the model belonging to this context.
-    pub fn handle(&self) -> Model<T> {
+    pub fn model(&self) -> Model<T> {
         self.weak_model()
             .upgrade()
             .expect("The entity must be alive if we have a model context")
@@ -202,6 +202,22 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     {
         let this = self.weak_model();
         self.app.spawn(|cx| f(this, cx))
+    }
+
+    /// Convenience method for accessing view state in an event callback.
+    ///
+    /// Many GPUI callbacks take the form of `Fn(&E, &mut WindowContext)`,
+    /// but it's often useful to be able to access view state in these
+    /// callbacks. This method provides a convenient way to do so.
+    pub fn listener<E: ?Sized>(
+        &self,
+        f: impl Fn(&mut T, &E, &mut Window, &mut ModelContext<T>) + 'static,
+    ) -> impl Fn(&E, &mut WindowContext) + 'static {
+        let view = self.model().downgrade();
+        move |e: &E, cx: &mut WindowContext| {
+            let window = &mut cx.window;
+            view.update(cx.app, |view, cx| f(view, e, window, cx)).ok();
+        }
     }
 }
 

@@ -3,7 +3,8 @@ use std::{fs, path::PathBuf, time::Duration};
 use anyhow::Result;
 use gpui::{
     div, hsla, img, point, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds,
-    BoxShadow, ClickEvent, ModelContext, SharedString, Task, Timer, WindowBounds, WindowOptions,
+    BoxShadow, ClickEvent, ModelContext, SharedString, Task, Timer, Window, WindowBounds,
+    WindowOptions,
 };
 
 struct Assets {
@@ -39,14 +40,14 @@ struct HelloWorld {
 }
 
 impl HelloWorld {
-    fn new(_: &mut ViewContext<Self>) -> Self {
+    fn new(_: &mut Window, _: &mut ModelContext<Self>) -> Self {
         Self {
             _task: None,
             opacity: 0.5,
         }
     }
 
-    fn change_opacity(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn change_opacity(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.opacity = 0.0;
         cx.notify();
 
@@ -75,7 +76,7 @@ impl HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_row()

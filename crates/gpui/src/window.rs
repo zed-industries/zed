@@ -3915,13 +3915,8 @@ impl VisualContext for WindowContext<'_> {
     where
         V: 'static + Render,
     {
-        let slot = self.app.entities.reserve();
-        let view = View {
-            model: slot.clone(),
-        };
-        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
-        let entity = build_view_state(&mut *self.window, todo!());
-        cx.entities.insert(slot, entity);
+        let window = &mut self.window;
+        let model = self.app.new_model(|cx| build_view_state(window, cx));
 
         // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
         fn notify_observers(cx: &mut WindowContext, tid: TypeId, view: AnyView) {
@@ -3931,9 +3926,9 @@ impl VisualContext for WindowContext<'_> {
                 true
             });
         }
-        notify_observers(self, TypeId::of::<V>(), AnyView::from(view.clone()));
+        notify_observers(self, TypeId::of::<V>(), AnyView::from(model.clone()));
 
-        view
+        View { model }
     }
 
     /// Updates the given view. Prefer calling [`View::update`] instead, which calls this method.
@@ -3942,12 +3937,9 @@ impl VisualContext for WindowContext<'_> {
         view: &View<T>,
         update: impl FnOnce(&mut T, &mut Window, &mut ModelContext<'_, T>) -> R,
     ) -> Self::Result<R> {
-        todo!()
-        // let mut lease = self.app.entities.lease(&view.model);
-        // let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, view);
-        // let result = update(&mut *lease, todo!());
-        // cx.app.entities.end_lease(lease);
-        // result
+        let window = &mut self.window;
+        view.model
+            .update(self.app, |model, cx| update(model, window, cx))
     }
 
     fn replace_root_view<V>(
@@ -3965,8 +3957,7 @@ impl VisualContext for WindowContext<'_> {
 
     fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
         self.update_view(view, |view, window, cx| {
-            todo!()
-            // view.focus_handle(cx).clone().focus(cx);
+            window.focus(&view.focus_handle(cx));
         })
     }
 
@@ -3974,8 +3965,9 @@ impl VisualContext for WindowContext<'_> {
     where
         V: ManagedView,
     {
-        todo!()
-        // self.update_view(view, |_, cx| cx.emit(DismissEvent))
+        view.model.update(self.app, |_model, cx| {
+            cx.emit(DismissEvent);
+        });
     }
 }
 
@@ -4042,108 +4034,89 @@ impl BorrowMut<Window> for WindowContext<'_> {
 
 impl<T> BorrowWindow for T where T: BorrowMut<AppContext> + BorrowMut<Window> {}
 
-/// Provides access to application state that is specialized for a particular [`View`].
-/// Allows you to interact with focus, emit events, etc.
-/// ViewContext also derefs to [`WindowContext`], giving you access to all of its methods as well.
-/// When you call [`View::update`], you're passed a `&mut V` and an `&mut ViewContext<V>`.
-pub struct ViewContext<'a, V> {
-    window_cx: WindowContext<'a>,
-    view: &'a View<V>,
-}
-
-impl<V> Borrow<AppContext> for ViewContext<'_, V> {
-    fn borrow(&self) -> &AppContext {
-        &*self.window_cx.app
-    }
-}
-
-impl<V> BorrowMut<AppContext> for ViewContext<'_, V> {
-    fn borrow_mut(&mut self) -> &mut AppContext {
-        &mut *self.window_cx.app
-    }
-}
-
-impl<V> Borrow<Window> for ViewContext<'_, V> {
-    fn borrow(&self) -> &Window {
-        &*self.window_cx.window
-    }
-}
-
-impl<V> BorrowMut<Window> for ViewContext<'_, V> {
-    fn borrow_mut(&mut self) -> &mut Window {
-        &mut *self.window_cx.window
-    }
-}
-
-impl<'a, V: 'static> ViewContext<'a, V> {
-    pub(crate) fn new(app: &'a mut AppContext, window: &'a mut Window, view: &'a View<V>) -> Self {
-        Self {
-            window_cx: WindowContext::new(app, window),
-            view,
-        }
+impl<'a, V: 'static> ModelContext<'a, V> {
+    /// Focus the given view in the given window. View type is required to implement FocusableView.
+    pub fn focus_view<W: FocusableView>(&mut self, view: &View<W>, window: &mut Window) {
+        window.focus(&view.focus_handle(self));
     }
 
-    /// Get the entity_id of this view.
-    pub fn entity_id(&self) -> EntityId {
-        self.view.entity_id()
-    }
+    // /// Get the entity_id of this view.
+    // pub fn entity_id(&self) -> EntityId {
+    //     self.view.entity_id()
+    // }
 
-    /// Get the view pointer underlying this context.
-    pub fn view(&self) -> &View<V> {
-        self.view
-    }
+    // /// Get the view pointer underlying this context.
+    // pub fn view(&self) -> &View<V> {
+    //     self.view
+    // }
 
-    /// Get the model underlying this view.
-    pub fn model(&self) -> &Model<V> {
-        &self.view.model
-    }
+    // /// Get the model underlying this view.
+    // pub fn model(&self) -> &Model<V> {
+    //     &self.view.model
+    // }
 
-    /// Access the underlying window context.
-    pub fn window_context(&mut self) -> &mut WindowContext<'a> {
-        &mut self.window_cx
-    }
+    // /// Access the underlying window context.
+    // pub fn window_context(&mut self) -> &mut WindowContext<'a> {
+    //     &mut self.window_cx
+    // }
 
     /// Sets a given callback to be run on the next frame.
-    pub fn on_next_frame(&self, f: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) + 'static)
-    where
+    pub fn on_next_frame(
+        &self,
+        window: &mut Window,
+        f: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) where
         V: 'static,
     {
-        let view = self.view().clone();
-        self.window_cx.on_next_frame(move |cx| view.update(cx, f));
+        let view = self.model();
+        window.on_next_frame(move |cx| {
+            let window = &mut cx.window;
+            view.update(cx.app, |view, cx| f(view, window, cx))
+        });
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
-    pub fn defer(&mut self, f: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) + 'static) {
-        let view = self.view().downgrade();
-        self.window_cx.defer(move |cx| {
-            view.update(cx, f).ok();
+    pub fn defer_in(
+        &mut self,
+        window: &Window,
+        f: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    ) {
+        let view = self.model();
+        window.defer(self, move |cx| {
+            let window = &mut cx.window;
+            view.update(cx.app, |view, cx| f(view, window, cx))
         });
     }
 
     /// Observe another model or view for changes to its state, as tracked by [`ModelContext::notify`].
-    pub fn observe<V2, E>(
+    pub fn observe_in<V2>(
         &mut self,
-        entity: &E,
-        mut on_notify: impl FnMut(&mut V, E, &mut Window, &mut ModelContext<'_, V>) + 'static,
+        observed: &Model<V2>,
+        window: &mut Window,
+        mut on_notify: impl FnMut(&mut V, Model<V2>, &mut Window, &mut ModelContext<'_, V>) + 'static,
     ) -> Subscription
     where
         V2: 'static,
         V: 'static,
-        E: Entity<V2>,
     {
-        let view = self.view().downgrade();
-        let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
-        let window_handle = self.window.handle;
-        self.app.new_observer(
-            entity_id,
+        let observed_id = observed.entity_id();
+        let observed = observed.downgrade();
+        let window_handle = window.handle;
+        let observer = self.weak_model();
+        self.new_observer(
+            observed_id,
             Box::new(move |cx| {
                 window_handle
                     .update(cx, |_, cx| {
-                        if let Some(handle) = E::upgrade_from(&entity) {
-                            view.update(cx, |this, window, cx| on_notify(this, handle, window, cx))
-                                .is_ok()
+                        if let Some((observer, observed)) =
+                            observer.upgrade().zip(observed.upgrade())
+                        {
+                            let window = &mut cx.window;
+                            observer.update(cx.app, |observer, cx| {
+                                on_notify(observer, observed, window, cx);
+                            });
+                            true
                         } else {
                             false
                         }
@@ -4153,516 +4126,3374 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
-    /// Subscribe to events emitted by another model or view.
-    /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
-    /// The callback will be invoked with a reference to the current view, a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a view context for the current view.
-    pub fn subscribe<V2, E, Evt>(
-        &mut self,
-        entity: &E,
-        mut on_event: impl FnMut(&mut V, E, &Evt, &mut Window, &mut ModelContext<'_, V>) + 'static,
-    ) -> Subscription
-    where
-        V2: EventEmitter<Evt>,
-        E: Entity<V2>,
-        Evt: 'static,
-    {
-        let view = self.view().downgrade();
-        let entity_id = entity.entity_id();
-        let handle = entity.downgrade();
-        let window_handle = self.window.handle;
-        self.app.new_subscription(
-            entity_id,
-            (
-                TypeId::of::<Evt>(),
-                Box::new(move |event, cx| {
-                    window_handle
-                        .update(cx, |_, cx| {
-                            if let Some(handle) = E::upgrade_from(&handle) {
-                                let event = event.downcast_ref().expect("invalid event type");
-                                view.update(cx, |this, window, cx| {
-                                    on_event(this, handle, event, window, cx)
-                                })
-                                .is_ok()
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false)
-                }),
-            ),
-        )
-    }
+    // /// Subscribe to events emitted by another model or view.
+    // /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
+    // /// The callback will be invoked with a reference to the current view, a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a view context for the current view.
+    // pub fn subscribe_in<V2, Evt>(
+    //     &mut self,
+    //     window: &mut Window,
+    //     entity: &E,
+    //     mut on_event: impl FnMut(&mut V, &Model<V2>, &Evt, &mut Window, &mut ModelContext<'_, V>)
+    //         + 'static,
+    // ) -> Subscription
+    // where
+    //     V2: EventEmitter<Evt>,
+    //     Evt: 'static,
+    // {
+    //     let view = self.model();
+    //     let entity_id = entity.entity_id();
+    //     let handle = entity.downgrade();
+    //     window.subscribe(entity_id, self, move |window, cx| {
+    //         if let Some(handle) = E::upgrade_from(&handle) {
+    //             let event = cx.event.downcast_ref().expect("invalid event type");
+    //             view.update(cx, |this, cx| on_event(this, handle, event, window, cx))
+    //                 .is_ok()
+    //         } else {
+    //             false
+    //         }
+    //     })
+    // }
 
-    /// Register a callback to be invoked when the view is released.
-    ///
-    /// The callback receives a handle to the view's window. This handle may be
-    /// invalid, if the window was closed before the view was released.
-    pub fn on_release(
-        &self,
-        on_release: impl FnOnce(&mut V, AnyWindowHandle, &mut AppContext) + 'static,
-    ) -> Subscription {
-        let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.release_listeners.insert(
-            self.view.model.entity_id,
-            Box::new(move |this, cx| {
-                let this = this.downcast_mut().expect("invalid entity type");
-                on_release(this, window_handle, cx)
-            }),
-        );
-        activate();
-        subscription
-    }
+    // /// Register a callback to be invoked when the view is released.
+    // ///
+    // /// The callback receives a handle to the view's window. This handle may be
+    // /// invalid, if the window was closed before the view was released.
+    // pub fn on_release(
+    //     &self,
+    //     on_release: impl FnOnce(&mut V, AnyWindowHandle, &mut AppContext) + 'static,
+    // ) -> Subscription {
+    //     let window_handle = self.window.handle;
+    //     let (subscription, activate) = self.app.release_listeners.insert(
+    //         self.view.model.entity_id,
+    //         Box::new(move |this, cx| {
+    //             let this = this.downcast_mut().expect("invalid entity type");
+    //             on_release(this, window_handle, cx)
+    //         }),
+    //     );
+    //     activate();
+    //     subscription
+    // }
 
-    /// Register a callback to be invoked when the given Model or View is released.
-    pub fn observe_release<V2, E>(
-        &self,
-        entity: &E,
-        mut on_release: impl FnMut(&mut V, &mut V2, &mut Window, &mut ModelContext<'_, V>) + 'static,
-    ) -> Subscription
-    where
-        V: 'static,
-        V2: 'static,
-        E: Entity<V2>,
-    {
-        let view = self.view().downgrade();
-        let entity_id = entity.entity_id();
-        let window_handle = self.window.handle;
-        let (subscription, activate) = self.app.release_listeners.insert(
-            entity_id,
-            Box::new(move |entity, cx| {
-                let entity = entity.downcast_mut().expect("invalid entity type");
-                let _ = window_handle.update(cx, |_, cx| {
-                    view.update(cx, |this, window, cx| on_release(this, entity, window, cx))
-                });
-            }),
-        );
-        activate();
-        subscription
-    }
+    // /// Register a callback to be invoked when the given Model or View is released.
+    // pub fn observe_release<V2, E>(
+    //     &self,
+    //     entity: &E,
+    //     mut on_release: impl FnMut(&mut V, &mut V2, &mut Window, &mut ModelContext<'_, V>) + 'static,
+    // ) -> Subscription
+    // where
+    //     V: 'static,
+    //     V2: 'static,
+    //     E: Entity<V2>,
+    // {
+    //     let view = self.view().downgrade();
+    //     let entity_id = entity.entity_id();
+    //     let window_handle = self.window.handle;
+    //     let (subscription, activate) = self.app.release_listeners.insert(
+    //         entity_id,
+    //         Box::new(move |entity, cx| {
+    //             let entity = entity.downcast_mut().expect("invalid entity type");
+    //             let _ = window_handle.update(cx, |_, cx| {
+    //                 view.update(cx, |this, window, cx| on_release(this, entity, window, cx))
+    //             });
+    //         }),
+    //     );
+    //     activate();
+    //     subscription
+    // }
 
-    /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
-    /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
-    pub fn notify(&mut self) {
-        self.window_cx.notify(Some(self.view.entity_id()));
-    }
+    // /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
+    // /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
+    // pub fn notify(&mut self) {
+    //     self.window_cx.notify(Some(self.view.entity_id()));
+    // }
 
-    /// Register a callback to be invoked when the window is resized.
-    pub fn observe_window_bounds(
-        &self,
-        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, activate) = self.window.bounds_observers.insert(
-            (),
-            Box::new(move |cx| {
-                view.update(cx, |view, window, cx| callback(view, window, cx))
-                    .is_ok()
-            }),
-        );
-        activate();
-        subscription
-    }
+    // /// Register a callback to be invoked when the window is resized.
+    // pub fn observe_window_bounds(
+    //     &self,
+    //     mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> Subscription {
+    //     let view = self.view.downgrade();
+    //     let (subscription, activate) = self.window.bounds_observers.insert(
+    //         (),
+    //         Box::new(move |cx| {
+    //             view.update(cx, |view, window, cx| callback(view, window, cx))
+    //                 .is_ok()
+    //         }),
+    //     );
+    //     activate();
+    //     subscription
+    // }
 
-    /// Register a callback to be invoked when the window is activated or deactivated.
-    pub fn observe_window_activation(
-        &self,
-        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, activate) = self.window.activation_observers.insert(
-            (),
-            Box::new(move |cx| {
-                view.update(cx, |view, window, cx| callback(view, window, cx))
-                    .is_ok()
-            }),
-        );
-        activate();
-        subscription
-    }
+    // /// Register a callback to be invoked when the window is activated or deactivated.
+    // pub fn observe_window_activation(
+    //     &self,
+    //     mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> Subscription {
+    //     let view = self.view.downgrade();
+    //     let (subscription, activate) = self.window.activation_observers.insert(
+    //         (),
+    //         Box::new(move |cx| {
+    //             view.update(cx, |view, window, cx| callback(view, window, cx))
+    //                 .is_ok()
+    //         }),
+    //     );
+    //     activate();
+    //     subscription
+    // }
 
+    // /// Registers a callback to be invoked when the window appearance changes.
+    // pub fn observe_window_appearance(
+    //     &self,
+    //     mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> Subscription {
+    //     let view = self.view.downgrade();
+    //     let (subscription, activate) = self.window.appearance_observers.insert(
+    //         (),
+    //         Box::new(move |cx| {
+    //             view.update(cx, |view, window, cx| callback(view, window, cx))
+    //                 .is_ok()
+    //         }),
+    //     );
+    //     activate();
+    //     subscription
+    // }
+
+    // /// Register a callback to be invoked when a keystroke is received by the application
+    // /// in any window. Note that this fires after all other action and event mechanisms have resolved
+    // /// and that this API will not be invoked if the event's propagation is stopped.
+    // pub fn observe_keystrokes(
+    //     &mut self,
+    //     mut f: impl FnMut(&mut V, &KeystrokeEvent, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> Subscription {
+    //     fn inner(
+    //         keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
+    //         handler: KeystrokeObserver,
+    //     ) -> Subscription {
+    //         let (subscription, activate) = keystroke_observers.insert((), handler);
+    //         activate();
+    //         subscription
+    //     }
+
+    //     let view = self.view.downgrade();
+    //     inner(
+    //         &mut self.keystroke_observers,
+    //         Box::new(move |event, cx| {
+    //             if let Some(view) = view.upgrade() {
+    //                 view.update(cx, |view, window, cx| f(view, event, window, cx));
+    //                 true
+    //             } else {
+    //                 false
+    //             }
+    //         }),
+    //     )
+    // }
+
+    // /// Register a callback to be invoked when the window's pending input changes.
+    // pub fn observe_pending_input(
+    //     &self,
+    //     mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> Subscription {
+    //     let view = self.view.downgrade();
+    //     let (subscription, activate) = self.window.pending_input_observers.insert(
+    //         (),
+    //         Box::new(move |cx| {
+    //             view.update(cx, |view, window, cx| callback(view, window, cx))
+    //                 .is_ok()
+    //         }),
+    //     );
+    //     activate();
+    //     subscription
+    // }
+
+    // /// Register a listener to be called when the given focus handle receives focus.
+    // /// Returns a subscription and persists until the subscription is dropped.
+    // pub fn on_focus(
+    //     &mut self,
+    //     handle: &FocusHandle,
+    //     mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> Subscription {
+    //     let view = self.view.downgrade();
+    //     let focus_id = handle.id;
+    //     let (subscription, activate) =
+    //         self.window.new_focus_listener(Box::new(move |event, cx| {
+    //             view.update(cx, |view, window, cx| {
+    //                 if event.previous_focus_path.last() != Some(&focus_id)
+    //                     && event.current_focus_path.last() == Some(&focus_id)
+    //                 {
+    //                     listener(view, window, cx)
+    //                 }
+    //             })
+    //             .is_ok()
+    //         }));
+    //     self.app.defer(|_| activate());
+    //     subscription
+    // }
+
+    // /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    // /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
+    // /// Returns a subscription and persists until the subscription is dropped.
+    // pub fn on_focus_in(
+    //     &mut self,
+    //     handle: &FocusHandle,
+    //     mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> Subscription {
+    //     let view = self.view.downgrade();
+    //     let focus_id = handle.id;
+    //     let (subscription, activate) =
+    //         self.window.new_focus_listener(Box::new(move |event, cx| {
+    //             view.update(cx, |view, window, cx| {
+    //                 if event.is_focus_in(focus_id) {
+    //                     listener(view, window, cx)
+    //                 }
+    //             })
+    //             .is_ok()
+    //         }));
+    //     self.app.defer(move |_| activate());
+    //     subscription
+    // }
+
+    // /// Register a listener to be called when the given focus handle loses focus.
+    // /// Returns a subscription and persists until the subscription is dropped.
+    // pub fn on_blur(
+    //     &mut self,
+    //     handle: &FocusHandle,
+    //     mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> Subscription {
+    //     let view = self.view.downgrade();
+    //     let focus_id = handle.id;
+    //     let (subscription, activate) =
+    //         self.window.new_focus_listener(Box::new(move |event, cx| {
+    //             view.update(cx, |view, window, cx| {
+    //                 if event.previous_focus_path.last() == Some(&focus_id)
+    //                     && event.current_focus_path.last() != Some(&focus_id)
+    //                 {
+    //                     listener(view, window, cx)
+    //                 }
+    //             })
+    //             .is_ok()
+    //         }));
+    //     self.app.defer(move |_| activate());
+    //     subscription
+    // }
+
+    // /// Register a listener to be called when nothing in the window has focus.
+    // /// This typically happens when the node that was focused is removed from the tree,
+    // /// and this callback lets you chose a default place to restore the users focus.
+    // /// Returns a subscription and persists until the subscription is dropped.
+    // pub fn on_focus_lost(
+    //     &self,
+    //     mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> Subscription {
+    //     let view = self.view.downgrade();
+    //     let (subscription, activate) = self.window.focus_lost_listeners.insert(
+    //         (),
+    //         Box::new(move |cx| {
+    //             view.update(cx, |view, window, cx| listener(view, window, cx))
+    //                 .is_ok()
+    //         }),
+    //     );
+    //     activate();
+    //     subscription
+    // }
+
+    // /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
+    // /// Returns a subscription and persists until the subscription is dropped.
+    // pub fn on_focus_out(
+    //     &mut self,
+    //     handle: &FocusHandle,
+    //     mut listener: impl FnMut(&mut V, FocusOutEvent, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> Subscription {
+    //     // let view = self.view.downgrade();
+    //     // let focus_id = handle.id;
+    //     // let (subscription, activate) =
+    //     //     self.window.new_focus_listener(Box::new(move |event, cx| {
+    //     //         view.update(cx, |view, window, cx| {
+    //     //             if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+    //     //                 if event.is_focus_out(focus_id) {
+    //     //                     let event = FocusOutEvent {
+    //     //                         blurred: WeakFocusHandle {
+    //     //                             id: blurred_id,
+    //     //                             handles: Arc::downgrade(&cx.app.focus_handles),
+    //     //                         },
+    //     //                     };
+    //     //                     listener(view, event, window, cx)
+    //     //                 }
+    //     //             }
+    //     //         })
+    //     //         .is_ok()
+    //     //     }));
+    //     // self.app.defer(move |_| activate());
+    //     // subscription
+    // }
+
+    // /// Schedule a future to be run asynchronously.
+    // /// The given callback is invoked with a [`WeakView<V>`] to avoid leaking the view for a long-running process.
+    // /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
+    // /// The returned future will be polled on the main thread.
+    // pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut) -> Task<R>
+    // where
+    //     R: 'static,
+    //     Fut: Future<Output = R> + 'static,
+    // {
+    //     let view = self.view().downgrade();
+    //     self.window_cx.spawn(|cx| f(view, cx))
+    // }
+
+    // /// Register a callback to be invoked when the given global state changes.
+    // pub fn observe_global<G: Global>(
+    //     &mut self,
+    //     mut f: impl FnMut(&mut V, &mut Window, &mut ModelContext<'_, V>) + 'static,
+    // ) -> Subscription {
+    //     let window_handle = self.window.handle;
+    //     let view = self.view().downgrade();
+    //     let (subscription, activate) = self.global_observers.insert(
+    //         TypeId::of::<G>(),
+    //         Box::new(move |cx| {
+    //             window_handle
+    //                 .update(cx, |_, cx| {
+    //                     view.update(cx, |view, window, cx| f(view, window, cx))
+    //                         .is_ok()
+    //                 })
+    //                 .unwrap_or(false)
+    //         }),
+    //     );
+    //     self.app.defer(move |_| activate());
+    //     subscription
+    // }
+
+    // /// Register a callback to be invoked when the given Action type is dispatched to the window.
+    // pub fn on_action(
+    //     &mut self,
+    //     action_type: TypeId,
+    //     listener: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) {
+    //     let handle = self.view().clone();
+    //     self.window_cx
+    //         .on_action(action_type, move |action, phase, cx| {
+    //             handle.update(cx, |view, window, cx| {
+    //                 listener(view, action, phase, window, cx);
+    //             })
+    //         });
+    // }
+
+    // /// Emit an event to be handled by any other views that have subscribed via [ViewContext::subscribe].
+    // pub fn emit<Evt>(&mut self, event: Evt)
+    // where
+    //     Evt: 'static,
+    //     V: EventEmitter<Evt>,
+    // {
+    //     let emitter = self.view.model.entity_id;
+    //     self.app.push_effect(Effect::Emit {
+    //         emitter,
+    //         event_type: TypeId::of::<Evt>(),
+    //         event: Box::new(event),
+    //     });
+    // }
+
+    // /// Move focus to the current view, assuming it implements [`FocusableView`].
+    // pub fn focus_self(&mut self)
+    // where
+    //     V: FocusableView,
+    // {
+    //     // self.defer(|view, window, cx| view.focus_handle(cx).focus(cx))
+    // }
+
+    // /// Convenience method for accessing view state in an event callback.
+    // ///
+    // /// Many GPUI callbacks take the form of `Fn(&E, &mut WindowContext)`,
+    // /// but it's often useful to be able to access view state in these
+    // /// callbacks. This method provides a convenient way to do so.
+    // pub fn listener<E: ?Sized>(
+    //     &self,
+    //     f: impl Fn(&mut V, &E, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> impl Fn(&E, &mut WindowContext) + 'static {
+    //     let view = self.view().downgrade();
+    //     move |e: &E, cx: &mut WindowContext| {
+    //         view.update(cx, |view, window, cx| f(view, e, window, cx))
+    //             .ok();
+    //     }
+    // }
+}
+
+// impl<V: 'static> VisualContext for ViewContext<'_, V> {
+//     fn new_view<W: Render + 'static>(
+//         &mut self,
+//         build_view_state: impl FnOnce(&mut Window, &mut ModelContext<'_, W>) -> W,
+//     ) -> Self::Result<View<W>> {
+//         self.window_cx.new_view(build_view_state)
+//     }
+
+//     fn update_view<V2: 'static, R>(
+//         &mut self,
+//         view: &View<V2>,
+//         update: impl FnOnce(&mut V2, &mut Window, &mut ModelContext<'_, V2>) -> R,
+//     ) -> Self::Result<R> {
+//         self.window_cx.update_view(view, update)
+//     }
+
+//     fn replace_root_view<W>(
+//         &mut self,
+//         build_view: impl FnOnce(&mut Window, &mut ModelContext<'_, W>) -> W,
+//     ) -> Self::Result<View<W>>
+//     where
+//         W: 'static + Render,
+//     {
+//         self.window_cx.replace_root_view(build_view)
+//     }
+
+//     fn focus_view<W: FocusableView>(&mut self, view: &View<W>) -> Self::Result<()> {
+//         self.window_cx.focus_view(view)
+//     }
+
+//     fn dismiss_view<W: ManagedView>(&mut self, view: &View<W>) -> Self::Result<()> {
+//         self.window_cx.dismiss_view(view)
+//     }
+// }
+
+impl Window {
     /// Registers a callback to be invoked when the window appearance changes.
     pub fn observe_window_appearance(
         &self,
-        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+        mut callback: impl FnMut(&mut WindowContext) + 'static,
     ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, activate) = self.window.appearance_observers.insert(
+        let (subscription, activate) = self.appearance_observers.insert(
             (),
             Box::new(move |cx| {
-                view.update(cx, |view, window, cx| callback(view, window, cx))
-                    .is_ok()
+                callback(cx);
+                true
             }),
         );
         activate();
         subscription
     }
 
-    /// Register a callback to be invoked when a keystroke is received by the application
-    /// in any window. Note that this fires after all other action and event mechanisms have resolved
-    /// and that this API will not be invoked if the event's propagation is stopped.
-    pub fn observe_keystrokes(
-        &mut self,
-        mut f: impl FnMut(&mut V, &KeystrokeEvent, &mut Window, &mut ModelContext<V>) + 'static,
-    ) -> Subscription {
-        fn inner(
-            keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
-            handler: KeystrokeObserver,
-        ) -> Subscription {
-            let (subscription, activate) = keystroke_observers.insert((), handler);
-            activate();
-            subscription
+    // /// Obtain a handle to the window that belongs to this context.
+    // pub fn window_handle(&self) -> AnyWindowHandle {
+    //     self.window.handle
+    // }
+
+    /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
+    pub fn refresh(&mut self) {
+        if self.draw_phase == DrawPhase::None {
+            self.refreshing = true;
+            self.dirty.set(true);
+        }
+    }
+
+    // /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
+    // /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
+    // /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
+    // pub fn notify(&mut self, view_id: Option<EntityId>) {
+    //     let Some(view_id) = view_id else {
+    //         self.refresh();
+    //         return;
+    //     };
+
+    //     for view_id in self
+    //         .window
+    //         .rendered_frame
+    //         .dispatch_tree
+    //         .view_path(view_id)
+    //         .into_iter()
+    //         .rev()
+    //     {
+    //         if !self.window.dirty_views.insert(view_id) {
+    //             break;
+    //         }
+    //     }
+
+    //     if self.window.draw_phase == DrawPhase::None {
+    //         self.window.dirty.set(true);
+    //         self.app.push_effect(Effect::Notify { emitter: view_id });
+    //     }
+    // }
+
+    // /// Close this window.
+    // pub fn remove_window(&mut self) {
+    //     self.window.removed = true;
+    // }
+
+    // /// Obtain the currently focused [`FocusHandle`]. If no elements are focused, returns `None`.
+    // pub fn focused(&self) -> Option<FocusHandle> {
+    //     self.window
+    //         .focus
+    //         .and_then(|id| FocusHandle::for_id(id, &self.app.focus_handles))
+    // }
+
+    /// Move focus to the element associated with the given [`FocusHandle`].
+    pub fn focus(&mut self, handle: &FocusHandle) {
+        if !self.focus_enabled || self.focus == Some(handle.id) {
+            return;
         }
 
-        let view = self.view.downgrade();
-        inner(
-            &mut self.keystroke_observers,
-            Box::new(move |event, cx| {
-                if let Some(view) = view.upgrade() {
-                    view.update(cx, |view, window, cx| f(view, event, window, cx));
-                    true
-                } else {
-                    false
-                }
+        self.focus = Some(handle.id);
+        self.clear_pending_keystrokes();
+        self.refresh();
+    }
+
+    // /// Remove focus from all elements within this context's window.
+    // pub fn blur(&mut self) {
+    //     if !self.window.focus_enabled {
+    //         return;
+    //     }
+
+    //     self.window.focus = None;
+    //     self.refresh();
+    // }
+
+    // /// Blur the window and don't allow anything in it to be focused again.
+    // pub fn disable_focus(&mut self) {
+    //     self.blur();
+    //     self.window.focus_enabled = false;
+    // }
+
+    // /// Accessor for the text system.
+    // pub fn text_system(&self) -> &Arc<WindowTextSystem> {
+    //     &self.window.text_system
+    // }
+
+    // /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
+    // pub fn text_style(&self) -> TextStyle {
+    //     let mut style = TextStyle::default();
+    //     for refinement in &self.window.text_style_stack {
+    //         style.refine(refinement);
+    //     }
+    //     style
+    // }
+
+    // /// Check if the platform window is maximized
+    // /// On some platforms (namely Windows) this is different than the bounds being the size of the display
+    // pub fn is_maximized(&self) -> bool {
+    //     self.window.platform_window.is_maximized()
+    // }
+
+    // /// request a certain window decoration (Wayland)
+    // pub fn request_decorations(&self, decorations: WindowDecorations) {
+    //     self.window.platform_window.request_decorations(decorations);
+    // }
+
+    // /// Start a window resize operation (Wayland)
+    // pub fn start_window_resize(&self, edge: ResizeEdge) {
+    //     self.window.platform_window.start_window_resize(edge);
+    // }
+
+    // /// Return the `WindowBounds` to indicate that how a window should be opened
+    // /// after it has been closed
+    // pub fn window_bounds(&self) -> WindowBounds {
+    //     self.window.platform_window.window_bounds()
+    // }
+
+    // /// Return the `WindowBounds` excluding insets (Wayland and X11)
+    // pub fn inner_window_bounds(&self) -> WindowBounds {
+    //     self.window.platform_window.inner_window_bounds()
+    // }
+
+    // /// Dispatch the given action on the currently focused element.
+    // pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
+    //     let focus_handle = self.focused();
+
+    //     let window = self.window.handle;
+    //     self.app.defer(move |cx| {
+    //         window
+    //             .update(cx, |_, cx| {
+    //                 let node_id = focus_handle
+    //                     .and_then(|handle| {
+    //                         cx.window
+    //                             .rendered_frame
+    //                             .dispatch_tree
+    //                             .focusable_node_id(handle.id)
+    //                     })
+    //                     .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
+
+    //                 cx.dispatch_action_on_node(node_id, action.as_ref());
+    //             })
+    //             .log_err();
+    //     })
+    // }
+
+    // pub(crate) fn dispatch_keystroke_observers(
+    //     &mut self,
+    //     event: &dyn Any,
+    //     action: Option<Box<dyn Action>>,
+    // ) {
+    //     let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
+    //         return;
+    //     };
+
+    //     self.keystroke_observers
+    //         .clone()
+    //         .retain(&(), move |callback| {
+    //             (callback)(
+    //                 &KeystrokeEvent {
+    //                     keystroke: key_down_event.keystroke.clone(),
+    //                     action: action.as_ref().map(|action| action.boxed_clone()),
+    //                 },
+    //                 self,
+    //             )
+    //         });
+    // }
+
+    /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
+    /// that are currently on the stack to be returned to the app.
+    pub fn defer(&self, cx: &mut AppContext, f: impl FnOnce(&mut WindowContext) + 'static) {
+        let handle = self.handle;
+        cx.defer(move |cx| {
+            handle.update(cx, |_, cx| f(cx)).ok();
+        });
+    }
+
+    /// Subscribe to events emitted by a model or view.
+    /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
+    /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
+    pub fn observe<T: 'static>(
+        &mut self,
+        observed: &Model<T>,
+        cx: &mut AppContext,
+        mut on_notify: impl FnMut(Model<T>, &mut WindowContext<'_>) + 'static,
+    ) -> Subscription {
+        let entity_id = observed.entity_id();
+        let observed = observed.downgrade();
+        let window_handle = self.handle;
+        cx.new_observer(
+            entity_id,
+            Box::new(move |cx| {
+                window_handle
+                    .update(cx, |_, cx| {
+                        if let Some(handle) = observed.upgrade() {
+                            on_notify(handle, cx);
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
             }),
         )
     }
 
-    /// Register a callback to be invoked when the window's pending input changes.
-    pub fn observe_pending_input(
-        &self,
-        mut callback: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, activate) = self.window.pending_input_observers.insert(
-            (),
-            Box::new(move |cx| {
-                view.update(cx, |view, window, cx| callback(view, window, cx))
-                    .is_ok()
-            }),
-        );
-        activate();
-        subscription
+    // /// Subscribe to events emitted by a model or view.
+    // /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
+    // /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
+    // pub fn subscribe<Emitter, E, Evt>(
+    //     &mut self,
+    //     entity: &E,
+    //     mut on_event: impl FnMut(E, &Evt, &mut WindowContext<'_>) + 'static,
+    // ) -> Subscription
+    // where
+    //     Emitter: EventEmitter<Evt>,
+    //     E: Entity<Emitter>,
+    //     Evt: 'static,
+    // {
+    //     let entity_id = entity.entity_id();
+    //     let entity = entity.downgrade();
+    //     let window_handle = self.window.handle;
+    //     self.app.new_subscription(
+    //         entity_id,
+    //         (
+    //             TypeId::of::<Evt>(),
+    //             Box::new(move |event, cx| {
+    //                 window_handle
+    //                     .update(cx, |_, cx| {
+    //                         if let Some(handle) = E::upgrade_from(&entity) {
+    //                             let event = event.downcast_ref().expect("invalid event type");
+    //                             on_event(handle, event, cx);
+    //                             true
+    //                         } else {
+    //                             false
+    //                         }
+    //                     })
+    //                     .unwrap_or(false)
+    //             }),
+    //         ),
+    //     )
+    // }
+
+    // /// Register a callback to be invoked when the given Model or View is released.
+    // pub fn observe_release<E, T>(
+    //     &self,
+    //     entity: &E,
+    //     mut on_release: impl FnOnce(&mut T, &mut WindowContext) + 'static,
+    // ) -> Subscription
+    // where
+    //     E: Entity<T>,
+    //     T: 'static,
+    // {
+    //     let entity_id = entity.entity_id();
+    //     let window_handle = self.window.handle;
+    //     let (subscription, activate) = self.app.release_listeners.insert(
+    //         entity_id,
+    //         Box::new(move |entity, cx| {
+    //             let entity = entity.downcast_mut().expect("invalid entity type");
+    //             let _ = window_handle.update(cx, |_, cx| on_release(entity, cx));
+    //         }),
+    //     );
+    //     activate();
+    //     subscription
+    // }
+
+    // /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
+    // /// await points in async code.
+    // pub fn to_async(&self) -> AsyncWindowContext {
+    //     AsyncWindowContext::new(self.app.to_async(), self.window.handle)
+    // }
+
+    /// Schedule the given closure to be run directly after the current frame is rendered.
+    pub fn on_next_frame(&self, callback: impl FnOnce(&mut WindowContext) + 'static) {
+        RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
     }
 
-    /// Register a listener to be called when the given focus handle receives focus.
-    /// Returns a subscription and persists until the subscription is dropped.
-    pub fn on_focus(
-        &mut self,
-        handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    ) -> Subscription {
-        let view = self.view.downgrade();
-        let focus_id = handle.id;
-        let (subscription, activate) =
-            self.window.new_focus_listener(Box::new(move |event, cx| {
-                view.update(cx, |view, window, cx| {
-                    if event.previous_focus_path.last() != Some(&focus_id)
-                        && event.current_focus_path.last() == Some(&focus_id)
-                    {
-                        listener(view, window, cx)
-                    }
-                })
-                .is_ok()
-            }));
-        self.app.defer(|_| activate());
-        subscription
+    // /// Schedule a frame to be drawn on the next animation frame.
+    // ///
+    // /// This is useful for elements that need to animate continuously, such as a video player or an animated GIF.
+    // /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
+    // ///
+    // /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
+    // pub fn request_animation_frame(&self) {
+    //     let parent_id = self.parent_view_id();
+    //     self.on_next_frame(move |cx| cx.notify(parent_id));
+    // }
+
+    // /// Spawn the future returned by the given closure on the application thread pool.
+    // /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
+    // /// use within your future.
+    // pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
+    // where
+    //     R: 'static,
+    //     Fut: Future<Output = R> + 'static,
+    // {
+    //     self.app
+    //         .spawn(|app| f(AsyncWindowContext::new(app, self.window.handle)))
+    // }
+
+    // fn bounds_changed(&mut self) {
+    //     self.window.scale_factor = self.window.platform_window.scale_factor();
+    //     self.window.viewport_size = self.window.platform_window.content_size();
+    //     self.window.display_id = self
+    //         .window
+    //         .platform_window
+    //         .display()
+    //         .map(|display| display.id());
+
+    //     self.refresh();
+
+    //     self.window
+    //         .bounds_observers
+    //         .clone()
+    //         .retain(&(), |callback| callback(self));
+    // }
+
+    /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
+    pub fn bounds(&self) -> Bounds<Pixels> {
+        self.platform_window.bounds()
     }
 
-    /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
-    /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
-    /// Returns a subscription and persists until the subscription is dropped.
-    pub fn on_focus_in(
-        &mut self,
-        handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    ) -> Subscription {
-        let view = self.view.downgrade();
-        let focus_id = handle.id;
-        let (subscription, activate) =
-            self.window.new_focus_listener(Box::new(move |event, cx| {
-                view.update(cx, |view, window, cx| {
-                    if event.is_focus_in(focus_id) {
-                        listener(view, window, cx)
-                    }
-                })
-                .is_ok()
-            }));
-        self.app.defer(move |_| activate());
-        subscription
+    // /// Returns whether or not the window is currently fullscreen
+    // pub fn is_fullscreen(&self) -> bool {
+    //     self.window.platform_window.is_fullscreen()
+    // }
+
+    // pub(crate) fn appearance_changed(&mut self) {
+    //     self.window.appearance = self.window.platform_window.appearance();
+
+    //     self.window
+    //         .appearance_observers
+    //         .clone()
+    //         .retain(&(), |callback| callback(self));
+    // }
+
+    // /// Returns the appearance of the current window.
+    // pub fn appearance(&self) -> WindowAppearance {
+    //     self.window.appearance
+    // }
+
+    // /// Returns the size of the drawable area within the window.
+    // pub fn viewport_size(&self) -> Size<Pixels> {
+    //     self.window.viewport_size
+    // }
+
+    // /// Returns whether this window is focused by the operating system (receiving key events).
+    // pub fn is_window_active(&self) -> bool {
+    //     self.window.active.get()
+    // }
+
+    // /// Returns whether this window is considered to be the window
+    // /// that currently owns the mouse cursor.
+    // /// On mac, this is equivalent to `is_window_active`.
+    // pub fn is_window_hovered(&self) -> bool {
+    //     if cfg!(any(
+    //         target_os = "windows",
+    //         target_os = "linux",
+    //         target_os = "freebsd"
+    //     )) {
+    //         self.window.hovered.get()
+    //     } else {
+    //         self.is_window_active()
+    //     }
+    // }
+
+    // /// Toggle zoom on the window.
+    // pub fn zoom_window(&self) {
+    //     self.window.platform_window.zoom();
+    // }
+
+    // /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
+    // pub fn show_window_menu(&self, position: Point<Pixels>) {
+    //     self.window.platform_window.show_window_menu(position)
+    // }
+
+    // /// Tells the compositor to take control of window movement (Wayland and X11)
+    // ///
+    // /// Events may not be received during a move operation.
+    // pub fn start_window_move(&self) {
+    //     self.window.platform_window.start_window_move()
+    // }
+
+    /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
+    pub fn set_client_inset(&self, inset: Pixels) {
+        self.platform_window.set_client_inset(inset);
     }
 
-    /// Register a listener to be called when the given focus handle loses focus.
-    /// Returns a subscription and persists until the subscription is dropped.
-    pub fn on_blur(
-        &mut self,
-        handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    ) -> Subscription {
-        let view = self.view.downgrade();
-        let focus_id = handle.id;
-        let (subscription, activate) =
-            self.window.new_focus_listener(Box::new(move |event, cx| {
-                view.update(cx, |view, window, cx| {
-                    if event.previous_focus_path.last() == Some(&focus_id)
-                        && event.current_focus_path.last() != Some(&focus_id)
-                    {
-                        listener(view, window, cx)
-                    }
-                })
-                .is_ok()
-            }));
-        self.app.defer(move |_| activate());
-        subscription
+    /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
+    pub fn window_decorations(&self) -> Decorations {
+        self.platform_window.window_decorations()
     }
 
-    /// Register a listener to be called when nothing in the window has focus.
-    /// This typically happens when the node that was focused is removed from the tree,
-    /// and this callback lets you chose a default place to restore the users focus.
-    /// Returns a subscription and persists until the subscription is dropped.
-    pub fn on_focus_lost(
-        &self,
-        mut listener: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-    ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, activate) = self.window.focus_lost_listeners.insert(
-            (),
-            Box::new(move |cx| {
-                view.update(cx, |view, window, cx| listener(view, window, cx))
-                    .is_ok()
-            }),
-        );
-        activate();
-        subscription
+    // /// Returns which window controls are currently visible (Wayland)
+    // pub fn window_controls(&self) -> WindowControls {
+    //     self.window.platform_window.window_controls()
+    // }
+
+    // /// Updates the window's title at the platform level.
+    // pub fn set_window_title(&mut self, title: &str) {
+    //     self.window.platform_window.set_title(title);
+    // }
+
+    // /// Sets the application identifier.
+    // pub fn set_app_id(&mut self, app_id: &str) {
+    //     self.window.platform_window.set_app_id(app_id);
+    // }
+
+    // /// Sets the window background appearance.
+    // pub fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
+    //     self.window
+    //         .platform_window
+    //         .set_background_appearance(background_appearance);
+    // }
+
+    // /// Mark the window as dirty at the platform level.
+    // pub fn set_window_edited(&mut self, edited: bool) {
+    //     self.window.platform_window.set_edited(edited);
+    // }
+
+    // /// Determine the display on which the window is visible.
+    // pub fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+    //     self.platform
+    //         .displays()
+    //         .into_iter()
+    //         .find(|display| Some(display.id()) == self.window.display_id)
+    // }
+
+    /// Show the platform character palette.
+    pub fn show_character_palette(&self) {
+        self.platform_window.show_character_palette();
     }
 
-    /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
-    /// Returns a subscription and persists until the subscription is dropped.
-    pub fn on_focus_out(
-        &mut self,
-        handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, FocusOutEvent, &mut Window, &mut ModelContext<V>) + 'static,
-    ) -> Subscription {
-        todo!()
-        // let view = self.view.downgrade();
-        // let focus_id = handle.id;
-        // let (subscription, activate) =
-        //     self.window.new_focus_listener(Box::new(move |event, cx| {
-        //         view.update(cx, |view, window, cx| {
-        //             if let Some(blurred_id) = event.previous_focus_path.last().copied() {
-        //                 if event.is_focus_out(focus_id) {
-        //                     let event = FocusOutEvent {
-        //                         blurred: WeakFocusHandle {
-        //                             id: blurred_id,
-        //                             handles: Arc::downgrade(&cx.app.focus_handles),
-        //                         },
-        //                     };
-        //                     listener(view, event, window, cx)
-        //                 }
-        //             }
-        //         })
-        //         .is_ok()
-        //     }));
-        // self.app.defer(move |_| activate());
-        // subscription
+    // /// The scale factor of the display associated with the window. For example, it could
+    // /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
+    // /// be rendered as two pixels on screen.
+    // pub fn scale_factor(&self) -> f32 {
+    //     self.window.scale_factor
+    // }
+
+    // /// The size of an em for the base font of the application. Adjusting this value allows the
+    // /// UI to scale, just like zooming a web page.
+    // pub fn rem_size(&self) -> Pixels {
+    //     self.window
+    //         .rem_size_override_stack
+    //         .last()
+    //         .copied()
+    //         .unwrap_or(self.window.rem_size)
+    // }
+
+    // /// Sets the size of an em for the base font of the application. Adjusting this value allows the
+    // /// UI to scale, just like zooming a web page.
+    // pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
+    //     self.window.rem_size = rem_size.into();
+    // }
+
+    // /// Executes the provided function with the specified rem size.
+    // ///
+    // /// This method must only be called as part of element drawing.
+    // pub fn with_rem_size<F, R>(&mut self, rem_size: Option<impl Into<Pixels>>, f: F) -> R
+    // where
+    //     F: FnOnce(&mut Self) -> R,
+    // {
+    //     debug_assert!(
+    //         matches!(
+    //             self.window.draw_phase,
+    //             DrawPhase::Prepaint | DrawPhase::Paint
+    //         ),
+    //         "this method can only be called during request_layout, prepaint, or paint"
+    //     );
+
+    //     if let Some(rem_size) = rem_size {
+    //         self.window.rem_size_override_stack.push(rem_size.into());
+    //         let result = f(self);
+    //         self.window.rem_size_override_stack.pop();
+    //         result
+    //     } else {
+    //         f(self)
+    //     }
+    // }
+
+    // /// The line height associated with the current text style.
+    // pub fn line_height(&self) -> Pixels {
+    //     self.text_style().line_height_in_pixels(self.rem_size())
+    // }
+
+    // /// Call to prevent the default action of an event. Currently only used to prevent
+    // /// parent elements from becoming focused on mouse down.
+    // pub fn prevent_default(&mut self) {
+    //     self.window.default_prevented = true;
+    // }
+
+    // /// Obtain whether default has been prevented for the event currently being dispatched.
+    // pub fn default_prevented(&self) -> bool {
+    //     self.window.default_prevented
+    // }
+
+    // /// Determine whether the given action is available along the dispatch path to the currently focused element.
+    // pub fn is_action_available(&self, action: &dyn Action) -> bool {
+    //     let target = self
+    //         .focused()
+    //         .and_then(|focused_handle| {
+    //             self.window
+    //                 .rendered_frame
+    //                 .dispatch_tree
+    //                 .focusable_node_id(focused_handle.id)
+    //         })
+    //         .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
+    //     self.window
+    //         .rendered_frame
+    //         .dispatch_tree
+    //         .is_action_available(action, target)
+    // }
+
+    // /// The position of the mouse relative to the window.
+    // pub fn mouse_position(&self) -> Point<Pixels> {
+    //     self.window.mouse_position
+    // }
+
+    // /// The current state of the keyboard's modifiers
+    // pub fn modifiers(&self) -> Modifiers {
+    //     self.window.modifiers
+    // }
+
+    // fn complete_frame(&self) {
+    //     self.window.platform_window.completed_frame();
+    // }
+
+    // /// Produces a new frame and assigns it to `rendered_frame`. To actually show
+    // /// the contents of the new [Scene], use [present].
+    // #[profiling::function]
+    // pub fn draw(&mut self) {
+    //     self.window.dirty.set(false);
+    //     self.window.requested_autoscroll = None;
+
+    //     // Restore the previously-used input handler.
+    //     if let Some(input_handler) = self.window.platform_window.take_input_handler() {
+    //         self.window
+    //             .rendered_frame
+    //             .input_handlers
+    //             .push(Some(input_handler));
+    //     }
+
+    //     self.draw_roots();
+    //     self.window.dirty_views.clear();
+    //     self.window.next_frame.window_active = self.window.active.get();
+
+    //     // Register requested input handler with the platform window.
+    //     if let Some(input_handler) = self.window.next_frame.input_handlers.pop() {
+    //         self.window
+    //             .platform_window
+    //             .set_input_handler(input_handler.unwrap());
+    //     }
+
+    //     self.window.layout_engine.as_mut().unwrap().clear();
+    //     self.text_system().finish_frame();
+    //     self.window
+    //         .next_frame
+    //         .finish(&mut self.window.rendered_frame);
+    //     ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+    //         let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
+    //         if percentage >= 80. {
+    //             log::warn!("elevated element arena occupation: {}.", percentage);
+    //         }
+    //         element_arena.clear();
+    //     });
+
+    //     self.window.draw_phase = DrawPhase::Focus;
+    //     let previous_focus_path = self.window.rendered_frame.focus_path();
+    //     let previous_window_active = self.window.rendered_frame.window_active;
+    //     mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
+    //     self.window.next_frame.clear();
+    //     let current_focus_path = self.window.rendered_frame.focus_path();
+    //     let current_window_active = self.window.rendered_frame.window_active;
+
+    //     if previous_focus_path != current_focus_path
+    //         || previous_window_active != current_window_active
+    //     {
+    //         if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
+    //             self.window
+    //                 .focus_lost_listeners
+    //                 .clone()
+    //                 .retain(&(), |listener| listener(self));
+    //         }
+
+    //         let event = WindowFocusEvent {
+    //             previous_focus_path: if previous_window_active {
+    //                 previous_focus_path
+    //             } else {
+    //                 Default::default()
+    //             },
+    //             current_focus_path: if current_window_active {
+    //                 current_focus_path
+    //             } else {
+    //                 Default::default()
+    //             },
+    //         };
+    //         self.window
+    //             .focus_listeners
+    //             .clone()
+    //             .retain(&(), |listener| listener(&event, self));
+    //     }
+
+    //     self.reset_cursor_style();
+    //     self.window.refreshing = false;
+    //     self.window.draw_phase = DrawPhase::None;
+    //     self.window.needs_present.set(true);
+    // }
+
+    // #[profiling::function]
+    // fn present(&self) {
+    //     self.window
+    //         .platform_window
+    //         .draw(&self.window.rendered_frame.scene);
+    //     self.window.needs_present.set(false);
+    //     profiling::finish_frame!();
+    // }
+
+    // fn draw_roots(&mut self) {
+    //     self.window.draw_phase = DrawPhase::Prepaint;
+    //     self.window.tooltip_bounds.take();
+
+    //     // Layout all root elements.
+    //     let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
+    //     root_element.prepaint_as_root(Point::default(), self.window.viewport_size.into(), self);
+
+    //     let mut sorted_deferred_draws =
+    //         (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
+    //     sorted_deferred_draws.sort_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
+    //     self.prepaint_deferred_draws(&sorted_deferred_draws);
+
+    //     let mut prompt_element = None;
+    //     let mut active_drag_element = None;
+    //     let mut tooltip_element = None;
+    //     if let Some(prompt) = self.window.prompt.take() {
+    //         let mut element = prompt.view.any_view().into_any();
+    //         element.prepaint_as_root(Point::default(), self.window.viewport_size.into(), self);
+    //         prompt_element = Some(element);
+    //         self.window.prompt = Some(prompt);
+    //     } else if let Some(active_drag) = self.app.active_drag.take() {
+    //         let mut element = active_drag.view.clone().into_any();
+    //         let offset = self.mouse_position() - active_drag.cursor_offset;
+    //         element.prepaint_as_root(offset, AvailableSpace::min_size(), self);
+    //         active_drag_element = Some(element);
+    //         self.app.active_drag = Some(active_drag);
+    //     } else {
+    //         tooltip_element = self.prepaint_tooltip();
+    //     }
+
+    //     self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
+
+    //     // Now actually paint the elements.
+    //     self.window.draw_phase = DrawPhase::Paint;
+    //     root_element.paint(self);
+
+    //     self.paint_deferred_draws(&sorted_deferred_draws);
+
+    //     if let Some(mut prompt_element) = prompt_element {
+    //         prompt_element.paint(self);
+    //     } else if let Some(mut drag_element) = active_drag_element {
+    //         drag_element.paint(self);
+    //     } else if let Some(mut tooltip_element) = tooltip_element {
+    //         tooltip_element.paint(self);
+    //     }
+    // }
+
+    // fn prepaint_tooltip(&mut self) -> Option<AnyElement> {
+    //     let tooltip_request = self.window.next_frame.tooltip_requests.last().cloned()?;
+    //     let tooltip_request = tooltip_request.unwrap();
+    //     let mut element = tooltip_request.tooltip.view.clone().into_any();
+    //     let mouse_position = tooltip_request.tooltip.mouse_position;
+    //     let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self);
+
+    //     let mut tooltip_bounds = Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
+    //     let window_bounds = Bounds {
+    //         origin: Point::default(),
+    //         size: self.viewport_size(),
+    //     };
+
+    //     if tooltip_bounds.right() > window_bounds.right() {
+    //         let new_x = mouse_position.x - tooltip_bounds.size.width - px(1.);
+    //         if new_x >= Pixels::ZERO {
+    //             tooltip_bounds.origin.x = new_x;
+    //         } else {
+    //             tooltip_bounds.origin.x = cmp::max(
+    //                 Pixels::ZERO,
+    //                 tooltip_bounds.origin.x - tooltip_bounds.right() - window_bounds.right(),
+    //             );
+    //         }
+    //     }
+
+    //     if tooltip_bounds.bottom() > window_bounds.bottom() {
+    //         let new_y = mouse_position.y - tooltip_bounds.size.height - px(1.);
+    //         if new_y >= Pixels::ZERO {
+    //             tooltip_bounds.origin.y = new_y;
+    //         } else {
+    //             tooltip_bounds.origin.y = cmp::max(
+    //                 Pixels::ZERO,
+    //                 tooltip_bounds.origin.y - tooltip_bounds.bottom() - window_bounds.bottom(),
+    //             );
+    //         }
+    //     }
+
+    //     self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
+
+    //     self.window.tooltip_bounds = Some(TooltipBounds {
+    //         id: tooltip_request.id,
+    //         bounds: tooltip_bounds,
+    //     });
+    //     Some(element)
+    // }
+
+    // fn prepaint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
+    //     assert_eq!(self.window.element_id_stack.len(), 0);
+
+    //     let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
+    //     for deferred_draw_ix in deferred_draw_indices {
+    //         let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+    //         self.window
+    //             .element_id_stack
+    //             .clone_from(&deferred_draw.element_id_stack);
+    //         self.window
+    //             .text_style_stack
+    //             .clone_from(&deferred_draw.text_style_stack);
+    //         self.window
+    //             .next_frame
+    //             .dispatch_tree
+    //             .set_active_node(deferred_draw.parent_node);
+
+    //         let prepaint_start = self.prepaint_index();
+    //         if let Some(element) = deferred_draw.element.as_mut() {
+    //             self.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
+    //                 element.prepaint(cx)
+    //             });
+    //         } else {
+    //             self.reuse_prepaint(deferred_draw.prepaint_range.clone());
+    //         }
+    //         let prepaint_end = self.prepaint_index();
+    //         deferred_draw.prepaint_range = prepaint_start..prepaint_end;
+    //     }
+    //     assert_eq!(
+    //         self.window.next_frame.deferred_draws.len(),
+    //         0,
+    //         "cannot call defer_draw during deferred drawing"
+    //     );
+    //     self.window.next_frame.deferred_draws = deferred_draws;
+    //     self.window.element_id_stack.clear();
+    //     self.window.text_style_stack.clear();
+    // }
+
+    // fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
+    //     assert_eq!(self.window.element_id_stack.len(), 0);
+
+    //     let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
+    //     for deferred_draw_ix in deferred_draw_indices {
+    //         let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+    //         self.window
+    //             .element_id_stack
+    //             .clone_from(&deferred_draw.element_id_stack);
+    //         self.window
+    //             .next_frame
+    //             .dispatch_tree
+    //             .set_active_node(deferred_draw.parent_node);
+
+    //         let paint_start = self.paint_index();
+    //         if let Some(element) = deferred_draw.element.as_mut() {
+    //             element.paint(self);
+    //         } else {
+    //             self.reuse_paint(deferred_draw.paint_range.clone());
+    //         }
+    //         let paint_end = self.paint_index();
+    //         deferred_draw.paint_range = paint_start..paint_end;
+    //     }
+    //     self.window.next_frame.deferred_draws = deferred_draws;
+    //     self.window.element_id_stack.clear();
+    // }
+
+    // pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
+    //     PrepaintStateIndex {
+    //         hitboxes_index: self.window.next_frame.hitboxes.len(),
+    //         tooltips_index: self.window.next_frame.tooltip_requests.len(),
+    //         deferred_draws_index: self.window.next_frame.deferred_draws.len(),
+    //         dispatch_tree_index: self.window.next_frame.dispatch_tree.len(),
+    //         accessed_element_states_index: self.window.next_frame.accessed_element_states.len(),
+    //         line_layout_index: self.window.text_system.layout_index(),
+    //     }
+    // }
+
+    // pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+    //     let window = &mut self.window;
+    //     window.next_frame.hitboxes.extend(
+    //         window.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
+    //             .iter()
+    //             .cloned(),
+    //     );
+    //     window.next_frame.tooltip_requests.extend(
+    //         window.rendered_frame.tooltip_requests
+    //             [range.start.tooltips_index..range.end.tooltips_index]
+    //             .iter_mut()
+    //             .map(|request| request.take()),
+    //     );
+    //     window.next_frame.accessed_element_states.extend(
+    //         window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+    //             ..range.end.accessed_element_states_index]
+    //             .iter()
+    //             .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+    //     );
+    //     window
+    //         .text_system
+    //         .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+
+    //     let reused_subtree = window.next_frame.dispatch_tree.reuse_subtree(
+    //         range.start.dispatch_tree_index..range.end.dispatch_tree_index,
+    //         &mut window.rendered_frame.dispatch_tree,
+    //         window.focus,
+    //     );
+
+    //     if reused_subtree.contains_focus() {
+    //         window.next_frame.focus = window.focus;
+    //     }
+
+    //     window.next_frame.deferred_draws.extend(
+    //         window.rendered_frame.deferred_draws
+    //             [range.start.deferred_draws_index..range.end.deferred_draws_index]
+    //             .iter()
+    //             .map(|deferred_draw| DeferredDraw {
+    //                 parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
+    //                 element_id_stack: deferred_draw.element_id_stack.clone(),
+    //                 text_style_stack: deferred_draw.text_style_stack.clone(),
+    //                 priority: deferred_draw.priority,
+    //                 element: None,
+    //                 absolute_offset: deferred_draw.absolute_offset,
+    //                 prepaint_range: deferred_draw.prepaint_range.clone(),
+    //                 paint_range: deferred_draw.paint_range.clone(),
+    //             }),
+    //     );
+    // }
+
+    // pub(crate) fn paint_index(&self) -> PaintIndex {
+    //     PaintIndex {
+    //         scene_index: self.window.next_frame.scene.len(),
+    //         mouse_listeners_index: self.window.next_frame.mouse_listeners.len(),
+    //         input_handlers_index: self.window.next_frame.input_handlers.len(),
+    //         cursor_styles_index: self.window.next_frame.cursor_styles.len(),
+    //         accessed_element_states_index: self.window.next_frame.accessed_element_states.len(),
+    //         line_layout_index: self.window.text_system.layout_index(),
+    //     }
+    // }
+
+    // pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+    //     let window = &mut self.window;
+
+    //     window.next_frame.cursor_styles.extend(
+    //         window.rendered_frame.cursor_styles
+    //             [range.start.cursor_styles_index..range.end.cursor_styles_index]
+    //             .iter()
+    //             .cloned(),
+    //     );
+    //     window.next_frame.input_handlers.extend(
+    //         window.rendered_frame.input_handlers
+    //             [range.start.input_handlers_index..range.end.input_handlers_index]
+    //             .iter_mut()
+    //             .map(|handler| handler.take()),
+    //     );
+    //     window.next_frame.mouse_listeners.extend(
+    //         window.rendered_frame.mouse_listeners
+    //             [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
+    //             .iter_mut()
+    //             .map(|listener| listener.take()),
+    //     );
+    //     window.next_frame.accessed_element_states.extend(
+    //         window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+    //             ..range.end.accessed_element_states_index]
+    //             .iter()
+    //             .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+    //     );
+
+    //     window
+    //         .text_system
+    //         .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+    //     window.next_frame.scene.replay(
+    //         range.start.scene_index..range.end.scene_index,
+    //         &window.rendered_frame.scene,
+    //     );
+    // }
+
+    // /// Push a text style onto the stack, and call a function with that style active.
+    // /// Use [`AppContext::text_style`] to get the current, combined text style. This method
+    // /// should only be called as part of element drawing.
+    // pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
+    // where
+    //     F: FnOnce(&mut Self) -> R,
+    // {
+    //     debug_assert!(
+    //         matches!(
+    //             self.window.draw_phase,
+    //             DrawPhase::Prepaint | DrawPhase::Paint
+    //         ),
+    //         "this method can only be called during request_layout, prepaint, or paint"
+    //     );
+    //     if let Some(style) = style {
+    //         self.window.text_style_stack.push(style);
+    //         let result = f(self);
+    //         self.window.text_style_stack.pop();
+    //         result
+    //     } else {
+    //         f(self)
+    //     }
+    // }
+
+    // /// Updates the cursor style at the platform level. This method should only be called
+    // /// during the prepaint phase of element drawing.
+    // pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+    //     self.window
+    //         .next_frame
+    //         .cursor_styles
+    //         .push(CursorStyleRequest {
+    //             hitbox_id: hitbox.id,
+    //             style,
+    //         });
+    // }
+
+    // /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
+    // /// during the paint phase of element drawing.
+    // pub fn set_tooltip(&mut self, tooltip: AnyTooltip) -> TooltipId {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during prepaint"
+    //     );
+    //     let id = TooltipId(post_inc(&mut self.window.next_tooltip_id.0));
+    //     self.window
+    //         .next_frame
+    //         .tooltip_requests
+    //         .push(Some(TooltipRequest { id, tooltip }));
+    //     id
+    // }
+
+    // /// Invoke the given function with the given content mask after intersecting it
+    // /// with the current mask. This method should only be called during element drawing.
+    // pub fn with_content_mask<R>(
+    //     &mut self,
+    //     mask: Option<ContentMask<Pixels>>,
+    //     f: impl FnOnce(&mut Self) -> R,
+    // ) -> R {
+    //     debug_assert!(
+    //         matches!(
+    //             self.window.draw_phase,
+    //             DrawPhase::Prepaint | DrawPhase::Paint
+    //         ),
+    //         "this method can only be called during request_layout, prepaint, or paint"
+    //     );
+    //     if let Some(mask) = mask {
+    //         let mask = mask.intersect(&self.content_mask());
+    //         self.window_mut().content_mask_stack.push(mask);
+    //         let result = f(self);
+    //         self.window_mut().content_mask_stack.pop();
+    //         result
+    //     } else {
+    //         f(self)
+    //     }
+    // }
+
+    // /// Updates the global element offset relative to the current offset. This is used to implement
+    // /// scrolling. This method should only be called during the prepaint phase of element drawing.
+    // pub fn with_element_offset<R>(
+    //     &mut self,
+    //     offset: Point<Pixels>,
+    //     f: impl FnOnce(&mut Self) -> R,
+    // ) -> R {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during request_layout, or prepaint"
+    //     );
+
+    //     if offset.is_zero() {
+    //         return f(self);
+    //     };
+
+    //     let abs_offset = self.element_offset() + offset;
+    //     self.with_absolute_element_offset(abs_offset, f)
+    // }
+
+    // /// Updates the global element offset based on the given offset. This is used to implement
+    // /// drag handles and other manual painting of elements. This method should only be called during
+    // /// the prepaint phase of element drawing.
+    // pub fn with_absolute_element_offset<R>(
+    //     &mut self,
+    //     offset: Point<Pixels>,
+    //     f: impl FnOnce(&mut Self) -> R,
+    // ) -> R {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during request_layout, or prepaint"
+    //     );
+    //     self.window_mut().element_offset_stack.push(offset);
+    //     let result = f(self);
+    //     self.window_mut().element_offset_stack.pop();
+    //     result
+    // }
+
+    // pub(crate) fn with_element_opacity<R>(
+    //     &mut self,
+    //     opacity: Option<f32>,
+    //     f: impl FnOnce(&mut Self) -> R,
+    // ) -> R {
+    //     if opacity.is_none() {
+    //         return f(self);
+    //     }
+
+    //     debug_assert!(
+    //         matches!(
+    //             self.window.draw_phase,
+    //             DrawPhase::Prepaint | DrawPhase::Paint
+    //         ),
+    //         "this method can only be called during prepaint, or paint"
+    //     );
+    //     self.window_mut().element_opacity = opacity;
+    //     let result = f(self);
+    //     self.window_mut().element_opacity = None;
+    //     result
+    // }
+
+    // /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
+    // /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
+    // /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
+    // /// element offset and prepaint again. See [`List`] for an example. This method should only be
+    // /// called during the prepaint phase of element drawing.
+    // pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during prepaint"
+    //     );
+    //     let index = self.prepaint_index();
+    //     let result = f(self);
+    //     if result.is_err() {
+    //         self.window
+    //             .next_frame
+    //             .hitboxes
+    //             .truncate(index.hitboxes_index);
+    //         self.window
+    //             .next_frame
+    //             .tooltip_requests
+    //             .truncate(index.tooltips_index);
+    //         self.window
+    //             .next_frame
+    //             .deferred_draws
+    //             .truncate(index.deferred_draws_index);
+    //         self.window
+    //             .next_frame
+    //             .dispatch_tree
+    //             .truncate(index.dispatch_tree_index);
+    //         self.window
+    //             .next_frame
+    //             .accessed_element_states
+    //             .truncate(index.accessed_element_states_index);
+    //         self.window
+    //             .text_system
+    //             .truncate_layouts(index.line_layout_index);
+    //     }
+    //     result
+    // }
+
+    // /// When you call this method during [`prepaint`], containing elements will attempt to
+    // /// scroll to cause the specified bounds to become visible. When they decide to autoscroll, they will call
+    // /// [`prepaint`] again with a new set of bounds. See [`List`] for an example of an element
+    // /// that supports this method being called on the elements it contains. This method should only be
+    // /// called during the prepaint phase of element drawing.
+    // pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during prepaint"
+    //     );
+    //     self.window.requested_autoscroll = Some(bounds);
+    // }
+
+    // /// This method can be called from a containing element such as [`List`] to support the autoscroll behavior
+    // /// described in [`request_autoscroll`].
+    // pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during prepaint"
+    //     );
+    //     self.window.requested_autoscroll.take()
+    // }
+
+    // /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
+    // /// Your view will be re-drawn once the asset has finished loading.
+    // ///
+    // /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
+    // /// time.
+    // pub fn use_asset<A: Asset>(&mut self, source: &A::Source) -> Option<A::Output> {
+    //     let (task, is_first) = self.fetch_asset::<A>(source);
+    //     task.clone().now_or_never().or_else(|| {
+    //         if is_first {
+    //             let parent_id = self.parent_view_id();
+    //             self.spawn({
+    //                 let task = task.clone();
+    //                 |mut cx| async move {
+    //                     task.await;
+
+    //                     cx.on_next_frame(move |cx| cx.notify(parent_id));
+    //                 }
+    //             })
+    //             .detach();
+    //         }
+
+    //         None
+    //     })
+    // }
+    // /// Obtain the current element offset. This method should only be called during the
+    // /// prepaint phase of element drawing.
+    // pub fn element_offset(&self) -> Point<Pixels> {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during prepaint"
+    //     );
+    //     self.window()
+    //         .element_offset_stack
+    //         .last()
+    //         .copied()
+    //         .unwrap_or_default()
+    // }
+
+    // /// Obtain the current element opacity. This method should only be called during the
+    // /// prepaint phase of element drawing.
+    // pub(crate) fn element_opacity(&self) -> f32 {
+    //     debug_assert!(
+    //         matches!(
+    //             self.window.draw_phase,
+    //             DrawPhase::Prepaint | DrawPhase::Paint
+    //         ),
+    //         "this method can only be called during prepaint, or paint"
+    //     );
+    //     self.window().element_opacity.unwrap_or(1.0)
+    // }
+
+    // /// Obtain the current content mask. This method should only be called during element drawing.
+    // pub fn content_mask(&self) -> ContentMask<Pixels> {
+    //     debug_assert!(
+    //         matches!(
+    //             self.window.draw_phase,
+    //             DrawPhase::Prepaint | DrawPhase::Paint
+    //         ),
+    //         "this method can only be called during prepaint, or paint"
+    //     );
+    //     self.window()
+    //         .content_mask_stack
+    //         .last()
+    //         .cloned()
+    //         .unwrap_or_else(|| ContentMask {
+    //             bounds: Bounds {
+    //                 origin: Point::default(),
+    //                 size: self.window().viewport_size,
+    //             },
+    //         })
+    // }
+
+    // /// Provide elements in the called function with a new namespace in which their identifiers must be unique.
+    // /// This can be used within a custom element to distinguish multiple sets of child elements.
+    // pub fn with_element_namespace<R>(
+    //     &mut self,
+    //     element_id: impl Into<ElementId>,
+    //     f: impl FnOnce(&mut Self) -> R,
+    // ) -> R {
+    //     self.window.element_id_stack.push(element_id.into());
+    //     let result = f(self);
+    //     self.window.element_id_stack.pop();
+    //     result
+    // }
+
+    // /// Updates or initializes state for an element with the given id that lives across multiple
+    // /// frames. If an element with this ID existed in the rendered frame, its state will be passed
+    // /// to the given closure. The state returned by the closure will be stored so it can be referenced
+    // /// when drawing the next frame. This method should only be called as part of element drawing.
+    // pub fn with_element_state<S, R>(
+    //     &mut self,
+    //     global_id: &GlobalElementId,
+    //     f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+    // ) -> R
+    // where
+    //     S: 'static,
+    // {
+    //     debug_assert!(
+    //         matches!(
+    //             self.window.draw_phase,
+    //             DrawPhase::Prepaint | DrawPhase::Paint
+    //         ),
+    //         "this method can only be called during request_layout, prepaint, or paint"
+    //     );
+
+    //     let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
+    //     self.window
+    //         .next_frame
+    //         .accessed_element_states
+    //         .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+
+    //     if let Some(any) = self
+    //         .window
+    //         .next_frame
+    //         .element_states
+    //         .remove(&key)
+    //         .or_else(|| self.window.rendered_frame.element_states.remove(&key))
+    //     {
+    //         let ElementStateBox {
+    //             inner,
+    //             #[cfg(debug_assertions)]
+    //             type_name,
+    //         } = any;
+    //         // Using the extra inner option to avoid needing to reallocate a new box.
+    //         let mut state_box = inner
+    //             .downcast::<Option<S>>()
+    //             .map_err(|_| {
+    //                 #[cfg(debug_assertions)]
+    //                 {
+    //                     anyhow::anyhow!(
+    //                         "invalid element state type for id, requested {:?}, actual: {:?}",
+    //                         std::any::type_name::<S>(),
+    //                         type_name
+    //                     )
+    //                 }
+
+    //                 #[cfg(not(debug_assertions))]
+    //                 {
+    //                     anyhow::anyhow!(
+    //                         "invalid element state type for id, requested {:?}",
+    //                         std::any::type_name::<S>(),
+    //                     )
+    //                 }
+    //             })
+    //             .unwrap();
+
+    //         let state = state_box.take().expect(
+    //             "reentrant call to with_element_state for the same state type and element id",
+    //         );
+    //         let (result, state) = f(Some(state), self);
+    //         state_box.replace(state);
+    //         self.window.next_frame.element_states.insert(
+    //             key,
+    //             ElementStateBox {
+    //                 inner: state_box,
+    //                 #[cfg(debug_assertions)]
+    //                 type_name,
+    //             },
+    //         );
+    //         result
+    //     } else {
+    //         let (result, state) = f(None, self);
+    //         self.window.next_frame.element_states.insert(
+    //             key,
+    //             ElementStateBox {
+    //                 inner: Box::new(Some(state)),
+    //                 #[cfg(debug_assertions)]
+    //                 type_name: std::any::type_name::<S>(),
+    //             },
+    //         );
+    //         result
+    //     }
+    // }
+
+    // /// A variant of `with_element_state` that allows the element's id to be optional. This is a convenience
+    // /// method for elements where the element id may or may not be assigned. Prefer using `with_element_state`
+    // /// when the element is guaranteed to have an id.
+    // ///
+    // /// The first option means 'no ID provided'
+    // /// The second option means 'not yet initialized'
+    // pub fn with_optional_element_state<S, R>(
+    //     &mut self,
+    //     global_id: Option<&GlobalElementId>,
+    //     f: impl FnOnce(Option<Option<S>>, &mut Self) -> (R, Option<S>),
+    // ) -> R
+    // where
+    //     S: 'static,
+    // {
+    //     debug_assert!(
+    //         matches!(
+    //             self.window.draw_phase,
+    //             DrawPhase::Prepaint | DrawPhase::Paint
+    //         ),
+    //         "this method can only be called during request_layout, prepaint, or paint"
+    //     );
+
+    //     if let Some(global_id) = global_id {
+    //         self.with_element_state(global_id, |state, cx| {
+    //             let (result, state) = f(Some(state), cx);
+    //             let state =
+    //                 state.expect("you must return some state when you pass some element id");
+    //             (result, state)
+    //         })
+    //     } else {
+    //         let (result, state) = f(None, self);
+    //         debug_assert!(
+    //             state.is_none(),
+    //             "you must not return an element state when passing None for the global id"
+    //         );
+    //         result
+    //     }
+    // }
+
+    // /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree
+    // /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
+    // /// with higher values being drawn on top.
+    // ///
+    // /// This method should only be called as part of the prepaint phase of element drawing.
+    // pub fn defer_draw(
+    //     &mut self,
+    //     element: AnyElement,
+    //     absolute_offset: Point<Pixels>,
+    //     priority: usize,
+    // ) {
+    //     let window = &mut self.window;
+    //     debug_assert_eq!(
+    //         window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during request_layout or prepaint"
+    //     );
+    //     let parent_node = window.next_frame.dispatch_tree.active_node_id().unwrap();
+    //     window.next_frame.deferred_draws.push(DeferredDraw {
+    //         parent_node,
+    //         element_id_stack: window.element_id_stack.clone(),
+    //         text_style_stack: window.text_style_stack.clone(),
+    //         priority,
+    //         element: Some(element),
+    //         absolute_offset,
+    //         prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
+    //         paint_range: PaintIndex::default()..PaintIndex::default(),
+    //     });
+    // }
+
+    // /// Creates a new painting layer for the specified bounds. A "layer" is a batch
+    // /// of geometry that are non-overlapping and have the same draw order. This is typically used
+    // /// for performance reasons.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let scale_factor = self.scale_factor();
+    //     let content_mask = self.content_mask();
+    //     let clipped_bounds = bounds.intersect(&content_mask.bounds);
+    //     if !clipped_bounds.is_empty() {
+    //         self.window
+    //             .next_frame
+    //             .scene
+    //             .push_layer(clipped_bounds.scale(scale_factor));
+    //     }
+
+    //     let result = f(self);
+
+    //     if !clipped_bounds.is_empty() {
+    //         self.window.next_frame.scene.pop_layer();
+    //     }
+
+    //     result
+    // }
+
+    // /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn paint_shadows(
+    //     &mut self,
+    //     bounds: Bounds<Pixels>,
+    //     corner_radii: Corners<Pixels>,
+    //     shadows: &[BoxShadow],
+    // ) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let scale_factor = self.scale_factor();
+    //     let content_mask = self.content_mask();
+    //     let opacity = self.element_opacity();
+    //     for shadow in shadows {
+    //         let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
+    //         self.window.next_frame.scene.insert_primitive(Shadow {
+    //             order: 0,
+    //             blur_radius: shadow.blur_radius.scale(scale_factor),
+    //             bounds: shadow_bounds.scale(scale_factor),
+    //             content_mask: content_mask.scale(scale_factor),
+    //             corner_radii: corner_radii.scale(scale_factor),
+    //             color: shadow.color.opacity(opacity),
+    //         });
+    //     }
+    // }
+
+    // /// Paint one or more quads into the scene for the next frame at the current stacking context.
+    // /// Quads are colored rectangular regions with an optional background, border, and corner radius.
+    // /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn paint_quad(&mut self, quad: PaintQuad) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let scale_factor = self.scale_factor();
+    //     let content_mask = self.content_mask();
+    //     let opacity = self.element_opacity();
+    //     self.window.next_frame.scene.insert_primitive(Quad {
+    //         order: 0,
+    //         pad: 0,
+    //         bounds: quad.bounds.scale(scale_factor),
+    //         content_mask: content_mask.scale(scale_factor),
+    //         background: quad.background.opacity(opacity),
+    //         border_color: quad.border_color.opacity(opacity),
+    //         corner_radii: quad.corner_radii.scale(scale_factor),
+    //         border_widths: quad.border_widths.scale(scale_factor),
+    //     });
+    // }
+
+    // /// Paint the given `Path` into the scene for the next frame at the current z-index.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Background>) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let scale_factor = self.scale_factor();
+    //     let content_mask = self.content_mask();
+    //     let opacity = self.element_opacity();
+    //     path.content_mask = content_mask;
+    //     let color: Background = color.into();
+    //     path.color = color.opacity(opacity);
+    //     self.window
+    //         .next_frame
+    //         .scene
+    //         .insert_primitive(path.scale(scale_factor));
+    // }
+
+    // /// Paint an underline into the scene for the next frame at the current z-index.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn paint_underline(
+    //     &mut self,
+    //     origin: Point<Pixels>,
+    //     width: Pixels,
+    //     style: &UnderlineStyle,
+    // ) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let scale_factor = self.scale_factor();
+    //     let height = if style.wavy {
+    //         style.thickness * 3.
+    //     } else {
+    //         style.thickness
+    //     };
+    //     let bounds = Bounds {
+    //         origin,
+    //         size: size(width, height),
+    //     };
+    //     let content_mask = self.content_mask();
+    //     let element_opacity = self.element_opacity();
+
+    //     self.window.next_frame.scene.insert_primitive(Underline {
+    //         order: 0,
+    //         pad: 0,
+    //         bounds: bounds.scale(scale_factor),
+    //         content_mask: content_mask.scale(scale_factor),
+    //         color: style.color.unwrap_or_default().opacity(element_opacity),
+    //         thickness: style.thickness.scale(scale_factor),
+    //         wavy: style.wavy,
+    //     });
+    // }
+
+    // /// Paint a strikethrough into the scene for the next frame at the current z-index.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn paint_strikethrough(
+    //     &mut self,
+    //     origin: Point<Pixels>,
+    //     width: Pixels,
+    //     style: &StrikethroughStyle,
+    // ) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let scale_factor = self.scale_factor();
+    //     let height = style.thickness;
+    //     let bounds = Bounds {
+    //         origin,
+    //         size: size(width, height),
+    //     };
+    //     let content_mask = self.content_mask();
+    //     let opacity = self.element_opacity();
+
+    //     self.window.next_frame.scene.insert_primitive(Underline {
+    //         order: 0,
+    //         pad: 0,
+    //         bounds: bounds.scale(scale_factor),
+    //         content_mask: content_mask.scale(scale_factor),
+    //         thickness: style.thickness.scale(scale_factor),
+    //         color: style.color.unwrap_or_default().opacity(opacity),
+    //         wavy: false,
+    //     });
+    // }
+
+    // /// Paints a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
+    // ///
+    // /// The y component of the origin is the baseline of the glyph.
+    // /// You should generally prefer to use the [`ShapedLine::paint`](crate::ShapedLine::paint) or
+    // /// [`WrappedLine::paint`](crate::WrappedLine::paint) methods in the [`TextSystem`](crate::TextSystem).
+    // /// This method is only useful if you need to paint a single glyph that has already been shaped.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn paint_glyph(
+    //     &mut self,
+    //     origin: Point<Pixels>,
+    //     font_id: FontId,
+    //     glyph_id: GlyphId,
+    //     font_size: Pixels,
+    //     color: Hsla,
+    // ) -> Result<()> {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let element_opacity = self.element_opacity();
+    //     let scale_factor = self.scale_factor();
+    //     let glyph_origin = origin.scale(scale_factor);
+    //     let subpixel_variant = Point {
+    //         x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+    //         y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+    //     };
+    //     let params = RenderGlyphParams {
+    //         font_id,
+    //         glyph_id,
+    //         font_size,
+    //         subpixel_variant,
+    //         scale_factor,
+    //         is_emoji: false,
+    //     };
+
+    //     let raster_bounds = self.text_system().raster_bounds(&params)?;
+    //     if !raster_bounds.is_zero() {
+    //         let tile = self
+    //             .window
+    //             .sprite_atlas
+    //             .get_or_insert_with(&params.clone().into(), &mut || {
+    //                 let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+    //                 Ok(Some((size, Cow::Owned(bytes))))
+    //             })?
+    //             .expect("Callback above only errors or returns Some");
+    //         let bounds = Bounds {
+    //             origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+    //             size: tile.bounds.size.map(Into::into),
+    //         };
+    //         let content_mask = self.content_mask().scale(scale_factor);
+    //         self.window
+    //             .next_frame
+    //             .scene
+    //             .insert_primitive(MonochromeSprite {
+    //                 order: 0,
+    //                 pad: 0,
+    //                 bounds,
+    //                 content_mask,
+    //                 color: color.opacity(element_opacity),
+    //                 tile,
+    //                 transformation: TransformationMatrix::unit(),
+    //             });
+    //     }
+    //     Ok(())
+    // }
+
+    // /// Paints an emoji glyph into the scene for the next frame at the current z-index.
+    // ///
+    // /// The y component of the origin is the baseline of the glyph.
+    // /// You should generally prefer to use the [`ShapedLine::paint`](crate::ShapedLine::paint) or
+    // /// [`WrappedLine::paint`](crate::WrappedLine::paint) methods in the [`TextSystem`](crate::TextSystem).
+    // /// This method is only useful if you need to paint a single emoji that has already been shaped.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn paint_emoji(
+    //     &mut self,
+    //     origin: Point<Pixels>,
+    //     font_id: FontId,
+    //     glyph_id: GlyphId,
+    //     font_size: Pixels,
+    // ) -> Result<()> {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let scale_factor = self.scale_factor();
+    //     let glyph_origin = origin.scale(scale_factor);
+    //     let params = RenderGlyphParams {
+    //         font_id,
+    //         glyph_id,
+    //         font_size,
+    //         // We don't render emojis with subpixel variants.
+    //         subpixel_variant: Default::default(),
+    //         scale_factor,
+    //         is_emoji: true,
+    //     };
+
+    //     let raster_bounds = self.text_system().raster_bounds(&params)?;
+    //     if !raster_bounds.is_zero() {
+    //         let tile = self
+    //             .window
+    //             .sprite_atlas
+    //             .get_or_insert_with(&params.clone().into(), &mut || {
+    //                 let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+    //                 Ok(Some((size, Cow::Owned(bytes))))
+    //             })?
+    //             .expect("Callback above only errors or returns Some");
+
+    //         let bounds = Bounds {
+    //             origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+    //             size: tile.bounds.size.map(Into::into),
+    //         };
+    //         let content_mask = self.content_mask().scale(scale_factor);
+    //         let opacity = self.element_opacity();
+
+    //         self.window
+    //             .next_frame
+    //             .scene
+    //             .insert_primitive(PolychromeSprite {
+    //                 order: 0,
+    //                 pad: 0,
+    //                 grayscale: false,
+    //                 bounds,
+    //                 corner_radii: Default::default(),
+    //                 content_mask,
+    //                 tile,
+    //                 opacity,
+    //             });
+    //     }
+    //     Ok(())
+    // }
+
+    // /// Paint a monochrome SVG into the scene for the next frame at the current stacking context.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn paint_svg(
+    //     &mut self,
+    //     bounds: Bounds<Pixels>,
+    //     path: SharedString,
+    //     transformation: TransformationMatrix,
+    //     color: Hsla,
+    // ) -> Result<()> {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let element_opacity = self.element_opacity();
+    //     let scale_factor = self.scale_factor();
+    //     let bounds = bounds.scale(scale_factor);
+    //     // Render the SVG at twice the size to get a higher quality result.
+    //     let params = RenderSvgParams {
+    //         path,
+    //         size: bounds
+    //             .size
+    //             .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
+    //     };
+
+    //     let Some(tile) =
+    //         self.window
+    //             .sprite_atlas
+    //             .get_or_insert_with(&params.clone().into(), &mut || {
+    //                 let Some(bytes) = self.svg_renderer.render(&params)? else {
+    //                     return Ok(None);
+    //                 };
+    //                 Ok(Some((params.size, Cow::Owned(bytes))))
+    //             })?
+    //     else {
+    //         return Ok(());
+    //     };
+    //     let content_mask = self.content_mask().scale(scale_factor);
+
+    //     self.window
+    //         .next_frame
+    //         .scene
+    //         .insert_primitive(MonochromeSprite {
+    //             order: 0,
+    //             pad: 0,
+    //             bounds: bounds
+    //                 .map_origin(|origin| origin.floor())
+    //                 .map_size(|size| size.ceil()),
+    //             content_mask,
+    //             color: color.opacity(element_opacity),
+    //             tile,
+    //             transformation,
+    //         });
+
+    //     Ok(())
+    // }
+
+    // /// Paint an image into the scene for the next frame at the current z-index.
+    // /// This method will panic if the frame_index is not valid
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn paint_image(
+    //     &mut self,
+    //     bounds: Bounds<Pixels>,
+    //     corner_radii: Corners<Pixels>,
+    //     data: Arc<RenderImage>,
+    //     frame_index: usize,
+    //     grayscale: bool,
+    // ) -> Result<()> {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let scale_factor = self.scale_factor();
+    //     let bounds = bounds.scale(scale_factor);
+    //     let params = RenderImageParams {
+    //         image_id: data.id,
+    //         frame_index,
+    //     };
+
+    //     let tile = self
+    //         .window
+    //         .sprite_atlas
+    //         .get_or_insert_with(&params.clone().into(), &mut || {
+    //             Ok(Some((
+    //                 data.size(frame_index),
+    //                 Cow::Borrowed(
+    //                     data.as_bytes(frame_index)
+    //                         .expect("It's the caller's job to pass a valid frame index"),
+    //                 ),
+    //             )))
+    //         })?
+    //         .expect("Callback above only returns Some");
+    //     let content_mask = self.content_mask().scale(scale_factor);
+    //     let corner_radii = corner_radii.scale(scale_factor);
+    //     let opacity = self.element_opacity();
+
+    //     self.window
+    //         .next_frame
+    //         .scene
+    //         .insert_primitive(PolychromeSprite {
+    //             order: 0,
+    //             pad: 0,
+    //             grayscale,
+    //             bounds,
+    //             content_mask,
+    //             corner_radii,
+    //             tile,
+    //             opacity,
+    //         });
+    //     Ok(())
+    // }
+
+    // /// Paint a surface into the scene for the next frame at the current z-index.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // #[cfg(target_os = "macos")]
+    // pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+    //     use crate::PaintSurface;
+
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     let scale_factor = self.scale_factor();
+    //     let bounds = bounds.scale(scale_factor);
+    //     let content_mask = self.content_mask().scale(scale_factor);
+    //     self.window.next_frame.scene.insert_primitive(PaintSurface {
+    //         order: 0,
+    //         bounds,
+    //         content_mask,
+    //         image_buffer,
+    //     });
+    // }
+
+    // /// Removes an image from the sprite atlas.
+    // pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
+    //     for frame_index in 0..data.frame_count() {
+    //         let params = RenderImageParams {
+    //             image_id: data.id,
+    //             frame_index,
+    //         };
+
+    //         self.window.sprite_atlas.remove(&params.clone().into());
+    //     }
+
+    //     Ok(())
+    // }
+
+    // #[must_use]
+    // /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
+    // /// layout is being requested, along with the layout ids of any children. This method is called during
+    // /// calls to the [`Element::request_layout`] trait method and enables any element to participate in layout.
+    // ///
+    // /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
+    // pub fn request_layout(
+    //     &mut self,
+    //     style: Style,
+    //     children: impl IntoIterator<Item = LayoutId>,
+    // ) -> LayoutId {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during request_layout, or prepaint"
+    //     );
+
+    //     self.app.layout_id_buffer.clear();
+    //     self.app.layout_id_buffer.extend(children);
+    //     let rem_size = self.rem_size();
+
+    //     self.window.layout_engine.as_mut().unwrap().request_layout(
+    //         style,
+    //         rem_size,
+    //         &self.app.layout_id_buffer,
+    //     )
+    // }
+
+    // /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
+    // /// this variant takes a function that is invoked during layout so you can use arbitrary logic to
+    // /// determine the element's size. One place this is used internally is when measuring text.
+    // ///
+    // /// The given closure is invoked at layout time with the known dimensions and available space and
+    // /// returns a `Size`.
+    // ///
+    // /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
+    // pub fn request_measured_layout<
+    //     F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>
+    //         + 'static,
+    // >(
+    //     &mut self,
+    //     style: Style,
+    //     measure: F,
+    // ) -> LayoutId {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during request_layout, or prepaint"
+    //     );
+
+    //     let rem_size = self.rem_size();
+    //     self.window
+    //         .layout_engine
+    //         .as_mut()
+    //         .unwrap()
+    //         .request_measured_layout(style, rem_size, measure)
+    // }
+
+    // /// Compute the layout for the given id within the given available space.
+    // /// This method is called for its side effect, typically by the framework prior to painting.
+    // /// After calling it, you can request the bounds of the given layout node id or any descendant.
+    // ///
+    // /// This method should only be called as part of the prepaint phase of element drawing.
+    // pub fn compute_layout(&mut self, layout_id: LayoutId, available_space: Size<AvailableSpace>) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during request_layout, or prepaint"
+    //     );
+
+    //     let mut layout_engine = self.window.layout_engine.take().unwrap();
+    //     layout_engine.compute_layout(layout_id, available_space, self);
+    //     self.window.layout_engine = Some(layout_engine);
+    // }
+
+    // /// Obtain the bounds computed for the given LayoutId relative to the window. This method will usually be invoked by
+    // /// GPUI itself automatically in order to pass your element its `Bounds` automatically.
+    // ///
+    // /// This method should only be called as part of element drawing.
+    // pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during request_layout, prepaint, or paint"
+    //     );
+
+    //     let mut bounds = self
+    //         .window
+    //         .layout_engine
+    //         .as_mut()
+    //         .unwrap()
+    //         .layout_bounds(layout_id)
+    //         .map(Into::into);
+    //     bounds.origin += self.element_offset();
+    //     bounds
+    // }
+
+    // /// This method should be called during `prepaint`. You can use
+    // /// the returned [Hitbox] during `paint` or in an event handler
+    // /// to determine whether the inserted hitbox was the topmost.
+    // ///
+    // /// This method should only be called as part of the prepaint phase of element drawing.
+    // pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during prepaint"
+    //     );
+
+    //     let content_mask = self.content_mask();
+    //     let window = &mut self.window;
+    //     let id = window.next_hitbox_id;
+    //     window.next_hitbox_id.0 += 1;
+    //     let hitbox = Hitbox {
+    //         id,
+    //         bounds,
+    //         content_mask,
+    //         opaque,
+    //     };
+    //     window.next_frame.hitboxes.push(hitbox.clone());
+    //     hitbox
+    // }
+
+    // /// Sets the key context for the current element. This context will be used to translate
+    // /// keybindings into actions.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn set_key_context(&mut self, context: KeyContext) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+    //     self.window
+    //         .next_frame
+    //         .dispatch_tree
+    //         .set_key_context(context);
+    // }
+
+    // /// Sets the focus handle for the current element. This handle will be used to manage focus state
+    // /// and keyboard event dispatch for the element.
+    // ///
+    // /// This method should only be called as part of the prepaint phase of element drawing.
+    // pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during prepaint"
+    //     );
+    //     if focus_handle.is_focused(self) {
+    //         self.window.next_frame.focus = Some(focus_handle.id);
+    //     }
+    //     self.window
+    //         .next_frame
+    //         .dispatch_tree
+    //         .set_focus_id(focus_handle.id);
+    // }
+
+    // /// Sets the view id for the current element, which will be used to manage view caching.
+    // ///
+    // /// This method should only be called as part of element prepaint. We plan on removing this
+    // /// method eventually when we solve some issues that require us to construct editor elements
+    // /// directly instead of always using editors via views.
+    // pub fn set_view_id(&mut self, view_id: EntityId) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Prepaint,
+    //         "this method can only be called during prepaint"
+    //     );
+    //     self.window.next_frame.dispatch_tree.set_view_id(view_id);
+    // }
+
+    // /// Get the last view id for the current element
+    // pub fn parent_view_id(&self) -> Option<EntityId> {
+    //     self.window.next_frame.dispatch_tree.parent_view_id()
+    // }
+
+    // /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
+    // /// platform to receive textual input with proper integration with concerns such
+    // /// as IME interactions. This handler will be active for the upcoming frame until the following frame is
+    // /// rendered.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // ///
+    // /// [element_input_handler]: crate::ElementInputHandler
+    // pub fn handle_input(&mut self, focus_handle: &FocusHandle, input_handler: impl InputHandler) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     if focus_handle.is_focused(self) {
+    //         let cx = self.to_async();
+    //         self.window
+    //             .next_frame
+    //             .input_handlers
+    //             .push(Some(PlatformInputHandler::new(cx, Box::new(input_handler))));
+    //     }
+    // }
+
+    // /// Register a mouse event listener on the window for the next frame. The type of event
+    // /// is determined by the first parameter of the given listener. When the next frame is rendered
+    // /// the listener will be cleared.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn on_mouse_event<Event: MouseEvent>(
+    //     &mut self,
+    //     mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
+    // ) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     self.window.next_frame.mouse_listeners.push(Some(Box::new(
+    //         move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
+    //             if let Some(event) = event.downcast_ref() {
+    //                 handler(event, phase, cx)
+    //             }
+    //         },
+    //     )));
+    // }
+
+    // /// Register a key event listener on the window for the next frame. The type of event
+    // /// is determined by the first parameter of the given listener. When the next frame is rendered
+    // /// the listener will be cleared.
+    // ///
+    // /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
+    // /// a specific need to register a global listener.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn on_key_event<Event: KeyEvent>(
+    //     &mut self,
+    //     listener: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
+    // ) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     self.window.next_frame.dispatch_tree.on_key_event(Rc::new(
+    //         move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+    //             if let Some(event) = event.downcast_ref::<Event>() {
+    //                 listener(event, phase, cx)
+    //             }
+    //         },
+    //     ));
+    // }
+
+    // /// Register a modifiers changed event listener on the window for the next frame.
+    // ///
+    // /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
+    // /// a specific need to register a global listener.
+    // ///
+    // /// This method should only be called as part of the paint phase of element drawing.
+    // pub fn on_modifiers_changed(
+    //     &mut self,
+    //     listener: impl Fn(&ModifiersChangedEvent, &mut WindowContext) + 'static,
+    // ) {
+    //     debug_assert_eq!(
+    //         self.window.draw_phase,
+    //         DrawPhase::Paint,
+    //         "this method can only be called during paint"
+    //     );
+
+    //     self.window
+    //         .next_frame
+    //         .dispatch_tree
+    //         .on_modifiers_changed(Rc::new(
+    //             move |event: &ModifiersChangedEvent, cx: &mut WindowContext<'_>| {
+    //                 listener(event, cx)
+    //             },
+    //         ));
+    // }
+
+    // /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    // /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
+    // /// Returns a subscription and persists until the subscription is dropped.
+    // pub fn on_focus_in(
+    //     &mut self,
+    //     handle: &FocusHandle,
+    //     mut listener: impl FnMut(&mut WindowContext) + 'static,
+    // ) -> Subscription {
+    //     let focus_id = handle.id;
+    //     let (subscription, activate) =
+    //         self.window.new_focus_listener(Box::new(move |event, cx| {
+    //             if event.is_focus_in(focus_id) {
+    //                 listener(cx);
+    //             }
+    //             true
+    //         }));
+    //     self.app.defer(move |_| activate());
+    //     subscription
+    // }
+
+    // /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
+    // /// Returns a subscription and persists until the subscription is dropped.
+    // pub fn on_focus_out(
+    //     &mut self,
+    //     handle: &FocusHandle,
+    //     mut listener: impl FnMut(FocusOutEvent, &mut WindowContext) + 'static,
+    // ) -> Subscription {
+    //     let focus_id = handle.id;
+    //     let (subscription, activate) =
+    //         self.window.new_focus_listener(Box::new(move |event, cx| {
+    //             if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+    //                 if event.is_focus_out(focus_id) {
+    //                     let event = FocusOutEvent {
+    //                         blurred: WeakFocusHandle {
+    //                             id: blurred_id,
+    //                             handles: Arc::downgrade(&cx.app.focus_handles),
+    //                         },
+    //                     };
+    //                     listener(event, cx)
+    //                 }
+    //             }
+    //             true
+    //         }));
+    //     self.app.defer(move |_| activate());
+    //     subscription
+    // }
+
+    // fn reset_cursor_style(&self) {
+    //     // Set the cursor only if we're the active window.
+    //     if self.is_window_hovered() {
+    //         let style = self
+    //             .window
+    //             .rendered_frame
+    //             .cursor_styles
+    //             .iter()
+    //             .rev()
+    //             .find(|request| request.hitbox_id.is_hovered(self))
+    //             .map(|request| request.style)
+    //             .unwrap_or(CursorStyle::Arrow);
+    //         self.platform.set_cursor_style(style);
+    //     }
+    // }
+
+    // /// Dispatch a given keystroke as though the user had typed it.
+    // /// You can create a keystroke with Keystroke::parse("").
+    // pub fn dispatch_keystroke(&mut self, keystroke: Keystroke) -> bool {
+    //     let keystroke = keystroke.with_simulated_ime();
+    //     let result = self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
+    //         keystroke: keystroke.clone(),
+    //         is_held: false,
+    //     }));
+    //     if !result.propagate {
+    //         return true;
+    //     }
+
+    //     if let Some(input) = keystroke.key_char {
+    //         if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+    //             input_handler.dispatch_input(&input, self);
+    //             self.window.platform_window.set_input_handler(input_handler);
+    //             return true;
+    //         }
+    //     }
+
+    //     false
+    // }
+
+    // /// Represent this action as a key binding string, to display in the UI.
+    // pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
+    //     self.bindings_for_action(action)
+    //         .into_iter()
+    //         .next()
+    //         .map(|binding| {
+    //             binding
+    //                 .keystrokes()
+    //                 .iter()
+    //                 .map(ToString::to_string)
+    //                 .collect::<Vec<_>>()
+    //                 .join(" ")
+    //         })
+    //         .unwrap_or_else(|| action.name().to_string())
+    // }
+
+    // /// Dispatch a mouse or keyboard event on the window.
+    // #[profiling::function]
+    // pub fn dispatch_event(&mut self, event: PlatformInput) -> DispatchEventResult {
+    //     self.window.last_input_timestamp.set(Instant::now());
+    //     // Handlers may set this to false by calling `stop_propagation`.
+    //     self.app.propagate_event = true;
+    //     // Handlers may set this to true by calling `prevent_default`.
+    //     self.window.default_prevented = false;
+
+    //     let event = match event {
+    //         // Track the mouse position with our own state, since accessing the platform
+    //         // API for the mouse position can only occur on the main thread.
+    //         PlatformInput::MouseMove(mouse_move) => {
+    //             self.window.mouse_position = mouse_move.position;
+    //             self.window.modifiers = mouse_move.modifiers;
+    //             PlatformInput::MouseMove(mouse_move)
+    //         }
+    //         PlatformInput::MouseDown(mouse_down) => {
+    //             self.window.mouse_position = mouse_down.position;
+    //             self.window.modifiers = mouse_down.modifiers;
+    //             PlatformInput::MouseDown(mouse_down)
+    //         }
+    //         PlatformInput::MouseUp(mouse_up) => {
+    //             self.window.mouse_position = mouse_up.position;
+    //             self.window.modifiers = mouse_up.modifiers;
+    //             PlatformInput::MouseUp(mouse_up)
+    //         }
+    //         PlatformInput::MouseExited(mouse_exited) => {
+    //             self.window.modifiers = mouse_exited.modifiers;
+    //             PlatformInput::MouseExited(mouse_exited)
+    //         }
+    //         PlatformInput::ModifiersChanged(modifiers_changed) => {
+    //             self.window.modifiers = modifiers_changed.modifiers;
+    //             PlatformInput::ModifiersChanged(modifiers_changed)
+    //         }
+    //         PlatformInput::ScrollWheel(scroll_wheel) => {
+    //             self.window.mouse_position = scroll_wheel.position;
+    //             self.window.modifiers = scroll_wheel.modifiers;
+    //             PlatformInput::ScrollWheel(scroll_wheel)
+    //         }
+    //         // Translate dragging and dropping of external files from the operating system
+    //         // to internal drag and drop events.
+    //         PlatformInput::FileDrop(file_drop) => match file_drop {
+    //             FileDropEvent::Entered { position, paths } => {
+    //                 self.window.mouse_position = position;
+    //                 if self.active_drag.is_none() {
+    //                     self.active_drag = Some(AnyDrag {
+    //                         value: Arc::new(paths.clone()),
+    //                         view: self.new_view(|_, _| paths).into(),
+    //                         cursor_offset: position,
+    //                     });
+    //                 }
+    //                 PlatformInput::MouseMove(MouseMoveEvent {
+    //                     position,
+    //                     pressed_button: Some(MouseButton::Left),
+    //                     modifiers: Modifiers::default(),
+    //                 })
+    //             }
+    //             FileDropEvent::Pending { position } => {
+    //                 self.window.mouse_position = position;
+    //                 PlatformInput::MouseMove(MouseMoveEvent {
+    //                     position,
+    //                     pressed_button: Some(MouseButton::Left),
+    //                     modifiers: Modifiers::default(),
+    //                 })
+    //             }
+    //             FileDropEvent::Submit { position } => {
+    //                 self.activate(true);
+    //                 self.window.mouse_position = position;
+    //                 PlatformInput::MouseUp(MouseUpEvent {
+    //                     button: MouseButton::Left,
+    //                     position,
+    //                     modifiers: Modifiers::default(),
+    //                     click_count: 1,
+    //                 })
+    //             }
+    //             FileDropEvent::Exited => {
+    //                 self.active_drag.take();
+    //                 PlatformInput::FileDrop(FileDropEvent::Exited)
+    //             }
+    //         },
+    //         PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
+    //     };
+
+    //     if let Some(any_mouse_event) = event.mouse_event() {
+    //         self.dispatch_mouse_event(any_mouse_event);
+    //     } else if let Some(any_key_event) = event.keyboard_event() {
+    //         self.dispatch_key_event(any_key_event);
+    //     }
+
+    //     DispatchEventResult {
+    //         propagate: self.app.propagate_event,
+    //         default_prevented: self.window.default_prevented,
+    //     }
+    // }
+
+    // fn dispatch_mouse_event(&mut self, event: &dyn Any) {
+    //     let hit_test = self.window.rendered_frame.hit_test(self.mouse_position());
+    //     if hit_test != self.window.mouse_hit_test {
+    //         self.window.mouse_hit_test = hit_test;
+    //         self.reset_cursor_style();
+    //     }
+
+    //     let mut mouse_listeners = mem::take(&mut self.window.rendered_frame.mouse_listeners);
+
+    //     // Capture phase, events bubble from back to front. Handlers for this phase are used for
+    //     // special purposes, such as detecting events outside of a given Bounds.
+    //     for listener in &mut mouse_listeners {
+    //         let listener = listener.as_mut().unwrap();
+    //         listener(event, DispatchPhase::Capture, self);
+    //         if !self.app.propagate_event {
+    //             break;
+    //         }
+    //     }
+
+    //     // Bubble phase, where most normal handlers do their work.
+    //     if self.app.propagate_event {
+    //         for listener in mouse_listeners.iter_mut().rev() {
+    //             let listener = listener.as_mut().unwrap();
+    //             listener(event, DispatchPhase::Bubble, self);
+    //             if !self.app.propagate_event {
+    //                 break;
+    //             }
+    //         }
+    //     }
+
+    //     self.window.rendered_frame.mouse_listeners = mouse_listeners;
+
+    //     if self.has_active_drag() {
+    //         if event.is::<MouseMoveEvent>() {
+    //             // If this was a mouse move event, redraw the window so that the
+    //             // active drag can follow the mouse cursor.
+    //             self.refresh();
+    //         } else if event.is::<MouseUpEvent>() {
+    //             // If this was a mouse up event, cancel the active drag and redraw
+    //             // the window.
+    //             self.active_drag = None;
+    //             self.refresh();
+    //         }
+    //     }
+    // }
+
+    // fn dispatch_key_event(&mut self, event: &dyn Any) {
+    //     if self.window.dirty.get() {
+    //         self.draw();
+    //     }
+
+    //     let node_id = self
+    //         .window
+    //         .focus
+    //         .and_then(|focus_id| {
+    //             self.window
+    //                 .rendered_frame
+    //                 .dispatch_tree
+    //                 .focusable_node_id(focus_id)
+    //         })
+    //         .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
+
+    //     let dispatch_path = self
+    //         .window
+    //         .rendered_frame
+    //         .dispatch_tree
+    //         .dispatch_path(node_id);
+
+    //     let mut keystroke: Option<Keystroke> = None;
+
+    //     if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
+    //         if event.modifiers.number_of_modifiers() == 0
+    //             && self.window.pending_modifier.modifiers.number_of_modifiers() == 1
+    //             && !self.window.pending_modifier.saw_keystroke
+    //         {
+    //             let key = match self.window.pending_modifier.modifiers {
+    //                 modifiers if modifiers.shift => Some("shift"),
+    //                 modifiers if modifiers.control => Some("control"),
+    //                 modifiers if modifiers.alt => Some("alt"),
+    //                 modifiers if modifiers.platform => Some("platform"),
+    //                 modifiers if modifiers.function => Some("function"),
+    //                 _ => None,
+    //             };
+    //             if let Some(key) = key {
+    //                 keystroke = Some(Keystroke {
+    //                     key: key.to_string(),
+    //                     key_char: None,
+    //                     modifiers: Modifiers::default(),
+    //                 });
+    //             }
+    //         }
+
+    //         if self.window.pending_modifier.modifiers.number_of_modifiers() == 0
+    //             && event.modifiers.number_of_modifiers() == 1
+    //         {
+    //             self.window.pending_modifier.saw_keystroke = false
+    //         }
+    //         self.window.pending_modifier.modifiers = event.modifiers
+    //     } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+    //         self.window.pending_modifier.saw_keystroke = true;
+    //         keystroke = Some(key_down_event.keystroke.clone());
+    //     }
+
+    //     let Some(keystroke) = keystroke else {
+    //         self.finish_dispatch_key_event(event, dispatch_path);
+    //         return;
+    //     };
+
+    //     let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
+    //     if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus {
+    //         currently_pending = PendingInput::default();
+    //     }
+
+    //     let match_result = self.window.rendered_frame.dispatch_tree.dispatch_key(
+    //         currently_pending.keystrokes,
+    //         keystroke,
+    //         &dispatch_path,
+    //     );
+    //     if !match_result.to_replay.is_empty() {
+    //         self.replay_pending_input(match_result.to_replay)
+    //     }
+
+    //     if !match_result.pending.is_empty() {
+    //         currently_pending.keystrokes = match_result.pending;
+    //         currently_pending.focus = self.window.focus;
+    //         currently_pending.timer = Some(self.spawn(|mut cx| async move {
+    //             cx.background_executor.timer(Duration::from_secs(1)).await;
+    //             cx.update(move |cx| {
+    //                 let Some(currently_pending) = cx
+    //                     .window
+    //                     .pending_input
+    //                     .take()
+    //                     .filter(|pending| pending.focus == cx.window.focus)
+    //                 else {
+    //                     return;
+    //                 };
+
+    //                 let dispatch_path = cx
+    //                     .window
+    //                     .rendered_frame
+    //                     .dispatch_tree
+    //                     .dispatch_path(node_id);
+
+    //                 let to_replay = cx
+    //                     .window
+    //                     .rendered_frame
+    //                     .dispatch_tree
+    //                     .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+
+    //                 cx.replay_pending_input(to_replay)
+    //             })
+    //             .log_err();
+    //         }));
+    //         self.window.pending_input = Some(currently_pending);
+    //         self.pending_input_changed();
+    //         self.propagate_event = false;
+    //         return;
+    //     }
+
+    //     self.propagate_event = true;
+    //     for binding in match_result.bindings {
+    //         self.dispatch_action_on_node(node_id, binding.action.as_ref());
+    //         if !self.propagate_event {
+    //             self.dispatch_keystroke_observers(event, Some(binding.action));
+    //             self.pending_input_changed();
+    //             return;
+    //         }
+    //     }
+
+    //     self.finish_dispatch_key_event(event, dispatch_path);
+    //     self.pending_input_changed();
+    // }
+
+    // fn finish_dispatch_key_event(
+    //     &mut self,
+    //     event: &dyn Any,
+    //     dispatch_path: SmallVec<[DispatchNodeId; 32]>,
+    // ) {
+    //     self.dispatch_key_down_up_event(event, &dispatch_path);
+    //     if !self.propagate_event {
+    //         return;
+    //     }
+
+    //     self.dispatch_modifiers_changed_event(event, &dispatch_path);
+    //     if !self.propagate_event {
+    //         return;
+    //     }
+
+    //     self.dispatch_keystroke_observers(event, None);
+    // }
+
+    // fn pending_input_changed(&mut self) {
+    //     self.window
+    //         .pending_input_observers
+    //         .clone()
+    //         .retain(&(), |callback| callback(self));
+    // }
+
+    // fn dispatch_key_down_up_event(
+    //     &mut self,
+    //     event: &dyn Any,
+    //     dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    // ) {
+    //     // Capture phase
+    //     for node_id in dispatch_path {
+    //         let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+
+    //         for key_listener in node.key_listeners.clone() {
+    //             key_listener(event, DispatchPhase::Capture, self);
+    //             if !self.propagate_event {
+    //                 return;
+    //             }
+    //         }
+    //     }
+
+    //     // Bubble phase
+    //     for node_id in dispatch_path.iter().rev() {
+    //         // Handle low level key events
+    //         let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+    //         for key_listener in node.key_listeners.clone() {
+    //             key_listener(event, DispatchPhase::Bubble, self);
+    //             if !self.propagate_event {
+    //                 return;
+    //             }
+    //         }
+    //     }
+    // }
+
+    // fn dispatch_modifiers_changed_event(
+    //     &mut self,
+    //     event: &dyn Any,
+    //     dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    // ) {
+    //     let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() else {
+    //         return;
+    //     };
+    //     for node_id in dispatch_path.iter().rev() {
+    //         let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+    //         for listener in node.modifiers_changed_listeners.clone() {
+    //             listener(event, self);
+    //             if !self.propagate_event {
+    //                 return;
+    //             }
+    //         }
+    //     }
+    // }
+
+    // /// Determine whether a potential multi-stroke key binding is in progress on this window.
+    // pub fn has_pending_keystrokes(&self) -> bool {
+    //     self.window.pending_input.is_some()
+    // }
+
+    pub(crate) fn clear_pending_keystrokes(&mut self) {
+        self.pending_input.take();
     }
 
-    /// Schedule a future to be run asynchronously.
-    /// The given callback is invoked with a [`WeakView<V>`] to avoid leaking the view for a long-running process.
-    /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
-    /// The returned future will be polled on the main thread.
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut) -> Task<R>
-    where
-        R: 'static,
-        Fut: Future<Output = R> + 'static,
-    {
-        let view = self.view().downgrade();
-        self.window_cx.spawn(|cx| f(view, cx))
-    }
+    // /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
+    // pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
+    //     self.window
+    //         .pending_input
+    //         .as_ref()
+    //         .map(|pending_input| pending_input.keystrokes.as_slice())
+    // }
 
-    /// Register a callback to be invoked when the given global state changes.
-    pub fn observe_global<G: Global>(
-        &mut self,
-        mut f: impl FnMut(&mut V, &mut Window, &mut ModelContext<'_, V>) + 'static,
-    ) -> Subscription {
-        let window_handle = self.window.handle;
-        let view = self.view().downgrade();
-        let (subscription, activate) = self.global_observers.insert(
-            TypeId::of::<G>(),
-            Box::new(move |cx| {
-                window_handle
-                    .update(cx, |_, cx| {
-                        view.update(cx, |view, window, cx| f(view, window, cx))
-                            .is_ok()
-                    })
-                    .unwrap_or(false)
-            }),
-        );
-        self.app.defer(move |_| activate());
-        subscription
-    }
+    // fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>) {
+    //     let node_id = self
+    //         .window
+    //         .focus
+    //         .and_then(|focus_id| {
+    //             self.window
+    //                 .rendered_frame
+    //                 .dispatch_tree
+    //                 .focusable_node_id(focus_id)
+    //         })
+    //         .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
 
-    /// Register a callback to be invoked when the given Action type is dispatched to the window.
-    pub fn on_action(
-        &mut self,
-        action_type: TypeId,
-        listener: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut Window, &mut ModelContext<V>) + 'static,
-    ) {
-        let handle = self.view().clone();
-        self.window_cx
-            .on_action(action_type, move |action, phase, cx| {
-                handle.update(cx, |view, window, cx| {
-                    listener(view, action, phase, window, cx);
-                })
-            });
-    }
+    //     let dispatch_path = self
+    //         .window
+    //         .rendered_frame
+    //         .dispatch_tree
+    //         .dispatch_path(node_id);
 
-    /// Emit an event to be handled by any other views that have subscribed via [ViewContext::subscribe].
-    pub fn emit<Evt>(&mut self, event: Evt)
-    where
-        Evt: 'static,
-        V: EventEmitter<Evt>,
-    {
-        let emitter = self.view.model.entity_id;
-        self.app.push_effect(Effect::Emit {
-            emitter,
-            event_type: TypeId::of::<Evt>(),
-            event: Box::new(event),
-        });
-    }
+    //     'replay: for replay in replays {
+    //         let event = KeyDownEvent {
+    //             keystroke: replay.keystroke.clone(),
+    //             is_held: false,
+    //         };
 
-    /// Move focus to the current view, assuming it implements [`FocusableView`].
-    pub fn focus_self(&mut self)
-    where
-        V: FocusableView,
-    {
-        todo!()
-        // self.defer(|view, window, cx| view.focus_handle(cx).focus(cx))
-    }
+    //         self.propagate_event = true;
+    //         for binding in replay.bindings {
+    //             self.dispatch_action_on_node(node_id, binding.action.as_ref());
+    //             if !self.propagate_event {
+    //                 self.dispatch_keystroke_observers(&event, Some(binding.action));
+    //                 continue 'replay;
+    //             }
+    //         }
 
-    /// Convenience method for accessing view state in an event callback.
-    ///
-    /// Many GPUI callbacks take the form of `Fn(&E, &mut WindowContext)`,
-    /// but it's often useful to be able to access view state in these
-    /// callbacks. This method provides a convenient way to do so.
-    pub fn listener<E: ?Sized>(
-        &self,
-        f: impl Fn(&mut V, &E, &mut Window, &mut ModelContext<V>) + 'static,
-    ) -> impl Fn(&E, &mut WindowContext) + 'static {
-        let view = self.view().downgrade();
-        move |e: &E, cx: &mut WindowContext| {
-            view.update(cx, |view, window, cx| f(view, e, window, cx))
-                .ok();
-        }
-    }
-}
+    //         self.dispatch_key_down_up_event(&event, &dispatch_path);
+    //         if !self.propagate_event {
+    //             continue 'replay;
+    //         }
+    //         if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
+    //             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+    //                 input_handler.dispatch_input(&input, self);
+    //                 self.window.platform_window.set_input_handler(input_handler)
+    //             }
+    //         }
+    //     }
+    // }
 
-impl<V> Context for ViewContext<'_, V> {
-    type Result<U> = U;
+    // fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: &dyn Action) {
+    //     let dispatch_path = self
+    //         .window
+    //         .rendered_frame
+    //         .dispatch_tree
+    //         .dispatch_path(node_id);
 
-    fn new_model<T: 'static>(
-        &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
-    ) -> Model<T> {
-        self.window_cx.new_model(build_model)
-    }
+    //     // Capture phase for global actions.
+    //     self.propagate_event = true;
+    //     if let Some(mut global_listeners) = self
+    //         .global_action_listeners
+    //         .remove(&action.as_any().type_id())
+    //     {
+    //         for listener in &global_listeners {
+    //             listener(action.as_any(), DispatchPhase::Capture, self);
+    //             if !self.propagate_event {
+    //                 break;
+    //             }
+    //         }
 
-    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
-        self.window_cx.reserve_model()
-    }
+    //         global_listeners.extend(
+    //             self.global_action_listeners
+    //                 .remove(&action.as_any().type_id())
+    //                 .unwrap_or_default(),
+    //         );
 
-    fn insert_model<T: 'static>(
-        &mut self,
-        reservation: crate::Reservation<T>,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
-    ) -> Self::Result<Model<T>> {
-        self.window_cx.insert_model(reservation, build_model)
-    }
+    //         self.global_action_listeners
+    //             .insert(action.as_any().type_id(), global_listeners);
+    //     }
 
-    fn update_model<T: 'static, R>(
-        &mut self,
-        model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
-    ) -> R {
-        self.window_cx.update_model(model, update)
-    }
+    //     if !self.propagate_event {
+    //         return;
+    //     }
 
-    fn read_model<T, R>(
-        &self,
-        handle: &Model<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
-    ) -> Self::Result<R>
-    where
-        T: 'static,
-    {
-        self.window_cx.read_model(handle, read)
-    }
+    //     // Capture phase for window actions.
+    //     for node_id in &dispatch_path {
+    //         let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+    //         for DispatchActionListener {
+    //             action_type,
+    //             listener,
+    //         } in node.action_listeners.clone()
+    //         {
+    //             let any_action = action.as_any();
+    //             if action_type == any_action.type_id() {
+    //                 listener(any_action, DispatchPhase::Capture, self);
 
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
-    where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
-    {
-        self.window_cx.update_window(window, update)
-    }
+    //                 if !self.propagate_event {
+    //                     return;
+    //                 }
+    //             }
+    //         }
+    //     }
 
-    fn read_window<T, R>(
-        &self,
-        window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
-    ) -> Result<R>
-    where
-        T: 'static,
-    {
-        self.window_cx.read_window(window, read)
-    }
-}
+    //     // Bubble phase for window actions.
+    //     for node_id in dispatch_path.iter().rev() {
+    //         let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+    //         for DispatchActionListener {
+    //             action_type,
+    //             listener,
+    //         } in node.action_listeners.clone()
+    //         {
+    //             let any_action = action.as_any();
+    //             if action_type == any_action.type_id() {
+    //                 self.propagate_event = false; // Actions stop propagation by default during the bubble phase
+    //                 listener(any_action, DispatchPhase::Bubble, self);
 
-impl<V: 'static> VisualContext for ViewContext<'_, V> {
-    fn new_view<W: Render + 'static>(
-        &mut self,
-        build_view_state: impl FnOnce(&mut Window, &mut ModelContext<'_, W>) -> W,
-    ) -> Self::Result<View<W>> {
-        self.window_cx.new_view(build_view_state)
-    }
+    //                 if !self.propagate_event {
+    //                     return;
+    //                 }
+    //             }
+    //         }
+    //     }
 
-    fn update_view<V2: 'static, R>(
-        &mut self,
-        view: &View<V2>,
-        update: impl FnOnce(&mut V2, &mut Window, &mut ModelContext<'_, V2>) -> R,
-    ) -> Self::Result<R> {
-        self.window_cx.update_view(view, update)
-    }
+    //     // Bubble phase for global actions.
+    //     if let Some(mut global_listeners) = self
+    //         .global_action_listeners
+    //         .remove(&action.as_any().type_id())
+    //     {
+    //         for listener in global_listeners.iter().rev() {
+    //             self.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
-    fn replace_root_view<W>(
-        &mut self,
-        build_view: impl FnOnce(&mut Window, &mut ModelContext<'_, W>) -> W,
-    ) -> Self::Result<View<W>>
-    where
-        W: 'static + Render,
-    {
-        self.window_cx.replace_root_view(build_view)
-    }
+    //             listener(action.as_any(), DispatchPhase::Bubble, self);
+    //             if !self.propagate_event {
+    //                 break;
+    //             }
+    //         }
 
-    fn focus_view<W: FocusableView>(&mut self, view: &View<W>) -> Self::Result<()> {
-        self.window_cx.focus_view(view)
-    }
+    //         global_listeners.extend(
+    //             self.global_action_listeners
+    //                 .remove(&action.as_any().type_id())
+    //                 .unwrap_or_default(),
+    //         );
 
-    fn dismiss_view<W: ManagedView>(&mut self, view: &View<W>) -> Self::Result<()> {
-        self.window_cx.dismiss_view(view)
-    }
-}
+    //         self.global_action_listeners
+    //             .insert(action.as_any().type_id(), global_listeners);
+    //     }
+    // }
 
-impl<'a, V> std::ops::Deref for ViewContext<'a, V> {
-    type Target = WindowContext<'a>;
+    // /// Register the given handler to be invoked whenever the global of the given type
+    // /// is updated.
+    // pub fn observe_global<G: Global>(
+    //     &mut self,
+    //     f: impl Fn(&mut WindowContext<'_>) + 'static,
+    // ) -> Subscription {
+    //     let window_handle = self.window.handle;
+    //     let (subscription, activate) = self.global_observers.insert(
+    //         TypeId::of::<G>(),
+    //         Box::new(move |cx| window_handle.update(cx, |_, cx| f(cx)).is_ok()),
+    //     );
+    //     self.app.defer(move |_| activate());
+    //     subscription
+    // }
 
-    fn deref(&self) -> &Self::Target {
-        &self.window_cx
-    }
-}
+    // /// Focus the current window and bring it to the foreground at the platform level.
+    // pub fn activate_window(&self) {
+    //     self.window.platform_window.activate();
+    // }
 
-impl<'a, V> std::ops::DerefMut for ViewContext<'a, V> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.window_cx
-    }
+    // /// Minimize the current window at the platform level.
+    // pub fn minimize_window(&self) {
+    //     self.window.platform_window.minimize();
+    // }
+
+    // /// Toggle full screen status on the current window at the platform level.
+    // pub fn toggle_fullscreen(&self) {
+    //     self.window.platform_window.toggle_fullscreen();
+    // }
+
+    // /// Updates the IME panel position suggestions for languages like japanese, chinese.
+    // pub fn invalidate_character_coordinates(&self) {
+    //     self.on_next_frame(|cx| {
+    //         if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
+    //             if let Some(bounds) = input_handler.selected_bounds(cx) {
+    //                 cx.window
+    //                     .platform_window
+    //                     .update_ime_position(bounds.scale(cx.scale_factor()));
+    //             }
+    //             cx.window.platform_window.set_input_handler(input_handler);
+    //         }
+    //     });
+    // }
+
+    // /// Present a platform dialog.
+    // /// The provided message will be presented, along with buttons for each answer.
+    // /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
+    // pub fn prompt(
+    //     &mut self,
+    //     level: PromptLevel,
+    //     message: &str,
+    //     detail: Option<&str>,
+    //     answers: &[&str],
+    // ) -> oneshot::Receiver<usize> {
+    //     let prompt_builder = self.app.prompt_builder.take();
+    //     let Some(prompt_builder) = prompt_builder else {
+    //         unreachable!("Re-entrant window prompting is not supported by GPUI");
+    //     };
+
+    //     let receiver = match &prompt_builder {
+    //         PromptBuilder::Default => self
+    //             .window
+    //             .platform_window
+    //             .prompt(level, message, detail, answers)
+    //             .unwrap_or_else(|| {
+    //                 self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+    //             }),
+    //         PromptBuilder::Custom(_) => {
+    //             self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+    //         }
+    //     };
+
+    //     self.app.prompt_builder = Some(prompt_builder);
+
+    //     receiver
+    // }
+
+    // fn build_custom_prompt(
+    //     &mut self,
+    //     prompt_builder: &PromptBuilder,
+    //     level: PromptLevel,
+    //     message: &str,
+    //     detail: Option<&str>,
+    //     answers: &[&str],
+    // ) -> oneshot::Receiver<usize> {
+    //     let (sender, receiver) = oneshot::channel();
+    //     let handle = PromptHandle::new(sender);
+    //     let handle = (prompt_builder)(level, message, detail, answers, handle, self);
+    //     self.window.prompt = Some(handle);
+    //     receiver
+    // }
+
+    // /// Returns the current context stack.
+    // pub fn context_stack(&self) -> Vec<KeyContext> {
+    //     let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
+    //     let node_id = self
+    //         .window
+    //         .focus
+    //         .and_then(|focus_id| dispatch_tree.focusable_node_id(focus_id))
+    //         .unwrap_or_else(|| dispatch_tree.root_node_id());
+
+    //     dispatch_tree
+    //         .dispatch_path(node_id)
+    //         .iter()
+    //         .filter_map(move |&node_id| dispatch_tree.node(node_id).context.clone())
+    //         .collect()
+    // }
+
+    // /// Returns all available actions for the focused element.
+    // pub fn available_actions(&self) -> Vec<Box<dyn Action>> {
+    //     let node_id = self
+    //         .window
+    //         .focus
+    //         .and_then(|focus_id| {
+    //             self.window
+    //                 .rendered_frame
+    //                 .dispatch_tree
+    //                 .focusable_node_id(focus_id)
+    //         })
+    //         .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
+
+    //     let mut actions = self
+    //         .window
+    //         .rendered_frame
+    //         .dispatch_tree
+    //         .available_actions(node_id);
+    //     for action_type in self.global_action_listeners.keys() {
+    //         if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.as_any().type_id()) {
+    //             let action = self.actions.build_action_type(action_type).ok();
+    //             if let Some(action) = action {
+    //                 actions.insert(ix, action);
+    //             }
+    //         }
+    //     }
+    //     actions
+    // }
+
+    // /// Returns key bindings that invoke the given action on the currently focused element.
+    // pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
+    //     self.window
+    //         .rendered_frame
+    //         .dispatch_tree
+    //         .bindings_for_action(
+    //             action,
+    //             &self.window.rendered_frame.dispatch_tree.context_stack,
+    //         )
+    // }
+
+    // /// Returns key bindings that invoke the given action on the currently focused element.
+    // pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
+    //     RefCell::borrow(&self.keymap).all_bindings_for_input(input)
+    // }
+
+    // /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
+    // pub fn bindings_for_action_in(
+    //     &self,
+    //     action: &dyn Action,
+    //     focus_handle: &FocusHandle,
+    // ) -> Vec<KeyBinding> {
+    //     let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
+
+    //     let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
+    //         return vec![];
+    //     };
+    //     let context_stack: Vec<_> = dispatch_tree
+    //         .dispatch_path(node_id)
+    //         .into_iter()
+    //         .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
+    //         .collect();
+    //     dispatch_tree.bindings_for_action(action, &context_stack)
+    // }
+
+    // /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
+    // pub fn listener_for<V: Render, E>(
+    //     &self,
+    //     view: &View<V>,
+    //     f: impl Fn(&mut V, &E, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> impl Fn(&E, &mut WindowContext) + 'static {
+    //     let view = view.downgrade();
+    //     move |e: &E, cx: &mut WindowContext| {
+    //         view.update(cx, |view, window, cx| f(view, e, window, cx))
+    //             .ok();
+    //     }
+    // }
+
+    // /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
+    // pub fn handler_for<V: Render>(
+    //     &self,
+    //     view: &View<V>,
+    //     f: impl Fn(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
+    // ) -> impl Fn(&mut WindowContext) {
+    //     let view = view.downgrade();
+    //     move |cx: &mut WindowContext| {
+    //         view.update(cx, |view, window, cx| f(view, window, cx)).ok();
+    //     }
+    // }
+
+    // /// Register a callback that can interrupt the closing of the current window based the returned boolean.
+    // /// If the callback returns false, the window won't be closed.
+    // pub fn on_window_should_close(&self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
+    //     let mut this = self.to_async();
+    //     self.window
+    //         .platform_window
+    //         .on_should_close(Box::new(move || this.update(|cx| f(cx)).unwrap_or(true)))
+    // }
+
+    // /// Register an action listener on the window for the next frame. The type of action
+    // /// is determined by the first parameter of the given listener. When the next frame is rendered
+    // /// the listener will be cleared.
+    // ///
+    // /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
+    // /// a specific need to register a global listener.
+    // pub fn on_action(
+    //     &mut self,
+    //     action_type: TypeId,
+    //     listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
+    // ) {
+    //     self.window
+    //         .next_frame
+    //         .dispatch_tree
+    //         .on_action(action_type, Rc::new(listener));
+    // }
+
+    // /// Read information about the GPU backing this window.
+    // /// Currently returns None on Mac and Windows.
+    // pub fn gpu_specs(&self) -> Option<GpuSpecs> {
+    //     self.window.platform_window.gpu_specs()
+    // }
 }
 
 // #[derive(Clone, Copy, Eq, PartialEq, Hash)]

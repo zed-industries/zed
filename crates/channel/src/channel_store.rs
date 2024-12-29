@@ -311,7 +311,7 @@ impl ChannelStore {
     ) -> Task<Result<Model<ChannelBuffer>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let channel_store = cx.handle();
+        let channel_store = cx.model();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_buffers,
@@ -441,7 +441,7 @@ impl ChannelStore {
     ) -> Task<Result<Model<ChannelChat>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let this = cx.handle();
+        let this = cx.model();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_chats,

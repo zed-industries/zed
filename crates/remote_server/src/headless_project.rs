@@ -166,7 +166,7 @@ impl HeadlessProject {
 
         session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
-        session.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
+        session.subscribe_to_entity(SSH_PROJECT_ID, &cx.model());
         session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);

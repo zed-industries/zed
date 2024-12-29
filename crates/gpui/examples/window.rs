@@ -23,7 +23,7 @@ fn button(text: &str, on_click: impl Fn(&mut WindowContext) + 'static) -> impl I
 }
 
 impl Render for SubWindow {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -64,7 +64,11 @@ impl Render for SubWindow {
 struct WindowDemo {}
 
 impl Render for WindowDemo {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let window_bounds =
             WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx));
 
@@ -84,7 +88,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |cx| {
-                        cx.new_view(|_cx| SubWindow {
+                        cx.new_view(|window, _cx| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -99,7 +103,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |cx| {
-                        cx.new_view(|_cx| SubWindow {
+                        cx.new_view(|window, _cx| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -114,7 +118,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |cx| {
-                        cx.new_view(|_cx| SubWindow {
+                        cx.new_view(|window, _cx| SubWindow {
                             custom_titlebar: true,
                         })
                     },
@@ -129,7 +133,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |cx| {
-                        cx.new_view(|_cx| SubWindow {
+                        cx.new_view(|window, _cx| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -145,7 +149,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |cx| {
-                        cx.new_view(|_cx| SubWindow {
+                        cx.new_view(|window, _cx| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -175,7 +179,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |cx| cx.new_view(|_cx| WindowDemo {}),
+            |cx| cx.new_view(|window, _cx| WindowDemo {}),
         )
         .unwrap();
     });

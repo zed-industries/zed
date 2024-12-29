@@ -663,7 +663,7 @@ impl Worktree {
 
     pub fn root_file(&self, cx: &ModelContext<Self>) -> Option<Arc<File>> {
         let entry = self.root_entry()?;
-        Some(File::for_entry(entry.clone(), cx.handle()))
+        Some(File::for_entry(entry.clone(), cx.model()))
     }
 
     pub fn observe_updates<F, Fut>(

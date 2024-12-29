@@ -521,9 +521,8 @@ mod test {
         });
 
         window
-            .update(cx, |test_view, window, cx| {
-                todo!()
-                // window.focus(&test_view.focus_handle)
+            .update(cx, |test_view, window, _cx| {
+                window.focus(&test_view.focus_handle)
             })
             .unwrap();
 

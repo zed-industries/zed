@@ -883,7 +883,7 @@ impl LspLogView {
                 .expect("log buffer should be a singleton")
                 .update(cx, |_, cx| {
                     cx.spawn({
-                        let buffer = cx.handle();
+                        let buffer = cx.model();
                         |_, mut cx| async move {
                             let language = language.await.ok();
                             buffer.update(&mut cx, |buffer, cx| {

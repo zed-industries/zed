@@ -695,7 +695,7 @@ impl LocalBufferStore {
                     buffer_id,
                 );
                 events.push(BufferStoreEvent::BufferChangedFilePath {
-                    buffer: cx.handle(),
+                    buffer: cx.model(),
                     old_file: buffer.file().cloned(),
                 });
             }
@@ -884,7 +884,7 @@ impl LocalBufferStore {
                         if !push_to_history {
                             buffer.forget_transaction(transaction.id);
                         }
-                        project_transaction.0.insert(cx.handle(), transaction);
+                        project_transaction.0.insert(cx.model(), transaction);
                     }
                 })?;
             }
@@ -1313,7 +1313,7 @@ impl BufferStore {
             unstaged_changes: None,
         };
 
-        let handle = cx.handle().downgrade();
+        let handle = cx.model().downgrade();
         buffer.update(cx, move |_, cx| {
             cx.on_release(move |buffer, cx| {
                 handle

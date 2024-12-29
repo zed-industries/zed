@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use gpui::{
     black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
     AppContext, Asset, AssetLogger, AssetSource, Bounds, Hsla, ImageAssetLoader, ImageCacheError,
-    ImgResourceLoader, Length, ModelContext, Pixels, RenderImage, Resource, SharedString,
+    ImgResourceLoader, Length, ModelContext, Pixels, RenderImage, Resource, SharedString, Window,
     WindowBounds, WindowContext, WindowOptions, LOADING_DELAY,
 };
 
@@ -100,7 +100,7 @@ impl ImageLoadingExample {
 }
 
 impl Render for ImageLoadingExample {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().flex().flex_col().size_full().justify_around().child(
             div().flex().flex_row().w_full().justify_around().child(
                 div()
@@ -207,7 +207,7 @@ fn main() {
             };
             cx.open_window(options, |cx| {
                 cx.activate(false);
-                cx.new_view(|_cx| ImageLoadingExample {})
+                cx.new_view(|window, _cx| ImageLoadingExample {})
             })
             .unwrap();
         });

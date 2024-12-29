@@ -801,7 +801,7 @@ impl Buffer {
     }
 
     pub fn branch(&mut self, cx: &mut ModelContext<Self>) -> Model<Self> {
-        let this = cx.handle();
+        let this = cx.model();
         cx.new_model(|cx| {
             let mut branch = Self {
                 branch_state: Some(BufferBranchState {

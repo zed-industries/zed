@@ -9,12 +9,12 @@
 /// actions!(editor,[Undo, Redo]);;
 ///
 /// impl Editor {
-///   fn undo(&mut self, _: &Undo, _cx: &mut ViewContext<Self>) { ... }
-///   fn redo(&mut self, _: &Redo, _cx: &mut ViewContext<Self>) { ... }
+///   fn undo(&mut self, _: &Undo, _window: &mut Window, _cx: &mut ModelContext<Self>) { ... }
+///   fn redo(&mut self, _: &Redo, _window: &mut Window, _cx: &mut ModelContext<Self>) { ... }
 /// }
 ///
 /// impl Render for Editor {
-///   fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+///   fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
 ///     div()
 ///       .track_focus(&self.focus_handle(cx))
 ///       .keymap_context("Editor")
