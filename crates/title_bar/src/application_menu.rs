@@ -60,7 +60,7 @@ impl ApplicationMenu {
         cleaned
     }
 
-    fn build_menu_from_items(entry: MenuEntry, cx: &mut WindowContext<'_>) -> View<ContextMenu> {
+    fn build_menu_from_items(entry: MenuEntry, cx: &mut WindowContext) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, cx| {
             let menu = menu.when_some(cx.focused(), |menu, focused| menu.context(focused));
             let sanitized_items = Self::sanitize_menu_items(entry.menu.items);
@@ -150,7 +150,7 @@ impl ApplicationMenu {
 
                     // Defer to prevent focus race condition with the previously open menu
                     let handle = current_handle.clone();
-                    cx.defer(move |w| handle.show(w));
+                    cx.defer(move |cx| handle.show(cx));
                 }
             })
     }

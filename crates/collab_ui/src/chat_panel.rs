@@ -1096,7 +1096,7 @@ impl FocusableView for ChatPanel {
 }
 
 impl Panel for ChatPanel {
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         ChatPanelSettings::get_global(cx).dock
     }
 
@@ -1112,7 +1112,7 @@ impl Panel for ChatPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| ChatPanelSettings::get_global(cx).default_width)
     }

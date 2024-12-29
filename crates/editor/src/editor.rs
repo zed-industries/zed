@@ -3515,7 +3515,7 @@ impl Editor {
         }
     }
 
-    fn visible_inlay_hints(&self, cx: &ViewContext<'_, Editor>) -> Vec<Inlay> {
+    fn visible_inlay_hints(&self, cx: &ViewContext<Editor>) -> Vec<Inlay> {
         self.display_map
             .read(cx)
             .current_inlays()
@@ -6011,7 +6011,7 @@ impl Editor {
     fn gather_revert_changes(
         &mut self,
         selections: &[Selection<Point>],
-        cx: &mut ViewContext<'_, Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>> {
         let mut revert_changes = HashMap::default();
         let snapshot = self.snapshot(cx);
@@ -8938,7 +8938,7 @@ impl Editor {
     fn templates_with_tags(
         project: &Model<Project>,
         runnable: &mut Runnable,
-        cx: &WindowContext<'_>,
+        cx: &WindowContext,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
             let (worktree_id, file) = project
@@ -9250,7 +9250,7 @@ impl Editor {
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
-        cx: &mut ViewContext<'_, Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<MultiBufferDiffHunk> {
         for (ix, position) in [position, Point::zero()].into_iter().enumerate() {
             if let Some(hunk) = self.go_to_next_hunk_in_direction(
@@ -9279,7 +9279,7 @@ impl Editor {
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
-        cx: &mut ViewContext<'_, Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<MultiBufferDiffHunk> {
         for (ix, position) in [position, snapshot.buffer_snapshot.max_point()]
             .into_iter()
@@ -13862,7 +13862,7 @@ impl SemanticsProvider for Model<Project> {
 fn inlay_hint_settings(
     location: Anchor,
     snapshot: &MultiBufferSnapshot,
-    cx: &mut ViewContext<'_, Editor>,
+    cx: &mut ViewContext<Editor>,
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
     let language = snapshot.language_at(location).map(|l| l.name());

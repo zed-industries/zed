@@ -1239,11 +1239,7 @@ pub mod test {
             None
         }
 
-        fn tab_content(
-            &self,
-            params: TabContentParams,
-            _cx: &ui::prelude::WindowContext,
-        ) -> AnyElement {
+        fn tab_content(&self, params: TabContentParams, _cx: &WindowContext) -> AnyElement {
             self.tab_detail.set(params.detail);
             gpui::div().into_any_element()
         }

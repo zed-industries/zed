@@ -1044,7 +1044,7 @@ impl GitPanel {
         hunks: Rc<OnceCell<Vec<DiffHunk>>>,
         change_focus: bool,
         debounce: Option<Duration>,
-        cx: &mut ViewContext<'_, Self>,
+        cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace.clone();
         let Some(diff_editor) = self.git_diff_editor.clone() else {
@@ -1199,7 +1199,7 @@ impl Panel for GitPanel {
         "GitPanel"
     }
 
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         GitPanelSettings::get_global(cx).dock
     }
 
@@ -1215,7 +1215,7 @@ impl Panel for GitPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| GitPanelSettings::get_global(cx).default_width)
     }

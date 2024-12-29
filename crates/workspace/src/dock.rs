@@ -844,7 +844,7 @@ pub mod test {
             "TestPanel"
         }
 
-        fn position(&self, _: &gpui::WindowContext) -> super::DockPosition {
+        fn position(&self, _: &WindowContext) -> super::DockPosition {
             self.position
         }
 

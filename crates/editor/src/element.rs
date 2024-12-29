@@ -5154,7 +5154,7 @@ fn prepaint_gutter_button(
     scroll_pixel_position: gpui::Point<Pixels>,
     gutter_hitbox: &Hitbox,
     rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
-    cx: &mut WindowContext<'_>,
+    cx: &mut WindowContext,
 ) -> AnyElement {
     let mut button = button.into_any_element();
     let available_space = size(
@@ -5187,7 +5187,7 @@ fn render_inline_blame_entry(
     blame_entry: BlameEntry,
     style: &EditorStyle,
     workspace: Option<WeakView<Workspace>>,
-    cx: &mut WindowContext<'_>,
+    cx: &mut WindowContext,
 ) -> AnyElement {
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
 
@@ -5227,7 +5227,7 @@ fn render_blame_entry(
     style: &EditorStyle,
     last_used_color: &mut Option<(PlayerColor, Oid)>,
     editor: View<Editor>,
-    cx: &mut WindowContext<'_>,
+    cx: &mut WindowContext,
 ) -> AnyElement {
     let mut sha_color = cx
         .theme()
@@ -5309,7 +5309,7 @@ fn deploy_blame_entry_context_menu(
     details: Option<&CommitDetails>,
     editor: View<Editor>,
     position: gpui::Point<Pixels>,
-    cx: &mut WindowContext<'_>,
+    cx: &mut WindowContext,
 ) {
     let context_menu = ContextMenu::build(cx, move |menu, _| {
         let sha = format!("{}", blame_entry.sha);
