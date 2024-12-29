@@ -4040,26 +4040,6 @@ impl<'a, V: 'static> ModelContext<'a, V> {
         window.focus(&view.focus_handle(self));
     }
 
-    // /// Get the entity_id of this view.
-    // pub fn entity_id(&self) -> EntityId {
-    //     self.view.entity_id()
-    // }
-
-    // /// Get the view pointer underlying this context.
-    // pub fn view(&self) -> &View<V> {
-    //     self.view
-    // }
-
-    // /// Get the model underlying this view.
-    // pub fn model(&self) -> &Model<V> {
-    //     &self.view.model
-    // }
-
-    // /// Access the underlying window context.
-    // pub fn window_context(&mut self) -> &mut WindowContext<'a> {
-    //     &mut self.window_cx
-    // }
-
     /// Sets a given callback to be run on the next frame.
     pub fn on_next_frame(
         &self,
@@ -4126,33 +4106,49 @@ impl<'a, V: 'static> ModelContext<'a, V> {
         )
     }
 
-    // /// Subscribe to events emitted by another model or view.
-    // /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
-    // /// The callback will be invoked with a reference to the current view, a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a view context for the current view.
-    // pub fn subscribe_in<V2, Evt>(
-    //     &mut self,
-    //     window: &mut Window,
-    //     entity: &E,
-    //     mut on_event: impl FnMut(&mut V, &Model<V2>, &Evt, &mut Window, &mut ModelContext<'_, V>)
-    //         + 'static,
-    // ) -> Subscription
-    // where
-    //     V2: EventEmitter<Evt>,
-    //     Evt: 'static,
-    // {
-    //     let view = self.model();
-    //     let entity_id = entity.entity_id();
-    //     let handle = entity.downgrade();
-    //     window.subscribe(entity_id, self, move |window, cx| {
-    //         if let Some(handle) = E::upgrade_from(&handle) {
-    //             let event = cx.event.downcast_ref().expect("invalid event type");
-    //             view.update(cx, |this, cx| on_event(this, handle, event, window, cx))
-    //                 .is_ok()
-    //         } else {
-    //             false
-    //         }
-    //     })
-    // }
+    /// Subscribe to events emitted by another model or view.
+    /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
+    /// The callback will be invoked with a reference to the current view, a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a view context for the current view.
+    pub fn subscribe_in<Emitter, Evt>(
+        &mut self,
+        emitter: &Model<Emitter>,
+        window: &Window,
+        cx: &mut AppContext,
+        mut on_event: impl FnMut(&mut V, &Model<Emitter>, &Evt, &mut Window, &mut ModelContext<'_, V>)
+            + 'static,
+    ) -> Subscription
+    where
+        Emitter: EventEmitter<Evt>,
+        Evt: 'static,
+    {
+        let emitter = emitter.downgrade();
+        let window_handle = window.handle;
+        let subscriber = self.weak_model();
+        cx.new_subscription(
+            emitter.entity_id(),
+            (
+                TypeId::of::<Evt>(),
+                Box::new(move |event, cx| {
+                    window_handle
+                        .update(cx, |_, cx| {
+                            let window = &mut cx.window;
+                            if let Some((subscriber, emitter)) =
+                                subscriber.upgrade().zip(emitter.upgrade())
+                            {
+                                let event = event.downcast_ref().expect("invalid event type");
+                                subscriber.update(cx.app, |subscriber, cx| {
+                                    on_event(subscriber, &emitter, event, window, cx);
+                                });
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false)
+                }),
+            ),
+        )
+    }
 
     // /// Register a callback to be invoked when the view is released.
     // ///
