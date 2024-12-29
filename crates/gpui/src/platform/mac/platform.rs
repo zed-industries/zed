@@ -10,7 +10,7 @@ use crate::{
     PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task,
     WindowAppearance, WindowParams,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -57,6 +57,7 @@ use std::{
     sync::Arc,
 };
 use strum::IntoEnumIterator;
+use util::ResultExt;
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -779,15 +780,16 @@ impl Platform for MacPlatform {
     }
 
     fn open_with_system(&self, path: &Path) {
-        let path = path.to_path_buf();
+        let path = path.to_owned();
         self.0
             .lock()
             .background_executor
             .spawn(async move {
-                std::process::Command::new("open")
+                let _ = std::process::Command::new("open")
                     .arg(path)
                     .spawn()
-                    .expect("Failed to open file");
+                    .context("invoking open command")
+                    .log_err();
             })
             .detach();
     }

@@ -253,7 +253,7 @@ impl TabSwitcherDelegate {
     fn select_item(
         &mut self,
         item_id: EntityId,
-        cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>,
+        cx: &mut ViewContext<Picker<TabSwitcherDelegate>>,
     ) {
         let selected_idx = self
             .matches
@@ -263,7 +263,7 @@ impl TabSwitcherDelegate {
         self.set_selected_index(selected_idx, cx);
     }
 
-    fn close_item_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>) {
+    fn close_item_at(&mut self, ix: usize, cx: &mut ViewContext<Picker<TabSwitcherDelegate>>) {
         let Some(tab_match) = self.matches.get(ix) else {
             return;
         };
@@ -407,7 +407,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(h_flex().w_full().child(label))
                 .start_slot::<Icon>(icon)
                 .map(|el| {

@@ -2,40 +2,64 @@
 
 set -eu
 if [[ $# -eq 0 ]] || [[ "$1" == "--help" ]]; then
-  echo "Usage: $(basename $0) <path_to_ips_file>"
-  echo "This script symbolicates the provided .ips file using the appropriate dSYM file from digital ocean"
+  echo "Usage: $(basename $0) <path_to_ips_file_or_json>"
+  echo "This script symbolicates the provided .ips file or .json panic report using the appropriate debug symbols from DigitalOcean"
   echo ""
   exit 1
 fi
 
-ips_file=$1;
+input_file=$1;
 
-version=$(cat $ips_file | head -n 1 | jq -r .app_version)
-bundle_id=$(cat $ips_file | head -n 1 | jq -r .bundleID)
-cpu_type=$(cat $ips_file | tail -n+2 | jq -r .cpuType)
+if [[ "$input_file" == *.json ]]; then
+    version=$(cat $input_file | jq -r .app_version)
+    channel=$(cat $input_file | jq -r .release_channel)
+    target_triple=$(cat $input_file | jq -r .target)
 
-which symbolicate >/dev/null || cargo install symbolicate
+    which llvm-symbolizer rustfilt >dev/null || echo Need to install llvm-symbolizer and rustfilt
 
-arch="x86_64-apple-darwin"
-if [[ "$cpu_type" == *ARM-64* ]]; then
-    arch="aarch64-apple-darwin"
+    echo $channel;
+
+    mkdir -p target/dsyms/$channel
+
+    dsym="$channel/zed-$version-$target_triple.dbg"
+    if [[ ! -f target/dsyms/$dsym ]]; then
+        echo "Downloading $dsym..."
+        curl -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/$dsym.gz"
+        gunzip  target/dsyms/$dsym.gz
+    fi
+
+    cat $input_file | jq -r .backtrace[] | sed s'/.*+//' | llvm-symbolizer --no-demangle --obj=target/dsyms/$dsym | rustfilt
+
+else # ips file
+
+    version=$(cat $input_file | head -n 1 | jq -r .app_version)
+    bundle_id=$(cat $input_file | head -n 1 | jq -r .bundleID)
+    cpu_type=$(cat $input_file | tail -n+2 | jq -r .cpuType)
+
+    which symbolicate >/dev/null || cargo install symbolicate
+
+    arch="x86_64-apple-darwin"
+    if [[ "$cpu_type" == *ARM-64* ]]; then
+        arch="aarch64-apple-darwin"
+    fi
+    echo $bundle_id;
+
+    channel="stable"
+    if [[ "$bundle_id" == *Nightly* ]]; then
+        channel="nightly"
+    elif [[ "$bundle_id" == *Preview* ]]; then
+        channel="preview"
+    fi
+
+    mkdir -p target/dsyms/$channel
+
+    dsym="$channel/Zed-$version-$arch.dwarf"
+    if [[ ! -f target/dsyms/$dsym ]]; then
+        echo "Downloading $dsym..."
+        curl -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/$channel/Zed-$version-$arch.dwarf.gz"
+        gunzip  target/dsyms/$dsym.gz
+    fi
+
+    symbolicate $input_file target/dsyms/$dsym
+
 fi
-echo $bundle_id;
-
-channel="stable"
-if [[ "$bundle_id" == *Nightly* ]]; then
-    channel="nightly"
-elif [[ "$bundle_id" == *Preview* ]]; then
-    channel="preview"
-fi
-
-mkdir -p target/dsyms/$channel
-
-dsym="$channel/Zed-$version-$arch.dwarf"
-if [[ ! -f target/dsyms/$dsym ]]; then
-    echo "Downloading $dsym..."
-    curl -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/$channel/Zed-$version-$arch.dwarf.gz"
-    gunzip  target/dsyms/$dsym.gz
-fi
-
-symbolicate $ips_file target/dsyms/$dsym

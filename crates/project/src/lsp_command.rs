@@ -1,9 +1,10 @@
 mod signature_help;
 
 use crate::{
-    lsp_store::LspStore, CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
-    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
-    InlayHintTooltip, Location, LocationLink, MarkupContent, ProjectTransaction, ResolveState,
+    lsp_store::{LocalLspStore, LspStore},
+    CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
+    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
+    LocationLink, MarkupContent, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -348,7 +349,7 @@ impl LspCommand for PerformRename {
         if let Some(edit) = message {
             let (lsp_adapter, lsp_server) =
                 language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
-            LspStore::deserialize_workspace_edit(
+            LocalLspStore::deserialize_workspace_edit(
                 lsp_store,
                 edit,
                 self.push_to_history,
@@ -837,7 +838,7 @@ fn language_server_for_buffer(
     lsp_store
         .update(cx, |lsp_store, cx| {
             lsp_store
-                .language_server_for_buffer(buffer.read(cx), server_id, cx)
+                .language_server_for_local_buffer(buffer.read(cx), server_id, cx)
                 .map(|(adapter, server)| (adapter.clone(), server.clone()))
         })?
         .ok_or_else(|| anyhow!("no language server found for buffer"))
@@ -1917,6 +1918,7 @@ impl LspCommand for GetCompletions {
                     new_text,
                     server_id,
                     lsp_completion,
+                    resolved: false,
                 }
             })
             .collect())
@@ -2306,7 +2308,7 @@ impl LspCommand for OnTypeFormatting {
         if let Some(edits) = message {
             let (lsp_adapter, lsp_server) =
                 language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
-            LspStore::deserialize_text_edits(
+            LocalLspStore::deserialize_text_edits(
                 lsp_store,
                 buffer,
                 edits,

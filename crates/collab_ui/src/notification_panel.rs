@@ -662,7 +662,7 @@ impl Panel for NotificationPanel {
         "NotificationPanel"
     }
 
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         NotificationPanelSettings::get_global(cx).dock
     }
 
@@ -678,7 +678,7 @@ impl Panel for NotificationPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| NotificationPanelSettings::get_global(cx).default_width)
     }
@@ -702,7 +702,7 @@ impl Panel for NotificationPanel {
         }
     }
 
-    fn icon(&self, cx: &gpui::WindowContext) -> Option<IconName> {
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
         let show_button = NotificationPanelSettings::get_global(cx).button;
         if !show_button {
             return None;

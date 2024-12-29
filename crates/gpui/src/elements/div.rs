@@ -1193,7 +1193,7 @@ impl Element for Div {
             for (ix, child_layout_id) in request_layout.child_layout_ids.iter().enumerate() {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
-                child_max = child_max.max(&child_bounds.lower_right());
+                child_max = child_max.max(&child_bounds.bottom_right());
                 state.child_bounds.push(child_bounds);
 
                 if let Some(requested) = requested.as_ref() {
@@ -1208,7 +1208,7 @@ impl Element for Div {
             for child_layout_id in &request_layout.child_layout_ids {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
-                child_max = child_max.max(&child_bounds.lower_right());
+                child_max = child_max.max(&child_bounds.bottom_right());
             }
             (child_max - child_min).into()
         };
@@ -2499,7 +2499,7 @@ impl ScrollAnchor {
         }
     }
     /// Request scroll to this item on the next frame.
-    pub fn scroll_to(&self, cx: &mut WindowContext<'_>) {
+    pub fn scroll_to(&self, cx: &mut WindowContext) {
         let this = self.clone();
 
         cx.on_next_frame(move |_| {

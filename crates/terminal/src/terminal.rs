@@ -324,6 +324,7 @@ impl TerminalBuilder {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         working_directory: Option<PathBuf>,
+        python_venv_directory: Option<PathBuf>,
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
@@ -471,6 +472,7 @@ impl TerminalBuilder {
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             vi_mode_enabled: false,
             is_ssh_terminal,
+            python_venv_directory,
         };
 
         Ok(TerminalBuilder {
@@ -619,6 +621,7 @@ pub struct Terminal {
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
     title_override: Option<SharedString>,
+    pub python_venv_directory: Option<PathBuf>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -1180,10 +1183,10 @@ impl Terminal {
         }
 
         let motion: Option<ViMotion> = match key.as_str() {
-            "h" => Some(ViMotion::Left),
-            "j" => Some(ViMotion::Down),
-            "k" => Some(ViMotion::Up),
-            "l" => Some(ViMotion::Right),
+            "h" | "left" => Some(ViMotion::Left),
+            "j" | "down" => Some(ViMotion::Down),
+            "k" | "up" => Some(ViMotion::Up),
+            "l" | "right" => Some(ViMotion::Right),
             "w" => Some(ViMotion::WordRight),
             "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
             "e" => Some(ViMotion::WordRightEnd),
@@ -1458,7 +1461,7 @@ impl Terminal {
     fn drag_line_delta(&self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
         let top = region.origin.y + (self.last_content.size.line_height * 2.);
-        let bottom = region.lower_left().y - (self.last_content.size.line_height * 2.);
+        let bottom = region.bottom_left().y - (self.last_content.size.line_height * 2.);
         let scroll_delta = if e.position.y < top {
             (top - e.position.y).pow(1.1)
         } else if e.position.y > bottom {

@@ -1,8 +1,7 @@
 use collections::{HashMap, HashSet};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    Action, AnchorCorner, AppContext, CursorStyle, Hsla, Model, MouseButton, Subscription, Task,
-    View,
+    Action, AppContext, Corner, CursorStyle, Hsla, Model, MouseButton, Subscription, Task, View,
 };
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
@@ -89,7 +88,6 @@ impl DiffMap {
         self.snapshot
             .0
             .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
-        Editor::sync_expanded_diff_hunks(self, buffer_id, cx);
         self.diff_bases.insert(
             buffer_id,
             DiffBaseState {
@@ -105,6 +103,7 @@ impl DiffMap {
                 change_set,
             },
         );
+        Editor::sync_expanded_diff_hunks(self, buffer_id, cx);
     }
 
     pub fn hunks(&self, include_folded: bool) -> impl Iterator<Item = &ExpandedHunk> {
@@ -366,7 +365,7 @@ impl Editor {
         &mut self,
         diff_base_buffer: Option<Model<Buffer>>,
         hunk: &HoveredHunk,
-        cx: &mut ViewContext<'_, Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<()> {
         let buffer = self.buffer.clone();
         let multi_buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -455,7 +454,7 @@ impl Editor {
     fn apply_diff_hunks_in_range(
         &mut self,
         range: Range<Anchor>,
-        cx: &mut ViewContext<'_, Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<()> {
         let (buffer, range, _) = self
             .buffer
@@ -531,7 +530,7 @@ impl Editor {
     fn hunk_header_block(
         &self,
         hunk: &HoveredHunk,
-        cx: &mut ViewContext<'_, Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> BlockProperties<Anchor> {
         let is_branch_buffer = self
             .buffer
@@ -726,7 +725,7 @@ impl Editor {
                                                             .shape(IconButtonShape::Square)
                                                             .icon_size(IconSize::Small)
                                                             .style(ButtonStyle::Subtle)
-                                                            .selected(
+                                                            .toggle_state(
                                                                 hunk_controls_menu_handle
                                                                     .is_deployed(),
                                                             )
@@ -743,7 +742,7 @@ impl Editor {
                                                                 },
                                                             ),
                                                         )
-                                                        .anchor(AnchorCorner::TopRight)
+                                                        .anchor(Corner::TopRight)
                                                         .with_handle(hunk_controls_menu_handle)
                                                         .menu(move |cx| {
                                                             let focus = focus.clone();
@@ -802,7 +801,7 @@ impl Editor {
         hunk: &HoveredHunk,
         diff_base_buffer: Model<Buffer>,
         deleted_text_height: u32,
-        cx: &mut ViewContext<'_, Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> BlockProperties<Anchor> {
         let gutter_color = match hunk.status {
             DiffHunkStatus::Added => unreachable!(),
@@ -865,7 +864,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) -> bool {
+    pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<Editor>) -> bool {
         if self.diff_map.expand_all {
             return false;
         }
@@ -888,7 +887,7 @@ impl Editor {
     pub(super) fn sync_expanded_diff_hunks(
         diff_map: &mut DiffMap,
         buffer_id: BufferId,
-        cx: &mut ViewContext<'_, Self>,
+        cx: &mut ViewContext<Self>,
     ) {
         let diff_base_state = diff_map.diff_bases.get_mut(&buffer_id);
         let mut diff_base_buffer = None;
@@ -1135,7 +1134,7 @@ fn editor_with_deleted_text(
     diff_base_buffer: Model<Buffer>,
     deleted_color: Hsla,
     hunk: &HoveredHunk,
-    cx: &mut ViewContext<'_, Editor>,
+    cx: &mut ViewContext<Editor>,
 ) -> (u32, View<Editor>) {
     let parent_editor = cx.view().downgrade();
     let editor = cx.new_view(|cx| {
@@ -1156,6 +1155,11 @@ fn editor_with_deleted_text(
         editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
         editor.set_show_wrap_guides(false, cx);
         editor.set_show_gutter(false, cx);
+        editor.set_show_line_numbers(false, cx);
+        editor.set_show_scrollbars(false, cx);
+        editor.set_show_runnables(false, cx);
+        editor.set_show_git_diff_gutter(false, cx);
+        editor.set_show_code_actions(false, cx);
         editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_read_only(true);
         editor.set_show_inline_completions(Some(false), cx);
@@ -1167,7 +1171,7 @@ fn editor_with_deleted_text(
             false,
             cx,
         );
-        editor.set_current_line_highlight(Some(CurrentLineHighlight::None)); //
+        editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
         editor
             ._subscriptions
             .extend([cx.on_blur(&editor.focus_handle, |editor, cx| {

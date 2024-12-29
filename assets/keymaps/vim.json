@@ -230,8 +230,8 @@
       "ctrl-pageup": "pane::ActivatePrevItem",
       "insert": "vim::InsertBefore",
       // tree-sitter related commands
-      "[ x": "editor::SelectLargerSyntaxNode",
-      "] x": "editor::SelectSmallerSyntaxNode",
+      "[ x": "vim::SelectLargerSyntaxNode",
+      "] x": "vim::SelectSmallerSyntaxNode",
       "] d": "editor::GoToDiagnostic",
       "[ d": "editor::GoToPrevDiagnostic",
       "] c": "editor::GoToHunk",

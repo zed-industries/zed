@@ -64,18 +64,19 @@ pub enum ClosePosition {
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowDiagnostics {
+    #[default]
     Off,
     Errors,
-    #[default]
     All,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ActivateOnClose {
     #[default]
     History,
     Neighbour,
+    LeftNeighbour,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -99,7 +100,7 @@ pub struct ItemSettingsContent {
     /// Which files containing diagnostic errors/warnings to mark in the tabs.
     /// This setting can take the following three values:
     ///
-    /// Default: all
+    /// Default: off
     show_diagnostics: Option<ShowDiagnostics>,
     /// Whether to always show the close button on tabs.
     ///
@@ -1056,11 +1057,10 @@ pub mod test {
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
         InteractiveElement, IntoElement, Model, Render, SharedString, Task, View, ViewContext,
-        VisualContext, WeakView,
+        VisualContext, WeakView, WindowContext,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};
-    use ui::WindowContext;
 
     pub struct TestProjectItem {
         pub entry_id: Option<ProjectEntryId>,
@@ -1239,11 +1239,7 @@ pub mod test {
             None
         }
 
-        fn tab_content(
-            &self,
-            params: TabContentParams,
-            _cx: &ui::prelude::WindowContext,
-        ) -> AnyElement {
+        fn tab_content(&self, params: TabContentParams, _cx: &WindowContext) -> AnyElement {
             self.tab_detail.set(params.detail);
             gpui::div().into_any_element()
         }
@@ -1375,7 +1371,7 @@ pub mod test {
         fn cleanup(
             _workspace_id: WorkspaceId,
             _alive_items: Vec<ItemId>,
-            _cx: &mut ui::WindowContext,
+            _cx: &mut WindowContext,
         ) -> Task<anyhow::Result<()>> {
             Task::ready(Ok(()))
         }

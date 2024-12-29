@@ -28,7 +28,7 @@ mod windows;
 
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs,
     ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImage,
     RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, SvgRenderer,
     SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
@@ -420,6 +420,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn get_raw_handle(&self) -> windows::HWND;
 
     // Linux specific methods
+    fn inner_window_bounds(&self) -> WindowBounds {
+        self.window_bounds()
+    }
     fn request_decorations(&self, _decorations: WindowDecorations) {}
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
@@ -432,7 +435,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
-    fn gpu_specs(&self) -> Option<GPUSpecs>;
+    fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>);
 

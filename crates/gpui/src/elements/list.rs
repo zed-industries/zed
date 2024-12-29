@@ -716,7 +716,7 @@ impl Element for List {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        cx: &mut crate::WindowContext,
+        cx: &mut WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
@@ -827,7 +827,7 @@ impl Element for List {
         bounds: Bounds<crate::Pixels>,
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        cx: &mut crate::WindowContext,
+        cx: &mut WindowContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             for item in &mut prepaint.layout.item_layouts {
