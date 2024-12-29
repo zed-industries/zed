@@ -5455,27 +5455,18 @@ impl LineWithInvisibles {
                             } else {
                                 invisibles.extend(
                                     line_chunk
-                                        .bytes()
+                                        .chars()
                                         .enumerate()
-                                        .filter(|(_, line_byte)| {
-                                            let is_whitespace =
-                                                (*line_byte as char).is_whitespace();
+                                        .filter(|(_, c)| {
+                                            let is_whitespace = c.is_whitespace();
                                             non_whitespace_added |= !is_whitespace;
-                                            match *line_byte as char {
-                                                '\u{a0}' => false,
-                                                _ if is_whitespace
-                                                    && (non_whitespace_added
-                                                        || !is_soft_wrapped) =>
-                                                {
-                                                    true
-                                                }
-                                                _ => false,
-                                            }
+                                            is_whitespace
+                                                && (non_whitespace_added || !is_soft_wrapped)
                                         })
                                         .map(|(whitespace_index, _)| Invisible::Whitespace {
                                             line_offset: line.len() + whitespace_index,
                                         }),
-                                );
+                                )
                             }
                         }
 
