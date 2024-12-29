@@ -205,7 +205,7 @@ impl DebugPanelItem {
         }
     }
 
-    pub(crate) fn to_proto(&self, cx: &ViewContext<Self>, project_id: u64) -> SetDebuggerPanelItem {
+    pub(crate) fn to_proto(&self, project_id: u64, cx: &AppContext) -> SetDebuggerPanelItem {
         let thread_state = Some(self.thread_state.read(cx).to_proto());
         let module_list = Some(self.module_list.read(cx).to_proto());
         let variable_list = Some(self.variable_list.read(cx).to_proto());
@@ -296,7 +296,7 @@ impl DebugPanelItem {
 
         if let Some((downstream_client, project_id)) = self.dap_store.read(cx).downstream_client() {
             downstream_client
-                .send(self.to_proto(cx, *project_id))
+                .send(self.to_proto(*project_id, cx))
                 .log_err();
         }
     }
