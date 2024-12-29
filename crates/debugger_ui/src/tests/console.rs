@@ -372,7 +372,7 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
 
                         // scope 1
                         assert_eq!(
-                            [
+                            vec![
                                 VariableContainer {
                                     container_reference: scopes[0].variables_reference,
                                     variable: scope1_variables[0].clone(),
@@ -399,7 +399,7 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
 
                         // scope 2
                         assert_eq!(
-                            [VariableContainer {
+                            vec![VariableContainer {
                                 container_reference: scopes[1].variables_reference,
                                 variable: scope2_variables[0].clone(),
                                 depth: 1,

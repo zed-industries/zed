@@ -3711,6 +3711,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "sum_tree",
  "sysinfo",
  "task",
  "tasks_ui",

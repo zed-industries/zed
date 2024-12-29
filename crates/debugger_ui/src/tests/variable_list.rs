@@ -494,7 +494,7 @@ async fn test_fetch_variables_for_multiple_scopes(
 
                         // scope 1
                         assert_eq!(
-                            [
+                            vec![
                                 VariableContainer {
                                     container_reference: scopes[0].variables_reference,
                                     variable: variables.get(&2).unwrap()[0].clone(),
@@ -511,7 +511,7 @@ async fn test_fetch_variables_for_multiple_scopes(
 
                         // scope 2
                         assert_eq!(
-                            [VariableContainer {
+                            vec![VariableContainer {
                                 container_reference: scopes[1].variables_reference,
                                 variable: variables.get(&3).unwrap()[0].clone(),
                                 depth: 1,
@@ -811,7 +811,7 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
                     .update(cx, |variable_list, _| {
                         // scope 1
                         assert_eq!(
-                            [
+                            vec![
                                 VariableContainer {
                                     container_reference: scopes[0].variables_reference,
                                     variable: scope1_variables[0].clone(),
@@ -828,7 +828,7 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
 
                         // scope 2
                         assert_eq!(
-                            [VariableContainer {
+                            vec![VariableContainer {
                                 container_reference: scopes[1].variables_reference,
                                 variable: scope2_variables[0].clone(),
                                 depth: 1,
@@ -906,7 +906,7 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
                     .update(cx, |variable_list, _| {
                         // scope 1
                         assert_eq!(
-                            [
+                            vec![
                                 VariableContainer {
                                     container_reference: scopes[0].variables_reference,
                                     variable: scope1_variables[0].clone(),
@@ -933,7 +933,7 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
 
                         // scope 2
                         assert_eq!(
-                            [VariableContainer {
+                            vec![VariableContainer {
                                 container_reference: scopes[1].variables_reference,
                                 variable: scope2_variables[0].clone(),
                                 depth: 1,
@@ -1020,7 +1020,7 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
                     .update(cx, |variable_list, _| {
                         // scope 1
                         assert_eq!(
-                            [
+                            vec![
                                 VariableContainer {
                                     container_reference: scopes[0].variables_reference,
                                     variable: scope1_variables[0].clone(),
@@ -1047,7 +1047,7 @@ async fn test_toggle_scope_and_variable(executor: BackgroundExecutor, cx: &mut T
 
                         // scope 2
                         assert_eq!(
-                            [VariableContainer {
+                            vec![VariableContainer {
                                 container_reference: scopes[1].variables_reference,
                                 variable: scope2_variables[0].clone(),
                                 depth: 1,
