@@ -129,11 +129,27 @@ impl super::LspAdapter for CLspAdapter {
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
-                let text = format!("{} {}", detail, label);
+                let fn_ptr_begin = detail.find("(*");
+                let fn_ptr_end = detail[fn_ptr_begin.unwrap_or(detail.len())..].find(')');
+                let text = fn_ptr_begin.map_or(format!("{} {}", detail, label), |fn_ptr_begin| {
+                    let mut result = detail.to_owned();
+                    result.insert_str(fn_ptr_begin + fn_ptr_end.unwrap(), label);
+                    result
+                });
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
+                let filter_start = if let Some(fn_ptr_begin) = fn_ptr_begin {
+                    fn_ptr_begin + fn_ptr_end.unwrap()
+                } else {
+                    detail.len() + 1
+                };
+                let filter_end = if let Some(fn_ptr_begin) = fn_ptr_begin {
+                    fn_ptr_begin + fn_ptr_end.unwrap() + label.len()
+                } else {
+                    text.len()
+                };
                 return Some(CodeLabel {
-                    filter_range: detail.len() + 1..text.len(),
+                    filter_range: filter_start..filter_end,
                     text,
                     runs,
                 });
@@ -142,10 +158,26 @@ impl super::LspAdapter for CLspAdapter {
                 if completion.detail.is_some() =>
             {
                 let detail = completion.detail.as_ref().unwrap();
-                let text = format!("{} {}", detail, label);
+                let fn_ptr_begin = detail.find("(*");
+                let fn_ptr_end = detail[fn_ptr_begin.unwrap_or(detail.len())..].find(')');
+                let text = fn_ptr_begin.map_or(format!("{} {}", detail, label), |fn_ptr_begin| {
+                    let mut result = detail.to_owned();
+                    result.insert_str(fn_ptr_begin + fn_ptr_end.unwrap(), label);
+                    result
+                });
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let filter_start = if let Some(fn_ptr_begin) = fn_ptr_begin {
+                    fn_ptr_begin + fn_ptr_end.unwrap()
+                } else {
+                    detail.len() + 1
+                };
+                let filter_end = if let Some(fn_ptr_begin) = fn_ptr_begin {
+                    fn_ptr_begin + fn_ptr_end.unwrap() + label.len()
+                } else {
+                    text.len()
+                };
                 return Some(CodeLabel {
-                    filter_range: detail.len() + 1..text.len(),
+                    filter_range: filter_start..filter_end,
                     text,
                     runs,
                 });
@@ -154,7 +186,16 @@ impl super::LspAdapter for CLspAdapter {
                 if completion.detail.is_some() =>
             {
                 let detail = completion.detail.as_ref().unwrap();
-                let text = format!("{} {}", detail, label);
+                let function_arguments = completion
+                    .label_details
+                    .as_ref()
+                    .map_or(None, |details| details.detail.as_ref());
+                let text = format!(
+                    "{} {}{}",
+                    detail,
+                    label,
+                    function_arguments.unwrap_or(&String::default()),
+                );
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
                 let filter_start = detail.len() + 1;
                 let filter_end =
@@ -163,9 +204,18 @@ impl super::LspAdapter for CLspAdapter {
                     } else {
                         text.len()
                     };
-
                 return Some(CodeLabel {
                     filter_range: filter_start..filter_end,
+                    text,
+                    runs,
+                });
+            }
+            Some(lsp::CompletionItemKind::SNIPPET) if completion.label_details.is_some() => {
+                let label_details = completion.label_details.as_ref().unwrap().detail.as_ref();
+                let text = format!("{label}{}", label_details.unwrap_or(&String::default()));
+                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                return Some(CodeLabel {
+                    filter_range: 0..label.len(),
                     text,
                     runs,
                 });
