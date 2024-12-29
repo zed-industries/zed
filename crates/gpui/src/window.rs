@@ -4567,10 +4567,10 @@ impl Window {
         subscription
     }
 
-    // /// Obtain a handle to the window that belongs to this context.
-    // pub fn window_handle(&self) -> AnyWindowHandle {
-    //     self.window.handle
-    // }
+    /// Obtain a handle to the window that belongs to this context.
+    pub fn window_handle(&self) -> AnyWindowHandle {
+        self.handle
+    }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn refresh(&mut self) {
@@ -4580,6 +4580,7 @@ impl Window {
         }
     }
 
+    // todo!: Replace with window observing the entities
     // /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     // /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     // /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
@@ -4608,17 +4609,16 @@ impl Window {
     //     }
     // }
 
-    // /// Close this window.
-    // pub fn remove_window(&mut self) {
-    //     self.window.removed = true;
-    // }
+    /// Close this window.
+    pub fn remove_window(&mut self) {
+        self.removed = true;
+    }
 
-    // /// Obtain the currently focused [`FocusHandle`]. If no elements are focused, returns `None`.
-    // pub fn focused(&self) -> Option<FocusHandle> {
-    //     self.window
-    //         .focus
-    //         .and_then(|id| FocusHandle::for_id(id, &self.app.focus_handles))
-    // }
+    /// Obtain the currently focused [`FocusHandle`]. If no elements are focused, returns `None`.
+    pub fn focused(&self, cx: &AppContext) -> Option<FocusHandle> {
+        self.focus
+            .and_then(|id| FocusHandle::for_id(id, &cx.focus_handles))
+    }
 
     /// Move focus to the element associated with the given [`FocusHandle`].
     pub fn focus(&mut self, handle: &FocusHandle) {
@@ -4631,107 +4631,106 @@ impl Window {
         self.refresh();
     }
 
-    // /// Remove focus from all elements within this context's window.
-    // pub fn blur(&mut self) {
-    //     if !self.window.focus_enabled {
-    //         return;
-    //     }
+    /// Remove focus from all elements within this context's window.
+    pub fn blur(&mut self) {
+        if !self.focus_enabled {
+            return;
+        }
 
-    //     self.window.focus = None;
-    //     self.refresh();
-    // }
+        self.focus = None;
+        self.refresh();
+    }
 
-    // /// Blur the window and don't allow anything in it to be focused again.
-    // pub fn disable_focus(&mut self) {
-    //     self.blur();
-    //     self.window.focus_enabled = false;
-    // }
+    /// Blur the window and don't allow anything in it to be focused again.
+    pub fn disable_focus(&mut self) {
+        self.blur();
+        self.focus_enabled = false;
+    }
 
-    // /// Accessor for the text system.
-    // pub fn text_system(&self) -> &Arc<WindowTextSystem> {
-    //     &self.window.text_system
-    // }
+    /// Accessor for the text system.
+    pub fn text_system(&self) -> &Arc<WindowTextSystem> {
+        &self.text_system
+    }
 
-    // /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
-    // pub fn text_style(&self) -> TextStyle {
-    //     let mut style = TextStyle::default();
-    //     for refinement in &self.window.text_style_stack {
-    //         style.refine(refinement);
-    //     }
-    //     style
-    // }
+    /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
+    pub fn text_style(&self) -> TextStyle {
+        let mut style = TextStyle::default();
+        for refinement in &self.text_style_stack {
+            style.refine(refinement);
+        }
+        style
+    }
 
-    // /// Check if the platform window is maximized
-    // /// On some platforms (namely Windows) this is different than the bounds being the size of the display
-    // pub fn is_maximized(&self) -> bool {
-    //     self.window.platform_window.is_maximized()
-    // }
+    /// Check if the platform window is maximized
+    /// On some platforms (namely Windows) this is different than the bounds being the size of the display
+    pub fn is_maximized(&self) -> bool {
+        self.platform_window.is_maximized()
+    }
 
-    // /// request a certain window decoration (Wayland)
-    // pub fn request_decorations(&self, decorations: WindowDecorations) {
-    //     self.window.platform_window.request_decorations(decorations);
-    // }
+    /// request a certain window decoration (Wayland)
+    pub fn request_decorations(&self, decorations: WindowDecorations) {
+        self.platform_window.request_decorations(decorations);
+    }
 
-    // /// Start a window resize operation (Wayland)
-    // pub fn start_window_resize(&self, edge: ResizeEdge) {
-    //     self.window.platform_window.start_window_resize(edge);
-    // }
+    /// Start a window resize operation (Wayland)
+    pub fn start_window_resize(&self, edge: ResizeEdge) {
+        self.platform_window.start_window_resize(edge);
+    }
 
-    // /// Return the `WindowBounds` to indicate that how a window should be opened
-    // /// after it has been closed
-    // pub fn window_bounds(&self) -> WindowBounds {
-    //     self.window.platform_window.window_bounds()
-    // }
+    /// Return the `WindowBounds` to indicate that how a window should be opened
+    /// after it has been closed
+    pub fn window_bounds(&self) -> WindowBounds {
+        self.platform_window.window_bounds()
+    }
 
-    // /// Return the `WindowBounds` excluding insets (Wayland and X11)
-    // pub fn inner_window_bounds(&self) -> WindowBounds {
-    //     self.window.platform_window.inner_window_bounds()
-    // }
+    /// Return the `WindowBounds` excluding insets (Wayland and X11)
+    pub fn inner_window_bounds(&self) -> WindowBounds {
+        self.platform_window.inner_window_bounds()
+    }
 
-    // /// Dispatch the given action on the currently focused element.
-    // pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
-    //     let focus_handle = self.focused();
+    /// Dispatch the given action on the currently focused element.
+    pub fn dispatch_action(&mut self, action: Box<dyn Action>, cx: &mut AppContext) {
+        let focus_handle = self.focused(cx);
 
-    //     let window = self.window.handle;
-    //     self.app.defer(move |cx| {
-    //         window
-    //             .update(cx, |_, cx| {
-    //                 let node_id = focus_handle
-    //                     .and_then(|handle| {
-    //                         cx.window
-    //                             .rendered_frame
-    //                             .dispatch_tree
-    //                             .focusable_node_id(handle.id)
-    //                     })
-    //                     .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
+        let window = self.handle;
+        cx.defer(move |cx| {
+            window
+                .update(cx, |_, cx| {
+                    let node_id = focus_handle
+                        .and_then(|handle| {
+                            cx.window
+                                .rendered_frame
+                                .dispatch_tree
+                                .focusable_node_id(handle.id)
+                        })
+                        .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
 
-    //                 cx.dispatch_action_on_node(node_id, action.as_ref());
-    //             })
-    //             .log_err();
-    //     })
-    // }
+                    cx.dispatch_action_on_node(node_id, action.as_ref());
+                })
+                .log_err();
+        })
+    }
 
-    // pub(crate) fn dispatch_keystroke_observers(
-    //     &mut self,
-    //     event: &dyn Any,
-    //     action: Option<Box<dyn Action>>,
-    // ) {
-    //     let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
-    //         return;
-    //     };
+    pub(crate) fn dispatch_keystroke_observers(
+        &mut self,
+        event: &dyn Any,
+        action: Option<Box<dyn Action>>,
+        cx: &mut AppContext,
+    ) {
+        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
+            return;
+        };
 
-    //     self.keystroke_observers
-    //         .clone()
-    //         .retain(&(), move |callback| {
-    //             (callback)(
-    //                 &KeystrokeEvent {
-    //                     keystroke: key_down_event.keystroke.clone(),
-    //                     action: action.as_ref().map(|action| action.boxed_clone()),
-    //                 },
-    //                 self,
-    //             )
-    //         });
-    // }
+        cx.keystroke_observers.clone().retain(&(), move |callback| {
+            (callback)(
+                &KeystrokeEvent {
+                    keystroke: key_down_event.keystroke.clone(),
+                    action: action.as_ref().map(|action| action.boxed_clone()),
+                },
+                todo!(),
+            )
+        });
+    }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
@@ -4771,182 +4770,181 @@ impl Window {
         )
     }
 
-    // /// Subscribe to events emitted by a model or view.
-    // /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
-    // /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
-    // pub fn subscribe<Emitter, E, Evt>(
-    //     &mut self,
-    //     entity: &E,
-    //     mut on_event: impl FnMut(E, &Evt, &mut WindowContext<'_>) + 'static,
-    // ) -> Subscription
-    // where
-    //     Emitter: EventEmitter<Evt>,
-    //     E: Entity<Emitter>,
-    //     Evt: 'static,
-    // {
-    //     let entity_id = entity.entity_id();
-    //     let entity = entity.downgrade();
-    //     let window_handle = self.window.handle;
-    //     self.app.new_subscription(
-    //         entity_id,
-    //         (
-    //             TypeId::of::<Evt>(),
-    //             Box::new(move |event, cx| {
-    //                 window_handle
-    //                     .update(cx, |_, cx| {
-    //                         if let Some(handle) = E::upgrade_from(&entity) {
-    //                             let event = event.downcast_ref().expect("invalid event type");
-    //                             on_event(handle, event, cx);
-    //                             true
-    //                         } else {
-    //                             false
-    //                         }
-    //                     })
-    //                     .unwrap_or(false)
-    //             }),
-    //         ),
-    //     )
-    // }
+    /// Subscribe to events emitted by a model or view.
+    /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
+    /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
+    pub fn subscribe<Emitter, E, Evt>(
+        &mut self,
+        entity: &E,
+        cx: &mut AppContext,
+        mut on_event: impl FnMut(E, &Evt, &mut WindowContext<'_>) + 'static,
+    ) -> Subscription
+    where
+        Emitter: EventEmitter<Evt>,
+        E: Entity<Emitter>,
+        Evt: 'static,
+    {
+        let entity_id = entity.entity_id();
+        let entity = entity.downgrade();
+        let window_handle = self.handle;
+        cx.new_subscription(
+            entity_id,
+            (
+                TypeId::of::<Evt>(),
+                Box::new(move |event, cx| {
+                    window_handle
+                        .update(cx, |_, cx| {
+                            if let Some(handle) = E::upgrade_from(&entity) {
+                                let event = event.downcast_ref().expect("invalid event type");
+                                on_event(handle, event, cx);
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false)
+                }),
+            ),
+        )
+    }
 
-    // /// Register a callback to be invoked when the given Model or View is released.
-    // pub fn observe_release<E, T>(
-    //     &self,
-    //     entity: &E,
-    //     mut on_release: impl FnOnce(&mut T, &mut WindowContext) + 'static,
-    // ) -> Subscription
-    // where
-    //     E: Entity<T>,
-    //     T: 'static,
-    // {
-    //     let entity_id = entity.entity_id();
-    //     let window_handle = self.window.handle;
-    //     let (subscription, activate) = self.app.release_listeners.insert(
-    //         entity_id,
-    //         Box::new(move |entity, cx| {
-    //             let entity = entity.downcast_mut().expect("invalid entity type");
-    //             let _ = window_handle.update(cx, |_, cx| on_release(entity, cx));
-    //         }),
-    //     );
-    //     activate();
-    //     subscription
-    // }
+    /// Register a callback to be invoked when the given Model or View is released.
+    pub fn observe_release<E, T>(
+        &self,
+        entity: &E,
+        cx: &mut AppContext,
+        mut on_release: impl FnOnce(&mut T, &mut WindowContext) + 'static,
+    ) -> Subscription
+    where
+        E: Entity<T>,
+        T: 'static,
+    {
+        let entity_id = entity.entity_id();
+        let window_handle = self.handle;
+        let (subscription, activate) = cx.release_listeners.insert(
+            entity_id,
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                let _ = window_handle.update(cx, |_, cx| on_release(entity, cx));
+            }),
+        );
+        activate();
+        subscription
+    }
 
-    // /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
-    // /// await points in async code.
-    // pub fn to_async(&self) -> AsyncWindowContext {
-    //     AsyncWindowContext::new(self.app.to_async(), self.window.handle)
-    // }
+    /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
+    /// await points in async code.
+    pub fn to_async(&self, cx: &AppContext) -> AsyncWindowContext {
+        AsyncWindowContext::new(cx.to_async(), self.handle)
+    }
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut WindowContext) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
     }
 
-    // /// Schedule a frame to be drawn on the next animation frame.
-    // ///
-    // /// This is useful for elements that need to animate continuously, such as a video player or an animated GIF.
-    // /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
-    // ///
-    // /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
-    // pub fn request_animation_frame(&self) {
-    //     let parent_id = self.parent_view_id();
-    //     self.on_next_frame(move |cx| cx.notify(parent_id));
-    // }
+    /// Schedule a frame to be drawn on the next animation frame.
+    ///
+    /// This is useful for elements that need to animate continuously, such as a video player or an animated GIF.
+    /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
+    ///
+    /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
+    pub fn request_animation_frame(&self) {
+        let parent_id = self.parent_view_id();
+        self.on_next_frame(move |cx| cx.notify(parent_id));
+    }
 
-    // /// Spawn the future returned by the given closure on the application thread pool.
-    // /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
-    // /// use within your future.
-    // pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
-    // where
-    //     R: 'static,
-    //     Fut: Future<Output = R> + 'static,
-    // {
-    //     self.app
-    //         .spawn(|app| f(AsyncWindowContext::new(app, self.window.handle)))
-    // }
+    /// Spawn the future returned by the given closure on the application thread pool.
+    /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
+    /// use within your future.
+    pub fn spawn<Fut, R>(
+        &self,
+        cx: &&AppContext,
+        f: impl FnOnce(AsyncWindowContext) -> Fut,
+    ) -> Task<R>
+    where
+        R: 'static,
+        Fut: Future<Output = R> + 'static,
+    {
+        cx.spawn(|app| f(AsyncWindowContext::new(app, self.handle)))
+    }
 
-    // fn bounds_changed(&mut self) {
-    //     self.window.scale_factor = self.window.platform_window.scale_factor();
-    //     self.window.viewport_size = self.window.platform_window.content_size();
-    //     self.window.display_id = self
-    //         .window
-    //         .platform_window
-    //         .display()
-    //         .map(|display| display.id());
+    fn bounds_changed(&mut self, cx: &mut AppContext) {
+        self.scale_factor = self.platform_window.scale_factor();
+        self.viewport_size = self.platform_window.content_size();
+        self.display_id = self.platform_window.display().map(|display| display.id());
 
-    //     self.refresh();
+        self.refresh();
 
-    //     self.window
-    //         .bounds_observers
-    //         .clone()
-    //         .retain(&(), |callback| callback(self));
-    // }
+        self.bounds_observers
+            .clone()
+            .retain(&(), |callback| callback(todo!()));
+    }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.platform_window.bounds()
     }
 
-    // /// Returns whether or not the window is currently fullscreen
-    // pub fn is_fullscreen(&self) -> bool {
-    //     self.window.platform_window.is_fullscreen()
-    // }
+    /// Returns whether or not the window is currently fullscreen
+    pub fn is_fullscreen(&self) -> bool {
+        self.platform_window.is_fullscreen()
+    }
 
-    // pub(crate) fn appearance_changed(&mut self) {
-    //     self.window.appearance = self.window.platform_window.appearance();
+    pub(crate) fn appearance_changed(&mut self, cx: &mut AppContext) {
+        self.appearance = self.platform_window.appearance();
 
-    //     self.window
-    //         .appearance_observers
-    //         .clone()
-    //         .retain(&(), |callback| callback(self));
-    // }
+        self.appearance_observers
+            .clone()
+            .retain(&(), |callback| callback(todo!()));
+    }
 
-    // /// Returns the appearance of the current window.
-    // pub fn appearance(&self) -> WindowAppearance {
-    //     self.window.appearance
-    // }
+    /// Returns the appearance of the current window.
+    pub fn appearance(&self) -> WindowAppearance {
+        self.appearance
+    }
 
-    // /// Returns the size of the drawable area within the window.
-    // pub fn viewport_size(&self) -> Size<Pixels> {
-    //     self.window.viewport_size
-    // }
+    /// Returns the size of the drawable area within the window.
+    pub fn viewport_size(&self) -> Size<Pixels> {
+        self.viewport_size
+    }
 
-    // /// Returns whether this window is focused by the operating system (receiving key events).
-    // pub fn is_window_active(&self) -> bool {
-    //     self.window.active.get()
-    // }
+    /// Returns whether this window is focused by the operating system (receiving key events).
+    pub fn is_window_active(&self) -> bool {
+        self.active.get()
+    }
 
-    // /// Returns whether this window is considered to be the window
-    // /// that currently owns the mouse cursor.
-    // /// On mac, this is equivalent to `is_window_active`.
-    // pub fn is_window_hovered(&self) -> bool {
-    //     if cfg!(any(
-    //         target_os = "windows",
-    //         target_os = "linux",
-    //         target_os = "freebsd"
-    //     )) {
-    //         self.window.hovered.get()
-    //     } else {
-    //         self.is_window_active()
-    //     }
-    // }
+    /// Returns whether this window is considered to be the window
+    /// that currently owns the mouse cursor.
+    /// On mac, this is equivalent to `is_window_active`.
+    pub fn is_window_hovered(&self) -> bool {
+        if cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )) {
+            self.hovered.get()
+        } else {
+            self.is_window_active()
+        }
+    }
 
-    // /// Toggle zoom on the window.
-    // pub fn zoom_window(&self) {
-    //     self.window.platform_window.zoom();
-    // }
+    /// Toggle zoom on the window.
+    pub fn zoom_window(&self) {
+        self.platform_window.zoom();
+    }
 
-    // /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
-    // pub fn show_window_menu(&self, position: Point<Pixels>) {
-    //     self.window.platform_window.show_window_menu(position)
-    // }
+    /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
+    pub fn show_window_menu(&self, position: Point<Pixels>) {
+        self.platform_window.show_window_menu(position)
+    }
 
-    // /// Tells the compositor to take control of window movement (Wayland and X11)
-    // ///
-    // /// Events may not be received during a move operation.
-    // pub fn start_window_move(&self) {
-    //     self.window.platform_window.start_window_move()
-    // }
+    /// Tells the compositor to take control of window movement (Wayland and X11)
+    ///
+    /// Events may not be received during a move operation.
+    pub fn start_window_move(&self) {
+        self.platform_window.start_window_move()
+    }
 
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
     pub fn set_client_inset(&self, inset: Pixels) {
@@ -4958,140 +4956,133 @@ impl Window {
         self.platform_window.window_decorations()
     }
 
-    // /// Returns which window controls are currently visible (Wayland)
-    // pub fn window_controls(&self) -> WindowControls {
-    //     self.window.platform_window.window_controls()
-    // }
+    /// Returns which window controls are currently visible (Wayland)
+    pub fn window_controls(&self) -> WindowControls {
+        self.platform_window.window_controls()
+    }
 
-    // /// Updates the window's title at the platform level.
-    // pub fn set_window_title(&mut self, title: &str) {
-    //     self.window.platform_window.set_title(title);
-    // }
+    /// Updates the window's title at the platform level.
+    pub fn set_window_title(&mut self, title: &str) {
+        self.platform_window.set_title(title);
+    }
 
-    // /// Sets the application identifier.
-    // pub fn set_app_id(&mut self, app_id: &str) {
-    //     self.window.platform_window.set_app_id(app_id);
-    // }
+    /// Sets the application identifier.
+    pub fn set_app_id(&mut self, app_id: &str) {
+        self.platform_window.set_app_id(app_id);
+    }
 
-    // /// Sets the window background appearance.
-    // pub fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-    //     self.window
-    //         .platform_window
-    //         .set_background_appearance(background_appearance);
-    // }
+    /// Sets the window background appearance.
+    pub fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
+        self.platform_window
+            .set_background_appearance(background_appearance);
+    }
 
-    // /// Mark the window as dirty at the platform level.
-    // pub fn set_window_edited(&mut self, edited: bool) {
-    //     self.window.platform_window.set_edited(edited);
-    // }
+    /// Mark the window as dirty at the platform level.
+    pub fn set_window_edited(&mut self, edited: bool) {
+        self.platform_window.set_edited(edited);
+    }
 
-    // /// Determine the display on which the window is visible.
-    // pub fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-    //     self.platform
-    //         .displays()
-    //         .into_iter()
-    //         .find(|display| Some(display.id()) == self.window.display_id)
-    // }
+    /// Determine the display on which the window is visible.
+    pub fn display(&self, cx: &AppContext) -> Option<Rc<dyn PlatformDisplay>> {
+        cx.platform
+            .displays()
+            .into_iter()
+            .find(|display| Some(display.id()) == self.display_id)
+    }
 
     /// Show the platform character palette.
     pub fn show_character_palette(&self) {
         self.platform_window.show_character_palette();
     }
 
-    // /// The scale factor of the display associated with the window. For example, it could
-    // /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
-    // /// be rendered as two pixels on screen.
-    // pub fn scale_factor(&self) -> f32 {
-    //     self.window.scale_factor
-    // }
+    /// The scale factor of the display associated with the window. For example, it could
+    /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
+    /// be rendered as two pixels on screen.
+    pub fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
 
-    // /// The size of an em for the base font of the application. Adjusting this value allows the
-    // /// UI to scale, just like zooming a web page.
-    // pub fn rem_size(&self) -> Pixels {
-    //     self.window
-    //         .rem_size_override_stack
-    //         .last()
-    //         .copied()
-    //         .unwrap_or(self.window.rem_size)
-    // }
+    /// The size of an em for the base font of the application. Adjusting this value allows the
+    /// UI to scale, just like zooming a web page.
+    pub fn rem_size(&self) -> Pixels {
+        self.rem_size_override_stack
+            .last()
+            .copied()
+            .unwrap_or(self.rem_size)
+    }
 
-    // /// Sets the size of an em for the base font of the application. Adjusting this value allows the
-    // /// UI to scale, just like zooming a web page.
-    // pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
-    //     self.window.rem_size = rem_size.into();
-    // }
+    /// Sets the size of an em for the base font of the application. Adjusting this value allows the
+    /// UI to scale, just like zooming a web page.
+    pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
+        self.rem_size = rem_size.into();
+    }
 
-    // /// Executes the provided function with the specified rem size.
-    // ///
-    // /// This method must only be called as part of element drawing.
-    // pub fn with_rem_size<F, R>(&mut self, rem_size: Option<impl Into<Pixels>>, f: F) -> R
-    // where
-    //     F: FnOnce(&mut Self) -> R,
-    // {
-    //     debug_assert!(
-    //         matches!(
-    //             self.window.draw_phase,
-    //             DrawPhase::Prepaint | DrawPhase::Paint
-    //         ),
-    //         "this method can only be called during request_layout, prepaint, or paint"
-    //     );
+    /// Executes the provided function with the specified rem size.
+    ///
+    /// This method must only be called as part of element drawing.
+    pub fn with_rem_size<F, R>(&mut self, rem_size: Option<impl Into<Pixels>>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        debug_assert!(
+            matches!(self.draw_phase, DrawPhase::Prepaint | DrawPhase::Paint),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
 
-    //     if let Some(rem_size) = rem_size {
-    //         self.window.rem_size_override_stack.push(rem_size.into());
-    //         let result = f(self);
-    //         self.window.rem_size_override_stack.pop();
-    //         result
-    //     } else {
-    //         f(self)
-    //     }
-    // }
+        if let Some(rem_size) = rem_size {
+            self.rem_size_override_stack.push(rem_size.into());
+            let result = f(self);
+            self.rem_size_override_stack.pop();
+            result
+        } else {
+            f(self)
+        }
+    }
 
-    // /// The line height associated with the current text style.
-    // pub fn line_height(&self) -> Pixels {
-    //     self.text_style().line_height_in_pixels(self.rem_size())
-    // }
+    /// The line height associated with the current text style.
+    pub fn line_height(&self) -> Pixels {
+        self.text_style().line_height_in_pixels(self.rem_size())
+    }
 
-    // /// Call to prevent the default action of an event. Currently only used to prevent
-    // /// parent elements from becoming focused on mouse down.
-    // pub fn prevent_default(&mut self) {
-    //     self.window.default_prevented = true;
-    // }
+    /// Call to prevent the default action of an event. Currently only used to prevent
+    /// parent elements from becoming focused on mouse down.
+    pub fn prevent_default(&mut self) {
+        self.default_prevented = true;
+    }
 
-    // /// Obtain whether default has been prevented for the event currently being dispatched.
-    // pub fn default_prevented(&self) -> bool {
-    //     self.window.default_prevented
-    // }
+    /// Obtain whether default has been prevented for the event currently being dispatched.
+    pub fn default_prevented(&self) -> bool {
+        self.default_prevented
+    }
 
-    // /// Determine whether the given action is available along the dispatch path to the currently focused element.
-    // pub fn is_action_available(&self, action: &dyn Action) -> bool {
-    //     let target = self
-    //         .focused()
-    //         .and_then(|focused_handle| {
-    //             self.window
-    //                 .rendered_frame
-    //                 .dispatch_tree
-    //                 .focusable_node_id(focused_handle.id)
-    //         })
-    //         .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
-    //     self.window
-    //         .rendered_frame
-    //         .dispatch_tree
-    //         .is_action_available(action, target)
-    // }
+    /// Determine whether the given action is available along the dispatch path to the currently focused element.
+    pub fn is_action_available(&self, action: &dyn Action, cx: &mut AppContext) -> bool {
+        let target = self
+            .focused(cx)
+            .and_then(|focused_handle| {
+                self.rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focused_handle.id)
+            })
+            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
+        self.rendered_frame
+            .dispatch_tree
+            .is_action_available(action, target)
+    }
 
-    // /// The position of the mouse relative to the window.
-    // pub fn mouse_position(&self) -> Point<Pixels> {
-    //     self.window.mouse_position
-    // }
+    /// The position of the mouse relative to the window.
+    pub fn mouse_position(&self) -> Point<Pixels> {
+        self.mouse_position
+    }
 
-    // /// The current state of the keyboard's modifiers
-    // pub fn modifiers(&self) -> Modifiers {
-    //     self.window.modifiers
-    // }
+    /// The current state of the keyboard's modifiers
+    pub fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
 
-    // fn complete_frame(&self) {
-    //     self.window.platform_window.completed_frame();
-    // }
+    fn complete_frame(&self) {
+        self.platform_window.completed_frame();
+    }
 
     // /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     // /// the contents of the new [Scene], use [present].
@@ -6554,10 +6545,10 @@ impl Window {
     //     self.window.next_frame.dispatch_tree.set_view_id(view_id);
     // }
 
-    // /// Get the last view id for the current element
-    // pub fn parent_view_id(&self) -> Option<EntityId> {
-    //     self.window.next_frame.dispatch_tree.parent_view_id()
-    // }
+    /// Get the last view id for the current element
+    pub fn parent_view_id(&self) -> Option<EntityId> {
+        self.next_frame.dispatch_tree.parent_view_id()
+    }
 
     // /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
     // /// platform to receive textual input with proper integration with concerns such
