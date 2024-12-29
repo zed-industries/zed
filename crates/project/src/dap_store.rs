@@ -934,6 +934,7 @@ impl DapStore {
                     Ok(task) => match task.await {
                         Ok(_) => (true, None),
                         Err(error) => {
+                            dbg!(&error);
                             this.update(&mut cx, |_, cx| {
                                 cx.emit(DapStoreEvent::Notification(error.to_string()));
                             })
@@ -1467,14 +1468,13 @@ impl DapStore {
         breakpoints: Vec<proto::SynchronizeBreakpoints>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.breakpoints.clear();
-
+        let mut new_breakpoints = BTreeMap::new();
         for project_breakpoints in breakpoints {
             let Some(project_path) = project_breakpoints.project_path else {
                 continue;
             };
 
-            self.breakpoints.insert(
+            new_breakpoints.insert(
                 ProjectPath::from_proto(project_path),
                 project_breakpoints
                     .breakpoints
@@ -1484,6 +1484,7 @@ impl DapStore {
             );
         }
 
+        std::mem::swap(&mut self.breakpoints, &mut new_breakpoints);
         cx.notify();
     }
 
