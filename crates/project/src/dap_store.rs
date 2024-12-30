@@ -1617,11 +1617,7 @@ impl DapStore {
     ) -> Task<Result<()>> {
         let upstream_client = self.upstream_client();
 
-        let mut breakpoint_set = self
-            .breakpoints
-            .get(project_path)
-            .cloned()
-            .unwrap_or_default();
+        let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
 
         match edit_action {
             BreakpointEditAction::Toggle => {
@@ -1633,13 +1629,6 @@ impl DapStore {
                 breakpoint_set.remove(&breakpoint);
                 breakpoint_set.insert(breakpoint);
             }
-        }
-
-        if breakpoint_set.is_empty() {
-            self.breakpoints.remove(project_path);
-        } else {
-            self.breakpoints
-                .insert(project_path.clone(), breakpoint_set.clone());
         }
 
         cx.notify();
@@ -1657,7 +1646,20 @@ impl DapStore {
                 .log_err();
         }
 
-        self.send_changed_breakpoints(project_path, buffer_path, buffer_snapshot, cx)
+        let remove_breakpoint_set = breakpoint_set.is_empty();
+
+        if self
+            .as_local()
+            .is_some_and(|local| !local.sessions.is_empty())
+        {
+            self.send_changed_breakpoints(project_path, buffer_path, buffer_snapshot, cx)
+        } else {
+            if remove_breakpoint_set {
+                self.breakpoints.remove(project_path);
+            }
+
+            Task::ready(Ok(()))
+        }
     }
 
     pub fn send_breakpoints(

@@ -1241,7 +1241,7 @@ impl Project {
         all_breakpoints
     }
 
-    pub fn send_breakpoints(
+    pub fn initial_send_breakpoints(
         &self,
         session_id: &DebugSessionId,
         client_id: &DebugAdapterClientId,
@@ -1249,7 +1249,11 @@ impl Project {
     ) -> Task<()> {
         let mut tasks = Vec::new();
 
-        for (abs_path, serialized_breakpoints) in self.all_breakpoints(true, cx) {
+        for (abs_path, serialized_breakpoints) in self
+            .all_breakpoints(true, cx)
+            .into_iter()
+            .filter(|(_, bps)| !bps.is_empty())
+        {
             let source_breakpoints = serialized_breakpoints
                 .iter()
                 .map(|bp| bp.to_source_breakpoint())
