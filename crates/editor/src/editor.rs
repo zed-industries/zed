@@ -5885,10 +5885,7 @@ impl Editor {
                     let start_of_next_line = Point::new(next_line_row.0, indent.len);
 
                     let replace = if snapshot.line_len(next_line_row) > indent.len {
-                        match options.separator.as_deref() {
-                            Some(replace_str) => replace_str,
-                            None => " ",
-                        }
+                        options.separator.as_deref().unwrap_or(" ")
                     } else {
                         ""
                     };
