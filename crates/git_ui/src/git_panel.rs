@@ -1,15 +1,15 @@
 use crate::{git_status_icon, settings::GitPanelSettings};
 use crate::{CommitAllChanges, CommitStagedChanges, DiscardAll, StageAll, UnstageAll};
 use anyhow::{Context as _, Result};
-use collections::HashMap;
-use db::kvp::KEY_VALUE_STORE;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     scroll::{Autoscroll, AutoscrollStrategy},
     Editor, MultiBuffer, DEFAULT_MULTIBUFFER_CONTEXT,
 };
-use git::repository::{GitFileStatus, RepoPath};
-use git::{diff::DiffHunk, repository::GitFileStatus};
+use git::{
+    diff::DiffHunk,
+    repository::{GitFileStatus, RepoPath},
+};
 use gpui::*;
 use gpui::{
     actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
@@ -19,11 +19,8 @@ use gpui::{
 };
 use language::{Buffer, BufferRow, OffsetRangeExt};
 use menu::{SelectNext, SelectPrev};
-use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
-use project::{EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
+use project::{EntryKind, Fs, Project, ProjectEntryId, ProjectPath, WorktreeId};
 use serde::{Deserialize, Serialize};
-use serde::{Deserialize, Serialize};
-use settings::Settings as _;
 use settings::Settings as _;
 use std::{
     cell::OnceCell,
@@ -40,7 +37,6 @@ use ui::{
     prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, ListItem, Scrollbar,
     ScrollbarState, Tooltip,
 };
-use util::{ResultExt, TryFutureExt};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -76,7 +72,7 @@ pub struct GitStatusEntry {}
 struct EntryDetails {
     filename: String,
     display_name: String,
-    path: Arc<Path>,
+    path: RepoPath,
     kind: EntryKind,
     depth: usize,
     is_expanded: bool,
@@ -106,7 +102,7 @@ pub struct GitPanel {
     project: Model<Project>,
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
-    _selected_item: Option<usize>,
+    selected_item: Option<usize>,
     show_scrollbar: bool,
     // todo!(): Reintroduce expanded directories, once we're deriving directories from paths
     // expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
@@ -123,6 +119,8 @@ pub struct GitPanel {
 #[derive(Debug, Clone)]
 struct WorktreeEntries {
     worktree_id: WorktreeId,
+    // TODO support multiple repositories per worktree
+    work_directory: WorkDirectory,
     visible_entries: Vec<GitPanelEntry>,
     paths: Rc<OnceCell<HashSet<RepoPath>>>,
 }
@@ -131,6 +129,14 @@ struct WorktreeEntries {
 struct GitPanelEntry {
     entry: worktree::StatusEntry,
     hunks: Rc<OnceCell<Vec<DiffHunk>>>,
+}
+
+impl GitPanelEntry {
+    fn project_path(&self) -> Option<Arc<Path>> {
+        self.entry
+            .work_directory
+            .unrelativize(&self.entry.repo_path)
+    }
 }
 
 impl Deref for GitPanelEntry {
@@ -146,7 +152,7 @@ impl WorktreeEntries {
         self.paths.get_or_init(|| {
             self.visible_entries
                 .iter()
-                .map(|e| (e.entry.path.clone()))
+                .map(|e| (e.entry.repo_path.clone()))
                 .collect()
         })
     }
@@ -176,7 +182,7 @@ impl GitPanel {
                 project::Event::GitRepositoryUpdated => {
                     this.update_visible_entries(None, None, cx);
                 }
-                project::Event::WorktreeRemoved(id) => {
+                project::Event::WorktreeRemoved(_id) => {
                     // this.expanded_dir_ids.remove(id);
                     this.update_visible_entries(None, None, cx);
                     cx.notify();
@@ -194,7 +200,7 @@ impl GitPanel {
                 project::Event::Closed => {
                     this.git_diff_editor_updates = Task::ready(());
                     this.reveal_in_editor = Task::ready(());
-                    this.expanded_dir_ids.clear();
+                    // this.expanded_dir_ids.clear();
                     this.visible_entries.clear();
                     this.git_diff_editor = None;
                 }
@@ -215,7 +221,7 @@ impl GitPanel {
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
                 scroll_handle,
-                _selected_item: None,
+                selected_item: None,
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 git_diff_editor: Some(diff_display_editor(cx)),
@@ -302,12 +308,12 @@ impl GitPanel {
         visible_worktree_entries: &HashSet<RepoPath>,
     ) -> (usize, usize) {
         let (depth, difference) = entry
-            .path
+            .repo_path
             .ancestors()
             .skip(1) // Skip the entry itself
             .find_map(|ancestor| {
                 if let Some(parent_entry) = visible_worktree_entries.get(ancestor) {
-                    let entry_path_components_count = entry.path.components().count();
+                    let entry_path_components_count = entry.repo_path.components().count();
                     let parent_path_components_count = parent_entry.components().count();
                     let difference = entry_path_components_count - parent_path_components_count;
                     let depth = parent_entry
@@ -494,15 +500,15 @@ impl GitPanel {
 
                     let filename = match difference {
                         diff if diff > 1 => entry
-                            .path
+                            .repo_path
                             .iter()
-                            .skip(entry.path.components().count() - diff)
+                            .skip(entry.repo_path.components().count() - diff)
                             .collect::<PathBuf>()
                             .to_str()
                             .unwrap_or_default()
                             .to_string(),
                         _ => entry
-                            .path
+                            .repo_path
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
@@ -510,11 +516,12 @@ impl GitPanel {
 
                     let details = EntryDetails {
                         filename,
-                        display_name: entry.path.to_string_lossy().into_owned(),
-                        kind: entry.kind,
+                        display_name: entry.repo_path.to_string_lossy().into_owned(),
+                        // FIXME get it from StatusEntry?
+                        kind: EntryKind::File,
                         is_expanded,
-                        path: entry.path.clone(),
-                        status,
+                        path: entry.repo_path.clone(),
+                        status: Some(status),
                         hunks: entry.hunks.clone(),
                         depth,
                         index,
@@ -561,9 +568,12 @@ impl GitPanel {
             }
 
             let mut visible_worktree_entries = Vec::new();
-            let repositories = snapshot.repositories().take(1); // Only use the first for now
+            // Only use the first repository for now
+            let repositories = snapshot.repositories().take(1);
+            let mut work_directory = None;
             for repository in repositories {
                 visible_worktree_entries.extend(repository.status());
+                work_directory = Some(repository.clone());
             }
 
             // let mut visible_worktree_entries = snapshot
@@ -578,6 +588,7 @@ impl GitPanel {
             if !visible_worktree_entries.is_empty() {
                 self.visible_entries.push(WorktreeEntries {
                     worktree_id,
+                    work_directory: work_directory.unwrap(),
                     visible_entries: visible_worktree_entries
                         .into_iter()
                         .map(|entry| GitPanelEntry {
@@ -624,12 +635,14 @@ impl GitPanel {
                                 .visible_entries
                                 .iter()
                                 .filter_map(|entry| {
-                                    let git_status = entry.git_status()?;
+                                    let git_status = entry.git_status;
                                     let entry_hunks = entry.hunks.clone();
                                     let (entry_path, unstaged_changes_task) =
                                         project.update(cx, |project, cx| {
-                                            let entry_path =
-                                                project.path_for_entry(entry.id, cx)?;
+                                            let entry_path = ProjectPath {
+                                                worktree_id: worktree_entries.worktree_id,
+                                                path: entry.project_path(),
+                                            };
                                             let open_task =
                                                 project.open_path(entry_path.clone(), cx);
                                             let unstaged_changes_task =

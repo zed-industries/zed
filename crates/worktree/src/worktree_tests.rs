@@ -2558,11 +2558,11 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
         let entries = repo.status().collect::<Vec<_>>();
 
         assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
+        assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
         assert_eq!(entries[0].git_status, GitFileStatus::Modified);
-        assert_eq!(entries[1].path.as_ref(), Path::new("b.txt"));
+        assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
         assert_eq!(entries[1].git_status, GitFileStatus::Untracked);
-        assert_eq!(entries[2].path.as_ref(), Path::new("d.txt"));
+        assert_eq!(entries[2].repo_path.as_ref(), Path::new("d.txt"));
         assert_eq!(entries[2].git_status, GitFileStatus::Deleted);
     });
 
@@ -2580,14 +2580,14 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
         let entries = repository.status().collect::<Vec<_>>();
 
         std::assert_eq!(entries.len(), 4, "entries: {entries:?}");
-        assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
+        assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
         assert_eq!(entries[0].git_status, GitFileStatus::Modified);
-        assert_eq!(entries[1].path.as_ref(), Path::new("b.txt"));
+        assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
         assert_eq!(entries[1].git_status, GitFileStatus::Untracked);
         // Status updated
-        assert_eq!(entries[2].path.as_ref(), Path::new("c.txt"));
+        assert_eq!(entries[2].repo_path.as_ref(), Path::new("c.txt"));
         assert_eq!(entries[2].git_status, GitFileStatus::Modified);
-        assert_eq!(entries[3].path.as_ref(), Path::new("d.txt"));
+        assert_eq!(entries[3].repo_path.as_ref(), Path::new("d.txt"));
         assert_eq!(entries[3].git_status, GitFileStatus::Deleted);
     });
 
@@ -2620,7 +2620,7 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
             "Entries length was incorrect\n{:#?}",
             &entries
         );
-        assert_eq!(entries[0].path.as_ref(), Path::new("a.txt"));
+        assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
         assert_eq!(entries[0].git_status, GitFileStatus::Deleted);
     });
 }

@@ -296,6 +296,17 @@ impl WorkDirectory {
             Ok(relativized_path.into())
         }
     }
+
+    /// FIXME come up with a better name
+    pub fn unrelativize(&self, path: &RepoPath) -> Option<Arc<Path>> {
+        if let Some(location) = &self.location_in_repo {
+            // If we fail to strip the prefix, that means this status entry is
+            // external to this worktree, and we definitely won't have an entry_id
+            path.strip_prefix(location).ok().map(Into::into)
+        } else {
+            Some(self.path.join(path).into())
+        }
+    }
 }
 
 impl Default for WorkDirectory {
@@ -3587,7 +3598,7 @@ pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
-    pub path: RepoPath,
+    pub repo_path: RepoPath,
     pub git_status: GitFileStatus,
 }
 
@@ -3670,7 +3681,7 @@ impl sum_tree::Item for StatusEntry {
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
-            max_path: self.path.0.clone(),
+            max_path: self.repo_path.0.clone(),
             item_summary: match self.git_status {
                 GitFileStatus::Added => GitStatuses {
                     added: 1,
@@ -3698,7 +3709,7 @@ impl sum_tree::KeyedItem for StatusEntry {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
-        PathKey(self.path.0.clone())
+        PathKey(self.repo_path.0.clone())
     }
 }
 
@@ -4810,7 +4821,7 @@ impl BackgroundScanner {
                 for (repo_path, status) in &*status.entries {
                     paths.remove_repo_path(repo_path);
                     changed_path_statuses.push(Edit::Insert(StatusEntry {
-                        path: repo_path.clone(),
+                        repo_path: repo_path.clone(),
                         git_status: *status,
                     }));
                 }
@@ -5215,19 +5226,11 @@ impl BackgroundScanner {
         };
 
         let mut new_entries_by_path = SumTree::new(&());
-        for (path, status) in statuses.entries.iter() {
-            let project_path: Option<Arc<Path>> =
-                if let Some(location) = &job.local_repository.location_in_repo {
-                    // If we fail to strip the prefix, that means this status entry is
-                    // external to this worktree, and we definitely won't have an entry_id
-                    path.strip_prefix(location).ok().map(Into::into)
-                } else {
-                    Some(job.local_repository.work_directory.path.join(path).into())
-                };
-
+        for (repo_path, status) in statuses.entries.iter() {
+            let project_path = repository.work_directory.unrelativize(repo_path);
             new_entries_by_path.insert_or_replace(
                 StatusEntry {
-                    path: path.clone(),
+                    repo_path: repo_path.clone(),
                     git_status: *status,
                 },
                 &(),
