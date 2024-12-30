@@ -263,7 +263,9 @@ impl DebugAdapterClient {
     #[cfg(any(test, feature = "test-support"))]
     pub async fn on_request<R: dap_types::requests::Request, F>(&self, handler: F)
     where
-        F: 'static + Send + FnMut(u64, R::Arguments) -> Result<R::Response>,
+        F: 'static
+            + Send
+            + FnMut(u64, R::Arguments) -> Result<R::Response, dap_types::ErrorResponse>,
     {
         let transport = self.transport_delegate.transport();
 

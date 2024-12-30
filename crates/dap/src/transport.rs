@@ -774,23 +774,22 @@ impl FakeTransport {
 
     pub async fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
     where
-        F: 'static + Send + FnMut(u64, R::Arguments) -> Result<R::Response>,
+        F: 'static + Send + FnMut(u64, R::Arguments) -> Result<R::Response, ErrorResponse>,
     {
         self.request_handlers.lock().await.insert(
             R::COMMAND,
             Box::new(
                 move |seq, args, writer: Arc<Mutex<async_pipe::PipeWriter>>| {
-                    let response = handler(seq, serde_json::from_value(args).unwrap()).unwrap();
+                    let response = handler(seq, serde_json::from_value(args).unwrap());
 
-                    let message = Message::Response(Response {
+                    let message = serde_json::to_string(&Message::Response(Response {
                         seq: seq + 1,
                         request_seq: seq,
-                        success: true,
+                        success: response.is_ok(),
                         command: R::COMMAND.into(),
                         body: Some(serde_json::to_value(response).unwrap()),
-                    });
-
-                    let message = serde_json::to_string(&message).unwrap();
+                    }))
+                    .unwrap();
 
                     let writer = writer.clone();
 
