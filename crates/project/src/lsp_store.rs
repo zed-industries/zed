@@ -299,9 +299,7 @@ impl LocalLspStore {
                         Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
 
                         let language_server = cx
-                            .update(|cx| {
-                                language_server.initialize(Some(initialization_params), cx)
-                            })?
+                            .update(|cx| language_server.initialize(initialization_params, cx))?
                             .await
                             .inspect_err(|_| {
                                 if let Some(this) = this.upgrade() {
@@ -362,7 +360,7 @@ impl LocalLspStore {
         self.language_server_ids.insert(key, server_id);
     }
 
-    pub fn start_language_servers(
+    fn start_language_servers(
         &mut self,
         worktree: &Model<Worktree>,
         language: LanguageName,
@@ -1043,7 +1041,20 @@ impl LocalLspStore {
             };
             let root = self.lsp_tree.update(cx, |this, cx| {
                 this.get(path, language.name(), cx)
-                    .map(|node| node.server_id(|attach, path| LanguageServerId(0)))
+                    .map(|node| {
+                        node.server_id(|server_name, attach, root_path| match attach {
+                            language::Attach::InstancePerRoot => todo!(),
+                            language::Attach::Shared => *this
+                                .language_server_ids
+                                .entry((worktree_id, server_name.clone()))
+                                .or_insert_with(|| {
+                                    todo!();
+                                    let id = self.languages.next_language_server_id();
+                                    id
+                                    //self.start_language_server(worktree_handle, delegate, adapter, language, cx);
+                                }),
+                        })
+                    })
                     .collect::<Vec<_>>()
             });
 

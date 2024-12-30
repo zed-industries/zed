@@ -37,26 +37,28 @@ pub struct LanguageServerTree {
 pub(crate) struct LanguageServerTreeNode(Arc<InnerTreeNode>);
 
 impl LanguageServerTreeNode {
-    fn new(attach: Attach, path: ProjectPath) -> Self {
+    fn new(name: LanguageServerName, attach: Attach, path: ProjectPath) -> Self {
         Self(Arc::new(InnerTreeNode {
             id: Default::default(),
+            name,
             attach,
             path,
         }))
     }
     pub(crate) fn server_id(
         &self,
-        init: impl FnOnce(Attach, ProjectPath) -> LanguageServerId,
+        init: impl FnOnce(&LanguageServerName, Attach, ProjectPath) -> LanguageServerId,
     ) -> LanguageServerId {
         *self
             .0
             .id
-            .get_or_init(|| init(self.0.attach, self.0.path.clone()))
+            .get_or_init(|| init(&self.0.name, self.0.attach, self.0.path.clone()))
     }
 }
 
 struct InnerTreeNode {
     id: OnceLock<LanguageServerId>,
+    name: LanguageServerName,
     attach: Attach,
     path: ProjectPath,
 }
@@ -97,7 +99,7 @@ impl LanguageServerTree {
                 .entry(root_path.clone())
                 .or_default()
                 .entry(adapter.0.name.clone())
-                .or_insert_with(|| LanguageServerTreeNode::new(attach, root_path))
+                .or_insert_with(|| LanguageServerTreeNode::new(adapter.0.name(), attach, root_path))
                 .clone()
         })
     }

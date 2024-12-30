@@ -7,6 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, SharedString, Task};
+use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
@@ -600,12 +601,11 @@ impl LanguageServer {
     }
 
     pub fn default_initialize_params(&self, cx: &AppContext) -> InitializeParams {
-        let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
         InitializeParams {
             process_id: None,
             root_path: None,
-            root_uri: Some(root_uri.clone()),
+            root_uri: None,
             initialization_options: None,
             capabilities: ClientCapabilities {
                 general: Some(GeneralClientCapabilities {
@@ -772,10 +772,7 @@ impl LanguageServer {
                 }),
             },
             trace: None,
-            workspace_folders: Some(vec![WorkspaceFolder {
-                uri: root_uri,
-                name: Default::default(),
-            }]),
+            workspace_folders: None,
             client_info: release_channel::ReleaseChannel::try_global(cx).map(|release_channel| {
                 ClientInfo {
                     name: release_channel.display_name().to_string(),
@@ -794,15 +791,9 @@ impl LanguageServer {
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
     pub fn initialize(
         mut self,
-        initialize_params: Option<InitializeParams>,
+        params: InitializeParams,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
-        let params = if let Some(params) = initialize_params {
-            params
-        } else {
-            self.default_initialize_params(cx)
-        };
-
         cx.spawn(|_| async move {
             let response = self.request::<request::Initialize>(params).await?;
             if let Some(info) = response.server_info {
@@ -1181,6 +1172,34 @@ impl LanguageServer {
         outbound_tx.try_send(message)?;
         Ok(())
     }
+
+    /// Add new workspace folder to the list.
+    pub fn add_workspace_folder(&self, uri: Url) {
+        if self
+            .capabilities()
+            .workspace
+            .and_then(|ws| {
+                ws.workspace_folders.and_then(|folders| {
+                    folders
+                        .change_notifications
+                        .map(|caps| !matches!(caps, OneOf::Left(false)))
+                })
+            })
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let params = DidChangeWorkspaceFoldersParams {
+            event: WorkspaceFoldersChangeEvent {
+                added: vec![WorkspaceFolder {
+                    uri,
+                    name: String::default(),
+                }],
+                removed: vec![],
+            },
+        };
+        self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+    }
 }
 
 impl Drop for LanguageServer {
@@ -1528,7 +1547,10 @@ mod tests {
             })
             .detach();
 
-        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
+        let server = cx
+            .update(|cx| server.initialize(server.default_initialize_params(cx), cx))
+            .await
+            .unwrap();
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
