@@ -1638,8 +1638,6 @@ impl DapStore {
             }
         }
 
-        cx.notify();
-
         if let Some((client, project_id)) = upstream_client.or(self.downstream_client.clone()) {
             client
                 .send(client::proto::SynchronizeBreakpoints {
@@ -1653,20 +1651,13 @@ impl DapStore {
                 .log_err();
         }
 
-        let remove_breakpoint_set = breakpoint_set.is_empty();
-
-        if self
-            .as_local()
-            .is_some_and(|local| !local.sessions.is_empty())
-        {
-            self.send_changed_breakpoints(project_path, buffer_path, buffer_snapshot, cx)
-        } else {
-            if remove_breakpoint_set {
-                self.breakpoints.remove(project_path);
-            }
-
-            Task::ready(Ok(()))
+        if breakpoint_set.is_empty() {
+            self.breakpoints.remove(project_path);
         }
+
+        cx.notify();
+
+        self.send_changed_breakpoints(project_path, buffer_path, buffer_snapshot, cx)
     }
 
     pub fn send_breakpoints(
@@ -1721,11 +1712,11 @@ impl DapStore {
             return Task::ready(Err(anyhow!("cannot start session on remote side")));
         };
 
-        let Some(breakpoints) = self.breakpoints.get(project_path) else {
-            return Task::ready(Ok(()));
-        };
-
-        let source_breakpoints = breakpoints
+        let source_breakpoints = self
+            .breakpoints
+            .get(project_path)
+            .cloned()
+            .unwrap_or_default()
             .iter()
             .map(|bp| bp.source_for_snapshot(&buffer_snapshot))
             .collect::<Vec<_>>();
