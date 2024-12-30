@@ -102,10 +102,11 @@ impl Render for Breadcrumbs {
                     .on_click({
                         let editor = editor.clone();
                         move |_, cx| {
-                            if let Some(editor) = editor.upgrade() {
-                                zed_actions::outline::TOGGLE_OUTLINE
-                                    .get()
-                                    .map(|callback| callback(editor.to_any(), cx));
+                            if let Some((editor, callback)) = editor
+                                .upgrade()
+                                .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                            {
+                                callback(editor.to_any(), cx);
                             }
                         }
                     })
