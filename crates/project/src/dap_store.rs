@@ -939,10 +939,36 @@ impl DapStore {
                             })
                             .log_err();
 
-                            (false, None)
+                            (
+                                false,
+                                Some(serde_json::to_value(ErrorResponse {
+                                    error: Some(dap::Message {
+                                        id: seq,
+                                        format: error.to_string(),
+                                        variables: None,
+                                        send_telemetry: None,
+                                        show_user: None,
+                                        url: None,
+                                        url_label: None,
+                                    }),
+                                })?),
+                            )
                         }
                     },
-                    Err(_) => (false, None),
+                    Err(error) => (
+                        false,
+                        Some(serde_json::to_value(ErrorResponse {
+                            error: Some(dap::Message {
+                                id: seq,
+                                format: error.to_string(),
+                                variables: None,
+                                send_telemetry: None,
+                                show_user: None,
+                                url: None,
+                                url_label: None,
+                            }),
+                        })?),
+                    ),
                 }
             } else {
                 (
