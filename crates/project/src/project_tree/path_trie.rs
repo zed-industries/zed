@@ -74,7 +74,7 @@ impl<Label: Ord> RootPathTrie<Label> {
         for key in path.0.iter() {
             if !current.labels.is_empty() {
                 if (callback)(&tmp_path, &current.labels).is_break() {
-                    break;
+                    return;
                 };
             }
             current = match current.children.get(key) {
