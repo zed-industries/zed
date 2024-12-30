@@ -1141,6 +1141,7 @@ impl Panel for ChatPanel {
             ChatPanelButton::WhenInCall => ActiveCall::global(cx)
                 .read(cx)
                 .room()
+                .filter(|room| room.read(cx).contains_guests())
                 .map(|_| ui::IconName::MessageBubbles),
         }
     }
