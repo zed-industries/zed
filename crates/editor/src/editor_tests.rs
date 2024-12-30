@@ -28,6 +28,7 @@ use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{buffer_store::BufferChangeSet, FakeFs};
 use project::{
+    dap_store::BreakpointKind,
     lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
     project_settings::{LspSettings, ProjectSettings},
 };
@@ -14730,6 +14731,127 @@ fn test_inline_completion_text_with_deletions(cx: &mut TestAppContext) {
             })
             .unwrap();
     }
+}
+
+#[gpui::test]
+async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    #[track_caller]
+    fn assert_breakpoint(
+        breakpoints: &BTreeMap<ProjectPath, std::collections::HashSet<Breakpoint>>,
+        project_path: &ProjectPath,
+        expected: Vec<(u32, BreakpointKind)>,
+    ) {
+        if expected.len() == 0usize {
+            assert!(!breakpoints.contains_key(project_path));
+        } else {
+            let mut breakpoint = breakpoints
+                .get(project_path)
+                .unwrap()
+                .into_iter()
+                .map(|breakpoint| (breakpoint.cached_position, breakpoint.kind.clone()))
+                .collect::<Vec<_>>();
+
+            breakpoint.sort_by_key(|(cached_position, _)| *cached_position);
+
+            assert_eq!(expected, breakpoint);
+        }
+    }
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let window = cx.add_window(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project),
+            true,
+            cx,
+        )
+    });
+
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let project_path = window
+        .update(cx, |editor, cx| editor.project_path(cx).unwrap())
+        .unwrap();
+
+    // assert we can add breakpoint on the first line
+    window
+        .update(cx, |editor, cx| {
+            editor.toggle_breakpoint(&actions::ToggleBreakpoint, cx);
+        })
+        .unwrap();
+
+    let breakpoints = window
+        .update(cx, |editor, cx| {
+            editor
+                .project
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .dap_store()
+                .read(cx)
+                .breakpoints()
+                .clone()
+        })
+        .unwrap();
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &project_path,
+        vec![(0, BreakpointKind::Standard)],
+    );
+
+    window
+        .update(cx, |editor, cx| {
+            editor.toggle_breakpoint(&actions::ToggleBreakpoint, cx);
+        })
+        .unwrap();
+
+    let breakpoints = window
+        .update(cx, |editor, cx| {
+            editor
+                .project
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .dap_store()
+                .read(cx)
+                .breakpoints()
+                .clone()
+        })
+        .unwrap();
+
+    assert_eq!(0, breakpoints.len());
+    assert_breakpoint(&breakpoints, &project_path, vec![]);
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
