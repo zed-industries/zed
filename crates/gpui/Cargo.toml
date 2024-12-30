@@ -148,7 +148,10 @@ pathfinder_geometry = "0.5"
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
 flume = "0.11"
-oo7 = "0.3.0"
+# Unreleased fix for a panic: https://github.com/bilelmoussaoui/oo7/pull/172
+oo7 = { git = "https://github.com/bilelmoussaoui/oo7", rev = "9d20779", default-features = false, features =  [
+    "async-std", "native_crypto"
+] }
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
