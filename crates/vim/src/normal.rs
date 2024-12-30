@@ -34,12 +34,12 @@ use gpui::{actions, impl_actions, ViewContext};
 use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
-use util::serde::default_true;
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct JoinLines {
-    #[serde(default = "default_true")]
-    pub remove_indent: bool,
+    #[serde(default)]
+    pub remove_indent: Option<bool>,
     #[serde(default)]
     pub separator: Option<String>,
 }
