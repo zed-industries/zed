@@ -1627,7 +1627,14 @@ impl DapStore {
             }
             BreakpointEditAction::EditLogMessage => {
                 breakpoint_set.remove(&breakpoint);
-                breakpoint_set.insert(breakpoint);
+
+                if breakpoint
+                    .kind
+                    .log_message()
+                    .is_some_and(|msg| !msg.is_empty())
+                {
+                    breakpoint_set.insert(breakpoint);
+                }
             }
         }
 
