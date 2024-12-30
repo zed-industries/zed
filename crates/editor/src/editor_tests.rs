@@ -14806,6 +14806,8 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     window
         .update(cx, |editor, cx| {
             editor.toggle_breakpoint(&actions::ToggleBreakpoint, cx);
+            editor.move_to_end(&MoveToEnd, cx);
+            editor.toggle_breakpoint(&actions::ToggleBreakpoint, cx);
         })
         .unwrap();
 
@@ -14827,11 +14829,40 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     assert_breakpoint(
         &breakpoints,
         &project_path,
-        vec![(0, BreakpointKind::Standard)],
+        vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
     );
 
     window
         .update(cx, |editor, cx| {
+            editor.move_to_beginning(&MoveToBeginning, cx);
+            editor.toggle_breakpoint(&actions::ToggleBreakpoint, cx);
+        })
+        .unwrap();
+
+    let breakpoints = window
+        .update(cx, |editor, cx| {
+            editor
+                .project
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .dap_store()
+                .read(cx)
+                .breakpoints()
+                .clone()
+        })
+        .unwrap();
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &project_path,
+        vec![(3, BreakpointKind::Standard)],
+    );
+
+    window
+        .update(cx, |editor, cx| {
+            editor.move_to_end(&MoveToEnd, cx);
             editor.toggle_breakpoint(&actions::ToggleBreakpoint, cx);
         })
         .unwrap();
