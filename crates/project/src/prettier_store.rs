@@ -40,7 +40,7 @@ pub struct PrettierStore {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
 }
 
-pub enum PrettierStoreEvent {
+pub(crate) enum PrettierStoreEvent {
     LanguageServerRemoved(LanguageServerId),
     LanguageServerAdded {
         new_server_id: LanguageServerId,

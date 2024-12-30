@@ -1041,20 +1041,7 @@ impl LocalLspStore {
             };
             let root = self.lsp_tree.update(cx, |this, cx| {
                 this.get(path, language.name(), cx)
-                    .map(|node| {
-                        node.server_id(|server_name, attach, root_path| match attach {
-                            language::Attach::InstancePerRoot => todo!(),
-                            language::Attach::Shared => *this
-                                .language_server_ids
-                                .entry((worktree_id, server_name.clone()))
-                                .or_insert_with(|| {
-                                    todo!();
-                                    let id = self.languages.next_language_server_id();
-                                    id
-                                    //self.start_language_server(worktree_handle, delegate, adapter, language, cx);
-                                }),
-                        })
-                    })
+                    .filter_map(|node| node.server_id())
                     .collect::<Vec<_>>()
             });
 
@@ -7695,7 +7682,7 @@ impl LspStore {
         }
     }
 
-    pub fn supplementary_language_servers(
+    pub(crate) fn supplementary_language_servers(
         &self,
     ) -> impl '_ + Iterator<Item = (LanguageServerId, LanguageServerName)> {
         self.as_local().into_iter().flat_map(|local| {

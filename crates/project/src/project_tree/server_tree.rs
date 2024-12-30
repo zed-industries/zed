@@ -45,7 +45,12 @@ impl LanguageServerTreeNode {
             path,
         }))
     }
-    pub(crate) fn server_id(
+    /// Returns a language server ID for this node if there is one; if a language server has not been started yet
+    /// for this path, returns None.
+    pub(crate) fn server_id(&self) -> Option<LanguageServerId> {
+        self.0.id.get().copied()
+    }
+    pub(crate) fn server_id_or_init(
         &self,
         init: impl FnOnce(&LanguageServerName, Attach, ProjectPath) -> LanguageServerId,
     ) -> LanguageServerId {
