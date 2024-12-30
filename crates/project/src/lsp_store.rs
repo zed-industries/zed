@@ -573,14 +573,16 @@ impl LocalLspStore {
                         else {
                             return Ok(None);
                         };
-                        let root = server.root_path();
-                        let Ok(uri) = Url::from_file_path(&root) else {
-                            return Ok(None);
-                        };
-                        Ok(Some(vec![WorkspaceFolder {
-                            uri,
-                            name: Default::default(),
-                        }]))
+                        let root = server.workspace_folders();
+                        Ok(Some(
+                            root.iter()
+                                .cloned()
+                                .map(|uri| WorkspaceFolder {
+                                    uri,
+                                    name: Default::default(),
+                                })
+                                .collect(),
+                        ))
                     }
                 }
             })

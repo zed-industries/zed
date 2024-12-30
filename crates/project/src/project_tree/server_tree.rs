@@ -88,6 +88,7 @@ impl LanguageServerTree {
             .or_insert_with(|| adapter.0.attach_kind())
     }
 
+    /// Get all language server root points for a given path and language; the language servers might already be initialized at a given path.
     pub(crate) fn get<'a>(
         &'a mut self,
         path: ProjectPath,

@@ -24,10 +24,11 @@ use smol::{
 };
 
 use std::{
+    collections::BTreeSet,
     ffi::{OsStr, OsString},
     fmt,
     io::Write,
-    ops::DerefMut,
+    ops::{Deref, DerefMut},
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -92,9 +93,8 @@ pub struct LanguageServer {
     #[allow(clippy::type_complexity)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
-    root_path: PathBuf,
-    working_dir: PathBuf,
     server: Arc<Mutex<Option<Child>>>,
+    workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
 }
 
 /// Identifies a running language server.
@@ -371,8 +371,6 @@ impl LanguageServer {
             Some(stderr),
             stderr_capture,
             Some(server),
-            root_path,
-            working_dir,
             code_action_kinds,
             cx,
             move |notification| {
@@ -401,8 +399,6 @@ impl LanguageServer {
         stderr: Option<Stderr>,
         stderr_capture: Arc<Mutex<Option<String>>>,
         server: Option<Child>,
-        root_path: &Path,
-        working_dir: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
         on_unhandled_notification: F,
@@ -474,9 +470,8 @@ impl LanguageServer {
             executor: cx.background_executor().clone(),
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
-            root_path: root_path.to_path_buf(),
-            working_dir: working_dir.to_path_buf(),
             server: Arc::new(Mutex::new(server)),
+            workspace_folders: Default::default(),
         }
     }
 
@@ -1040,11 +1035,6 @@ impl LanguageServer {
         self.server_id
     }
 
-    /// Get the root path of the project the language server is running against.
-    pub fn root_path(&self) -> &PathBuf {
-        &self.root_path
-    }
-
     /// Sends a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
@@ -1189,6 +1179,7 @@ impl LanguageServer {
         {
             return;
         }
+        self.workspace_folders.lock().insert(uri.clone());
         let params = DidChangeWorkspaceFoldersParams {
             event: WorkspaceFoldersChangeEvent {
                 added: vec![WorkspaceFolder {
@@ -1199,6 +1190,37 @@ impl LanguageServer {
             },
         };
         self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+    }
+    /// Add new workspace folder to the list.
+    pub fn remove_workspace_folder(&self, uri: Url) {
+        if self
+            .capabilities()
+            .workspace
+            .and_then(|ws| {
+                ws.workspace_folders.and_then(|folders| {
+                    folders
+                        .change_notifications
+                        .map(|caps| !matches!(caps, OneOf::Left(false)))
+                })
+            })
+            .unwrap_or(true)
+        {
+            return;
+        }
+        self.workspace_folders.lock().remove(&uri);
+        let params = DidChangeWorkspaceFoldersParams {
+            event: WorkspaceFoldersChangeEvent {
+                added: vec![],
+                removed: vec![WorkspaceFolder {
+                    uri,
+                    name: String::default(),
+                }],
+            },
+        };
+        self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+    }
+    pub fn workspace_folders<'a>(&'a self) -> impl Deref<Target = BTreeSet<Url>> + 'a {
+        self.workspace_folders.lock()
     }
 }
 
@@ -1293,7 +1315,6 @@ impl FakeLanguageServer {
             None::<async_pipe::PipeReader>,
             Arc::new(Mutex::new(None)),
             None,
-            root,
             root,
             None,
             cx.clone(),
