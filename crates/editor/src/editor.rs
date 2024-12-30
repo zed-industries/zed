@@ -4965,7 +4965,7 @@ impl Editor {
                             .buffer
                             .read(cx)
                             .snapshot(cx)
-                            .anchor_at(Point::new(row.0, 0u32), Bias::Left);
+                            .breakpoint_anchor(Point::new(row.0, 0u32));
 
                         let anchor = source.text_anchor;
 
@@ -5210,7 +5210,7 @@ impl Editor {
                     .buffer
                     .read(cx)
                     .snapshot(cx)
-                    .anchor_at(Point::new(row.0, 0u32), Bias::Left);
+                    .breakpoint_anchor(Point::new(row.0, 0u32));
 
                 let clicked_point = event.down.position;
 
@@ -5392,7 +5392,7 @@ impl Editor {
                     .buffer
                     .read(cx)
                     .snapshot(cx)
-                    .anchor_at(Point::new(row.0, 0u32), Bias::Left);
+                    .breakpoint_anchor(Point::new(row.0, 0u32));
 
                 let anchor = source.text_anchor;
 
