@@ -1254,7 +1254,7 @@ impl ProjectSearchView {
 fn buffer_search_query(
     workspace: &mut Workspace,
     item: &dyn ItemHandle,
-    cx: &mut ViewContext<'_, Workspace>,
+    cx: &mut ViewContext<Workspace>,
 ) -> Option<String> {
     let buffer_search_bar = workspace
         .pane_for(item)

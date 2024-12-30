@@ -1,13 +1,12 @@
+use crate::assistant_model_selector::AssistantModelSelector;
 use crate::buffer_codegen::BufferCodegen;
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::context_strip::ContextStrip;
 use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::ThreadStore;
-use crate::ToggleContextPicker;
-use crate::{
-    assistant_settings::AssistantSettings, CycleNextInlineAssist, CyclePreviousInlineAssist,
-};
+use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
+use crate::{ToggleContextPicker, ToggleModelSelector};
 use client::ErrorExt;
 use collections::VecDeque;
 use editor::{
@@ -22,9 +21,9 @@ use gpui::{
     WeakModel, WeakView, WindowContext,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use language_model_selector::LanguageModelSelector;
 use parking_lot::Mutex;
-use settings::{update_settings_file, Settings};
+use settings::Settings;
 use std::cmp;
 use std::sync::Arc;
 use theme::ThemeSettings;
@@ -39,7 +38,8 @@ pub struct PromptEditor<T> {
     mode: PromptEditorMode,
     context_strip: View<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    language_model_selector: View<LanguageModelSelector>,
+    model_selector: View<AssistantModelSelector>,
+    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -56,7 +56,7 @@ impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut buttons = Vec::new();
 
-        let spacing = match &self.mode {
+        let left_gutter_spacing = match &self.mode {
             PromptEditorMode::Buffer {
                 id: _,
                 codegen,
@@ -72,23 +72,36 @@ impl<T: 'static> Render for PromptEditor<T> {
 
                 gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0)
             }
-            PromptEditorMode::Terminal { .. } => Pixels::ZERO,
+            PromptEditorMode::Terminal { .. } => {
+                // Give the equivalent of the same left-padding that we're using on the right
+                Pixels::from(40.0)
+            }
+        };
+
+        let bottom_padding = match &self.mode {
+            PromptEditorMode::Buffer { .. } => Pixels::from(0.),
+            PromptEditorMode::Terminal { .. } => Pixels::from(8.0),
         };
 
         buttons.extend(self.render_buttons(cx));
 
         v_flex()
+            .key_context("PromptEditor")
+            .bg(cx.theme().colors().editor_background)
+            .block_mouse_down()
+            .gap_0p5()
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
-            .py(cx.line_height() / 2.5)
+            .pt_0p5()
+            .pb(bottom_padding)
+            .pr_6()
             .child(
                 h_flex()
-                    .key_context("PromptEditor")
-                    .bg(cx.theme().colors().editor_background)
-                    .block_mouse_down()
+                    .items_start()
                     .cursor(CursorStyle::Arrow)
                     .on_action(cx.listener(Self::toggle_context_picker))
+                    .on_action(cx.listener(Self::toggle_model_selector))
                     .on_action(cx.listener(Self::confirm))
                     .on_action(cx.listener(Self::cancel))
                     .on_action(cx.listener(Self::move_up))
@@ -97,30 +110,11 @@ impl<T: 'static> Render for PromptEditor<T> {
                     .capture_action(cx.listener(Self::cycle_next))
                     .child(
                         h_flex()
-                            .w(spacing)
+                            .h_full()
+                            .w(left_gutter_spacing)
                             .justify_center()
                             .gap_2()
-                            .child(LanguageModelSelectorPopoverMenu::new(
-                                self.language_model_selector.clone(),
-                                IconButton::new("context", IconName::SettingsAlt)
-                                    .shape(IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .tooltip(move |cx| {
-                                        Tooltip::with_meta(
-                                            format!(
-                                                "Using {}",
-                                                LanguageModelRegistry::read_global(cx)
-                                                    .active_model()
-                                                    .map(|model| model.name().0)
-                                                    .unwrap_or_else(|| "No model selected".into()),
-                                            ),
-                                            None,
-                                            "Change Model",
-                                            cx,
-                                        )
-                                    }),
-                            ))
+                            .child(self.render_close_button(cx))
                             .map(|el| {
                                 let CodegenStatus::Error(error) = self.codegen_status(cx) else {
                                     return el;
@@ -172,13 +166,24 @@ impl<T: 'static> Render for PromptEditor<T> {
                                 }
                             }),
                     )
-                    .child(div().flex_1().child(self.render_editor(cx)))
-                    .child(h_flex().gap_2().pr_6().children(buttons)),
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .child(div().flex_1().child(self.render_editor(cx)))
+                            .child(h_flex().gap_1().children(buttons)),
+                    ),
             )
             .child(
-                h_flex()
-                    .child(h_flex().w(spacing).justify_center().gap_2())
-                    .child(self.context_strip.clone()),
+                h_flex().child(div().w(left_gutter_spacing)).child(
+                    h_flex()
+                        .w_full()
+                        .pl_1()
+                        .items_start()
+                        .justify_between()
+                        .child(self.context_strip.clone())
+                        .child(self.model_selector.clone()),
+                ),
             )
     }
 }
@@ -311,6 +316,10 @@ impl<T: 'static> PromptEditor<T> {
         self.context_picker_menu_handle.toggle(cx);
     }
 
+    fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
+        self.model_selector_menu_handle.toggle(cx);
+    }
+
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
@@ -400,73 +409,45 @@ impl<T: 'static> PromptEditor<T> {
 
         match codegen_status {
             CodegenStatus::Idle => {
-                vec![
-                    IconButton::new("cancel", IconName::Close)
-                        .icon_color(Color::Muted)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
-                        )
-                        .into_any_element(),
-                    Button::new("start", mode.start_label())
-                        .icon(IconName::Return)
-                        .icon_color(Color::Muted)
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
-                        )
-                        .into_any_element(),
-                ]
+                vec![Button::new("start", mode.start_label())
+                    .label_size(LabelSize::Small)
+                    .icon(IconName::Return)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)))
+                    .into_any_element()]
             }
-            CodegenStatus::Pending => vec![
-                IconButton::new("cancel", IconName::Close)
-                    .icon_color(Color::Muted)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
-                    .into_any_element(),
-                IconButton::new("stop", IconName::Stop)
-                    .icon_color(Color::Error)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(move |cx| {
-                        Tooltip::with_meta(
-                            mode.tooltip_interrupt(),
-                            Some(&menu::Cancel),
-                            "Changes won't be discarded",
-                            cx,
-                        )
-                    })
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
-                    .into_any_element(),
-            ],
+            CodegenStatus::Pending => vec![IconButton::new("stop", IconName::Stop)
+                .icon_color(Color::Error)
+                .shape(IconButtonShape::Square)
+                .tooltip(move |cx| {
+                    Tooltip::with_meta(
+                        mode.tooltip_interrupt(),
+                        Some(&menu::Cancel),
+                        "Changes won't be discarded",
+                        cx,
+                    )
+                })
+                .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
+                .into_any_element()],
             CodegenStatus::Done | CodegenStatus::Error(_) => {
-                let cancel = IconButton::new("cancel", IconName::Close)
-                    .icon_color(Color::Muted)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
-                    .into_any_element();
-
                 let has_error = matches!(codegen_status, CodegenStatus::Error(_));
                 if has_error || self.edited_since_done {
-                    vec![
-                        cancel,
-                        IconButton::new("restart", IconName::RotateCw)
-                            .icon_color(Color::Info)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(move |cx| {
-                                Tooltip::with_meta(
-                                    mode.tooltip_restart(),
-                                    Some(&menu::Confirm),
-                                    "Changes will be discarded",
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(PromptEditorEvent::StartRequested);
-                            }))
-                            .into_any_element(),
-                    ]
+                    vec![IconButton::new("restart", IconName::RotateCw)
+                        .icon_color(Color::Info)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(move |cx| {
+                            Tooltip::with_meta(
+                                mode.tooltip_restart(),
+                                Some(&menu::Confirm),
+                                "Changes will be discarded",
+                                cx,
+                            )
+                        })
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(PromptEditorEvent::StartRequested);
+                        }))
+                        .into_any_element()]
                 } else {
                     let accept = IconButton::new("accept", IconName::Check)
                         .icon_color(Color::Info)
@@ -482,7 +463,6 @@ impl<T: 'static> PromptEditor<T> {
                     match &self.mode {
                         PromptEditorMode::Terminal { .. } => vec![
                             accept,
-                            cancel,
                             IconButton::new("confirm", IconName::Play)
                                 .icon_color(Color::Info)
                                 .shape(IconButtonShape::Square)
@@ -498,7 +478,7 @@ impl<T: 'static> PromptEditor<T> {
                                 }))
                                 .into_any_element(),
                         ],
-                        PromptEditorMode::Buffer { .. } => vec![accept, cancel],
+                        PromptEditorMode::Buffer { .. } => vec![accept],
                     }
                 }
             }
@@ -525,6 +505,15 @@ impl<T: 'static> PromptEditor<T> {
                 // no cycle buttons in terminal mode
             }
         }
+    }
+
+    fn render_close_button(&self, cx: &ViewContext<Self>) -> AnyElement {
+        IconButton::new("cancel", IconName::Close)
+            .icon_color(Color::Muted)
+            .shape(IconButtonShape::Square)
+            .tooltip(|cx| Tooltip::text("Close Assistant", cx))
+            .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
+            .into_any_element()
     }
 
     fn render_cycle_controls(&self, codegen: &BufferCodegen, cx: &ViewContext<Self>) -> AnyElement {
@@ -690,20 +679,18 @@ impl<T: 'static> PromptEditor<T> {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
 
-        v_flex()
+        div()
             .key_context("MessageEditor")
             .size_full()
-            .gap_2()
             .p_2()
             .bg(cx.theme().colors().editor_background)
             .child({
                 let settings = ThemeSettings::get_global(cx);
                 let text_style = TextStyle {
                     color: cx.theme().colors().editor_foreground,
-                    font_family: settings.ui_font.family.clone(),
-                    font_features: settings.ui_font.features.clone(),
+                    font_family: settings.buffer_font.family.clone(),
+                    font_features: settings.buffer_font.features.clone(),
                     font_size: font_size.into(),
-                    font_weight: settings.ui_font.weight,
                     line_height: line_height.into(),
                     ..Default::default()
                 };
@@ -795,6 +782,7 @@ impl PromptEditor<BufferCodegen> {
             editor
         });
         let context_picker_menu_handle = PopoverMenuHandle::default();
+        let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
@@ -809,19 +797,10 @@ impl PromptEditor<BufferCodegen> {
                 )
             }),
             context_picker_menu_handle,
-            language_model_selector: cx.new_view(|cx| {
-                let fs = fs.clone();
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    },
-                    cx,
-                )
+            model_selector: cx.new_view(|cx| {
+                AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
             }),
+            model_selector_menu_handle,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -942,6 +921,7 @@ impl PromptEditor<TerminalCodegen> {
             editor
         });
         let context_picker_menu_handle = PopoverMenuHandle::default();
+        let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this = Self {
             editor: prompt_editor.clone(),
@@ -956,19 +936,10 @@ impl PromptEditor<TerminalCodegen> {
                 )
             }),
             context_picker_menu_handle,
-            language_model_selector: cx.new_view(|cx| {
-                let fs = fs.clone();
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    },
-                    cx,
-                )
+            model_selector: cx.new_view(|cx| {
+                AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
             }),
+            model_selector_menu_handle,
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,

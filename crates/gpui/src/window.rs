@@ -999,6 +999,11 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.window_bounds()
     }
 
+    /// Return the `WindowBounds` excluding insets (Wayland and X11)
+    pub fn inner_window_bounds(&self) -> WindowBounds {
+        self.window.platform_window.inner_window_bounds()
+    }
+
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
         let focus_handle = self.focused();
@@ -1748,17 +1753,12 @@ impl<'a> WindowContext<'a> {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        if let Some(element_states) = window
-            .rendered_frame
-            .accessed_element_states
-            .get(range.start.accessed_element_states_index..range.end.accessed_element_states_index)
-        {
-            window.next_frame.accessed_element_states.extend(
-                element_states
-                    .iter()
-                    .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
-            );
-        }
+        window.next_frame.accessed_element_states.extend(
+            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+        );
 
         window
             .text_system

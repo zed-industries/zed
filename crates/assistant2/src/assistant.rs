@@ -1,4 +1,5 @@
 mod active_thread;
+mod assistant_model_selector;
 mod assistant_panel;
 mod assistant_settings;
 mod buffer_codegen;

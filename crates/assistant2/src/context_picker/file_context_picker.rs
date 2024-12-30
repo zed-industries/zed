@@ -192,7 +192,9 @@ impl PickerDelegate for FileContextPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        let mat = &self.matches[self.selected_index];
+        let Some(mat) = self.matches.get(self.selected_index) else {
+            return;
+        };
 
         let workspace = self.workspace.clone();
         let Some(project) = workspace

@@ -1417,6 +1417,19 @@ impl Interactivity {
                             None
                         };
 
+                        let invalidate_tooltip = hitbox
+                            .as_ref()
+                            .map_or(true, |hitbox| !hitbox.bounds.contains(&cx.mouse_position()));
+                        if invalidate_tooltip {
+                            if let Some(active_tooltip) = element_state
+                                .as_ref()
+                                .and_then(|state| state.active_tooltip.as_ref())
+                            {
+                                *active_tooltip.borrow_mut() = None;
+                                self.tooltip_id = None;
+                            }
+                        }
+
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
                         let result = f(&style, scroll_offset, hitbox, cx);
                         (result, element_state)
@@ -2499,7 +2512,7 @@ impl ScrollAnchor {
         }
     }
     /// Request scroll to this item on the next frame.
-    pub fn scroll_to(&self, cx: &mut WindowContext<'_>) {
+    pub fn scroll_to(&self, cx: &mut WindowContext) {
         let this = self.clone();
 
         cx.on_next_frame(move |_| {

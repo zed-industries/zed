@@ -61,7 +61,7 @@ struct CreateRemoteServer {
 }
 
 impl CreateRemoteServer {
-    fn new(cx: &mut WindowContext<'_>) -> Self {
+    fn new(cx: &mut WindowContext) -> Self {
         let address_editor = cx.new_view(Editor::single_line);
         address_editor.update(cx, |this, cx| {
             this.focus_handle(cx).focus(cx);
@@ -88,7 +88,7 @@ struct EditNicknameState {
 }
 
 impl EditNicknameState {
-    fn new(index: usize, cx: &mut WindowContext<'_>) -> Self {
+    fn new(index: usize, cx: &mut WindowContext) -> Self {
         let this = Self {
             index,
             editor: cx.new_view(Editor::single_line),
@@ -264,7 +264,7 @@ struct DefaultState {
     servers: Vec<ProjectEntry>,
 }
 impl DefaultState {
-    fn new(cx: &WindowContext<'_>) -> Self {
+    fn new(cx: &WindowContext) -> Self {
         let handle = ScrollHandle::new();
         let scrollbar = ScrollbarState::new(handle.clone());
         let add_new_server = NavigableEntry::new(&handle, cx);
@@ -309,7 +309,7 @@ enum Mode {
 }
 
 impl Mode {
-    fn default_mode(cx: &WindowContext<'_>) -> Self {
+    fn default_mode(cx: &WindowContext) -> Self {
         Self::Default(DefaultState::new(cx))
     }
 }
@@ -1003,7 +1003,7 @@ impl RemoteServerProjects {
                             fn callback(
                                 workspace: WeakView<Workspace>,
                                 connection_string: SharedString,
-                                cx: &mut WindowContext<'_>,
+                                cx: &mut WindowContext,
                             ) {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     connection_string.to_string(),
@@ -1069,7 +1069,7 @@ impl RemoteServerProjects {
                                 remote_servers: View<RemoteServerProjects>,
                                 index: usize,
                                 connection_string: SharedString,
-                                cx: &mut WindowContext<'_>,
+                                cx: &mut WindowContext,
                             ) {
                                 let prompt_message =
                                     format!("Remove server `{}`?", connection_string);

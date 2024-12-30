@@ -298,14 +298,21 @@ impl Zeta {
         cx.spawn(|this, mut cx| async move {
             let request_sent_at = Instant::now();
 
-            let mut input_events = String::new();
-            for event in events {
-                if !input_events.is_empty() {
-                    input_events.push('\n');
-                    input_events.push('\n');
-                }
-                input_events.push_str(&event.to_prompt());
-            }
+            let input_events = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut input_events = String::new();
+                    for event in events {
+                        if !input_events.is_empty() {
+                            input_events.push('\n');
+                            input_events.push('\n');
+                        }
+                        input_events.push_str(&event.to_prompt());
+                    }
+                    input_events
+                })
+                .await;
+
             let input_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
             let input_outline = prompt_for_outline(&snapshot);
 

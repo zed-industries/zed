@@ -282,6 +282,52 @@ impl RenderOnce for Switch {
     }
 }
 
+/// A [`Switch`] that has a [`Label`].
+#[derive(IntoElement)]
+pub struct SwitchWithLabel {
+    id: ElementId,
+    label: Label,
+    checked: ToggleState,
+    on_click: Arc<dyn Fn(&ToggleState, &mut WindowContext) + 'static>,
+}
+
+impl SwitchWithLabel {
+    pub fn new(
+        id: impl Into<ElementId>,
+        label: Label,
+        checked: ToggleState,
+        on_click: impl Fn(&ToggleState, &mut WindowContext) + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label,
+            checked,
+            on_click: Arc::new(on_click),
+        }
+    }
+}
+
+impl RenderOnce for SwitchWithLabel {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        h_flex()
+            .gap(DynamicSpacing::Base08.rems(cx))
+            .child(Switch::new(self.id.clone(), self.checked).on_click({
+                let on_click = self.on_click.clone();
+                move |checked, cx| {
+                    (on_click)(checked, cx);
+                }
+            }))
+            .child(
+                div()
+                    .id(SharedString::from(format!("{}-label", self.id)))
+                    .on_click(move |_event, cx| {
+                        (self.on_click)(&self.checked.inverse(), cx);
+                    })
+                    .child(self.label),
+            )
+    }
+}
+
 impl ComponentPreview for Checkbox {
     fn description() -> impl Into<Option<&'static str>> {
         "A checkbox lets people choose between a pair of opposing states, like enabled and disabled, using a different appearance to indicate each state."
@@ -399,6 +445,35 @@ impl ComponentPreview for CheckboxWithLabel {
                 "Selected",
                 CheckboxWithLabel::new(
                     "checkbox_with_label_selected",
+                    Label::new("Always save on quit"),
+                    ToggleState::Selected,
+                    |_, _| {},
+                ),
+            ),
+        ])]
+    }
+}
+
+impl ComponentPreview for SwitchWithLabel {
+    fn description() -> impl Into<Option<&'static str>> {
+        "A switch with an associated label, allowing users to select an option while providing a descriptive text."
+    }
+
+    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+        vec![example_group(vec![
+            single_example(
+                "Off",
+                SwitchWithLabel::new(
+                    "switch_with_label_unselected",
+                    Label::new("Always save on quit"),
+                    ToggleState::Unselected,
+                    |_, _| {},
+                ),
+            ),
+            single_example(
+                "On",
+                SwitchWithLabel::new(
+                    "switch_with_label_selected",
                     Label::new("Always save on quit"),
                     ToggleState::Selected,
                     |_, _| {},

@@ -1209,7 +1209,7 @@ impl ProjectPanel {
         self.remove(false, action.skip_prompt, cx);
     }
 
-    fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
+    fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<ProjectPanel>) {
         maybe!({
             let items_to_delete = self.disjoint_entries(cx);
             if items_to_delete.is_empty() {
@@ -3209,7 +3209,7 @@ impl ProjectPanel {
             item_colors.default
         };
 
-        let bg_hover_color = if self.mouse_down {
+        let bg_hover_color = if self.mouse_down || is_marked || is_active {
             item_colors.marked_active
         } else {
             item_colors.hover
@@ -3233,9 +3233,7 @@ impl ProjectPanel {
             .border_1()
             .border_r_2()
             .border_color(border_color)
-            .when(!is_marked && !is_active, |div| {
-                div.hover(|style| style.bg(bg_hover_color))
-            })
+            .hover(|style| style.bg(bg_hover_color))
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
@@ -3716,7 +3714,7 @@ impl ProjectPanel {
         project: Model<Project>,
         entry_id: ProjectEntryId,
         skip_ignored: bool,
-        cx: &mut ViewContext<'_, Self>,
+        cx: &mut ViewContext<Self>,
     ) {
         if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
             let worktree = worktree.read(cx);
@@ -3821,7 +3819,7 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
 }
 
 impl Render for ProjectPanel {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
         let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
@@ -4262,6 +4260,10 @@ impl Panel for ProjectPanel {
                 .root_entry()
                 .map_or(false, |entry| entry.is_dir())
         })
+    }
+
+    fn activation_priority(&self) -> u32 {
+        0
     }
 }
 
