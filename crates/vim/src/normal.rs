@@ -34,9 +34,12 @@ use gpui::{actions, impl_actions, ViewContext};
 use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
+use util::serde::default_true;
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct JoinLines {
+    #[serde(default = "default_true")]
+    pub remove_indent: bool,
     #[serde(default)]
     pub separator: Option<String>,
 }
@@ -130,6 +133,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
                 for _ in 0..times {
                     editor.join_lines(
                         &editor::actions::JoinLines {
+                            remove_indent: options.remove_indent,
                             separator: options.separator.clone(),
                         },
                         cx,

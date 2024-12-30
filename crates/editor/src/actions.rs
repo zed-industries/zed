@@ -176,6 +176,8 @@ pub enum UuidVersion {
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct JoinLines {
+    #[serde(default = "default_true")]
+    pub remove_indent: bool,
     #[serde(default)]
     pub separator: Option<String>,
 }
