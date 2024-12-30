@@ -1043,15 +1043,10 @@ impl LocalLspStore {
             };
             let root = self.lsp_tree.update(cx, |this, cx| {
                 this.get(path, language.name(), cx)
-                    .map(|node| {
-                        node.server_id(|attach, path| {
-                            dbg!(attach);
-                            LanguageServerId(0)
-                        })
-                    })
+                    .map(|node| node.server_id(|attach, path| LanguageServerId(0)))
                     .collect::<Vec<_>>()
             });
-            dbg!(&root);
+
             root
         } else {
             Vec::new()

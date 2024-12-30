@@ -147,7 +147,6 @@ impl ProjectTree {
 
         let key = TriePath::from(&*path);
         let mut known_missing = HashSet::default();
-
         worktree_roots.update(cx, |this, _| {
             this.roots.walk(&key, &mut |path, labels| {
                 for (label, presence) in labels {
