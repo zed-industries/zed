@@ -27,7 +27,7 @@ use std::{
     collections::HashSet,
     ffi::OsStr,
     ops::{Deref, Range},
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -120,7 +120,7 @@ pub struct GitPanel {
 struct WorktreeEntries {
     worktree_id: WorktreeId,
     // TODO support multiple repositories per worktree
-    work_directory: WorkDirectory,
+    work_directory: worktree::WorkDirectory,
     visible_entries: Vec<GitPanelEntry>,
     paths: Rc<OnceCell<HashSet<RepoPath>>>,
 }
@@ -129,14 +129,6 @@ struct WorktreeEntries {
 struct GitPanelEntry {
     entry: worktree::StatusEntry,
     hunks: Rc<OnceCell<Vec<DiffHunk>>>,
-}
-
-impl GitPanelEntry {
-    fn project_path(&self) -> Option<Arc<Path>> {
-        self.entry
-            .work_directory
-            .unrelativize(&self.entry.repo_path)
-    }
 }
 
 impl Deref for GitPanelEntry {
@@ -573,7 +565,7 @@ impl GitPanel {
             let mut work_directory = None;
             for repository in repositories {
                 visible_worktree_entries.extend(repository.status());
-                work_directory = Some(repository.clone());
+                work_directory = Some(worktree::WorkDirectory::clone(repository));
             }
 
             // let mut visible_worktree_entries = snapshot
@@ -641,7 +633,7 @@ impl GitPanel {
                                         project.update(cx, |project, cx| {
                                             let entry_path = ProjectPath {
                                                 worktree_id: worktree_entries.worktree_id,
-                                                path: entry.project_path(),
+                                                path: worktree_entries.work_directory.unrelativize(&entry.repo_path)?,
                                             };
                                             let open_task =
                                                 project.open_path(entry_path.clone(), cx);
@@ -707,8 +699,8 @@ impl GitPanel {
                                                                                 )
                                                                                 .collect()
                                                                     }
-                                                                    // TODO support conflicts display
-                                                                    GitFileStatus::Conflict => Vec::new(),
+                                                                    // TODO support these
+                                                                    GitFileStatus::Conflict | GitFileStatus::Deleted | GitFileStatus::Untracked => Vec::new(),
                                                                 }
                                                             }).clone()
                                                     })?;
@@ -1043,7 +1035,8 @@ impl GitPanel {
                 this.child(git_status_icon(status))
             })
             .child(
-                ListItem::new(("label", id))
+                // FIXME is it okay to use ix here? do we need a proper ID for git status entries?
+                ListItem::new(("label", ix))
                     .toggle_state(selected)
                     .child(h_flex().gap_1p5().child(details.display_name.clone()))
                     .on_click(move |e, cx| {
