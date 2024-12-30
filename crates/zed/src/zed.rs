@@ -345,7 +345,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace.add_panel(channels_panel, cx);
             workspace.add_panel(chat_panel, cx);
             workspace.add_panel(notification_panel, cx);
-            workspace.add_panel(assistant_panel, cx);
+            workspace.add_panel(assistant_panel, cx)
         })?;
 
         let git_ui_enabled = git_ui_feature_flag.await;
@@ -380,7 +380,9 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             } else {
                 workspace.register_action(assistant::AssistantPanel::inline_assist);
             }
-        })
+        })?;
+
+        anyhow::Ok(())
     })
     .detach();
 }

@@ -1141,6 +1141,7 @@ impl Panel for ChatPanel {
             ChatPanelButton::WhenInCall => ActiveCall::global(cx)
                 .read(cx)
                 .room()
+                .filter(|room| room.read(cx).contains_guests())
                 .map(|_| ui::IconName::MessageBubbles),
         }
     }
@@ -1158,6 +1159,10 @@ impl Panel for ChatPanel {
             .read(cx)
             .room()
             .is_some_and(|room| room.read(cx).contains_guests())
+    }
+
+    fn activation_priority(&self) -> u32 {
+        7
     }
 }
 

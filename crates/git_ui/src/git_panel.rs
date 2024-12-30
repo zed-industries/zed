@@ -1237,6 +1237,10 @@ impl Panel for GitPanel {
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
     }
+
+    fn activation_priority(&self) -> u32 {
+        2
+    }
 }
 
 fn diff_display_editor(cx: &mut WindowContext) -> View<Editor> {

@@ -53,6 +53,7 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn remote_id() -> Option<proto::PanelId> {
         None
     }
+    fn activation_priority(&self) -> u32;
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -74,6 +75,7 @@ pub trait PanelHandle: Send + Sync {
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
+    fn activation_priority(&self, cx: &AppContext) -> u32;
 }
 
 impl<T> PanelHandle for View<T>
@@ -151,6 +153,10 @@ where
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.read(cx).focus_handle(cx).clone()
     }
+
+    fn activation_priority(&self, cx: &AppContext) -> u32 {
+        self.read(cx).activation_priority()
+    }
 }
 
 impl From<&dyn PanelHandle> for AnyView {
@@ -165,7 +171,7 @@ pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
     is_open: bool,
-    active_panel_index: usize,
+    active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
     pub(crate) serialized_dock: Option<DockData>,
     resizeable: bool,
@@ -218,7 +224,7 @@ impl Dock {
         let workspace = cx.view().clone();
         let dock = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
-                if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
+                if let Some(active_entry) = dock.active_panel_entry() {
                     active_entry.panel.focus_handle(cx).focus(cx)
                 }
             });
@@ -231,7 +237,7 @@ impl Dock {
             Self {
                 position,
                 panel_entries: Default::default(),
-                active_panel_index: 0,
+                active_panel_index: None,
                 is_open: false,
                 focus_handle: focus_handle.clone(),
                 _subscriptions: [focus_subscription, zoom_subscription],
@@ -321,14 +327,15 @@ impl Dock {
             .position(|entry| entry.panel.remote_id() == Some(panel_id))
     }
 
-    pub fn active_panel_index(&self) -> usize {
+    fn active_panel_entry(&self) -> Option<&PanelEntry> {
         self.active_panel_index
+            .and_then(|index| self.panel_entries.get(index))
     }
 
     pub(crate) fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
         if open != self.is_open {
             self.is_open = open;
-            if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
+            if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(open, cx);
             }
 
@@ -363,7 +370,7 @@ impl Dock {
         panel: View<T>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> usize {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
             cx.observe_global::<SettingsStore>({
@@ -399,10 +406,10 @@ impl Dock {
 
                     new_dock.update(cx, |new_dock, cx| {
                         new_dock.remove_panel(&panel, cx);
-                        new_dock.add_panel(panel.clone(), workspace.clone(), cx);
+                        let index = new_dock.add_panel(panel.clone(), workspace.clone(), cx);
                         if was_visible {
                             new_dock.set_open(true, cx);
-                            new_dock.activate_panel(new_dock.panels_len() - 1, cx);
+                            new_dock.activate_panel(index, cx);
                         }
                     });
                 }
@@ -456,17 +463,34 @@ impl Dock {
             }),
         ];
 
-        self.panel_entries.push(PanelEntry {
-            panel: Arc::new(panel.clone()),
-            _subscriptions: subscriptions,
-        });
+        let index = match self
+            .panel_entries
+            .binary_search_by_key(&panel.read(cx).activation_priority(), |entry| {
+                entry.panel.activation_priority(cx)
+            }) {
+            Ok(ix) => ix,
+            Err(ix) => ix,
+        };
+        if let Some(active_index) = self.active_panel_index.as_mut() {
+            if *active_index >= index {
+                *active_index += 1;
+            }
+        }
+        self.panel_entries.insert(
+            index,
+            PanelEntry {
+                panel: Arc::new(panel.clone()),
+                _subscriptions: subscriptions,
+            },
+        );
 
         if !self.restore_state(cx) && panel.read(cx).starts_open(cx) {
-            self.activate_panel(self.panel_entries.len() - 1, cx);
+            self.activate_panel(index, cx);
             self.set_open(true, cx);
         }
 
-        cx.notify()
+        cx.notify();
+        index
     }
 
     pub fn restore_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
@@ -494,15 +518,17 @@ impl Dock {
             .iter()
             .position(|entry| entry.panel.panel_id() == Entity::entity_id(panel))
         {
-            match panel_ix.cmp(&self.active_panel_index) {
-                std::cmp::Ordering::Less => {
-                    self.active_panel_index -= 1;
+            if let Some(active_panel_index) = self.active_panel_index.as_mut() {
+                match panel_ix.cmp(active_panel_index) {
+                    std::cmp::Ordering::Less => {
+                        *active_panel_index -= 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        self.active_panel_index = None;
+                        self.set_open(false, cx);
+                    }
+                    std::cmp::Ordering::Greater => {}
                 }
-                std::cmp::Ordering::Equal => {
-                    self.active_panel_index = 0;
-                    self.set_open(false, cx);
-                }
-                std::cmp::Ordering::Greater => {}
             }
             self.panel_entries.remove(panel_ix);
             cx.notify();
@@ -514,13 +540,13 @@ impl Dock {
     }
 
     pub fn activate_panel(&mut self, panel_ix: usize, cx: &mut ViewContext<Self>) {
-        if panel_ix != self.active_panel_index {
-            if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
+        if Some(panel_ix) != self.active_panel_index {
+            if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(false, cx);
             }
 
-            self.active_panel_index = panel_ix;
-            if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
+            self.active_panel_index = Some(panel_ix);
+            if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(true, cx);
             }
 
@@ -534,12 +560,13 @@ impl Dock {
     }
 
     pub fn active_panel(&self) -> Option<&Arc<dyn PanelHandle>> {
-        Some(&self.panel_entries.get(self.active_panel_index)?.panel)
+        let panel_entry = self.active_panel_entry()?;
+        Some(&panel_entry.panel)
     }
 
     fn visible_entry(&self) -> Option<&PanelEntry> {
         if self.is_open {
-            self.panel_entries.get(self.active_panel_index)
+            self.active_panel_entry()
         } else {
             None
         }
@@ -563,16 +590,14 @@ impl Dock {
 
     pub fn active_panel_size(&self, cx: &WindowContext) -> Option<Pixels> {
         if self.is_open {
-            self.panel_entries
-                .get(self.active_panel_index)
-                .map(|entry| entry.panel.size(cx))
+            self.active_panel_entry().map(|entry| entry.panel.size(cx))
         } else {
             None
         }
     }
 
     pub fn resize_active_panel(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
-        if let Some(entry) = self.panel_entries.get_mut(self.active_panel_index) {
+        if let Some(entry) = self.active_panel_entry() {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
 
             entry.panel.set_size(size, cx);
@@ -733,7 +758,7 @@ impl Render for PanelButtons {
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
-                let is_active_button = i == active_index && is_open;
+                let is_active_button = Some(i) == active_index && is_open;
                 let (action, tooltip) = if is_active_button {
                     let action = dock.toggle_action();
 
@@ -887,6 +912,10 @@ pub mod test {
 
         fn set_active(&mut self, active: bool, _cx: &mut ViewContext<Self>) {
             self.active = active;
+        }
+
+        fn activation_priority(&self) -> u32 {
+            100
         }
     }
 

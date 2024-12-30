@@ -2297,6 +2297,10 @@ impl Workspace {
             let was_visible = dock.is_open() && !other_is_zoomed;
             dock.set_open(!was_visible, cx);
 
+            if dock.active_panel().is_none() && dock.panels_len() > 0 {
+                dock.activate_panel(0, cx);
+            }
+
             if let Some(active_panel) = dock.active_panel() {
                 if was_visible {
                     if active_panel.focus_handle(cx).contains_focused(cx) {
@@ -7267,14 +7271,10 @@ mod tests {
         let (panel_1, panel_2) = workspace.update(cx, |workspace, cx| {
             let panel_1 = cx.new_view(|cx| TestPanel::new(DockPosition::Left, cx));
             workspace.add_panel(panel_1.clone(), cx);
-            workspace
-                .left_dock()
-                .update(cx, |left_dock, cx| left_dock.set_open(true, cx));
+            workspace.toggle_dock(DockPosition::Left, cx);
             let panel_2 = cx.new_view(|cx| TestPanel::new(DockPosition::Right, cx));
             workspace.add_panel(panel_2.clone(), cx);
-            workspace
-                .right_dock()
-                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+            workspace.toggle_dock(DockPosition::Right, cx);
 
             let left_dock = workspace.left_dock();
             assert_eq!(

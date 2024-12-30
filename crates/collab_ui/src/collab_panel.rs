@@ -2763,6 +2763,10 @@ impl Panel for CollabPanel {
     fn persistent_name() -> &'static str {
         "CollabPanel"
     }
+
+    fn activation_priority(&self) -> u32 {
+        6
+    }
 }
 
 impl FocusableView for CollabPanel {
