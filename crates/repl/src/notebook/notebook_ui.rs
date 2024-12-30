@@ -673,7 +673,7 @@ impl Item for NotebookEditor {
             .into_any_element()
     }
 
-    fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
         Some(IconName::Book.into())
     }
 

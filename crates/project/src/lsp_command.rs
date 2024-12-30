@@ -1920,6 +1920,7 @@ impl LspCommand for GetCompletions {
                     new_text,
                     server_id,
                     lsp_completion,
+                    resolved: false,
                 }
             })
             .collect())

@@ -174,8 +174,9 @@ impl BladePipelines {
                     ..Default::default()
                 },
                 depth_stencil: None,
-                fragment: shader.at("fs_quad"),
+                fragment: Some(shader.at("fs_quad")),
                 color_targets,
+                multisample_state: gpu::MultisampleState::default(),
             }),
             shadows: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "shadows",
@@ -187,8 +188,9 @@ impl BladePipelines {
                     ..Default::default()
                 },
                 depth_stencil: None,
-                fragment: shader.at("fs_shadow"),
+                fragment: Some(shader.at("fs_shadow")),
                 color_targets,
+                multisample_state: gpu::MultisampleState::default(),
             }),
             path_rasterization: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "path_rasterization",
@@ -200,12 +202,13 @@ impl BladePipelines {
                     ..Default::default()
                 },
                 depth_stencil: None,
-                fragment: shader.at("fs_path_rasterization"),
+                fragment: Some(shader.at("fs_path_rasterization")),
                 color_targets: &[gpu::ColorTargetState {
                     format: PATH_TEXTURE_FORMAT,
                     blend: Some(gpu::BlendState::ADDITIVE),
                     write_mask: gpu::ColorWrites::default(),
                 }],
+                multisample_state: gpu::MultisampleState::default(),
             }),
             paths: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "paths",
@@ -217,8 +220,9 @@ impl BladePipelines {
                     ..Default::default()
                 },
                 depth_stencil: None,
-                fragment: shader.at("fs_path"),
+                fragment: Some(shader.at("fs_path")),
                 color_targets,
+                multisample_state: gpu::MultisampleState::default(),
             }),
             underlines: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "underlines",
@@ -230,8 +234,9 @@ impl BladePipelines {
                     ..Default::default()
                 },
                 depth_stencil: None,
-                fragment: shader.at("fs_underline"),
+                fragment: Some(shader.at("fs_underline")),
                 color_targets,
+                multisample_state: gpu::MultisampleState::default(),
             }),
             mono_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "mono-sprites",
@@ -243,8 +248,9 @@ impl BladePipelines {
                     ..Default::default()
                 },
                 depth_stencil: None,
-                fragment: shader.at("fs_mono_sprite"),
+                fragment: Some(shader.at("fs_mono_sprite")),
                 color_targets,
+                multisample_state: gpu::MultisampleState::default(),
             }),
             poly_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "poly-sprites",
@@ -256,8 +262,9 @@ impl BladePipelines {
                     ..Default::default()
                 },
                 depth_stencil: None,
-                fragment: shader.at("fs_poly_sprite"),
+                fragment: Some(shader.at("fs_poly_sprite")),
                 color_targets,
+                multisample_state: gpu::MultisampleState::default(),
             }),
             surfaces: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "surfaces",
@@ -269,8 +276,9 @@ impl BladePipelines {
                     ..Default::default()
                 },
                 depth_stencil: None,
-                fragment: shader.at("fs_surface"),
+                fragment: Some(shader.at("fs_surface")),
                 color_targets,
+                multisample_state: gpu::MultisampleState::default(),
             }),
         }
     }
@@ -350,8 +358,10 @@ impl BladeRenderer {
 
         #[cfg(target_os = "macos")]
         let core_video_texture_cache = unsafe {
-            use foreign_types::ForeignType as _;
-            CVMetalTextureCache::new(context.gpu.metal_device().as_ptr()).unwrap()
+            CVMetalTextureCache::new(
+                objc2::rc::Retained::as_ptr(&context.gpu.metal_device()) as *mut _
+            )
+            .unwrap()
         };
 
         Ok(Self {
@@ -440,13 +450,12 @@ impl BladeRenderer {
 
     #[cfg(target_os = "macos")]
     pub fn layer(&self) -> metal::MetalLayer {
-        self.surface.metal_layer()
+        unsafe { foreign_types::ForeignType::from_ptr(self.layer_ptr()) }
     }
 
     #[cfg(target_os = "macos")]
     pub fn layer_ptr(&self) -> *mut metal::CAMetalLayer {
-        use metal::foreign_types::ForeignType as _;
-        self.surface.metal_layer().as_ptr()
+        objc2::rc::Retained::as_ptr(&self.surface.metal_layer()) as *mut _
     }
 
     #[profiling::function]
@@ -678,45 +687,59 @@ impl BladeRenderer {
 
                             #[cfg(target_os = "macos")]
                             {
-                                let (t_y, t_cb_cr) = {
+                                let (t_y, t_cb_cr) = unsafe {
                                     use core_foundation::base::TCFType as _;
                                     use std::ptr;
 
                                     assert_eq!(
-                                    surface.image_buffer.pixel_format_type(),
-                                    media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-                                );
+                                        surface.image_buffer.pixel_format_type(),
+                                        media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                                    );
 
-                                    let y_texture = unsafe {
-                                        self.core_video_texture_cache
-                                            .create_texture_from_image(
-                                                surface.image_buffer.as_concrete_TypeRef(),
-                                                ptr::null(),
-                                                metal::MTLPixelFormat::R8Unorm,
-                                                surface.image_buffer.plane_width(0),
-                                                surface.image_buffer.plane_height(0),
-                                                0,
-                                            )
-                                            .unwrap()
-                                    };
-                                    let cb_cr_texture = unsafe {
-                                        self.core_video_texture_cache
-                                            .create_texture_from_image(
-                                                surface.image_buffer.as_concrete_TypeRef(),
-                                                ptr::null(),
-                                                metal::MTLPixelFormat::RG8Unorm,
-                                                surface.image_buffer.plane_width(1),
-                                                surface.image_buffer.plane_height(1),
-                                                1,
-                                            )
-                                            .unwrap()
-                                    };
+                                    let y_texture = self
+                                        .core_video_texture_cache
+                                        .create_texture_from_image(
+                                            surface.image_buffer.as_concrete_TypeRef(),
+                                            ptr::null(),
+                                            metal::MTLPixelFormat::R8Unorm,
+                                            surface.image_buffer.plane_width(0),
+                                            surface.image_buffer.plane_height(0),
+                                            0,
+                                        )
+                                        .unwrap();
+                                    let cb_cr_texture = self
+                                        .core_video_texture_cache
+                                        .create_texture_from_image(
+                                            surface.image_buffer.as_concrete_TypeRef(),
+                                            ptr::null(),
+                                            metal::MTLPixelFormat::RG8Unorm,
+                                            surface.image_buffer.plane_width(1),
+                                            surface.image_buffer.plane_height(1),
+                                            1,
+                                        )
+                                        .unwrap();
                                     (
                                         gpu::TextureView::from_metal_texture(
-                                            y_texture.as_texture_ref(),
+                                            &objc2::rc::Retained::retain(
+                                                foreign_types::ForeignTypeRef::as_ptr(
+                                                    y_texture.as_texture_ref(),
+                                                )
+                                                    as *mut objc2::runtime::ProtocolObject<
+                                                        dyn objc2_metal::MTLTexture,
+                                                    >,
+                                            )
+                                            .unwrap(),
                                         ),
                                         gpu::TextureView::from_metal_texture(
-                                            cb_cr_texture.as_texture_ref(),
+                                            &objc2::rc::Retained::retain(
+                                                foreign_types::ForeignTypeRef::as_ptr(
+                                                    cb_cr_texture.as_texture_ref(),
+                                                )
+                                                    as *mut objc2::runtime::ProtocolObject<
+                                                        dyn objc2_metal::MTLTexture,
+                                                    >,
+                                            )
+                                            .unwrap(),
                                         ),
                                     )
                                 };

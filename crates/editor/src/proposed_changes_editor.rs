@@ -288,7 +288,7 @@ impl EventEmitter<EditorEvent> for ProposedChangesEditor {}
 impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
-    fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
         Some(Icon::new(IconName::Diff))
     }
 
