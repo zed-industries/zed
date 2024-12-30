@@ -197,6 +197,7 @@
       "d": ["vim::PushOperator", "Delete"],
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
+      "g shift-j": ["vim::JoinLines", { "separator": "" }],
       "y": ["vim::PushOperator", "Yank"],
       "shift-y": "vim::YankLine",
       "i": "vim::InsertBefore",

@@ -22,6 +22,7 @@ use crate::{
     surrounds::SurroundsType,
     Vim,
 };
+use ::serde::Deserialize;
 use case::CaseTarget;
 use collections::BTreeSet;
 use editor::scroll::Autoscroll;
@@ -29,10 +30,18 @@ use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{actions, ViewContext};
+use gpui::{actions, impl_actions, ViewContext};
 use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct JoinLines {
+    #[serde(default)]
+    pub separator: Option<String>,
+}
+
+impl_actions!(vim, [JoinLines]);
 
 actions!(
     vim,
@@ -53,7 +62,6 @@ actions!(
         ChangeCase,
         ConvertToUpperCase,
         ConvertToLowerCase,
-        JoinLines,
         ToggleComments,
         Undo,
         Redo,
@@ -107,7 +115,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             cx,
         );
     });
-    Vim::action(editor, cx, |vim, _: &JoinLines, cx| {
+    Vim::action(editor, cx, |vim, options: &JoinLines, cx| {
         vim.record_current_action(cx);
         let mut times = Vim::take_count(cx).unwrap_or(1);
         if vim.mode.is_visual() {
@@ -120,7 +128,12 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.update_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 for _ in 0..times {
-                    editor.join_lines(&Default::default(), cx)
+                    editor.join_lines(
+                        &editor::actions::JoinLines {
+                            separator: options.separator.clone(),
+                        },
+                        cx,
+                    )
                 }
             })
         });

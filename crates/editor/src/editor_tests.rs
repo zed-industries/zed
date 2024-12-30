@@ -3173,7 +3173,7 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
         );
 
         // When on single line, replace newline at end by space
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
         assert_eq!(
             editor.selections.ranges::<Point>(cx),
@@ -3184,7 +3184,7 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
         editor.change_selections(None, cx, |s| {
             s.select_ranges([Point::new(0, 5)..Point::new(2, 2)])
         });
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb ccc ddd\n\n");
         assert_eq!(
             editor.selections.ranges::<Point>(cx),
@@ -3203,7 +3203,7 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
         editor.change_selections(None, cx, |s| {
             s.select_ranges([Point::new(2, 1)..Point::new(2, 2)])
         });
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n");
         assert_eq!(
             editor.selections.ranges::<Point>(cx),
@@ -3211,7 +3211,7 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
         );
 
         // We can remove trailing newlines
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
         assert_eq!(
             editor.selections.ranges::<Point>(cx),
@@ -3219,7 +3219,7 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
         );
 
         // We don't blow up on the last line
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
         assert_eq!(
             editor.selections.ranges::<Point>(cx),
@@ -3243,15 +3243,15 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
         editor.change_selections(None, cx, |s| {
             s.select_ranges([Point::new(0, 1)..Point::new(0, 1)])
         });
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb c\n  \n\td");
 
         // We don't insert a space for a line containing only spaces
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb c\n\td");
 
         // We ignore any leading tabs
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb c d");
 
         editor
@@ -3275,7 +3275,7 @@ fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
             ])
         });
 
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
         assert_eq!(buffer.read(cx).text(), "aaa bbb ccc\nddd\n");
 
         assert_eq!(
@@ -3321,7 +3321,7 @@ async fn test_join_lines_with_git_diff_base(
 
     // Join lines
     cx.update_editor(|editor, cx| {
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
     });
     executor.run_until_parked();
 
@@ -3335,7 +3335,7 @@ async fn test_join_lines_with_git_diff_base(
     );
     // Join again
     cx.update_editor(|editor, cx| {
-        editor.join_lines(&JoinLines, cx);
+        editor.join_lines(&JoinLines::default(), cx);
     });
     executor.run_until_parked();
 

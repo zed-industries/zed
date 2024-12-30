@@ -5842,7 +5842,7 @@ impl Editor {
         });
     }
 
-    pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
+    pub fn join_lines(&mut self, options: &JoinLines, cx: &mut ViewContext<Self>) {
         if self.read_only(cx) {
             return;
         }
@@ -5885,7 +5885,10 @@ impl Editor {
                     let start_of_next_line = Point::new(next_line_row.0, indent.len);
 
                     let replace = if snapshot.line_len(next_line_row) > indent.len {
-                        " "
+                        match options.separator.as_deref() {
+                            Some(replace_str) => replace_str,
+                            None => " ",
+                        }
                     } else {
                         ""
                     };
