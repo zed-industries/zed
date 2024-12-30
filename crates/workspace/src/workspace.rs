@@ -1273,7 +1273,7 @@ impl Workspace {
         self.window_edited
     }
 
-    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) -> usize {
+    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
         let focus_handle = panel.focus_handle(cx);
         cx.on_focus_in(&focus_handle, Self::handle_panel_focused)
             .detach();
@@ -2296,6 +2296,10 @@ impl Workspace {
             let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
             let was_visible = dock.is_open() && !other_is_zoomed;
             dock.set_open(!was_visible, cx);
+
+            if dock.active_panel().is_none() && dock.panels_len() > 0 {
+                dock.activate_panel(0, cx);
+            }
 
             if let Some(active_panel) = dock.active_panel() {
                 if was_visible {

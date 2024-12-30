@@ -338,7 +338,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             assistant_panel,
         )?;
 
-        let mut index = workspace_handle.update(&mut cx, |workspace, cx| {
+        workspace_handle.update(&mut cx, |workspace, cx| {
             workspace.add_panel(project_panel, cx);
             workspace.add_panel(outline_panel, cx);
             workspace.add_panel(terminal_panel, cx);
@@ -347,7 +347,6 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace.add_panel(notification_panel, cx);
             workspace.add_panel(assistant_panel, cx)
         })?;
-        let index = &mut index;
 
         let git_ui_enabled = git_ui_feature_flag.await;
         let git_panel = if git_ui_enabled {
@@ -373,7 +372,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
         };
         workspace_handle.update(&mut cx, |workspace, cx| {
             if let Some(assistant2_panel) = assistant2_panel {
-                *index = workspace.add_panel(assistant2_panel, cx);
+                workspace.add_panel(assistant2_panel, cx);
             }
 
             if is_assistant2_enabled {
@@ -383,11 +382,6 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             }
         })?;
 
-        workspace_handle.update(&mut cx, |workspace, cx| {
-            workspace.right_dock().update(cx, |dock, cx| {
-                dock.activate_panel(*index, cx);
-            });
-        })?;
         anyhow::Ok(())
     })
     .detach();

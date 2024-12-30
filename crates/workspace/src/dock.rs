@@ -53,6 +53,7 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn remote_id() -> Option<proto::PanelId> {
         None
     }
+    fn activation_priority(&self) -> u32;
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -74,6 +75,7 @@ pub trait PanelHandle: Send + Sync {
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
+    fn activation_priority(&self, cx: &AppContext) -> u32;
 }
 
 impl<T> PanelHandle for View<T>
@@ -150,6 +152,10 @@ where
 
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.read(cx).focus_handle(cx).clone()
+    }
+
+    fn activation_priority(&self, cx: &AppContext) -> u32 {
+        self.read(cx).activation_priority()
     }
 }
 
@@ -322,7 +328,8 @@ impl Dock {
     }
 
     fn active_panel_entry(&self) -> Option<&PanelEntry> {
-        self.active_panel_index.and_then(|index| self.panel_entries.get(index))
+        self.active_panel_index
+            .and_then(|index| self.panel_entries.get(index))
     }
 
     pub(crate) fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
@@ -363,7 +370,7 @@ impl Dock {
         panel: View<T>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
-    ) -> usize {
+    ) {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
             cx.observe_global::<SettingsStore>({
@@ -456,19 +463,28 @@ impl Dock {
             }),
         ];
 
-        let index = self.panel_entries.len();
-        self.panel_entries.push(PanelEntry {
-            panel: Arc::new(panel.clone()),
-            _subscriptions: subscriptions,
-        });
+        let index = match self
+            .panel_entries
+            .binary_search_by_key(&panel.read(cx).activation_priority(), |entry| {
+                entry.panel.activation_priority(cx)
+            }) {
+            Ok(ix) => ix,
+            Err(ix) => ix,
+        };
+        self.panel_entries.insert(
+            index,
+            PanelEntry {
+                panel: Arc::new(panel.clone()),
+                _subscriptions: subscriptions,
+            },
+        );
 
         if !self.restore_state(cx) && panel.read(cx).starts_open(cx) {
-            self.activate_panel(self.panel_entries.len() - 1, cx);
+            self.activate_panel(index, cx);
             self.set_open(true, cx);
         }
 
-        cx.notify();
-        index
+        cx.notify()
     }
 
     pub fn restore_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
@@ -890,6 +906,10 @@ pub mod test {
 
         fn set_active(&mut self, active: bool, _cx: &mut ViewContext<Self>) {
             self.active = active;
+        }
+
+        fn activation_priority(&self) -> u32 {
+            100
         }
     }
 

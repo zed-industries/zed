@@ -1159,6 +1159,10 @@ impl Panel for ChatPanel {
             .room()
             .is_some_and(|room| room.read(cx).contains_guests())
     }
+
+    fn activation_priority(&self) -> u32 {
+        7
+    }
 }
 
 impl EventEmitter<PanelEvent> for ChatPanel {}
