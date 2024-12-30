@@ -1945,10 +1945,10 @@ dependencies = [
  "editor",
  "gpui",
  "itertools 0.13.0",
- "outline",
  "theme",
  "ui",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -8629,6 +8629,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
