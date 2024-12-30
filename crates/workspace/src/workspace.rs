@@ -1286,7 +1286,7 @@ impl Workspace {
 
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), cx)
-        })
+        });
     }
 
     pub fn status_bar(&self) -> &View<StatusBar> {
@@ -7271,14 +7271,10 @@ mod tests {
         let (panel_1, panel_2) = workspace.update(cx, |workspace, cx| {
             let panel_1 = cx.new_view(|cx| TestPanel::new(DockPosition::Left, cx));
             workspace.add_panel(panel_1.clone(), cx);
-            workspace
-                .left_dock()
-                .update(cx, |left_dock, cx| left_dock.set_open(true, cx));
+            workspace.toggle_dock(DockPosition::Left, cx);
             let panel_2 = cx.new_view(|cx| TestPanel::new(DockPosition::Right, cx));
             workspace.add_panel(panel_2.clone(), cx);
-            workspace
-                .right_dock()
-                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+            workspace.toggle_dock(DockPosition::Right, cx);
 
             let left_dock = workspace.left_dock();
             assert_eq!(

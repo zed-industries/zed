@@ -370,7 +370,7 @@ impl Dock {
         panel: View<T>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> usize {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
             cx.observe_global::<SettingsStore>({
@@ -406,10 +406,10 @@ impl Dock {
 
                     new_dock.update(cx, |new_dock, cx| {
                         new_dock.remove_panel(&panel, cx);
-                        new_dock.add_panel(panel.clone(), workspace.clone(), cx);
+                        let index = new_dock.add_panel(panel.clone(), workspace.clone(), cx);
                         if was_visible {
                             new_dock.set_open(true, cx);
-                            new_dock.activate_panel(new_dock.panels_len() - 1, cx);
+                            new_dock.activate_panel(index, cx);
                         }
                     });
                 }
@@ -471,6 +471,11 @@ impl Dock {
             Ok(ix) => ix,
             Err(ix) => ix,
         };
+        if let Some(active_index) = self.active_panel_index.as_mut() {
+            if *active_index >= index {
+                *active_index += 1;
+            }
+        }
         self.panel_entries.insert(
             index,
             PanelEntry {
@@ -484,7 +489,8 @@ impl Dock {
             self.set_open(true, cx);
         }
 
-        cx.notify()
+        cx.notify();
+        index
     }
 
     pub fn restore_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
