@@ -24,6 +24,11 @@ pub struct ContextStrip {
     _subscription: Option<Subscription>,
 }
 
+pub enum SuggestContextKind {
+    File,
+    Thread,
+}
+
 #[derive(Clone)]
 pub struct SuggestedContext {
     entry_id: ProjectEntryId,
@@ -38,10 +43,19 @@ impl ContextStrip {
         thread_store: Option<WeakModel<ThreadStore>>,
         focus_handle: FocusHandle,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
+        suggest_context_kind: SuggestContextKind,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let subscription = if let Some(workspace) = workspace.upgrade() {
-            Some(cx.subscribe(&workspace, Self::handle_workspace_event))
+            match suggest_context_kind {
+                SuggestContextKind::File => {
+                    Some(cx.subscribe(&workspace, Self::handle_workspace_event))
+                }
+                SuggestContextKind::Thread => {
+                    // TODO: Suggest current thread
+                    None
+                }
+            }
         } else {
             None
         };
