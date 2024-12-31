@@ -3,7 +3,10 @@ use std::{
     borrow::Cow,
     cmp::{self, Ordering},
     path::Path,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc,
+    },
 };
 
 use crate::{
@@ -154,6 +157,10 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
                     let mut tree_start = 0;
                     for candidate_set in candidate_sets {
+                        if cancel_flag.load(atomic::Ordering::Relaxed) {
+                            break;
+                        }
+
                         let tree_end = tree_start + candidate_set.len();
 
                         if tree_start < segment_end && segment_start < tree_end {
@@ -201,6 +208,10 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
             }
         })
         .await;
+
+    if cancel_flag.load(atomic::Ordering::Relaxed) {
+        return Vec::new();
+    }
 
     let mut results = segment_results.concat();
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
