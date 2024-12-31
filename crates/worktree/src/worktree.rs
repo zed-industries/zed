@@ -6,7 +6,7 @@ mod worktree_tests;
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context as _, Result};
 use clock::ReplicaId;
-use collections::{HashMap, HashSet, VecDeque};
+use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use fs::{copy_recursive, Fs, MTime, PathEvent, RemoveOptions, Watcher};
 use futures::{
     channel::{
@@ -310,7 +310,7 @@ struct BackgroundScannerState {
     /// if the same inode is discovered at a new path, or if the given
     /// path is re-created after being deleted.
     removed_entries: HashMap<u64, Entry>,
-    changed_paths: Vec<Arc<Path>>,
+    changed_paths: BTreeSet<Arc<Path>>,
     prev_snapshot: Snapshot,
     git_hosting_provider_registry: Option<Arc<GitHostingProviderRegistry>>,
 }
@@ -2990,9 +2990,7 @@ impl BackgroundScannerState {
             .edit(entries_by_path_edits, &());
         self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
 
-        if let Err(ix) = self.changed_paths.binary_search(parent_path) {
-            self.changed_paths.insert(ix, parent_path.clone());
-        }
+        self.changed_paths.insert(parent_path.clone());
 
         #[cfg(test)]
         self.snapshot.check_invariants(false);
@@ -4562,12 +4560,7 @@ impl BackgroundScanner {
             }
         }
 
-        util::extend_sorted(
-            &mut state.changed_paths,
-            relative_paths.iter().cloned(),
-            usize::MAX,
-            Ord::cmp,
-        );
+        state.changed_paths.extend(relative_paths.iter().cloned());
     }
 
     fn remove_repo_path(&self, path: &Path, snapshot: &mut LocalSnapshot) -> Option<()> {
@@ -4740,9 +4733,7 @@ impl BackgroundScanner {
         let state = &mut self.state.lock();
         for edit in &entries_by_path_edits {
             if let Edit::Insert(entry) = edit {
-                if let Err(ix) = state.changed_paths.binary_search(&entry.path) {
-                    state.changed_paths.insert(ix, entry.path.clone());
-                }
+                state.changed_paths.insert(entry.path.clone());
             }
         }
 
@@ -4930,12 +4921,9 @@ impl BackgroundScanner {
             .collect();
 
         // Apply the git status changes.
-        util::extend_sorted(
-            &mut state.changed_paths,
-            changes.iter().map(|p| p.0.clone()),
-            usize::MAX,
-            Ord::cmp,
-        );
+        state
+            .changed_paths
+            .extend(changes.iter().map(|p| p.0.clone()));
         state.snapshot.entries_by_path.edit(edits, &());
         log::trace!(
             "applied git status updates for repo {:?} in {:?}",
@@ -4948,7 +4936,7 @@ impl BackgroundScanner {
         &self,
         old_snapshot: &Snapshot,
         new_snapshot: &Snapshot,
-        event_paths: &[Arc<Path>],
+        event_paths: &BTreeSet<Arc<Path>>,
     ) -> UpdatedEntriesSet {
         use BackgroundScannerPhase::*;
         use PathChange::{Added, AddedOrUpdated, Loaded, Removed, Updated};

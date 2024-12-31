@@ -10,6 +10,8 @@ use git::GitHostingProviderRegistry;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use collections::BTreeSet;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use smol::process::Command;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::fs::File;
@@ -120,6 +122,17 @@ pub trait Fs: Send + Sync {
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>>;
 
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    async fn watch(
+        &self,
+        path: &Path,
+        latency: Duration,
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = BTreeSet<PathEvent>>>>,
+        Arc<dyn Watcher>,
+    );
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     async fn watch(
         &self,
         path: &Path,
@@ -701,13 +714,14 @@ impl Fs for RealFs {
         path: &Path,
         latency: Duration,
     ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
+        Pin<Box<dyn Send + Stream<Item = BTreeSet<PathEvent>>>>,
         Arc<dyn Watcher>,
     ) {
+        use collections::BTreeSet;
         use parking_lot::Mutex;
 
         let (tx, rx) = smol::channel::unbounded();
-        let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+        let pending_paths: Arc<Mutex<BTreeSet<PathEvent>>> = Default::default();
         let watcher = Arc::new(linux_watcher::LinuxWatcher::new(tx, pending_paths.clone()));
 
         if watcher.add(path).is_err() {
@@ -1938,6 +1952,7 @@ impl Fs for FakeFs {
         Ok(Box::pin(futures::stream::iter(paths)))
     }
 
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     async fn watch(
         &self,
         path: &Path,
@@ -1962,6 +1977,38 @@ impl Fs for FakeFs {
                     result
                 }
             })),
+            Arc::new(FakeWatcher {}),
+        )
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    async fn watch(
+        &self,
+        path: &Path,
+        _: Duration,
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = BTreeSet<PathEvent>>>>,
+        Arc<dyn Watcher>,
+    ) {
+        self.simulate_random_delay().await;
+        let (tx, rx) = smol::channel::unbounded();
+        self.state.lock().event_txs.push(tx);
+        let path = path.to_path_buf();
+        let executor = self.executor.clone();
+        (
+            Box::pin(
+                futures::StreamExt::filter(rx, move |events| {
+                    let result = events
+                        .iter()
+                        .any(|evt_path| evt_path.path.starts_with(&path));
+                    let executor = executor.clone();
+                    async move {
+                        executor.simulate_random_delay().await;
+                        result
+                    }
+                })
+                .map(|events| BTreeSet::from_iter(events.into_iter())),
+            ),
             Arc::new(FakeWatcher {}),
         )
     }

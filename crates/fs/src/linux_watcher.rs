@@ -1,3 +1,4 @@
+use collections::BTreeSet;
 use notify::EventKind;
 use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock};
@@ -7,13 +8,13 @@ use crate::{PathEvent, PathEventKind, Watcher};
 
 pub struct LinuxWatcher {
     tx: smol::channel::Sender<()>,
-    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+    pending_path_events: Arc<Mutex<BTreeSet<PathEvent>>>,
 }
 
 impl LinuxWatcher {
     pub fn new(
         tx: smol::channel::Sender<()>,
-        pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+        pending_path_events: Arc<Mutex<BTreeSet<PathEvent>>>,
     ) -> Self {
         Self {
             tx,
@@ -40,7 +41,7 @@ impl Watcher for LinuxWatcher {
                         EventKind::Remove(_) => Some(PathEventKind::Removed),
                         _ => None,
                     };
-                    let mut path_events = event
+                    let path_events = event
                         .paths
                         .iter()
                         .filter_map(|event_path| {
@@ -52,17 +53,12 @@ impl Watcher for LinuxWatcher {
                         .collect::<Vec<_>>();
 
                     if !path_events.is_empty() {
-                        path_events.sort();
                         let mut pending_paths = pending_paths.lock();
-                        if pending_paths.is_empty() {
+                        let was_empty = pending_paths.is_empty();
+                        pending_paths.extend(path_events);
+                        if was_empty {
                             tx.try_send(()).ok();
                         }
-                        util::extend_sorted(
-                            &mut *pending_paths,
-                            path_events,
-                            usize::MAX,
-                            |a, b| a.path.cmp(&b.path),
-                        );
                     }
                 })
             }

@@ -87,29 +87,6 @@ pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     prev
 }
 
-/// Extend a sorted vector with a sorted sequence of items, maintaining the vector's sort order and
-/// enforcing a maximum length. This also de-duplicates items. Sort the items according to the given callback. Before calling this,
-/// both `vec` and `new_items` should already be sorted according to the `cmp` comparator.
-pub fn extend_sorted<T, I, F>(vec: &mut Vec<T>, new_items: I, limit: usize, mut cmp: F)
-where
-    I: IntoIterator<Item = T>,
-    F: FnMut(&T, &T) -> Ordering,
-{
-    let mut start_index = 0;
-    for new_item in new_items {
-        if let Err(i) = vec[start_index..].binary_search_by(|m| cmp(m, &new_item)) {
-            let index = start_index + i;
-            if vec.len() < limit {
-                vec.insert(index, new_item);
-            } else if index < vec.len() {
-                vec.pop();
-                vec.insert(index, new_item);
-            }
-            start_index = index;
-        }
-    }
-}
-
 pub fn truncate_to_bottom_n_sorted_by<T, F>(items: &mut Vec<T>, limit: usize, compare: &F)
 where
     F: Fn(&T, &T) -> Ordering,
@@ -739,20 +716,6 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_extend_sorted() {
-        let mut vec = vec![];
-
-        extend_sorted(&mut vec, vec![21, 17, 13, 8, 1, 0], 5, |a, b| b.cmp(a));
-        assert_eq!(vec, &[21, 17, 13, 8, 1]);
-
-        extend_sorted(&mut vec, vec![101, 19, 17, 8, 2], 8, |a, b| b.cmp(a));
-        assert_eq!(vec, &[101, 21, 19, 17, 13, 8, 2, 1]);
-
-        extend_sorted(&mut vec, vec![1000, 19, 17, 9, 5], 8, |a, b| b.cmp(a));
-        assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
-    }
 
     #[test]
     fn test_iife() {
