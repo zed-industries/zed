@@ -1,5 +1,6 @@
 use gpui::SharedString;
 use language_model::{LanguageModelRequestMessage, MessageContent};
+use project::ProjectEntryId;
 use serde::{Deserialize, Serialize};
 use util::post_inc;
 
@@ -23,7 +24,7 @@ pub struct Context {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContextKind {
-    File,
+    File(ProjectEntryId),
     Directory,
     FetchedUrl,
     Thread,
@@ -40,7 +41,7 @@ pub fn attach_context_to_message(
 
     for context in context.into_iter() {
         match context.kind {
-            ContextKind::File => {
+            ContextKind::File(_) => {
                 file_context.push_str(&context.text);
                 file_context.push('\n');
             }
