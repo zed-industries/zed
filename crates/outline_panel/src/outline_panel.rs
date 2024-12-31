@@ -5180,8 +5180,8 @@ mod tests {
                 "Should place the initial editor selection on the corresponding search result"
             );
 
-            outline_panel.select_next(&SelectNext, cx);
-            outline_panel.select_next(&SelectNext, cx);
+            outline_panel.select_next(&SelectNext, window, cx);
+            outline_panel.select_next(&SelectNext, window, cx);
         });
 
         let navigated_outline_selection =

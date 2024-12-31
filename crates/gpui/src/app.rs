@@ -38,8 +38,8 @@ use crate::{
     Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, View, Window, WindowAppearance, WindowContext,
-    WindowHandle, WindowId,
+    Subscription, SvgRenderer, Task, TextSystem, View, Window, WindowAppearance, WindowHandle,
+    WindowId,
 };
 
 mod async_context;
@@ -218,10 +218,10 @@ impl App {
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
-    Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) -> bool + 'static>;
+    Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut AppContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
-type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
+type NewViewListener = Box<dyn FnMut(AnyView, &mut Window, &mut AppContext) + 'static>;
 type NewModelListener = Box<dyn FnMut(AnyModel, &mut AppContext) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
@@ -555,16 +555,16 @@ impl AppContext {
     pub fn open_window<V: 'static + Render>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
+        build_root_view: impl FnOnce(&mut Window, &mut AppContext) -> View<V>,
     ) -> anyhow::Result<WindowHandle<V>> {
         self.update(|cx| {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
-                    let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
+                    let root_view = build_root_view(&mut window, cx);
                     window.root_view.replace(root_view.into());
-                    WindowContext::new(cx, &mut window).defer(|cx| cx.appearance_changed());
+                    window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);
                     Ok(handle)
@@ -826,7 +826,8 @@ impl AppContext {
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, cx| cx.draw()).unwrap();
+                    self.update_window(window, |_, window, cx| window.draw(cx))
+                        .unwrap();
                 }
 
                 if self.pending_effects.is_empty() {
@@ -865,9 +866,9 @@ impl AppContext {
                 if count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
-                            .update(self, |_, cx| {
-                                if cx.window.focus == Some(handle_id) {
-                                    cx.blur();
+                            .update(self, |_, window, cx| {
+                                if window.focus == Some(handle_id) {
+                                    window.blur();
                                 }
                             })
                             .unwrap();
@@ -1085,14 +1086,17 @@ impl AppContext {
     ) -> Subscription {
         self.new_view_observer(
             TypeId::of::<V>(),
-            Box::new(move |any_view: AnyView, cx: &mut WindowContext| {
-                any_view
-                    .downcast::<V>()
-                    .unwrap()
-                    .update(cx, |view_state, window, cx| {
-                        on_new(view_state, window, cx);
-                    })
-            }),
+            Box::new(
+                move |any_view: AnyView, window: &mut Window, cx: &mut AppContext| {
+                    any_view
+                        .downcast::<V>()
+                        .unwrap()
+                        .model
+                        .update(cx, |view_state, cx| {
+                            on_new(view_state, window, cx);
+                        })
+                },
+            ),
         )
     }
 
@@ -1148,7 +1152,7 @@ impl AppContext {
     /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
-        mut f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
+        mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut AppContext) + 'static,
     ) -> Subscription {
         fn inner(
             keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
@@ -1161,8 +1165,8 @@ impl AppContext {
 
         inner(
             &mut self.keystroke_observers,
-            Box::new(move |event, cx| {
-                f(event, cx);
+            Box::new(move |event, window, cx| {
+                f(event, window, cx);
                 true
             }),
         )
@@ -1249,7 +1253,7 @@ impl AppContext {
     pub(crate) fn clear_pending_keystrokes(&mut self) {
         for window in self.windows() {
             window
-                .update(self, |_, cx| {
+                .update(self, |_, window, cx| {
                     cx.clear_pending_keystrokes();
                 })
                 .ok();
@@ -1262,7 +1266,7 @@ impl AppContext {
         let mut action_available = false;
         if let Some(window) = self.active_window() {
             if let Ok(window_action_available) =
-                window.update(self, |_, cx| cx.is_action_available(action))
+                window.update(self, |_, window, cx| cx.is_action_available(action))
             {
                 action_available = window_action_available;
             }
@@ -1302,7 +1306,9 @@ impl AppContext {
     pub fn dispatch_action(&mut self, action: &dyn Action) {
         if let Some(active_window) = self.active_window() {
             active_window
-                .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
+                .update(self, |_, window, cx| {
+                    window.dispatch_action(action.boxed_clone(), cx)
+                })
                 .log_err();
         } else {
             self.dispatch_global_action(action);
@@ -1372,7 +1378,8 @@ impl AppContext {
                 Option<&str>,
                 &[&str],
                 PromptHandle,
-                &mut WindowContext,
+                &mut Window,
+                &mut AppContext,
             ) -> RenderablePromptHandle
             + 'static,
     ) {
@@ -1490,7 +1497,7 @@ impl Context for AppContext {
 
     fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext) -> T,
+        F: FnOnce(AnyView, &mut Window, &mut AppContext) -> T,
     {
         self.update(|cx| {
             let mut window = cx
@@ -1501,7 +1508,7 @@ impl Context for AppContext {
                 .ok_or_else(|| anyhow!("window not found"))?;
 
             let root_view = window.root_view.clone().unwrap();
-            let result = update(root_view, &mut WindowContext::new(cx, &mut window));
+            let result = update(root_view, &mut window, cx);
 
             if window.removed {
                 cx.window_handles.remove(&handle.id);

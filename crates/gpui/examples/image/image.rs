@@ -53,7 +53,7 @@ impl ImageContainer {
 }
 
 impl RenderOnce for ImageContainer {
-    fn render(self, _: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _: &mut Window, _: &mut AppContext) -> impl IntoElement {
         div().child(
             div()
                 .flex_row()

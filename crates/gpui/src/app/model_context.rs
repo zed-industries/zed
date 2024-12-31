@@ -1,7 +1,6 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId,
-    EventEmitter, Model, Reservation, Subscription, Task, View, WeakModel, Window, WindowContext,
-    WindowHandle,
+    EventEmitter, Model, Reservation, Subscription, Task, View, WeakModel, Window, WindowHandle,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -206,17 +205,16 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     /// Convenience method for accessing view state in an event callback.
     ///
-    /// Many GPUI callbacks take the form of `Fn(&E, &mut WindowContext)`,
+    /// Many GPUI callbacks take the form of `Fn(&E, &mut Window, &mut AppContext)`,
     /// but it's often useful to be able to access view state in these
     /// callbacks. This method provides a convenient way to do so.
     pub fn listener<E: ?Sized>(
         &self,
         f: impl Fn(&mut T, &E, &mut Window, &mut ModelContext<T>) + 'static,
-    ) -> impl Fn(&E, &mut WindowContext) + 'static {
+    ) -> impl Fn(&E, &mut Window, &mut AppContext) + 'static {
         let view = self.model().downgrade();
-        move |e: &E, cx: &mut WindowContext| {
-            let window = &mut cx.window;
-            view.update(cx.app, |view, cx| f(view, e, window, cx)).ok();
+        move |e: &E, window: &mut Window, cx: &mut AppContext| {
+            view.update(cx, |view, cx| f(view, e, window, cx)).ok();
         }
     }
 }
@@ -279,7 +277,7 @@ impl<'a, T> Context for ModelContext<'a, T> {
 
     fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>
     where
-        F: FnOnce(AnyView, &mut WindowContext) -> R,
+        F: FnOnce(AnyView, &mut Window, &mut AppContext) -> R,
     {
         self.app.update_window(window, update)
     }

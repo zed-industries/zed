@@ -117,7 +117,7 @@ impl Render for PaintingViewer {
                             move |_, _, cx| {
                                 const STROKE_WIDTH: Pixels = px(2.0);
                                 for path in default_lines {
-                                    cx.paint_path(path, gpui::black());
+                                    window.paint_path(path, gpui::black());
                                 }
                                 for points in lines {
                                     let mut path = Path::new(points[0]);
@@ -135,7 +135,7 @@ impl Render for PaintingViewer {
                                         last = p;
                                     }
 
-                                    cx.paint_path(path, gpui::black());
+                                    window.paint_path(path, gpui::black());
                                 }
                             },
                         )

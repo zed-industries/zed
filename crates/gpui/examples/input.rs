@@ -401,7 +401,8 @@ impl Element for TextElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
@@ -414,7 +415,8 @@ impl Element for TextElement {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Self::PrepaintState {
         let input = self.input.read(cx);
         let content = input.content.clone();
@@ -520,14 +522,15 @@ impl Element for TextElement {
             ElementInputHandler::new(bounds, self.input.clone()),
         );
         if let Some(selection) = prepaint.selection.take() {
-            cx.paint_quad(selection)
+            window.paint_quad(selection)
         }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, cx.line_height(), cx).unwrap();
+        line.paint(bounds.origin, cx.line_height(), window, cx)
+            .unwrap();
 
         if focus_handle.is_focused(cx) {
             if let Some(cursor) = prepaint.cursor.take() {
-                cx.paint_quad(cursor);
+                window.paint_quad(cursor);
             }
         }
 

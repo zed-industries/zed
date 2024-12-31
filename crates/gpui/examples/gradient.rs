@@ -225,7 +225,7 @@ impl Render for GradientViewer {
                     );
                     path.line_to(square_bounds.bottom_right());
                     path.line_to(square_bounds.bottom_left());
-                    cx.paint_path(
+                    window.paint_path(
                         path,
                         linear_gradient(
                             180.,

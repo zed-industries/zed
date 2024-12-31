@@ -581,17 +581,18 @@ impl Element for TerminalElement {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id = self
-            .interactivity
-            .request_layout(global_id, cx, |mut style, cx| {
-                style.size.width = relative(1.).into();
-                style.size.height = relative(1.).into();
-                // style.overflow = point(Overflow::Hidden, Overflow::Hidden);
+        let layout_id =
+            self.interactivity
+                .request_layout(global_id, window, cx, |mut style, window, cx| {
+                    style.size.width = relative(1.).into();
+                    style.size.height = relative(1.).into();
+                    // style.overflow = point(Overflow::Hidden, Overflow::Hidden);
 
-                cx.request_layout(style, None)
-            });
+                    cx.request_layout(style, None)
+                });
         (layout_id, ())
     }
 

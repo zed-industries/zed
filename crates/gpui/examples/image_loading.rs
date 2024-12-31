@@ -116,7 +116,7 @@ impl Render for ImageLoadingExample {
                         };
 
                         // Load within the 'loading delay', should not show loading fallback
-                        img(move |cx: &mut WindowContext| {
+                        img(move |window: &mut Window, cx: &mut AppContext| {
                             cx.use_asset::<LoadImageWithParameters>(&image_source)
                         })
                         .id("image-1")
@@ -136,7 +136,7 @@ impl Render for ImageLoadingExample {
                             fail: false,
                         };
 
-                        img(move |cx: &mut WindowContext| {
+                        img(move |window: &mut Window, cx: &mut AppContext| {
                             cx.use_asset::<LoadImageWithParameters>(&image_source)
                         })
                         .id("image-2")
@@ -157,7 +157,7 @@ impl Render for ImageLoadingExample {
                         };
 
                         // Fail to load after a long delay
-                        img(move |cx: &mut WindowContext| {
+                        img(move |window: &mut Window, cx: &mut AppContext| {
                             cx.use_asset::<LoadImageWithParameters>(&image_source)
                         })
                         .id("image-3")

@@ -14624,9 +14624,11 @@ pub fn diagnostic_block_renderer(
             )
         };
 
-        let icon_size = buttons(&diagnostic)
-            .into_any_element()
-            .layout_as_root(AvailableSpace::min_size(), cx);
+        let icon_size = buttons(&diagnostic).into_any_element().layout_as_root(
+            AvailableSpace::min_size(),
+            window,
+            cx,
+        );
 
         h_flex()
             .id(cx.block_id)

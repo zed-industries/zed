@@ -50,8 +50,8 @@
 ///  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
 ///
 use crate::{
-    Action, ActionRegistry, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    Keystroke, ModifiersChangedEvent, WindowContext,
+    Action, ActionRegistry, AppContext, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext,
+    Keymap, Keystroke, ModifiersChangedEvent, Window,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -123,13 +123,13 @@ pub(crate) struct DispatchResult {
     pub(crate) to_replay: SmallVec<[Replay; 1]>,
 }
 
-type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
-type ModifiersChangedListener = Rc<dyn Fn(&ModifiersChangedEvent, &mut WindowContext)>;
+type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut AppContext)>;
+type ModifiersChangedListener = Rc<dyn Fn(&ModifiersChangedEvent, &mut Window, &mut AppContext)>;
 
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {
     pub(crate) action_type: TypeId,
-    pub(crate) listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+    pub(crate) listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut AppContext)>,
 }
 
 impl DispatchTree {
@@ -333,7 +333,7 @@ impl DispatchTree {
     pub fn on_action(
         &mut self,
         action_type: TypeId,
-        listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+        listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut AppContext)>,
     ) {
         self.active_node()
             .action_listeners
