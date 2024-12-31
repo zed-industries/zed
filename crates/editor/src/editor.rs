@@ -9486,7 +9486,7 @@ impl Editor {
         url_finder.detach();
     }
 
-    pub fn open_file(&mut self, _: &OpenFile, cx: &mut ViewContext<Self>) {
+    pub fn open_selected_filename(&mut self, _: &OpenSelectedFilename, cx: &mut ViewContext<Self>) {
         let Some(workspace) = self.workspace() else {
             return;
         };

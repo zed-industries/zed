@@ -134,8 +134,6 @@ impl Keymap {
     /// If a user has disabled a binding with `"x": null` it will not be returned. Disabled
     /// bindings are evaluated with the same precedence rules so you can disable a rule in
     /// a given context only.
-    ///
-    /// In the case of multi-key bindings, the
     pub fn bindings_for_input(
         &self,
         input: &[Keystroke],

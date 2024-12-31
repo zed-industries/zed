@@ -1,6 +1,6 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
-use gpui::action_as;
+use gpui::{action_aliases, action_as};
 use util::serde::default_true;
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -311,7 +311,6 @@ gpui::actions!(
         OpenExcerpts,
         OpenExcerptsSplit,
         OpenProposedChangesEditor,
-        OpenFile,
         OpenDocs,
         OpenPermalinkToLine,
         OpenUrl,
@@ -389,3 +388,5 @@ gpui::actions!(
 );
 
 action_as!(go_to_line, ToggleGoToLine as Toggle);
+
+action_aliases!(editor, OpenSelectedFilename, [OpenFile]);
