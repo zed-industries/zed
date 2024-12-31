@@ -6,7 +6,7 @@ use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, Task, UpdateGlobal};
 use paths::{local_settings_file_relative_path, EDITORCONFIG_NAME};
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
-use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     any::{type_name, Any, TypeId},
@@ -236,6 +236,28 @@ trait AnySettingValue: 'static + Send + Sync {
         _: &SettingsJsonSchemaParams,
         cx: &AppContext,
     ) -> RootSchema;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageFileSizeUnitType {
+    Binary,
+    Decimal,
+}
+
+impl Settings for ImageFileSizeUnitType {
+    const KEY: Option<&'static str> = Some("image_file_unit_type");
+    type FileContent = Self;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge().or_else(|_| Ok(Self::Binary))
+    }
+}
+
+impl Default for ImageFileSizeUnitType {
+    fn default() -> Self {
+        ImageFileSizeUnitType::Binary
+    }
 }
 
 struct DeserializedSetting(Box<dyn Any>);
