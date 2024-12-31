@@ -1,5 +1,5 @@
 use crate::{
-    matcher::{Match, MatchCandidate, Matcher},
+    matcher::{MatchCandidate, Matcher},
     CharBag,
 };
 use gpui::BackgroundExecutor;
@@ -44,16 +44,6 @@ pub struct StringMatch {
     pub score: f64,
     pub positions: Vec<usize>,
     pub string: String,
-}
-
-impl Match for StringMatch {
-    fn score(&self) -> f64 {
-        self.score
-    }
-
-    fn set_positions(&mut self, positions: Vec<usize>) {
-        self.positions = positions;
-    }
 }
 
 impl StringMatch {
@@ -167,13 +157,8 @@ pub async fn match_strings(
                 scope.spawn(async move {
                     let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
                     let segment_end = cmp::min(segment_start + segment_size, candidates.len());
-                    let mut matcher = Matcher::new(
-                        query,
-                        lowercase_query,
-                        query_char_bag,
-                        smart_case,
-                        max_results,
-                    );
+                    let mut matcher =
+                        Matcher::new(query, lowercase_query, query_char_bag, smart_case);
 
                     matcher.match_candidates(
                         &[],
@@ -181,10 +166,10 @@ pub async fn match_strings(
                         candidates[segment_start..segment_end].iter(),
                         results,
                         cancel_flag,
-                        |candidate, score| StringMatch {
+                        |candidate, score, positions| StringMatch {
                             candidate_id: candidate.id,
                             score,
-                            positions: Vec::new(),
+                            positions: positions.clone(),
                             string: candidate.string.to_string(),
                         },
                     );
@@ -193,13 +178,7 @@ pub async fn match_strings(
         })
         .await;
 
-    let mut results = Vec::new();
-    for segment_result in segment_results {
-        if results.is_empty() {
-            results = segment_result;
-        } else {
-            util::extend_sorted(&mut results, segment_result, max_results, |a, b| b.cmp(a));
-        }
-    }
+    let mut results = segment_results.concat();
+    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
