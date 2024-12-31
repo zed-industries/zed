@@ -1,6 +1,8 @@
 use std::rc::Rc;
 
+use editor::Editor;
 use gpui::{FocusHandle, Model, View, WeakModel, WeakView};
+use language::Buffer;
 use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
@@ -16,6 +18,13 @@ pub struct ContextStrip {
     context_picker: View<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
+    suggested_context: Option<SuggestedContext>,
+}
+
+#[derive(Clone)]
+pub struct SuggestedContext {
+    title: SharedString,
+    buffer: WeakModel<Buffer>,
 }
 
 impl ContextStrip {
@@ -40,7 +49,35 @@ impl ContextStrip {
             }),
             context_picker_menu_handle,
             focus_handle,
+            suggested_context: None,
         }
+    }
+
+    pub fn update_suggested_context(&mut self, workspace: &Workspace, cx: &WindowContext) {
+        if let Some(active_buffer) = self.get_active_buffer(workspace, cx) {
+            let buffer = active_buffer.read(cx);
+
+            let title: SharedString = match buffer.file() {
+                Some(file) => file.path().to_string_lossy().into_owned().into(),
+                None => "untitled".into(),
+            };
+
+            self.suggested_context = Some(SuggestedContext {
+                title,
+                buffer: active_buffer.downgrade(),
+            });
+        } else {
+            self.suggested_context = None;
+        }
+    }
+
+    fn get_active_buffer(
+        &self,
+        workspace: &Workspace,
+        cx: &WindowContext,
+    ) -> Option<Model<Buffer>> {
+        let editor = workspace.active_item_as::<Editor>(cx)?.read(cx);
+        editor.buffer().read(cx).as_singleton()
     }
 }
 
@@ -77,7 +114,7 @@ impl Render for ContextStrip {
                     })
                     .with_handle(self.context_picker_menu_handle.clone()),
             )
-            .when(context.is_empty(), {
+            .when(context.is_empty() && self.suggested_context.is_none(), {
                 |parent| {
                     parent.child(
                         h_flex()
@@ -112,6 +149,20 @@ impl Render for ContextStrip {
                     }))
                 })
             }))
+            .when_some(self.suggested_context.clone(), |el, suggested| {
+                el.child(
+                    Button::new("add-suggested-context", suggested.title)
+                        .icon(IconName::Plus)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Filled)
+                        .tooltip(|cx| {
+                            Tooltip::with_meta("Suggested Context", None, "Click to add it", cx)
+                        }),
+                )
+            })
             .when(!context.is_empty(), {
                 move |parent| {
                     parent.child(

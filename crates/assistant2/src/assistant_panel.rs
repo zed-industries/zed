@@ -26,7 +26,7 @@ use crate::{NewThread, OpenHistory, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
-        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, cx| {
                     workspace.toggle_panel_focus::<AssistantPanel>(cx);
@@ -43,6 +43,23 @@ pub fn init(cx: &mut AppContext) {
                         panel.update(cx, |panel, cx| panel.open_history(cx));
                     }
                 });
+
+            cx.subscribe(
+                &cx.view().clone(),
+                move |workspace, _, event, cx| match event {
+                    workspace::Event::ActiveItemChanged => {
+                        if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.message_editor.update(cx, |editor, cx| {
+                                    editor.update_suggested_context(&workspace, cx)
+                                })
+                            });
+                        }
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
         },
     )
     .detach();

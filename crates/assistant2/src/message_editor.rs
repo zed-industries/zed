@@ -194,6 +194,12 @@ impl MessageEditor {
         let editor_focus_handle = self.editor.focus_handle(cx);
         cx.focus(&editor_focus_handle);
     }
+
+    pub fn update_suggested_context(&mut self, workspace: &Workspace, cx: &mut ViewContext<Self>) {
+        self.context_strip.update(cx, |context_strip, cx| {
+            context_strip.update_suggested_context(workspace, cx);
+        });
+    }
 }
 
 impl FocusableView for MessageEditor {
