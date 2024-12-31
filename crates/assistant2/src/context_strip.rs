@@ -97,13 +97,17 @@ impl Render for ContextStrip {
                         IconButton::new("add-context", IconName::Plus)
                             .icon_size(IconSize::Small)
                             .style(ui::ButtonStyle::Filled)
-                            .tooltip(move |cx| {
-                                Tooltip::for_action_in(
-                                    "Add Context",
-                                    &ToggleContextPicker,
-                                    &focus_handle,
-                                    cx,
-                                )
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Add Context",
+                                        &ToggleContextPicker,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
                             }),
                     )
                     .attach(gpui::Corner::TopLeft)
@@ -128,7 +132,7 @@ impl Render for ContextStrip {
                             .children(
                                 ui::KeyBinding::for_action_in(
                                     &ToggleContextPicker,
-                                    &self.focus_handle,
+                                    &focus_handle,
                                     cx,
                                 )
                                 .map(|binding| binding.into_any_element()),
@@ -151,7 +155,28 @@ impl Render for ContextStrip {
             }))
             .when_some(self.suggested_context.clone(), |el, suggested| {
                 el.child(
-                    Button::new("add-suggested-context", suggested.title)
+                    Button::new("add-suggested-context", suggested.title.clone())
+                        .on_click({
+                            let context_store = self.context_store.clone();
+
+                            cx.listener(move |_this, _event, cx| {
+                                let Some(buffer) = suggested.buffer.upgrade() else {
+                                    return;
+                                };
+
+                                let title = suggested.title.clone();
+                                let text = buffer.read(cx).text();
+
+                                context_store.update(cx, move |context_store, _cx| {
+                                    context_store.insert_context(
+                                        crate::context::ContextKind::File,
+                                        title,
+                                        text,
+                                    );
+                                });
+                                cx.notify();
+                            })
+                        })
                         .icon(IconName::Plus)
                         .icon_position(IconPosition::Start)
                         .icon_size(IconSize::XSmall)
