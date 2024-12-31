@@ -1905,6 +1905,7 @@ impl Render for ProjectSearchBar {
         }
 
         v_flex()
+            .py(px(1.0))
             .key_context(key_context)
             .on_action(cx.listener(|this, _: &ToggleFocus, cx| this.move_focus_to_results(cx)))
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
