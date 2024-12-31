@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use editor::Editor;
-use gpui::{FocusHandle, Model, View, WeakModel, WeakView};
+use gpui::{FocusHandle, Model, Subscription, View, WeakModel, WeakView};
 use language::Buffer;
 use project::ProjectEntryId;
 use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
@@ -21,6 +21,7 @@ pub struct ContextStrip {
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
     suggested_context: Option<SuggestedContext>,
+    _subscription: Option<Subscription>,
 }
 
 #[derive(Clone)]
@@ -39,6 +40,12 @@ impl ContextStrip {
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let subscription = if let Some(workspace) = workspace.upgrade() {
+            Some(cx.subscribe(&workspace, Self::handle_workspace_event))
+        } else {
+            None
+        };
+
         Self {
             context_store: context_store.clone(),
             context_picker: cx.new_view(|cx| {
@@ -53,11 +60,22 @@ impl ContextStrip {
             context_picker_menu_handle,
             focus_handle,
             suggested_context: None,
+            _subscription: subscription,
         }
     }
 
-    pub fn update_suggested_context(&mut self, workspace: &Workspace, cx: &WindowContext) {
-        self.suggested_context = self.get_suggested_context(workspace, cx);
+    fn handle_workspace_event(
+        &mut self,
+        workspace: View<Workspace>,
+        event: &workspace::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            workspace::Event::WorkspaceCreated(_) | workspace::Event::ActiveItemChanged => {
+                self.suggested_context = self.get_suggested_context(workspace.read(cx), cx);
+            }
+            _ => {}
+        }
     }
 
     fn get_suggested_context(
