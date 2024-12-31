@@ -4468,6 +4468,10 @@ impl Panel for OutlinePanel {
         })
         .detach()
     }
+
+    fn activation_priority(&self) -> u32 {
+        5
+    }
 }
 
 impl FocusableView for OutlinePanel {

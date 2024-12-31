@@ -257,6 +257,7 @@ fn main() -> Result<()> {
     if args.foreground {
         app.run_foreground(url)?;
     } else {
+        eprintln!("Logs are written to {:?}", paths::log_file());
         app.launch(url)?;
         sender.join().unwrap()?;
         pipe_handle.join().unwrap()?;

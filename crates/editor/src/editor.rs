@@ -992,12 +992,14 @@ pub(crate) struct FocusedBlock {
 }
 
 #[derive(Clone)]
-struct JumpData {
-    excerpt_id: ExcerptId,
-    position: Point,
-    anchor: text::Anchor,
-    path: Option<project::ProjectPath>,
-    line_offset_from_top: u32,
+enum JumpData {
+    MultiBufferRow(MultiBufferRow),
+    MultiBufferPoint {
+        excerpt_id: ExcerptId,
+        position: Point,
+        anchor: text::Anchor,
+        line_offset_from_top: u32,
+    },
 }
 
 impl Editor {
@@ -12458,26 +12460,44 @@ impl Editor {
 
         let mut new_selections_by_buffer = HashMap::default();
         match &jump_data {
-            Some(jump_data) => {
+            Some(JumpData::MultiBufferPoint {
+                excerpt_id,
+                position,
+                anchor,
+                line_offset_from_top,
+            }) => {
                 let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
                 if let Some(buffer) = multi_buffer_snapshot
-                    .buffer_id_for_excerpt(jump_data.excerpt_id)
+                    .buffer_id_for_excerpt(*excerpt_id)
                     .and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id))
                 {
                     let buffer_snapshot = buffer.read(cx).snapshot();
-                    let jump_to_point = if buffer_snapshot.can_resolve(&jump_data.anchor) {
-                        language::ToPoint::to_point(&jump_data.anchor, &buffer_snapshot)
+                    let jump_to_point = if buffer_snapshot.can_resolve(anchor) {
+                        language::ToPoint::to_point(anchor, &buffer_snapshot)
                     } else {
-                        buffer_snapshot.clip_point(jump_data.position, Bias::Left)
+                        buffer_snapshot.clip_point(*position, Bias::Left)
                     };
                     let jump_to_offset = buffer_snapshot.point_to_offset(jump_to_point);
                     new_selections_by_buffer.insert(
                         buffer,
                         (
                             vec![jump_to_offset..jump_to_offset],
-                            Some(jump_data.line_offset_from_top),
+                            Some(*line_offset_from_top),
                         ),
                     );
+                }
+            }
+            Some(JumpData::MultiBufferRow(row)) => {
+                let point = MultiBufferPoint::new(row.0, 0);
+                if let Some((buffer, buffer_point, _)) =
+                    self.buffer.read(cx).point_to_buffer_point(point, cx)
+                {
+                    let buffer_offset = buffer.read(cx).point_to_offset(buffer_point);
+                    new_selections_by_buffer
+                        .entry(buffer)
+                        .or_insert((Vec::new(), None))
+                        .0
+                        .push(buffer_offset..buffer_offset)
                 }
             }
             None => {

@@ -1103,6 +1103,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "Zig": {
+      "language_servers": ["zls", "..."]
     }
   },
   // Different settings for specific language models.

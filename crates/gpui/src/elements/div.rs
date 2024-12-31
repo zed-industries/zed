@@ -1479,6 +1479,19 @@ impl Interactivity {
                                 None
                             };
 
+                            let invalidate_tooltip = hitbox.as_ref().map_or(true, |hitbox| {
+                                !hitbox.bounds.contains(&window.mouse_position())
+                            });
+                            if invalidate_tooltip {
+                                if let Some(active_tooltip) = element_state
+                                    .as_ref()
+                                    .and_then(|state| state.active_tooltip.as_ref())
+                                {
+                                    *active_tooltip.borrow_mut() = None;
+                                    self.tooltip_id = None;
+                                }
+                            }
+
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
                             let result = f(&style, scroll_offset, hitbox, window, cx);
