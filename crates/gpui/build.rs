@@ -51,6 +51,8 @@ mod macos {
     fn generate_dispatch_bindings() {
         println!("cargo:rustc-link-lib=framework=System");
         println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
+        // Weakly link ScreenCaptureKit to ensure can be used on macOS 10.15+.
+        println!("cargo:rustc-link-arg=-Wl,-weak_framework,ScreenCaptureKit");
         println!("cargo:rerun-if-changed=src/platform/mac/dispatch.h");
 
         let bindings = bindgen::Builder::default()
