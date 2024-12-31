@@ -47,7 +47,7 @@ pub fn init(cx: &mut AppContext) {
             cx.subscribe(
                 &cx.view().clone(),
                 move |workspace, _, event, cx| match event {
-                    workspace::Event::ActiveItemChanged => {
+                    workspace::Event::WorkspaceCreated(_) | workspace::Event::ActiveItemChanged => {
                         if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                             panel.update(cx, |panel, cx| {
                                 panel.message_editor.update(cx, |editor, cx| {
