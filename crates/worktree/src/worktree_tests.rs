@@ -2774,8 +2774,6 @@ async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
-    dbg!(snapshot.git_satus(Path::new("x")));
-
     let mut traversal = snapshot
         .traverse_from_path(true, false, true, Path::new("x"))
         .with_git_statuses();
@@ -2879,7 +2877,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
             (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
             (Path::new("f"), None),
             (Path::new("f/no-status.txt"), None),
-            (Path::new("g"), Some(GitFileStatus::Conflict)), // This one is missing
+            (Path::new("g"), Some(GitFileStatus::Conflict)),
             (Path::new("g/h2.txt"), Some(GitFileStatus::Conflict)),
         ],
     );
@@ -3092,7 +3090,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_propagated_statuses(
         &snapshot,
         &[
-            (Path::new("z"), Some(GitFileStatus::Added)), // the y git repository has conflict file in it, and so should have a conflict status
+            (Path::new("z"), Some(GitFileStatus::Added)),
             (Path::new("z/z1.txt"), None),
             (Path::new("z/z2.txt"), Some(GitFileStatus::Added)),
         ],
@@ -3179,19 +3177,18 @@ fn check_propagated_statuses(
     snapshot: &Snapshot,
     expected_statuses: &[(&Path, Option<GitFileStatus>)],
 ) {
-    let entries = expected_statuses
+    let mut entries = expected_statuses
         .iter()
-        .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
+        .map(|(path, _)| GitEntry {
+            entry: snapshot.entry_for_path(path).unwrap().clone(),
+            git_status: None,
+        })
         .collect::<Vec<_>>();
-    // TODO: recreate this
-    // let statuses = snapshot.propagate_git_statuses(&entries);
-    let statuses: Vec<Option<GitFileStatus>> = Vec::new();
-    panic!("Redo git status propogation");
+    snapshot.propagate_git_statuses(&mut entries);
     assert_eq!(
         entries
             .iter()
-            .enumerate()
-            .map(|(ix, e)| (e.path.as_ref(), statuses[ix]))
+            .map(|e| (e.path.as_ref(), e.git_status))
             .collect::<Vec<_>>(),
         expected_statuses
     );
