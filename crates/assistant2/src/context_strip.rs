@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
 use editor::Editor;
-use gpui::{FocusHandle, Model, Subscription, View, WeakModel, WeakView};
+use gpui::{EntityId, FocusHandle, Model, Subscription, View, WeakModel, WeakView};
 use language::Buffer;
 use project::ProjectEntryId;
 use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
-use workspace::Workspace;
+use workspace::{ItemHandle, Workspace};
 
 use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
@@ -20,6 +20,7 @@ pub struct ContextStrip {
     context_picker: View<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
+    workspace_active_pane_id: Option<EntityId>,
     suggested_context: Option<SuggestedContext>,
     _subscription: Option<Subscription>,
 }
@@ -46,18 +47,18 @@ impl ContextStrip {
         suggest_context_kind: SuggestContextKind,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let subscription = if let Some(workspace) = workspace.upgrade() {
-            match suggest_context_kind {
-                SuggestContextKind::File => {
+        let subscription = match suggest_context_kind {
+            SuggestContextKind::File => {
+                if let Some(workspace) = workspace.upgrade() {
                     Some(cx.subscribe(&workspace, Self::handle_workspace_event))
-                }
-                SuggestContextKind::Thread => {
-                    // TODO: Suggest current thread
+                } else {
                     None
                 }
             }
-        } else {
-            None
+            SuggestContextKind::Thread => {
+                // TODO: Suggest current thread
+                None
+            }
         };
 
         Self {
@@ -73,6 +74,7 @@ impl ContextStrip {
             }),
             context_picker_menu_handle,
             focus_handle,
+            workspace_active_pane_id: None,
             suggested_context: None,
             _subscription: subscription,
         }
@@ -86,18 +88,28 @@ impl ContextStrip {
     ) {
         match event {
             workspace::Event::WorkspaceCreated(_) | workspace::Event::ActiveItemChanged => {
-                self.suggested_context = self.get_suggested_context(workspace.read(cx), cx);
+                let workspace = workspace.read(cx);
+
+                if let Some(active_item) = workspace.active_item(cx) {
+                    let new_active_item_id = Some(active_item.item_id());
+
+                    if self.workspace_active_pane_id != new_active_item_id {
+                        self.suggested_context = Self::suggested_file(active_item, cx);
+                        self.workspace_active_pane_id = new_active_item_id;
+                    }
+                } else {
+                    self.suggested_context = None;
+                    self.workspace_active_pane_id = None;
+                }
             }
             _ => {}
         }
     }
 
-    fn get_suggested_context(
-        &self,
-        workspace: &Workspace,
+    fn suggested_file(
+        active_item: Box<dyn ItemHandle>,
         cx: &WindowContext,
     ) -> Option<SuggestedContext> {
-        let active_item = workspace.active_item(cx)?;
         let entry_id = *active_item.project_entry_ids(cx).first()?;
 
         let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
