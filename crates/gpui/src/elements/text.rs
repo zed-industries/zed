@@ -675,6 +675,7 @@ impl Element for InteractiveText {
 
                 if let Some(tooltip_builder) = self.tooltip_builder.clone() {
                     let hitbox = hitbox.clone();
+                    let source_bounds = hitbox.bounds;
                     let active_tooltip = interactive_state.active_tooltip.clone();
                     let pending_mouse_down = interactive_state.mouse_down_index.clone();
                     let text_layout = text_layout.clone();
@@ -708,6 +709,8 @@ impl Element for InteractiveText {
                                                     tooltip: Some(AnyTooltip {
                                                         view: tooltip,
                                                         mouse_position: cx.mouse_position(),
+                                                        hoverable: true,
+                                                        origin_bounds: source_bounds,
                                                     }),
                                                     _task: None,
                                                 }
