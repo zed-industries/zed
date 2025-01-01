@@ -327,6 +327,8 @@
       "cmd-w": "pane::CloseActiveItem",
       "alt-cmd-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
+      "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
+      "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "cmd-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
       "cmd-k cmd-w": ["pane::CloseAllItems", { "close_pinned": false }],
       "cmd-f": "project_search::ToggleFocus",
@@ -448,7 +450,6 @@
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
       "cmd-shift-s": "workspace::SaveAs",
-      "cmd-n": "workspace::NewFile",
       "cmd-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",
       "cmd-1": ["workspace::ActivatePane", 0],
@@ -495,6 +496,7 @@
     "context": "Workspace && !Terminal",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-n": "workspace::NewFile",
       "cmd-shift-r": "task::Spawn",
       "cmd-alt-r": "task::Rerun",
       "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
@@ -761,6 +763,7 @@
       "cmd-v": "terminal::Paste",
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
+      "cmd-n": "workspace::NewTerminal",
       "ctrl-enter": "assistant::InlineAssist",
       // Some nice conveniences
       "cmd-backspace": ["terminal::SendText", "\u0015"],
