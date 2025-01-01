@@ -1923,6 +1923,7 @@ impl Interactivity {
                 cx.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
                     let hitbox = hitbox.clone();
+                    let source_bounds = hitbox.bounds;
                     let tooltip_id = self.tooltip_id;
                     move |_: &MouseMoveEvent, phase, cx| {
                         let is_hovered =
@@ -1952,6 +1953,8 @@ impl Interactivity {
                                             tooltip: Some(AnyTooltip {
                                                 view: build_tooltip(cx),
                                                 mouse_position: cx.mouse_position(),
+                                                hoverable: tooltip_is_hoverable,
+                                                origin_bounds: source_bounds,
                                             }),
                                             _task: None,
                                         });
