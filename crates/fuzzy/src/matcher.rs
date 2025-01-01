@@ -14,11 +14,17 @@ pub struct Matcher<'a> {
     lowercase_query: &'a [char],
     query_char_bag: CharBag,
     smart_case: bool,
+    max_results: usize,
     min_score: f64,
     match_positions: Vec<usize>,
     last_positions: Vec<usize>,
     score_matrix: Vec<Option<f64>>,
     best_position_matrix: Vec<usize>,
+}
+
+pub trait Match: Ord {
+    fn score(&self) -> f64;
+    fn set_positions(&mut self, positions: Vec<usize>);
 }
 
 pub trait MatchCandidate {
@@ -32,6 +38,7 @@ impl<'a> Matcher<'a> {
         lowercase_query: &'a [char],
         query_char_bag: CharBag,
         smart_case: bool,
+        max_results: usize,
     ) -> Self {
         Self {
             query,
@@ -43,11 +50,10 @@ impl<'a> Matcher<'a> {
             score_matrix: Vec::new(),
             best_position_matrix: Vec::new(),
             smart_case,
+            max_results,
         }
     }
 
-    /// Filter and score fuzzy match candidates. Results are returned unsorted, in the same order as
-    /// the input candidates.
     pub fn match_candidates<C: MatchCandidate, R, F>(
         &mut self,
         prefix: &[char],
@@ -57,7 +63,8 @@ impl<'a> Matcher<'a> {
         cancel_flag: &AtomicBool,
         build_match: F,
     ) where
-        F: Fn(&C, f64, &Vec<usize>) -> R,
+        R: Match,
+        F: Fn(&C, f64) -> R,
     {
         let mut candidate_chars = Vec::new();
         let mut lowercase_candidate_chars = Vec::new();
@@ -96,7 +103,20 @@ impl<'a> Matcher<'a> {
             );
 
             if score > 0.0 {
-                results.push(build_match(&candidate, score, &self.match_positions));
+                let mut mat = build_match(&candidate, score);
+                if let Err(i) = results.binary_search_by(|m| mat.cmp(m)) {
+                    if results.len() < self.max_results {
+                        mat.set_positions(self.match_positions.clone());
+                        results.insert(i, mat);
+                    } else if i < results.len() {
+                        results.pop();
+                        mat.set_positions(self.match_positions.clone());
+                        results.insert(i, mat);
+                    }
+                    if results.len() == self.max_results {
+                        self.min_score = results.last().unwrap().score();
+                    }
+                }
             }
         }
     }
@@ -305,18 +325,18 @@ mod tests {
     #[test]
     fn test_get_last_positions() {
         let mut query: &[char] = &['d', 'c'];
-        let mut matcher = Matcher::new(query, query, query.into(), false);
+        let mut matcher = Matcher::new(query, query, query.into(), false, 10);
         let result = matcher.find_last_positions(&['a', 'b', 'c'], &['b', 'd', 'e', 'f']);
         assert!(!result);
 
         query = &['c', 'd'];
-        let mut matcher = Matcher::new(query, query, query.into(), false);
+        let mut matcher = Matcher::new(query, query, query.into(), false, 10);
         let result = matcher.find_last_positions(&['a', 'b', 'c'], &['b', 'd', 'e', 'f']);
         assert!(result);
         assert_eq!(matcher.last_positions, vec![2, 4]);
 
         query = &['z', '/', 'z', 'f'];
-        let mut matcher = Matcher::new(query, query, query.into(), false);
+        let mut matcher = Matcher::new(query, query, query.into(), false, 10);
         let result = matcher.find_last_positions(&['z', 'e', 'd', '/'], &['z', 'e', 'd', '/', 'f']);
         assert!(result);
         assert_eq!(matcher.last_positions, vec![0, 3, 4, 8]);
@@ -431,7 +451,7 @@ mod tests {
             });
         }
 
-        let mut matcher = Matcher::new(&query, &lowercase_query, query_chars, smart_case);
+        let mut matcher = Matcher::new(&query, &lowercase_query, query_chars, smart_case, 100);
 
         let cancel_flag = AtomicBool::new(false);
         let mut results = Vec::new();
@@ -442,17 +462,16 @@ mod tests {
             path_entries.into_iter(),
             &mut results,
             &cancel_flag,
-            |candidate, score, positions| PathMatch {
+            |candidate, score| PathMatch {
                 score,
                 worktree_id: 0,
-                positions: positions.clone(),
+                positions: Vec::new(),
                 path: Arc::from(candidate.path),
                 path_prefix: "".into(),
                 distance_to_relative_ancestor: usize::MAX,
                 is_dir: false,
             },
         );
-        results.sort_by(|a, b| b.cmp(a));
 
         results
             .into_iter()
