@@ -903,34 +903,6 @@ impl ContentMask<Pixels> {
 //         }
 //     }
 
-//     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
-//     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
-//     /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
-//     pub fn notify(&mut self, view_id: Option<EntityId>) {
-//         let Some(view_id) = view_id else {
-//             self.refresh();
-//             return;
-//         };
-
-//         for view_id in self
-//             .window
-//             .rendered_frame
-//             .dispatch_tree
-//             .view_path(view_id)
-//             .into_iter()
-//             .rev()
-//         {
-//             if !self.window.dirty_views.insert(view_id) {
-//                 break;
-//             }
-//         }
-
-//         if self.window.draw_phase == DrawPhase::None {
-//             self.window.dirty.set(true);
-//             self.app.push_effect(Effect::Notify { emitter: view_id });
-//         }
-//     }
-
 //     /// Close this window.
 //     pub fn remove_window(&mut self) {
 //         self.window.removed = true;
@@ -4583,6 +4555,33 @@ impl Window {
     {
         View {
             model: cx.new_model(|cx| build_view_state(self, cx)),
+        }
+    }
+
+    /// Indicate that a view has changed, which will invoke any observers and also mark the window as dirty.
+    /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
+    /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
+    pub fn notify(&mut self, view_id: Option<EntityId>, cx: &mut AppContext) {
+        let Some(view_id) = view_id else {
+            self.refresh();
+            return;
+        };
+
+        for view_id in self
+            .rendered_frame
+            .dispatch_tree
+            .view_path(view_id)
+            .into_iter()
+            .rev()
+        {
+            if !self.dirty_views.insert(view_id) {
+                break;
+            }
+        }
+
+        if self.draw_phase == DrawPhase::None {
+            self.dirty.set(true);
+            cx.push_effect(Effect::Notify { emitter: view_id });
         }
     }
 
