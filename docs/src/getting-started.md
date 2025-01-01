@@ -50,14 +50,12 @@ Any time you see instructions that include commands of the form `zed: ...` or `e
 
 ## Configure Zed
 
-Use {#kb zed::OpenSettings} to open your custom settings to set things like fonts, formatting settings, per-language settings, and more.
+To open your custom settings to set things like fonts, formatting settings, per-language settings, and more, use the {#kb zed::OpenSettings} keybinding.
 
-On macOS, you can access the default configuration using the `Zed > Settings > Open Default Settings` menu item. See [Configuring Zed](./configuring-zed.md) for all available settings.
-
-On Linux, you can access the default configuration via the Command Palette. Open it with {#kb zed::OpenDefaultSettings} and type in `zed: open default settings` and then hit return.
+To see all available settings, open the Command Palette with {#kb command_palette::Toggle} and search for "zed: open default settings". You can also check them all out in the [Configuring Zed](./configuring-zed.md) documentation.
 
 ## Set up your key bindings
 
-On macOS, you can access the default key binding set using the `Zed > Settings > Open Default Key Bindings` menu item. Use <kbd>cmd-k cmd-s|ctrl-k ctrl-s</kbd> to open your custom keymap to add your key bindings. See Key Bindings for more info.
+To open your custom keymap to add your key bindings, use the {#kb zed::OpenKeymap} keybinding.
 
-On Linux, you can access the default key bindings via the Command Palette. Open it with <kbd>ctrl-shift-p</kbd> and type in `zed: open default keymap` and then hit return.
+To access the default key binding set, open the Command Palette with {#kb command_palette::Toggle} and search for "zed: open default keymap". See [Key Bindings](./key-bindings.md) for more info.
