@@ -3,14 +3,11 @@ use std::{
     borrow::Cow,
     cmp::{self, Ordering},
     path::Path,
-    sync::{
-        atomic::{self, AtomicBool},
-        Arc,
-    },
+    sync::{atomic::AtomicBool, Arc},
 };
 
 use crate::{
-    matcher::{MatchCandidate, Matcher},
+    matcher::{Match, MatchCandidate, Matcher},
     CharBag,
 };
 
@@ -43,6 +40,16 @@ pub trait PathMatchCandidateSet<'a>: Send + Sync {
     }
     fn prefix(&self) -> Arc<str>;
     fn candidates(&'a self, start: usize) -> Self::Candidates;
+}
+
+impl Match for PathMatch {
+    fn score(&self) -> f64 {
+        self.score
+    }
+
+    fn set_positions(&mut self, positions: Vec<usize>) {
+        self.positions = positions;
+    }
 }
 
 impl<'a> MatchCandidate for PathMatchCandidate<'a> {
@@ -95,7 +102,13 @@ pub fn match_fixed_path_set(
     let query = query.chars().collect::<Vec<_>>();
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
-    let mut matcher = Matcher::new(&query, &lowercase_query, query_char_bag, smart_case);
+    let mut matcher = Matcher::new(
+        &query,
+        &lowercase_query,
+        query_char_bag,
+        smart_case,
+        max_results,
+    );
 
     let mut results = Vec::new();
     matcher.match_candidates(
@@ -104,17 +117,16 @@ pub fn match_fixed_path_set(
         candidates.into_iter(),
         &mut results,
         &AtomicBool::new(false),
-        |candidate, score, positions| PathMatch {
+        |candidate, score| PathMatch {
             score,
             worktree_id,
-            positions: positions.clone(),
+            positions: Vec::new(),
             is_dir: candidate.is_dir,
             path: Arc::from(candidate.path),
             path_prefix: Arc::default(),
             distance_to_relative_ancestor: usize::MAX,
         },
     );
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
 
@@ -152,15 +164,16 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;
                     let segment_end = segment_start + segment_size;
-                    let mut matcher =
-                        Matcher::new(query, lowercase_query, query_char_bag, smart_case);
+                    let mut matcher = Matcher::new(
+                        query,
+                        lowercase_query,
+                        query_char_bag,
+                        smart_case,
+                        max_results,
+                    );
 
                     let mut tree_start = 0;
                     for candidate_set in candidate_sets {
-                        if cancel_flag.load(atomic::Ordering::Relaxed) {
-                            break;
-                        }
-
                         let tree_end = tree_start + candidate_set.len();
 
                         if tree_start < segment_end && segment_start < tree_end {
@@ -180,10 +193,10 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                                 candidates,
                                 results,
                                 cancel_flag,
-                                |candidate, score, positions| PathMatch {
+                                |candidate, score| PathMatch {
                                     score,
                                     worktree_id,
-                                    positions: positions.clone(),
+                                    positions: Vec::new(),
                                     path: Arc::from(candidate.path),
                                     is_dir: candidate.is_dir,
                                     path_prefix: candidate_set.prefix(),
@@ -209,12 +222,14 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         })
         .await;
 
-    if cancel_flag.load(atomic::Ordering::Relaxed) {
-        return Vec::new();
+    let mut results = Vec::new();
+    for segment_result in segment_results {
+        if results.is_empty() {
+            results = segment_result;
+        } else {
+            util::extend_sorted(&mut results, segment_result, max_results, |a, b| b.cmp(a));
+        }
     }
-
-    let mut results = segment_results.concat();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
 
