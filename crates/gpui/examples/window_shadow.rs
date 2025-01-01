@@ -1,8 +1,7 @@
 use gpui::{
     black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black, white, App,
-    AppContext, Bounds, CursorStyle, Decorations, Hsla, ModelContext, MouseButton, Pixels, Point,
-    ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowOptions,
+    AppContext, Bounds, CursorStyle, Decorations, Hsla, MouseButton, Pixels, Point, ResizeEdge,
+    Size, ViewContext, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowOptions,
 };
 
 struct WindowShadow {}
@@ -14,13 +13,13 @@ struct WindowShadow {}
 // 3. We need to implement the techniques in here in Zed
 
 impl Render for WindowShadow {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
-        let decorations = window.window_decorations();
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let decorations = cx.window_decorations();
         let rounding = px(10.0);
         let shadow_size = px(10.0);
         let border_size = px(1.0);
         let grey = rgb(0x808080);
-        window.set_client_inset(shadow_size);
+        cx.set_client_inset(shadow_size);
 
         div()
             .id("window-backdrop")
@@ -210,12 +209,11 @@ fn main() {
                 ..Default::default()
             },
             |cx| {
-                cx.new_view(|window, cx| {
-                    window
-                        .observe_window_appearance(|cx| {
-                            cx.refresh();
-                        })
-                        .detach();
+                cx.new_view(|cx| {
+                    cx.observe_window_appearance(|_, cx| {
+                        cx.refresh();
+                    })
+                    .detach();
                     WindowShadow {}
                 })
             },

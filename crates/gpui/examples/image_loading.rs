@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use gpui::{
     black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
     AppContext, Asset, AssetLogger, AssetSource, Bounds, Hsla, ImageAssetLoader, ImageCacheError,
-    ImgResourceLoader, Length, ModelContext, Pixels, RenderImage, Resource, SharedString, Window,
+    ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString, ViewContext,
     WindowBounds, WindowContext, WindowOptions, LOADING_DELAY,
 };
 
@@ -100,7 +100,7 @@ impl ImageLoadingExample {
 }
 
 impl Render for ImageLoadingExample {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().flex().flex_col().size_full().justify_around().child(
             div().flex().flex_row().w_full().justify_around().child(
                 div()
@@ -116,7 +116,7 @@ impl Render for ImageLoadingExample {
                         };
 
                         // Load within the 'loading delay', should not show loading fallback
-                        img(move |window: &mut Window, cx: &mut AppContext| {
+                        img(move |cx: &mut WindowContext| {
                             cx.use_asset::<LoadImageWithParameters>(&image_source)
                         })
                         .id("image-1")
@@ -136,7 +136,7 @@ impl Render for ImageLoadingExample {
                             fail: false,
                         };
 
-                        img(move |window: &mut Window, cx: &mut AppContext| {
+                        img(move |cx: &mut WindowContext| {
                             cx.use_asset::<LoadImageWithParameters>(&image_source)
                         })
                         .id("image-2")
@@ -157,7 +157,7 @@ impl Render for ImageLoadingExample {
                         };
 
                         // Fail to load after a long delay
-                        img(move |window: &mut Window, cx: &mut AppContext| {
+                        img(move |cx: &mut WindowContext| {
                             cx.use_asset::<LoadImageWithParameters>(&image_source)
                         })
                         .id("image-3")
@@ -207,7 +207,7 @@ fn main() {
             };
             cx.open_window(options, |cx| {
                 cx.activate(false);
-                cx.new_view(|window, _cx| ImageLoadingExample {})
+                cx.new_view(|_cx| ImageLoadingExample {})
             })
             .unwrap();
         });

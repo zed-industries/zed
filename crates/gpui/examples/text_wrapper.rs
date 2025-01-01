@@ -1,15 +1,11 @@
 use gpui::{
-    div, prelude::*, px, size, App, AppContext, Bounds, ModelContext, WindowBounds, WindowOptions,
+    div, prelude::*, px, size, App, AppContext, Bounds, ViewContext, WindowBounds, WindowOptions,
 };
 
 struct HelloWorld {}
 
 impl Render for HelloWorld {
-    fn render(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         let text = "The longest word 你好世界这段是中文，こんにちはこの段落は日本語です in any of the major English language dictionaries is pneumonoultramicroscopicsilicovolcanoconiosis, a word that refers to a lung disease contracted from the inhalation of very fine silica particles, specifically from a volcano; medically, it is the same as silicosis.";
         div()
             .id("page")
@@ -89,7 +85,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |cx| cx.new_view(|window, _cx| HelloWorld {}),
+            |cx| cx.new_view(|_cx| HelloWorld {}),
         )
         .unwrap();
     });
