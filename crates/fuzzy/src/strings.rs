@@ -8,7 +8,7 @@ use std::{
     cmp::{self, Ordering},
     iter,
     ops::Range,
-    sync::atomic::{self, AtomicBool},
+    sync::atomic::AtomicBool,
 };
 
 #[derive(Clone, Debug)]
@@ -177,10 +177,6 @@ pub async fn match_strings(
             }
         })
         .await;
-
-    if cancel_flag.load(atomic::Ordering::Relaxed) {
-        return Vec::new();
-    }
 
     let mut results = segment_results.concat();
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
