@@ -3100,7 +3100,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_propagated_statuses(
         &snapshot,
         &[
-            (Path::new("x"), Some(GitFileStatus::Conflict)), // FIXME: This should be Some(Modified)
+            (Path::new("x"), Some(GitFileStatus::Modified)),
             (Path::new("x/y"), Some(GitFileStatus::Conflict)),
             (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
         ],
@@ -3110,7 +3110,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_propagated_statuses(
         &snapshot,
         &[
-            (Path::new("x"), Some(GitFileStatus::Conflict)), // FIXME: This should be Some(Modified)
+            (Path::new("x"), Some(GitFileStatus::Modified)),
             (Path::new("x/x1.txt"), None),
             (Path::new("x/x2.txt"), Some(GitFileStatus::Modified)),
             (Path::new("x/y"), Some(GitFileStatus::Conflict)),
@@ -3124,8 +3124,8 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_propagated_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Conflict)), // FIXME: This should be None
-            (Path::new("x"), Some(GitFileStatus::Conflict)), // FIXME: This should be Some(Modified)
+            (Path::new(""), None),
+            (Path::new("x"), Some(GitFileStatus::Modified)),
             (Path::new("x/x1.txt"), None),
         ],
     );
@@ -3134,8 +3134,8 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_propagated_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Conflict)), // FIXME: This should be None
-            (Path::new("x"), Some(GitFileStatus::Conflict)), // FIXME: This should be Some(Modified)
+            (Path::new(""), None),
+            (Path::new("x"), Some(GitFileStatus::Modified)),
             (Path::new("x/x1.txt"), None),
             (Path::new("x/x2.txt"), Some(GitFileStatus::Modified)),
             (Path::new("x/y"), Some(GitFileStatus::Conflict)),
@@ -3177,21 +3177,39 @@ fn check_propagated_statuses(
     snapshot: &Snapshot,
     expected_statuses: &[(&Path, Option<GitFileStatus>)],
 ) {
-    let mut entries = expected_statuses
+    //let mut entries = expected_statuses
+    //    .iter()
+    //    .map(|(path, _)| GitEntry {
+    //        entry: snapshot.entry_for_path(path).unwrap().clone(),
+    //        git_status: None,
+    //    })
+    //    .collect::<Vec<_>>();
+    //snapshot.propagate_git_statuses(&mut entries);
+    //assert_eq!(
+    //    entries
+    //        .iter()
+    //        .map(|e| (e.path.as_ref(), e.git_status))
+    //        .collect::<Vec<_>>(),
+    //    expected_statuses
+    //);
+    check_git_statuses(snapshot, expected_statuses);
+}
+
+#[track_caller]
+fn check_git_statuses(snapshot: &Snapshot, expected_statuses: &[(&Path, Option<GitFileStatus>)]) {
+    let mut traversal = snapshot
+        .traverse_from_path(true, true, false, "".as_ref())
+        .with_git_statuses();
+    let found_statuses = expected_statuses
         .iter()
-        .map(|(path, _)| GitEntry {
-            entry: snapshot.entry_for_path(path).unwrap().clone(),
-            git_status: None,
+        .map(|&(path, _)| {
+            let git_entry = traversal
+                .find(|git_entry| &*git_entry.path == path)
+                .expect("Traversal has no entry for {path:?}");
+            (path, git_entry.git_status)
         })
         .collect::<Vec<_>>();
-    snapshot.propagate_git_statuses(&mut entries);
-    assert_eq!(
-        entries
-            .iter()
-            .map(|e| (e.path.as_ref(), e.git_status))
-            .collect::<Vec<_>>(),
-        expected_statuses
-    );
+    assert_eq!(found_statuses, expected_statuses);
 }
 
 #[track_caller]

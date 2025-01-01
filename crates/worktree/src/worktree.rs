@@ -65,7 +65,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::{
-    Bias, Cursor, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet, Unit,
+    Bias, Cursor, Edit, Item, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet, Unit,
 };
 use text::{LineEnding, Rope};
 use util::{
@@ -276,6 +276,7 @@ impl WorkDirectory {
         PathKey(self.path.clone())
     }
 
+    // FIXME footgun for nested repos
     pub fn contains(&self, path: impl AsRef<Path>) -> bool {
         let path = path.as_ref();
         path.starts_with(&self.path)
@@ -2536,7 +2537,56 @@ impl Snapshot {
         })
     }
 
-    pub fn propagate_git_statuses(&self, entries: &mut [GitEntry]) {
+    //pub fn propagate_git_statuses2(&self, entries: &mut [GitEntry]) {
+
+    //    type Cursor<'a> = sum_tree::Cursor<'a, StatusEntry, PathProgress<'a>>;
+
+    //    enum StackEntry<'a> {
+    //        Repo {
+    //            entry_ix: usize,
+    //            cursor_in_containing_repo: Option<Cursor<'a>>,
+    //            repo_entry: &'a RepositoryEntry,
+    //        },
+    //        NonRepo {
+    //            entry_ix: usize,
+    //            previous_statuses_in_containing_repo: Option<GitStatuses>,
+    //        },
+    //    }
+
+    //    fn push_stack_from_proper_ancestors<'a>(
+    //        stack: &mut Vec<StackEntry<'a>>,
+    //        statuses: &mut Option<Cursor<'a>>,
+    //        entry: &Entry,
+    //    ) -> RepoPath {
+    //        todo!();
+    //    }
+
+    //    fn pop_stack<'a>(stack: &mut Vec<StackEntry<'a>>, statuses: &mut Option<Cursor<'a>>) {
+    //        todo!()
+    //    }
+
+    //    let mut stack = Vec::new();
+    //    let mut statuses = None;
+    //    for entry in entries.iter_mut().rev() {
+    //        let path = push_stack_from_proper_ancestors(&mut stack, &mut statuses, &*entry);
+    //        entry.git_status = if entry.is_dir() {
+    //            let status = statuses.as_mut().map(|statuses| {
+    //                statuses.seek_forward(&PathTarget::Successor(&path), Bias::Left, &());
+    //                statuses.start().1.;
+    //            });
+    //            pop_stack(&mut stack, &mut statuses);
+    //            status
+    //        } else {
+    //            statuses.as_mut().and_then(|statuses| {
+    //                statuses.seek_forward(&PathTarget::Path(&path), Bias::Left, &());
+    //                let item = statuses.item()?;
+    //                Some(item.git_status)
+    //            })
+    //        };
+    //    }
+    //}
+
+    pub fn propagate_git_statuses_legacy(&self, entries: &mut [GitEntry]) {
         let mut cursor = all_statuses_cursor(self);
         let mut entry_stack = Vec::<(usize, GitStatuses)>::new();
 
@@ -3703,12 +3753,26 @@ impl sum_tree::KeyedItem for StatusEntry {
     }
 }
 
-#[derive(Clone, Debug, Default, Copy)]
+#[derive(Clone, Debug, Default, Copy, PartialEq, Eq)]
 pub struct GitStatuses {
     added: usize,
     modified: usize,
     conflict: usize,
     untracked: usize,
+}
+
+impl GitStatuses {
+    pub fn to_status(&self) -> Option<GitFileStatus> {
+        if self.conflict > 0 {
+            Some(GitFileStatus::Conflict)
+        } else if self.modified > 0 {
+            Some(GitFileStatus::Modified)
+        } else if self.added > 0 {
+            Some(GitFileStatus::Added)
+        } else {
+            None
+        }
+    }
 }
 
 impl std::ops::Add<Self> for GitStatuses {
@@ -5697,56 +5761,73 @@ impl<'a> AsRef<Entry> for GitEntry {
     }
 }
 
+// FIXME get rid of this, inline
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LastSeekResult {
+    FileFound,
+    FileNotFound,
+    Directory(GitStatuses),
+    Sentinel,
+}
+
 /// Walks the worktree entries and their associated git statuses.
-#[derive(Debug)]
 pub struct GitTraversal<'a> {
-    // worktree entries
     traversal: Traversal<'a>,
-    // idk
-    reset: bool,
-    // git statuses
-    statuses: Option<(
-        ProjectEntryId,
+    // reset: bool,
+    repo_location: Option<(
+        &'a RepositoryEntry,
         Cursor<'a, StatusEntry, PathProgress<'a>>,
-        bool,
+        LastSeekResult,
     )>,
 }
 
 impl<'a> GitTraversal<'a> {
     fn synchronize_statuses(&mut self) {
-        let reset = mem::take(&mut self.reset);
-        let Some(entry) = dbg!(self.traversal.cursor.item()) else {
+        let Some(entry) = self.traversal.cursor.item() else {
             return;
         };
 
-        let Some(repository) = self.traversal.snapshot.repository_for_path(&entry.path) else {
-            eprintln!("no repo");
-            self.statuses = None;
+        // TODO make this more efficient (see if we're in the same dir as last time e.g.)
+        let Some(repo) = self.traversal.snapshot.repository_for_path(&entry.path) else {
+            self.repo_location = None;
             return;
         };
 
-        if reset
-            || !self
-                .statuses
-                .as_ref()
-                .is_some_and(|(id, _, _)| id == &repository.work_directory_id())
+        // Update our state if we changed repositories.
+        if self
+            .repo_location
+            .as_ref()
+            .map(|(prev_repo, _, _)| prev_repo)
+            != Some(&repo)
         {
-            dbg!("x");
-            self.statuses = Some((
-                repository.work_directory_id,
-                repository.git_entries_by_path.cursor::<PathProgress>(&()),
-                false,
+            self.repo_location = Some((
+                repo,
+                repo.git_entries_by_path.cursor::<PathProgress>(&()),
+                LastSeekResult::Sentinel,
             ));
         }
 
-        let Some((_work_directory_id, statuses, found)) = self.statuses.as_mut() else {
+        let Some((repo, statuses, seek_result)) = &mut self.repo_location else {
             return;
         };
-        let Some(repo_path) = dbg!(repository).relativize(dbg!(&entry.path)).ok() else {
-            return;
-        };
-        *found = statuses.seek_forward(&PathTarget::Path(dbg!(&repo_path.0)), Bias::Left, &());
-        dbg!(statuses.item());
+        let repo_path = repo.relativize(&entry.path).unwrap();
+
+        if entry.is_dir() {
+            let mut statuses = statuses.clone();
+            statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &());
+            let summary =
+                statuses.summary(&PathTarget::Successor(repo_path.as_ref()), Bias::Left, &());
+            *seek_result = LastSeekResult::Directory(summary);
+        } else if entry.is_file() {
+            // For a file entry, park the cursor on the corresponding status,
+            // if it exists.
+            *seek_result =
+                if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &()) {
+                    LastSeekResult::FileFound
+                } else {
+                    LastSeekResult::FileNotFound
+                };
+        }
     }
 
     pub fn advance(&mut self) -> bool {
@@ -5766,8 +5847,9 @@ impl<'a> GitTraversal<'a> {
     }
 
     pub fn back_to_parent(&mut self) -> bool {
+        // FIXME need to put reset back?
         let found = self.traversal.back_to_parent();
-        self.reset = found;
+        self.synchronize_statuses();
         found
     }
 
@@ -5781,21 +5863,19 @@ impl<'a> GitTraversal<'a> {
 
     pub fn entry(&self) -> Option<GitEntryRef<'a>> {
         let entry = self.traversal.cursor.item()?;
-        let git_entry = self
-            .statuses
-            .as_ref()
-            .and_then(|(_, statuses, found)| {
-                let item = statuses.item()?;
-                found.then_some(item)
-            })
-            .map_or_else(
-                || GitEntryRef::entry(entry),
-                |status| GitEntryRef {
-                    entry,
-                    git_status: Some(status.git_status),
-                },
-            );
-        Some(git_entry)
+        let git_status =
+            dbg!(self.repo_location.as_ref()).and_then(|(_, statuses, seek_result)| {
+                match seek_result {
+                    LastSeekResult::FileFound => Some(statuses.item().unwrap().git_status),
+                    LastSeekResult::FileNotFound => {
+                        eprintln!("file not found");
+                        None
+                    }
+                    LastSeekResult::Directory(summary) => dbg!(summary.to_status()),
+                    LastSeekResult::Sentinel => unreachable!(),
+                }
+            });
+        Some(GitEntryRef { entry, git_status })
     }
 }
 
@@ -5857,8 +5937,7 @@ impl<'a> Traversal<'a> {
         //});
         let mut this = GitTraversal {
             traversal: self,
-            reset: false,
-            statuses: None,
+            repo_location: None,
         };
         this.synchronize_statuses();
         this
