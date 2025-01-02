@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
 use editor::Editor;
-use gpui::{EntityId, FocusHandle, Model, Subscription, View, WeakModel, WeakView};
+use gpui::{AppContext, FocusHandle, Model, View, WeakModel, WeakView};
 use language::Buffer;
 use project::ProjectEntryId;
 use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
-use workspace::{ItemHandle, Workspace};
+use workspace::Workspace;
 
 use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
@@ -20,9 +20,8 @@ pub struct ContextStrip {
     context_picker: View<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
-    workspace_active_pane_id: Option<EntityId>,
-    suggested_context: Option<SuggestedContext>,
-    _subscription: Option<Subscription>,
+    suggest_context_kind: SuggestContextKind,
+    workspace: WeakView<Workspace>,
 }
 
 pub enum SuggestContextKind {
@@ -47,20 +46,6 @@ impl ContextStrip {
         suggest_context_kind: SuggestContextKind,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let subscription = match suggest_context_kind {
-            SuggestContextKind::File => {
-                if let Some(workspace) = workspace.upgrade() {
-                    Some(cx.subscribe(&workspace, Self::handle_workspace_event))
-                } else {
-                    None
-                }
-            }
-            SuggestContextKind::Thread => {
-                // TODO: Suggest current thread
-                None
-            }
-        };
-
         Self {
             context_store: context_store.clone(),
             context_picker: cx.new_view(|cx| {
@@ -74,43 +59,26 @@ impl ContextStrip {
             }),
             context_picker_menu_handle,
             focus_handle,
-            workspace_active_pane_id: None,
-            suggested_context: None,
-            _subscription: subscription,
+            suggest_context_kind,
+            workspace,
         }
     }
 
-    fn handle_workspace_event(
-        &mut self,
-        workspace: View<Workspace>,
-        event: &workspace::Event,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            workspace::Event::WorkspaceCreated(_) | workspace::Event::ActiveItemChanged => {
-                let workspace = workspace.read(cx);
-
-                if let Some(active_item) = workspace.active_item(cx) {
-                    let new_active_item_id = Some(active_item.item_id());
-
-                    if self.workspace_active_pane_id != new_active_item_id {
-                        self.suggested_context = Self::suggested_file(active_item, cx);
-                        self.workspace_active_pane_id = new_active_item_id;
-                    }
-                } else {
-                    self.suggested_context = None;
-                    self.workspace_active_pane_id = None;
-                }
-            }
-            _ => {}
+    fn suggested_context(&self, cx: &AppContext) -> Option<SuggestedContext> {
+        match self.suggest_context_kind {
+            SuggestContextKind::File => self.suggested_file(cx),
+            SuggestContextKind::Thread => self.suggested_thread(cx),
         }
     }
 
-    fn suggested_file(
-        active_item: Box<dyn ItemHandle>,
-        cx: &WindowContext,
-    ) -> Option<SuggestedContext> {
+    fn suggested_file(&self, cx: &AppContext) -> Option<SuggestedContext> {
+        let workspace = self.workspace.upgrade()?;
+        let active_item = workspace.read(cx).active_item(cx)?;
         let entry_id = *active_item.project_entry_ids(cx).first()?;
+
+        if self.context_store.read(cx).contains_project_entry(entry_id) {
+            return None;
+        }
 
         let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
         let active_buffer = editor.buffer().read(cx).as_singleton()?;
@@ -124,6 +92,11 @@ impl ContextStrip {
             buffer: active_buffer.downgrade(),
         })
     }
+
+    fn suggested_thread(&self, _cx: &AppContext) -> Option<SuggestedContext> {
+        // TODO
+        None
+    }
 }
 
 impl Render for ContextStrip {
@@ -133,13 +106,7 @@ impl Render for ContextStrip {
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
-        let suggested_context = self.suggested_context.as_ref().and_then(|suggested| {
-            if context_store.contains_project_entry(suggested.entry_id) {
-                None
-            } else {
-                Some(suggested.clone())
-            }
-        });
+        let suggested_context = self.suggested_context(cx);
 
         h_flex()
             .flex_wrap()
@@ -172,7 +139,7 @@ impl Render for ContextStrip {
                     })
                     .with_handle(self.context_picker_menu_handle.clone()),
             )
-            .when(context.is_empty() && self.suggested_context.is_none(), {
+            .when(context.is_empty() && suggested_context.is_none(), {
                 |parent| {
                     parent.child(
                         h_flex()
