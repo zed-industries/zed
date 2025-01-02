@@ -209,7 +209,7 @@ impl StatusBar {
     fn update_active_pane_item(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let active_pane_item = self.active_pane.read(cx).active_item();
         for item in self.left_items.iter().chain(&self.right_items) {
-            item.set_active_pane_item(active_pane_item.as_deref(), cx);
+            item.set_active_pane_item(active_pane_item.as_deref(), window, cx);
         }
     }
 }
@@ -226,7 +226,7 @@ impl<T: StatusItemView> StatusItemViewHandle for Model<T> {
         cx: &mut AppContext,
     ) {
         self.update(cx, |this, cx| {
-            this.set_active_pane_item(active_pane_item, cx)
+            this.set_active_pane_item(active_pane_item, window, cx)
         });
     }
 
