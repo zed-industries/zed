@@ -2779,7 +2779,7 @@ pub mod tests {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         language::init(cx);
-        crate::init(window, cx);
+        crate::init(cx);
         Project::init_settings(cx);
         theme::init(LoadThemes::JustBase, cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {

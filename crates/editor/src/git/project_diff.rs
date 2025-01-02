@@ -78,7 +78,7 @@ impl ProjectDiffEditor {
             workspace.activate_item(&existing, true, true, window, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
-            let project_diff = window.new_view(cx, |cx| {
+            let project_diff = window.new_view(cx, |window, cx| {
                 Self::new(workspace.project().clone(), workspace_handle, window, cx)
             });
             workspace.add_item_to_active_pane(Box::new(project_diff), None, true, window, cx);
@@ -154,7 +154,7 @@ impl ProjectDiffEditor {
 
         let excerpts = cx.new_model(|cx| MultiBuffer::new(project.read(cx).capability()));
 
-        let editor = window.new_view(cx, |cx| {
+        let editor = window.new_view(cx, |window, cx| {
             let mut diff_display_editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project.clone()), true, window, cx);
             diff_display_editor.set_expand_all_diff_hunks();
@@ -320,7 +320,7 @@ impl ProjectDiffEditor {
                     .await;
 
                 project_diff_editor
-                    .update(&mut cx, |project_diff_editor, cx| {
+                    .update_in(&mut cx, |project_diff_editor, window, cx| {
                         project_diff_editor.update_excerpts(
                             id,
                             new_changes,
@@ -955,8 +955,8 @@ impl Item for ProjectDiffEditor {
     fn tab_content(
         &self,
         params: TabContentParams,
-        _window: &mut Window,
-        _: &mut AppContext,
+        _window: &Window,
+        _: &AppContext,
     ) -> AnyElement {
         if self.buffer_changes.is_empty() {
             Label::new("No changes")
@@ -1037,7 +1037,7 @@ impl Item for ProjectDiffEditor {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |cx| {
+        Some(window.new_view(cx, |window, cx| {
             ProjectDiffEditor::new(self.project.clone(), self.workspace.clone(), window, cx)
         }))
     }
@@ -1183,7 +1183,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), [Path::new("/root")], cx).await;
-        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
         let file_a_editor = workspace
@@ -1218,13 +1219,13 @@ mod tests {
         let old_text = file_a_editor.update(cx, |editor, cx| editor.text(cx));
         let change = "an edit after git add";
         file_a_editor
-            .update(cx, |file_a_editor, cx| {
+            .update_in(cx, |file_a_editor, window, cx| {
                 file_a_editor.insert(change, window, cx);
                 file_a_editor.save(false, project.clone(), window, cx)
             })
             .await
             .expect("failed to save a file");
-        file_a_editor.update(cx, |file_a_editor, cx| {
+        file_a_editor.update_in(cx, |file_a_editor, window, cx| {
             let change_set = cx.new_model(|cx| {
                 BufferChangeSet::new_with_base_text(
                     old_text.clone(),

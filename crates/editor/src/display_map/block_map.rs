@@ -226,7 +226,8 @@ pub enum BlockStyle {
 }
 
 pub struct BlockContext<'a, 'b> {
-    pub context: &'b mut WindowContext<'a>,
+    window: &'a mut Window,
+    pub context: &'b mut AppContext,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
     pub gutter_dimensions: &'b GutterDimensions,
@@ -1930,7 +1931,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
 }
 
 impl<'a> Deref for BlockContext<'a, '_> {
-    type Target = WindowContext<'a>;
+    type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
         self.context

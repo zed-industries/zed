@@ -527,7 +527,7 @@ pub struct ChunkRenderer {
 }
 
 pub struct ChunkRendererContext<'a, 'b> {
-    window: &'a mut Window,
+    pub window: &'a mut Window,
     pub context: &'b mut AppContext,
     pub max_width: Pixels,
 }

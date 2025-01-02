@@ -202,11 +202,11 @@ impl<T> Crease<T> {
         Crease::Inline {
             range,
             placeholder,
-            render_toggle: Some(Arc::new(move |row, folded, toggle, cx| {
-                render_toggle(row, folded, toggle, cx).into_any_element()
+            render_toggle: Some(Arc::new(move |row, folded, toggle, window, cx| {
+                render_toggle(row, folded, toggle, window, cx).into_any_element()
             })),
-            render_trailer: Some(Arc::new(move |row, folded, cx| {
-                render_trailer(row, folded, cx).into_any_element()
+            render_trailer: Some(Arc::new(move |row, folded, window, cx| {
+                render_trailer(row, folded, window, cx).into_any_element()
             })),
             metadata: None,
         }

@@ -33,7 +33,7 @@ pub struct FoldPlaceholder {
 impl Default for FoldPlaceholder {
     fn default() -> Self {
         Self {
-            render: Arc::new(|_, _, _| gpui::Empty.into_any_element()),
+            render: Arc::new(|_, _, _, _| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
             type_tag: None,
@@ -45,7 +45,7 @@ impl FoldPlaceholder {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
         Self {
-            render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
+            render: Arc::new(|_id, _range, _window, _cx| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
             type_tag: None,
@@ -487,7 +487,8 @@ impl FoldMap {
                                             (fold.placeholder.render)(
                                                 fold_id,
                                                 fold.range.0.clone(),
-                                                cx,
+                                                cx.window,
+                                                cx.context,
                                             )
                                         }),
                                         constrain_width: fold.placeholder.constrain_width,

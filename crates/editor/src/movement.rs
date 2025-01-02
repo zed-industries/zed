@@ -1187,7 +1187,7 @@ mod tests {
         cx.set_global(settings_store);
         theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
-        crate::init(window, cx);
+        crate::init(cx);
         Project::init_settings(cx);
     }
 }

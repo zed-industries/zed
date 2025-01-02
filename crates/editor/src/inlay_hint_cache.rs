@@ -19,7 +19,7 @@ use crate::{
 use anyhow::Context;
 use clock::Global;
 use futures::future;
-use gpui::{AsyncWindowContext, Model, ModelContext, Task, Window};
+use gpui::{AppContext, AsyncWindowContext, Model, ModelContext, Task, Window};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -3376,7 +3376,7 @@ pub mod tests {
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
-            crate::init(window, cx);
+            crate::init(cx);
         });
 
         update_test_language_settings(cx, f);

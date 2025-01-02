@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use gpui::{w, AppContext, Model, ModelContext, View};
+use gpui::{AppContext, Model, ModelContext, Window};
 use language::Language;
 use url::Url;
 
@@ -75,7 +75,7 @@ pub fn switch_source_header(
         })?;
 
         workspace
-            .update(&mut cx, |workspace, cx| {
+            .update_in(&mut cx, |workspace, window, cx| {
                 workspace.open_abs_path(path, false, window, cx)
             })
             .with_context(|| {

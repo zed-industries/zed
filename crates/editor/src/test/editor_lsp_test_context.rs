@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{w, Model, ModelContext, View, VisualTestContext};
+use gpui::{Model, ModelContext, View, VisualTestContext};
 use indoc::indoc;
 use language::{
     point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
@@ -83,7 +83,7 @@ impl EditorLspTestContext {
         cx.update(|cx| {
             assets::Assets.load_test_fonts(cx);
             language::init(cx);
-            crate::init(window, cx);
+            crate::init(cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
         });
