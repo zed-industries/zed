@@ -1358,6 +1358,71 @@ mod tests {
     use gpui::{self};
 
     #[gpui::test]
+    async fn test_breakpoints() {
+        env_logger::try_init().ok();
+
+        let db = WorkspaceDb(open_test_db("test_breakpoints").await);
+        let id = db.next_id().await.unwrap();
+
+        let path = Path::new("/tmp/test.rs");
+        let worktree = Path::new("/tmp");
+
+        let breakpoint = Breakpoint {
+            position: 123,
+            kind: BreakpointKind::Standard,
+        };
+
+        let log_breakpoint = Breakpoint {
+            position: 456,
+            kind: BreakpointKind::Log("Test log message".into()),
+        };
+
+        let workspace = SerializedWorkspace {
+            id,
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            breakpoints: {
+                let mut map = HashMap::default();
+                map.insert(
+                    Arc::from(worktree),
+                    vec![
+                        SerializedBreakpoint {
+                            position: breakpoint.position,
+                            path: Arc::from(path),
+                            kind: breakpoint.kind.clone(),
+                        },
+                        SerializedBreakpoint {
+                            position: log_breakpoint.position,
+                            path: Arc::from(path),
+                            kind: log_breakpoint.kind.clone(),
+                        },
+                    ],
+                );
+                map
+            },
+            window_id: None,
+        };
+
+        db.save_workspace(workspace.clone()).await;
+
+        let loaded = db.workspace_for_roots(&["/tmp"]).unwrap();
+        let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(worktree)).unwrap();
+
+        assert_eq!(loaded_breakpoints.len(), 2);
+        assert_eq!(loaded_breakpoints[0].position, breakpoint.position);
+        assert_eq!(loaded_breakpoints[0].kind, breakpoint.kind);
+        assert_eq!(loaded_breakpoints[1].position, log_breakpoint.position);
+        assert_eq!(loaded_breakpoints[1].kind, log_breakpoint.kind);
+        assert_eq!(loaded_breakpoints[0].path, Arc::from(path));
+        assert_eq!(loaded_breakpoints[1].path, Arc::from(path));
+    }
+
+    #[gpui::test]
     async fn test_next_id_stability() {
         env_logger::try_init().ok();
 
