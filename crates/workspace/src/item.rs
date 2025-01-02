@@ -558,7 +558,7 @@ impl<T: Item> ItemHandle for Model<T> {
 
     // todo! rename back to focus_handle?
     fn item_focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.item_focus_handle(cx)
+        self.read(cx).focus_handle(cx)
     }
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
@@ -727,7 +727,7 @@ impl<T: Item> ItemHandle for Model<T> {
                                 leader_id = id;
                             }
 
-                            workspace.update(&mut cx, |workspace, cx| {
+                            workspace.update_in(&mut cx, |workspace, window, cx| {
                                 let Some(item) = item.upgrade() else { return };
                                 workspace.update_followers(
                                     is_project_item,
@@ -1045,11 +1045,7 @@ pub enum Dedup {
 
 pub trait FollowableItem: Item {
     fn remote_id(&self) -> Option<ViewId>;
-    fn to_state_proto(
-        &self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<proto::view::Variant>;
+    fn to_state_proto(&self, window: &Window, cx: &AppContext) -> Option<proto::view::Variant>;
     fn from_state_proto(
         project: Model<Workspace>,
         id: ViewId,
@@ -1062,8 +1058,8 @@ pub trait FollowableItem: Item {
         &self,
         event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> bool;
     fn apply_update_proto(
         &mut self,
@@ -1072,14 +1068,14 @@ pub trait FollowableItem: Item {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>>;
-    fn is_project_item(&self, window: &mut Window, cx: &mut AppContext) -> bool;
+    fn is_project_item(&self, window: &Window, cx: &AppContext) -> bool;
     fn set_leader_peer_id(
         &mut self,
         leader_peer_id: Option<PeerId>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     );
-    fn dedup(&self, existing: &Self, window: &mut Window, cx: &mut AppContext) -> Option<Dedup>;
+    fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<Dedup>;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
@@ -1420,8 +1416,8 @@ pub mod test {
         fn tab_content(
             &self,
             params: TabContentParams,
-            _window: &mut Window,
-            _cx: &mut AppContext,
+            _window: &Window,
+            _cx: &AppContext,
         ) -> AnyElement {
             self.tab_detail.set(params.detail);
             gpui::div().into_any_element()
