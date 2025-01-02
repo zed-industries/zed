@@ -466,7 +466,7 @@ impl LineLayoutCache {
                 wrap_width,
             });
             let key = Arc::new(CacheKey {
-                text: text.into(),
+                text,
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width,
