@@ -1,9 +1,9 @@
 use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::Result;
-use gpui::{Window, ModelContext, 
+use gpui::{
     div, hsla, img, point, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds,
-    BoxShadow, ClickEvent, SharedString, Task, Timer,  WindowBounds, WindowOptions,
+    BoxShadow, ClickEvent, SharedString, Task, Timer, ViewContext, WindowBounds, WindowOptions,
 };
 
 struct Assets {
@@ -39,14 +39,14 @@ struct HelloWorld {
 }
 
 impl HelloWorld {
-    fn new(_window: &mut Window, _: &mut ModelContext<Self>) -> Self {
+    fn new(_: &mut ViewContext<Self>) -> Self {
         Self {
             _task: None,
             opacity: 0.5,
         }
     }
 
-    fn change_opacity(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn change_opacity(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
         self.opacity = 0.0;
         cx.notify();
 
@@ -54,7 +54,7 @@ impl HelloWorld {
             loop {
                 Timer::after(Duration::from_secs_f32(0.05)).await;
                 let mut stop = false;
-                let _ = cx.update(|window, cx| {
+                let _ = cx.update(|cx| {
                     view.update(cx, |view, cx| {
                         if view.opacity >= 1.0 {
                             stop = true;
@@ -75,7 +75,7 @@ impl HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_row()
@@ -168,7 +168,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| window.new_view(cx, HelloWorld::new),
+                |cx| cx.new_view(HelloWorld::new),
             )
             .unwrap();
         });
