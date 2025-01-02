@@ -10,7 +10,6 @@ use gpui::{
     WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use release_channel::ReleaseChannel;
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::Workspace;
@@ -56,16 +55,11 @@ impl ContextPicker {
             kind: ContextPickerEntryKind::File,
             icon: IconName::File,
         });
-        let release_channel = ReleaseChannel::global(cx);
-        // The directory context picker isn't fully implemented yet, so limit it
-        // to development builds.
-        if release_channel == ReleaseChannel::Dev {
-            entries.push(ContextPickerEntry {
-                name: "Folder".into(),
-                kind: ContextPickerEntryKind::Directory,
-                icon: IconName::Folder,
-            });
-        }
+        entries.push(ContextPickerEntry {
+            name: "Folder".into(),
+            kind: ContextPickerEntryKind::Directory,
+            icon: IconName::Folder,
+        });
         entries.push(ContextPickerEntry {
             name: "Fetch".into(),
             kind: ContextPickerEntryKind::FetchedUrl,
