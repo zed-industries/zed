@@ -3449,6 +3449,24 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn buffer_ids_in_selected_rows(
+        &self,
+        selection: Selection<Point>,
+    ) -> impl Iterator<Item = BufferId> + '_ {
+        let mut cursor = self.excerpts.cursor::<Point>(&());
+        cursor.seek(&Point::new(selection.start.row, 0), Bias::Right, &());
+        cursor.prev(&());
+
+        iter::from_fn(move || {
+            cursor.next(&());
+            if cursor.start().row <= selection.end.row {
+                cursor.item().map(|item| item.buffer_id)
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn excerpts(
         &self,
     ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, ExcerptRange<text::Anchor>)> {

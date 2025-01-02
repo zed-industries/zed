@@ -7,7 +7,7 @@ use std::sync::Arc;
 use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, WorktreeId};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -207,11 +207,20 @@ impl PickerDelegate for FileContextPickerDelegate {
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
-            let Some(open_buffer_task) = project
+            let Some((entry_id, open_buffer_task)) = project
                 .update(&mut cx, |project, cx| {
-                    project.open_buffer((worktree_id, path.clone()), cx)
+                    let project_path = ProjectPath {
+                        worktree_id,
+                        path: path.clone(),
+                    };
+
+                    let entry_id = project.entry_for_path(&project_path, cx)?.id;
+                    let task = project.open_buffer(project_path, cx);
+
+                    Some((entry_id, task))
                 })
                 .ok()
+                .flatten()
             else {
                 return anyhow::Ok(());
             };
@@ -232,7 +241,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                         text.push_str("```\n");
 
                         context_store.insert_context(
-                            ContextKind::File,
+                            ContextKind::File(entry_id),
                             path.to_string_lossy().to_string(),
                             text,
                         );
