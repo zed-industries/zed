@@ -534,7 +534,7 @@ List of `string` values
   "git_diff": true,
   "search_results": true,
   "selected_symbol": true,
-  "diagnostics": true,
+  "diagnostics": "all",
   "axes": {
     "horizontal": true,
     "vertical": true,
@@ -669,10 +669,6 @@ List of `string` values
   "diagnostics": "information"
 }
 ```
-
-**Options**
-
-`boolean` values
 
 ### Axes
 
