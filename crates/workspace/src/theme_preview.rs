@@ -1,5 +1,7 @@
 #![allow(unused, dead_code)]
-use gpui::{actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
+use gpui::{
+    actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla, Model,
+};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
@@ -14,9 +16,9 @@ use crate::{Item, Workspace};
 actions!(debug, [OpenThemePreview]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenThemePreview, window, cx| {
-            let theme_preview = window.new_view(ThemePreview::new, cx);
+            let theme_preview = window.new_view(cx, ThemePreview::new);
             workspace.add_item_to_active_pane(Box::new(theme_preview), None, true, window, cx)
         });
     })
@@ -85,7 +87,7 @@ impl Item for ThemePreview {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(crate::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, window: &mut Window, cx: &mut AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, window: &Window, cx: &AppContext) -> Option<SharedString> {
         let name = cx.theme().name.clone();
         Some(format!("{} Preview", name).into())
     }
@@ -99,11 +101,11 @@ impl Item for ThemePreview {
         _workspace_id: Option<crate::WorkspaceId>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
-    ) -> Option<gpui::View<Self>>
+    ) -> Option<Model<Self>>
     where
         Self: Sized,
     {
-        Some(window.new_view(Self::new, cx))
+        Some(window.new_view(cx, Self::new))
     }
 }
 
@@ -151,119 +153,119 @@ impl ThemePreview {
                             .child(
                                 Label::new(label_with_contrast(
                                     "Default Text",
-                                    Color::Default.color(window, cx),
+                                    Color::Default.color(cx),
                                 ))
                                 .color(Color::Default),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Accent Text",
-                                    Color::Accent.color(window, cx),
+                                    Color::Accent.color(cx),
                                 ))
                                 .color(Color::Accent),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Conflict Text",
-                                    Color::Conflict.color(window, cx),
+                                    Color::Conflict.color(cx),
                                 ))
                                 .color(Color::Conflict),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Created Text",
-                                    Color::Created.color(window, cx),
+                                    Color::Created.color(cx),
                                 ))
                                 .color(Color::Created),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Deleted Text",
-                                    Color::Deleted.color(window, cx),
+                                    Color::Deleted.color(cx),
                                 ))
                                 .color(Color::Deleted),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Disabled Text",
-                                    Color::Disabled.color(window, cx),
+                                    Color::Disabled.color(cx),
                                 ))
                                 .color(Color::Disabled),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Error Text",
-                                    Color::Error.color(window, cx),
+                                    Color::Error.color(cx),
                                 ))
                                 .color(Color::Error),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Hidden Text",
-                                    Color::Hidden.color(window, cx),
+                                    Color::Hidden.color(cx),
                                 ))
                                 .color(Color::Hidden),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Hint Text",
-                                    Color::Hint.color(window, cx),
+                                    Color::Hint.color(cx),
                                 ))
                                 .color(Color::Hint),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Ignored Text",
-                                    Color::Ignored.color(window, cx),
+                                    Color::Ignored.color(cx),
                                 ))
                                 .color(Color::Ignored),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Info Text",
-                                    Color::Info.color(window, cx),
+                                    Color::Info.color(cx),
                                 ))
                                 .color(Color::Info),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Modified Text",
-                                    Color::Modified.color(window, cx),
+                                    Color::Modified.color(cx),
                                 ))
                                 .color(Color::Modified),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Muted Text",
-                                    Color::Muted.color(window, cx),
+                                    Color::Muted.color(cx),
                                 ))
                                 .color(Color::Muted),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Placeholder Text",
-                                    Color::Placeholder.color(window, cx),
+                                    Color::Placeholder.color(cx),
                                 ))
                                 .color(Color::Placeholder),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Selected Text",
-                                    Color::Selected.color(window, cx),
+                                    Color::Selected.color(cx),
                                 ))
                                 .color(Color::Selected),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Success Text",
-                                    Color::Success.color(window, cx),
+                                    Color::Success.color(cx),
                                 ))
                                 .color(Color::Success),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Warning Text",
-                                    Color::Warning.color(window, cx),
+                                    Color::Warning.color(cx),
                                 ))
                                 .color(Color::Warning),
                             )
