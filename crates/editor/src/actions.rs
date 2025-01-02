@@ -366,7 +366,7 @@ gpui::actions!(
         Tab,
         TabPrev,
         ToggleBreakpoint,
-        ToggleLogBreakpoint,
+        EditLogBreakpoint,
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,

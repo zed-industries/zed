@@ -1635,7 +1635,7 @@ impl DapStore {
     pub fn toggle_breakpoint_for_buffer(
         &mut self,
         project_path: &ProjectPath,
-        breakpoint: Breakpoint,
+        mut breakpoint: Breakpoint,
         buffer_path: PathBuf,
         buffer_snapshot: BufferSnapshot,
         edit_action: BreakpointEditAction,
@@ -1651,14 +1651,13 @@ impl DapStore {
                     breakpoint_set.insert(breakpoint);
                 }
             }
-            BreakpointEditAction::EditLogMessage => {
-                breakpoint_set.remove(&breakpoint);
+            BreakpointEditAction::EditLogMessage(log_message) => {
+                if matches!(&breakpoint.kind, BreakpointKind::Log(_)) {
+                    breakpoint_set.remove(&breakpoint);
+                }
 
-                if breakpoint
-                    .kind
-                    .log_message()
-                    .is_some_and(|msg| !msg.is_empty())
-                {
+                if !log_message.is_empty() {
+                    breakpoint.kind = BreakpointKind::Log(log_message.clone());
                     breakpoint_set.insert(breakpoint);
                 }
             }
@@ -1806,7 +1805,7 @@ type LogMessage = Arc<str>;
 #[derive(Clone, Debug)]
 pub enum BreakpointEditAction {
     Toggle,
-    EditLogMessage,
+    EditLogMessage(LogMessage),
 }
 
 #[derive(Clone, Debug)]
