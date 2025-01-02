@@ -7,8 +7,8 @@
 use crate::{
     point, size, AnyElement, AppContext, AvailableSpace, Bounds, ContentMask, Element, ElementId,
     GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
-    ListSizingBehavior, ModelContext, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled,
-    View, Window,
+    ListSizingBehavior, Model, ModelContext, Pixels, Render, ScrollHandle, Size, StyleRefinement,
+    Styled, Window,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -21,7 +21,7 @@ use super::ListHorizontalSizingBehavior;
 /// uniform_list will only render the visible subset of items.
 #[track_caller]
 pub fn uniform_list<I, R, V>(
-    view: View<V>,
+    view: Model<V>,
     id: I,
     item_count: usize,
     f: impl 'static + Fn(&mut V, Range<usize>, &mut Window, &mut ModelContext<V>) -> Vec<R>,
@@ -36,7 +36,7 @@ where
     base_style.overflow.y = Some(Overflow::Scroll);
 
     let render_range = move |range, window: &mut Window, cx: &mut AppContext| {
-        view.model.update(cx, |this, cx| {
+        view.update(cx, |this, cx| {
             f(this, range, window, cx)
                 .into_iter()
                 .map(|component| component.into_any_element())

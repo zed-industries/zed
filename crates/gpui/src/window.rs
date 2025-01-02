@@ -12,7 +12,7 @@ use crate::{
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene,
     Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription,
     TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
-    UnderlineStyle, View, VisualContext, WeakModel, WindowAppearance, WindowBackgroundAppearance,
+    UnderlineStyle, VisualContext, WeakModel, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     SUBPIXEL_VARIANTS,
 };
@@ -297,9 +297,15 @@ impl PartialEq<WeakFocusHandle> for FocusHandle {
 
 /// FocusableView allows users of your view to easily
 /// focus it (using cx.focus_view(view))
-pub trait FocusableView: 'static + Render {
+pub trait FocusableView: 'static {
     /// Returns the focus handle associated with this view.
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+}
+
+impl<V: FocusableView> FocusableView for Model<V> {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.read(cx).focus_handle(cx)
+    }
 }
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
@@ -4017,7 +4023,7 @@ impl<T> BorrowWindow for T where T: BorrowMut<AppContext> + BorrowMut<Window> {}
 
 impl<'a, V: 'static> ModelContext<'a, V> {
     /// Focus the given view in the given window. View type is required to implement FocusableView.
-    pub fn focus_view<W: FocusableView>(&mut self, view: &View<W>, window: &mut Window) {
+    pub fn focus_view<W: FocusableView>(&mut self, view: &Model<W>, window: &mut Window) {
         window.focus(&view.focus_handle(self));
     }
 
@@ -4549,13 +4555,11 @@ impl Window {
         &mut self,
         cx: &mut AppContext,
         build_view_state: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> View<V>
+    ) -> Model<V>
     where
         V: 'static + Render,
     {
-        View {
-            model: cx.new_model(|cx| build_view_state(self, cx)),
-        }
+        cx.new_model(|cx| build_view_state(self, cx))
     }
 
     /// Indicate that a view has changed, which will invoke any observers and also mark the window as dirty.
@@ -4589,24 +4593,24 @@ impl Window {
     /// Builds a view in the window
     pub fn update_view<V: 'static, R>(
         &mut self,
-        view: &View<V>,
+        view: &Model<V>,
         cx: &mut AppContext,
         update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
     ) -> R {
-        view.model.update(cx, |model, cx| update(model, self, cx))
+        view.update(cx, |model, cx| update(model, self, cx))
     }
 
     // todo! remove this? seems trivial
-    fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>, cx: &AppContext) {
+    fn focus_view<V: crate::FocusableView>(&mut self, view: &Model<V>, cx: &AppContext) {
         self.focus(&view.read(cx).focus_handle(cx));
     }
 
     // todo! remove this or simplify? seems trivial
-    fn dismiss_view<V>(&mut self, view: &View<V>, cx: &mut AppContext)
+    fn dismiss_view<V>(&mut self, view: &Model<V>, cx: &mut AppContext)
     where
         V: ManagedView,
     {
-        view.model.update(cx, |_model, cx| {
+        view.update(cx, |_model, cx| {
             cx.emit(DismissEvent);
         });
     }
@@ -4631,13 +4635,11 @@ impl Window {
         &mut self,
         cx: &mut AppContext,
         build_view: impl FnOnce(&mut Window, &mut ModelContext<'_, V>) -> V,
-    ) -> View<V>
+    ) -> Model<V>
     where
         V: 'static + Render,
     {
-        let view = View {
-            model: cx.new_model(|cx| build_view(self, cx)),
-        };
+        let view = cx.new_model(|cx| build_view(self, cx));
         self.root_view = Some(view.clone().into());
         self.refresh();
         view
@@ -7441,26 +7443,24 @@ impl Window {
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
     pub fn listener_for<V: Render, E>(
         &self,
-        view: &View<V>,
+        view: &Model<V>,
         f: impl Fn(&mut V, &E, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut AppContext) + 'static {
         let view = view.downgrade();
         move |e: &E, window: &mut Window, cx: &mut AppContext| {
-            view.model
-                .update(cx, |view, cx| f(view, e, window, cx))
-                .ok();
+            view.update(cx, |view, cx| f(view, e, window, cx)).ok();
         }
     }
 
     /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
     pub fn handler_for<V: Render>(
         &self,
-        view: &View<V>,
+        view: &Model<V>,
         f: impl Fn(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
     ) -> impl Fn(&mut Window, &mut AppContext) {
         let view = view.downgrade();
         move |window: &mut Window, cx: &mut AppContext| {
-            view.model.update(cx, |view, cx| f(view, window, cx)).ok();
+            view.update(cx, |view, cx| f(view, window, cx)).ok();
         }
     }
 
@@ -7545,7 +7545,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Get the root view out of this window.
     ///
     /// This will fail if the window is closed or if the root view's type does not match `V`.
-    pub fn root<C>(&self, cx: &mut C) -> Result<View<V>>
+    pub fn root<C>(&self, cx: &mut C) -> Result<Model<V>>
     where
         C: Context,
     {
@@ -7572,7 +7572,7 @@ impl<V: 'static + Render> WindowHandle<V> {
                 .downcast::<V>()
                 .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
 
-            Ok(view.model.update(cx, |view, cx| update(view, window, cx)))
+            Ok(view.update(cx, |view, cx| update(view, window, cx)))
         })?
     }
 
@@ -7608,7 +7608,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Read the root view pointer off of this window.
     ///
     /// This will fail if the window is closed or if the root view's type does not match `V`.
-    pub fn root_view<C>(&self, cx: &C) -> Result<View<V>>
+    pub fn root_view<C>(&self, cx: &C) -> Result<Model<V>>
     where
         C: Context,
     {
@@ -7699,7 +7699,7 @@ impl AnyWindowHandle {
     /// Read the state of the root view of this window.
     ///
     /// This will fail if the window has been closed.
-    pub fn read<T, C, R>(self, cx: &C, read: impl FnOnce(View<T>, &AppContext) -> R) -> Result<R>
+    pub fn read<T, C, R>(self, cx: &C, read: impl FnOnce(Model<T>, &AppContext) -> R) -> Result<R>
     where
         C: Context,
         T: 'static,

@@ -1,7 +1,7 @@
 use crate::{
     AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext, Context,
     DismissEvent, FocusableView, ForegroundExecutor, Global, Model, ModelContext, PromptLevel,
-    Render, Reservation, Result, Task, View, VisualContext, Window, WindowHandle,
+    Render, Reservation, Result, Task, VisualContext, Window, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
@@ -93,7 +93,7 @@ impl Context for AsyncAppContext {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
+        read: impl FnOnce(Model<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static,
@@ -140,7 +140,7 @@ impl AsyncAppContext {
     pub fn open_window<V>(
         &self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut Window, &mut AppContext) -> View<V>,
+        build_root_view: impl FnOnce(&mut Window, &mut AppContext) -> Model<V>,
     ) -> Result<WindowHandle<V>>
     where
         V: 'static + Render,
@@ -369,7 +369,7 @@ impl Context for AsyncWindowContext {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
+        read: impl FnOnce(Model<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static,
@@ -382,29 +382,29 @@ impl VisualContext for AsyncWindowContext {
     fn new_view<V>(
         &mut self,
         build_view_state: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> Self::Result<View<V>>
+    ) -> Self::Result<Model<V>>
     where
         V: 'static + Render,
     {
-        self.window.update(self, |_, window, cx| View {
-            model: cx.new_model(|cx| build_view_state(window, cx)),
+        self.window.update(self, |_, window, cx| {
+            cx.new_model(|cx| build_view_state(window, cx))
         })
     }
 
     fn update_view<V: 'static, R>(
         &mut self,
-        view: &View<V>,
+        view: &Model<V>,
         update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
     ) -> Self::Result<R> {
         self.window.update(self, |_, window, cx| {
-            view.model.update(cx, |model, cx| update(model, window, cx))
+            view.update(cx, |model, cx| update(model, window, cx))
         })
     }
 
     fn replace_root_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> Self::Result<View<V>>
+    ) -> Self::Result<Model<V>>
     where
         V: 'static + Render,
     {
@@ -413,7 +413,7 @@ impl VisualContext for AsyncWindowContext {
         })
     }
 
-    fn focus_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    fn focus_view<V>(&mut self, view: &Model<V>) -> Self::Result<()>
     where
         V: FocusableView,
     {
@@ -422,10 +422,10 @@ impl VisualContext for AsyncWindowContext {
         })
     }
 
-    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    fn dismiss_view<V>(&mut self, view: &Model<V>) -> Self::Result<()>
     where
         V: crate::ManagedView,
     {
-        view.model.update(self, |_, cx| cx.emit(DismissEvent))
+        view.update(self, |_, cx| cx.emit(DismissEvent))
     }
 }

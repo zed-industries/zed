@@ -38,8 +38,7 @@ use crate::{
     Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, View, Window, WindowAppearance, WindowHandle,
-    WindowId,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -555,7 +554,7 @@ impl AppContext {
     pub fn open_window<V: 'static + Render>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut Window, &mut AppContext) -> View<V>,
+        build_root_view: impl FnOnce(&mut Window, &mut AppContext) -> Model<V>,
     ) -> anyhow::Result<WindowHandle<V>> {
         self.update(|cx| {
             let id = cx.windows.insert(None);
@@ -1091,7 +1090,6 @@ impl AppContext {
                     any_view
                         .downcast::<V>()
                         .unwrap()
-                        .model
                         .update(cx, |view_state, cx| {
                             on_new(view_state, window, cx);
                         })
@@ -1527,7 +1525,7 @@ impl Context for AppContext {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
+        read: impl FnOnce(Model<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static,

@@ -1,6 +1,6 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId,
-    EventEmitter, Model, Reservation, Subscription, Task, View, WeakModel, Window, WindowHandle,
+    EventEmitter, Model, Reservation, Subscription, Task, WeakModel, Window, WindowHandle,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -285,7 +285,7 @@ impl<'a, T> Context for ModelContext<'a, T> {
     fn read_window<U, R>(
         &self,
         window: &WindowHandle<U>,
-        read: impl FnOnce(View<U>, &AppContext) -> R,
+        read: impl FnOnce(Model<U>, &AppContext) -> R,
     ) -> Result<R>
     where
         U: 'static,

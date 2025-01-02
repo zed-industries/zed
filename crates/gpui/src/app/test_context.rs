@@ -4,7 +4,7 @@ use crate::{
     Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, View, VisualContext, Window,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
     WindowBounds, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
@@ -86,7 +86,7 @@ impl Context for TestAppContext {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
+        read: impl FnOnce(Model<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static,
@@ -191,9 +191,7 @@ impl TestAppContext {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| View {
-                model: cx.new_model(|cx| build_window(window, cx)),
-            },
+            |window, cx| cx.new_model(|cx| build_window(window, cx)),
         )
         .unwrap()
     }
@@ -208,9 +206,7 @@ impl TestAppContext {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| View {
-                    model: cx.new_model(|_| Empty),
-                },
+                |window, cx| cx.new_model(|_| Empty),
             )
             .unwrap();
         drop(cx);
@@ -222,7 +218,10 @@ impl TestAppContext {
     /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
     /// as a `WindowContext` for the rest of the test. Typically you would shadow this context with
     /// the returned one. `let (view, cx) = cx.add_window_view(...);`
-    pub fn add_window_view<F, V>(&mut self, build_root_view: F) -> (View<V>, &mut VisualTestContext)
+    pub fn add_window_view<F, V>(
+        &mut self,
+        build_root_view: F,
+    ) -> (Model<V>, &mut VisualTestContext)
     where
         F: FnOnce(&mut Window, &mut ModelContext<V>) -> V,
         V: 'static + Render,
@@ -235,9 +234,7 @@ impl TestAppContext {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| View {
-                    model: cx.new_model(|cx| build_root_view(window, cx)),
-                },
+                |window, cx| cx.new_model(|cx| build_root_view(window, cx)),
             )
             .unwrap();
         drop(cx);
@@ -526,33 +523,34 @@ impl<T: 'static> Model<T> {
         }
     }
 
-    /// Returns a future that resolves when the model notifies.
-    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
-        use postage::prelude::{Sink as _, Stream as _};
+    // todo! remove
+    // /// Returns a future that resolves when the model notifies.
+    // pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+    //     use postage::prelude::{Sink as _, Stream as _};
 
-        let (mut tx, mut rx) = postage::mpsc::channel(1);
-        let mut cx = cx.app.borrow_mut();
-        let subscription = cx.observe(self, move |_, _| {
-            tx.try_send(()).ok();
-        });
+    //     let (mut tx, mut rx) = postage::mpsc::channel(1);
+    //     let mut cx = cx.app.borrow_mut();
+    //     let subscription = cx.observe(self, move |_, _| {
+    //         tx.try_send(()).ok();
+    //     });
 
-        let duration = if std::env::var("CI").is_ok() {
-            Duration::from_secs(5)
-        } else {
-            Duration::from_secs(1)
-        };
+    //     let duration = if std::env::var("CI").is_ok() {
+    //         Duration::from_secs(5)
+    //     } else {
+    //         Duration::from_secs(1)
+    //     };
 
-        async move {
-            let notification = crate::util::timeout(duration, rx.recv())
-                .await
-                .expect("next notification timed out");
-            drop(subscription);
-            notification.expect("model dropped while test was waiting for its next notification")
-        }
-    }
+    //     async move {
+    //         let notification = crate::util::timeout(duration, rx.recv())
+    //             .await
+    //             .expect("next notification timed out");
+    //         drop(subscription);
+    //         notification.expect("model dropped while test was waiting for its next notification")
+    //     }
+    // }
 }
 
-impl<V: 'static> View<V> {
+impl<V: 'static> Model<V> {
     /// Returns a future that resolves when the view is next updated.
     pub fn next_notification(
         &self,
@@ -584,7 +582,7 @@ impl<V: 'static> View<V> {
     }
 }
 
-impl<V> View<V> {
+impl<V> Model<V> {
     /// Returns a future that resolves when the condition becomes true.
     pub fn condition<Evt>(
         &self,
@@ -936,7 +934,7 @@ impl Context for VisualTestContext {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
+        read: impl FnOnce(Model<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static,
@@ -949,7 +947,7 @@ impl VisualContext for VisualTestContext {
     fn new_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> Self::Result<View<V>>
+    ) -> Self::Result<Model<V>>
     where
         V: 'static + Render,
     {
@@ -962,7 +960,7 @@ impl VisualContext for VisualTestContext {
 
     fn update_view<V: 'static, R>(
         &mut self,
-        view: &View<V>,
+        view: &Model<V>,
         update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
     ) -> Self::Result<R> {
         self.window
@@ -975,7 +973,7 @@ impl VisualContext for VisualTestContext {
     fn replace_root_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> Self::Result<View<V>>
+    ) -> Self::Result<Model<V>>
     where
         V: 'static + Render,
     {
@@ -986,7 +984,7 @@ impl VisualContext for VisualTestContext {
             .unwrap()
     }
 
-    fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
+    fn focus_view<V: crate::FocusableView>(&mut self, view: &Model<V>) -> Self::Result<()> {
         self.window
             .update(&mut self.cx, |_, window, cx| {
                 view.read(cx).focus_handle(cx).clone().focus(window)
@@ -994,13 +992,13 @@ impl VisualContext for VisualTestContext {
             .unwrap()
     }
 
-    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    fn dismiss_view<V>(&mut self, view: &Model<V>) -> Self::Result<()>
     where
         V: crate::ManagedView,
     {
         self.window
             .update(&mut self.cx, |_, window, cx| {
-                view.model.update(cx, |_, cx| cx.emit(crate::DismissEvent))
+                view.update(cx, |_, cx| cx.emit(crate::DismissEvent))
             })
             .unwrap()
     }
@@ -1012,7 +1010,7 @@ impl AnyWindowHandle {
         &self,
         cx: &mut TestAppContext,
         build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> View<V> {
+    ) -> Model<V> {
         self.update(cx, |_, window, cx| window.new_view(cx, build_view))
             .unwrap()
     }

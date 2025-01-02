@@ -208,7 +208,7 @@ pub trait Context {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(View<T>, &AppContext) -> R,
+        read: impl FnOnce(Model<T>, &AppContext) -> R,
     ) -> Result<R>
     where
         T: 'static;
@@ -232,14 +232,14 @@ pub trait VisualContext: Context {
     fn new_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> Self::Result<View<V>>
+    ) -> Self::Result<Model<V>>
     where
         V: 'static + Render;
 
     /// Update a view with the given callback
     fn update_view<V: 'static, R>(
         &mut self,
-        view: &View<V>,
+        view: &Model<V>,
         update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
     ) -> Self::Result<R>;
 
@@ -247,17 +247,17 @@ pub trait VisualContext: Context {
     fn replace_root_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> Self::Result<View<V>>
+    ) -> Self::Result<Model<V>>
     where
         V: 'static + Render;
 
     /// Focus a view in the window, if it implements the [`FocusableView`] trait.
-    fn focus_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    fn focus_view<V>(&mut self, view: &Model<V>) -> Self::Result<()>
     where
         V: FocusableView;
 
     /// Dismiss a view in the window, if it implements the [`ManagedView`] trait.
-    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    fn dismiss_view<V>(&mut self, view: &Model<V>) -> Self::Result<()>
     where
         V: ManagedView;
 }

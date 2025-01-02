@@ -1,4 +1,6 @@
-use crate::{AppContext, Bounds, InputHandler, ModelContext, Pixels, UTF16Selection, View, Window};
+use crate::{
+    AppContext, Bounds, InputHandler, Model, ModelContext, Pixels, UTF16Selection, Window,
+};
 use std::ops::Range;
 
 /// Implement this trait to allow views to handle textual input when implementing an editor, field, etc.
@@ -67,7 +69,7 @@ pub trait ViewInputHandler: 'static + Sized {
 /// The canonical implementation of [`PlatformInputHandler`]. Call [`WindowContext::handle_input`]
 /// with an instance during your element's paint.
 pub struct ElementInputHandler<V> {
-    view: View<V>,
+    view: Model<V>,
     element_bounds: Bounds<Pixels>,
 }
 
@@ -76,7 +78,7 @@ impl<V: 'static> ElementInputHandler<V> {
     /// containing view.
     ///
     /// [element_paint]: crate::Element::paint
-    pub fn new(element_bounds: Bounds<Pixels>, view: View<V>) -> Self {
+    pub fn new(element_bounds: Bounds<Pixels>, view: Model<V>) -> Self {
         ElementInputHandler {
             view,
             element_bounds,
@@ -91,7 +93,7 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<UTF16Selection> {
-        self.view.model.update(cx, |view, cx| {
+        self.view.update(cx, |view, cx| {
             view.selected_text_range(ignore_disabled_input, window, cx)
         })
     }
@@ -102,7 +104,6 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
         cx: &mut AppContext,
     ) -> Option<Range<usize>> {
         self.view
-            .model
             .update(cx, |view, cx| view.marked_text_range(window, cx))
     }
 
@@ -113,7 +114,7 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<String> {
-        self.view.model.update(cx, |view, cx| {
+        self.view.update(cx, |view, cx| {
             view.text_for_range(range_utf16, adjusted_range, window, cx)
         })
     }
@@ -125,7 +126,7 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.view.model.update(cx, |view, cx| {
+        self.view.update(cx, |view, cx| {
             view.replace_text_in_range(replacement_range, text, window, cx)
         });
     }
@@ -138,7 +139,7 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.view.model.update(cx, |view, cx| {
+        self.view.update(cx, |view, cx| {
             view.replace_and_mark_text_in_range(
                 range_utf16,
                 new_text,
@@ -151,7 +152,6 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
 
     fn unmark_text(&mut self, window: &mut Window, cx: &mut AppContext) {
         self.view
-            .model
             .update(cx, |view, cx| view.unmark_text(window, cx));
     }
 
@@ -161,7 +161,7 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Bounds<Pixels>> {
-        self.view.model.update(cx, |view, cx| {
+        self.view.update(cx, |view, cx| {
             view.bounds_for_range(range_utf16, self.element_bounds, window, cx)
         })
     }

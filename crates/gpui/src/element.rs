@@ -118,7 +118,7 @@ impl<T: IntoElement> FluentBuilder for T {}
 /// models. Views are drawn to the screen and care about the current window's state, models are not and do not.
 pub trait Render: 'static + Sized {
     /// Render this view into an element tree.
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement;
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<'_, Self>) -> impl IntoElement;
 }
 
 impl Render for Empty {
