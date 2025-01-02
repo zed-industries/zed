@@ -1955,14 +1955,15 @@ impl Pane {
     }
 
     fn pin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
-        if self.is_active_preview_item(self.items[ix].item_id()) {
-            self.set_preview_item_id(None, cx);
-        }
         maybe!({
             let pane = cx.view().clone();
             let destination_index = self.pinned_tab_count.min(ix);
             self.pinned_tab_count += 1;
             let id = self.item_for_index(ix)?.item_id();
+
+            if self.is_active_preview_item(id) {
+                self.set_preview_item_id(None, cx);
+            }
 
             self.workspace
                 .update(cx, |_, cx| {
