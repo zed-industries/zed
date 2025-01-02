@@ -155,7 +155,7 @@ impl FeedbackModal {
                         })?;
                         let system_specs = system_specs.await;
 
-                        workspace.update(&mut cx, |workspace, cx| {
+                        workspace.update_in(&mut cx, |workspace, window, cx| {
                             workspace.toggle_modal(window, cx, move |window, cx| {
                                 FeedbackModal::new(system_specs, project, buffer, window, cx)
                             });
@@ -176,7 +176,7 @@ impl FeedbackModal {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let email_address_editor = window.new_view(cx, |cx| {
+        let email_address_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Email address (optional)", window, cx);
 
@@ -187,7 +187,7 @@ impl FeedbackModal {
             editor
         });
 
-        let feedback_editor = window.new_view(cx, |cx| {
+        let feedback_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), window, cx);
             editor.set_placeholder_text(
                 "You can use markdown to organize your feedback with code and links.",
@@ -202,23 +202,19 @@ impl FeedbackModal {
             editor
         });
 
-        cx.subscribe_in(
-            &feedback_editor,
-            window,
-            |this, editor, event: &EditorEvent, window, cx| {
-                if matches!(event, EditorEvent::Edited { .. }) {
-                    this.character_count = editor
-                        .read(cx)
-                        .buffer()
-                        .read(cx)
-                        .as_singleton()
-                        .expect("Feedback editor is never a multi-buffer")
-                        .read(cx)
-                        .len() as i32;
-                    cx.notify();
-                }
-            },
-        )
+        cx.subscribe(&feedback_editor, |this, editor, event: &EditorEvent, cx| {
+            if matches!(event, EditorEvent::Edited { .. }) {
+                this.character_count = editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("Feedback editor is never a multi-buffer")
+                    .read(cx)
+                    .len() as i32;
+                cx.notify();
+            }
+        })
         .detach();
 
         Self {
@@ -273,7 +269,7 @@ impl FeedbackModal {
                     }
                     Err(error) => {
                         log::error!("{}", error);
-                        this.update(&mut cx, |this, cx| {
+                        this.update_in(&mut cx, |this, window, cx| {
                             let prompt = window.prompt(
                                 PromptLevel::Critical,
                                 FEEDBACK_SUBMISSION_ERROR_TEXT,

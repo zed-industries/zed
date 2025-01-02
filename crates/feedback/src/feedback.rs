@@ -46,7 +46,7 @@ fn file_bug_report_url(specs: &SystemSpecs) -> String {
 }
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, cx| {
+    cx.observe_new_views(|workspace: &mut Workspace, window, cx| {
         feedback_modal::FeedbackModal::register(workspace, window, cx);
         workspace
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, window, cx| {
