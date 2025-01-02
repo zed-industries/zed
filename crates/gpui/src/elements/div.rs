@@ -1417,19 +1417,6 @@ impl Interactivity {
                             None
                         };
 
-                        let invalidate_tooltip = hitbox
-                            .as_ref()
-                            .map_or(true, |hitbox| !hitbox.bounds.contains(&cx.mouse_position()));
-                        if invalidate_tooltip {
-                            if let Some(active_tooltip) = element_state
-                                .as_ref()
-                                .and_then(|state| state.active_tooltip.as_ref())
-                            {
-                                *active_tooltip.borrow_mut() = None;
-                                self.tooltip_id = None;
-                            }
-                        }
-
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
                         let result = f(&style, scroll_offset, hitbox, cx);
                         (result, element_state)
@@ -1936,6 +1923,7 @@ impl Interactivity {
                 cx.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
                     let hitbox = hitbox.clone();
+                    let source_bounds = hitbox.bounds;
                     let tooltip_id = self.tooltip_id;
                     move |_: &MouseMoveEvent, phase, cx| {
                         let is_hovered =
@@ -1965,6 +1953,8 @@ impl Interactivity {
                                             tooltip: Some(AnyTooltip {
                                                 view: build_tooltip(cx),
                                                 mouse_position: cx.mouse_position(),
+                                                hoverable: tooltip_is_hoverable,
+                                                origin_bounds: source_bounds,
                                             }),
                                             _task: None,
                                         });

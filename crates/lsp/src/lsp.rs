@@ -285,6 +285,7 @@ impl<F: Future> LspRequestFuture<F::Output> for LspRequest<F> {
 }
 
 /// Combined capabilities of the server and the adapter.
+#[derive(Debug)]
 pub struct AdapterServerCapabilities {
     // Reported capabilities by the server
     pub server_capabilities: ServerCapabilities,

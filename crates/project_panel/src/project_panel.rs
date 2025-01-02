@@ -4252,6 +4252,10 @@ impl Panel for ProjectPanel {
                 .map_or(false, |entry| entry.is_dir())
         })
     }
+
+    fn activation_priority(&self) -> u32 {
+        0
+    }
 }
 
 impl FocusableView for ProjectPanel {
