@@ -2461,7 +2461,6 @@ impl ProjectPanel {
                 entry_iter.advance();
             }
 
-            snapshot.propagate_git_statuses(&mut visible_worktree_entries);
             project::sort_worktree_entries(&mut visible_worktree_entries);
 
             self.visible_entries

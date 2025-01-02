@@ -2515,10 +2515,8 @@ impl OutlinePanel {
                 .background_executor()
                 .spawn(async move {
                     let mut processed_external_buffers = HashSet::default();
-                    let mut new_worktree_entries = HashMap::<
-                        WorktreeId,
-                        (worktree::Snapshot, HashMap<ProjectEntryId, GitEntry>),
-                    >::default();
+                    let mut new_worktree_entries =
+                        HashMap::<WorktreeId, HashMap<ProjectEntryId, GitEntry>>::default();
                     let mut worktree_excerpts = HashMap::<
                         WorktreeId,
                         HashMap<ProjectEntryId, (BufferId, Vec<ExcerptId>)>,
@@ -2604,8 +2602,7 @@ impl OutlinePanel {
                                     }
                                     new_worktree_entries
                                         .entry(worktree_id)
-                                        .or_insert_with(|| (worktree.clone(), HashMap::default()))
-                                        .1
+                                        .or_insert_with(|| HashMap::default())
                                         .extend(entries_to_add);
                                 }
                                 None => {
@@ -2630,11 +2627,9 @@ impl OutlinePanel {
 
                     let worktree_entries = new_worktree_entries
                         .into_iter()
-                        .map(|(worktree_id, (worktree_snapshot, entries))| {
+                        .map(|(worktree_id, entries)| {
                             let mut entries = entries.into_values().collect::<Vec<_>>();
-                            // For a proper git status propagation, we have to keep the entries sorted lexicographically.
                             entries.sort_by(|a, b| a.path.as_ref().cmp(b.path.as_ref()));
-                            worktree_snapshot.propagate_git_statuses(&mut entries);
                             (worktree_id, entries)
                         })
                         .flat_map(|(worktree_id, entries)| {

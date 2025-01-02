@@ -1,6 +1,6 @@
 use crate::{
-    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, GitEntry, PathChange, Snapshot,
-    Worktree, WorktreeModelHandle,
+    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, Snapshot, Worktree,
+    WorktreeModelHandle,
 };
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
@@ -1498,7 +1498,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new(""), Some(GitFileStatus::Modified)), // This is testing our propogation stuff, which we just said we wouldn't do
@@ -2856,7 +2856,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new(""), Some(GitFileStatus::Conflict)),
@@ -2865,7 +2865,8 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
         ],
     );
 
-    check_propagated_statuses(
+    dbg!("******************************************");
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new(""), Some(GitFileStatus::Conflict)),
@@ -2882,7 +2883,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
         ],
     );
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("a/b"), Some(GitFileStatus::Added)),
@@ -2897,7 +2898,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
         ],
     );
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
@@ -2968,7 +2969,7 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("x"), Some(GitFileStatus::Added)),
@@ -2976,7 +2977,7 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
         ],
     );
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("y"), Some(GitFileStatus::Conflict)),
@@ -2985,7 +2986,7 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
         ],
     );
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("z"), Some(GitFileStatus::Modified)),
@@ -2993,7 +2994,7 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
         ],
     );
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("x"), Some(GitFileStatus::Added)),
@@ -3001,7 +3002,7 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
         ],
     );
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("x"), Some(GitFileStatus::Added)),
@@ -3079,7 +3080,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
     // Sanity check the propagation for x/y and z
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("x/y"), Some(GitFileStatus::Conflict)), // the y git repository has conflict file in it, and so should have a conflict status
@@ -3087,7 +3088,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
             (Path::new("x/y/y2.txt"), None),
         ],
     );
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("z"), Some(GitFileStatus::Added)),
@@ -3097,7 +3098,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     );
 
     // Test one of the fundamental cases of propogation blocking, the transition from one git repository to another
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("x"), Some(GitFileStatus::Modified)),
@@ -3107,7 +3108,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     );
 
     // Sanity check everything around it
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new("x"), Some(GitFileStatus::Modified)),
@@ -3121,7 +3122,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     );
 
     // Test the other fundamental case, transitioning from git repository to non-git repository
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new(""), None),
@@ -3131,7 +3132,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     );
 
     // And all together now
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
             (Path::new(""), None),
@@ -3170,29 +3171,6 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
         let entry = tree.entry_for_path("").unwrap();
         assert!(entry.is_private);
     });
-}
-
-#[track_caller]
-fn check_propagated_statuses(
-    snapshot: &Snapshot,
-    expected_statuses: &[(&Path, Option<GitFileStatus>)],
-) {
-    //let mut entries = expected_statuses
-    //    .iter()
-    //    .map(|(path, _)| GitEntry {
-    //        entry: snapshot.entry_for_path(path).unwrap().clone(),
-    //        git_status: None,
-    //    })
-    //    .collect::<Vec<_>>();
-    //snapshot.propagate_git_statuses(&mut entries);
-    //assert_eq!(
-    //    entries
-    //        .iter()
-    //        .map(|e| (e.path.as_ref(), e.git_status))
-    //        .collect::<Vec<_>>(),
-    //    expected_statuses
-    //);
-    check_git_statuses(snapshot, expected_statuses);
 }
 
 #[track_caller]

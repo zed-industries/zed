@@ -568,6 +568,7 @@ impl GitPanel {
                 work_directory = Some(worktree::WorkDirectory::clone(repository));
             }
 
+            // TODO use the GitTraversal
             // let mut visible_worktree_entries = snapshot
             //     .entries(false, 0)
             //     .filter(|entry| !entry.is_external)
