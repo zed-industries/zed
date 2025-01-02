@@ -529,7 +529,7 @@ pub fn show_link_definition(
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, url)) = find_url(&buffer, buffer_position, window, cx) {
+                    if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
                         this.update(&mut cx, |_, _| {
                             let range = maybe!({
                                 let start =

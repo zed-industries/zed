@@ -96,11 +96,11 @@ impl RenderOnce for BufferFontFamilyControl {
                         menu = menu.custom_entry(
                             {
                                 let font_name = font_name.clone();
-                                move |_cx| Label::new(font_name.clone()).into_any_element()
+                                move |_window, _cx| Label::new(font_name.clone()).into_any_element()
                             },
                             {
                                 let font_name = font_name.clone();
-                                move |cx| {
+                                move |_window, cx| {
                                     Self::write(font_name.clone(), cx);
                                 }
                             },
@@ -198,7 +198,7 @@ impl RenderOnce for BufferFontWeightControl {
                         menu = menu.custom_entry(
                             move |_window, _cx| Label::new(weight.0.to_string()).into_any_element(),
                             {
-                                move |cx| {
+                                move |window, cx| {
                                     Self::write(weight, cx);
                                 }
                             },
