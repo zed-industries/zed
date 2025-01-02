@@ -205,7 +205,7 @@ mod tests {
             LabelPresence::KnownAbsent,
         );
         let mut visited_paths = BTreeSet::new();
-        trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, nodes| {
+        trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, _nodes| {
             // Assert that we only ever visit a path once.
             assert!(visited_paths.insert(path.clone()));
             ControlFlow::Continue(())
@@ -213,7 +213,7 @@ mod tests {
         assert_eq!(visited_paths.len(), 3);
         trie.remove(&TriePath::from(Path::new("a/b/")));
         let mut visited_paths = BTreeSet::new();
-        trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, nodes| {
+        trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, _nodes| {
             // Assert that we only ever visit a path once.
             assert!(visited_paths.insert(path.clone()));
             ControlFlow::Continue(())
