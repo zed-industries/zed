@@ -35,7 +35,12 @@ jobs:
       - name: Check for non-docs changes
         id: check_changes
         run: |
-          if git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep -qvE '^docs/'; then
+          if [ "${{ github.event_name }}" == "merge_group" ]; then
+            # When we're running in a merge queue, never assume that the changes
+            # are docs-only, as there could be other PRs in the group that
+            # contain non-docs changes.
+            echo "docs_only=false" >> $GITHUB_OUTPUT
+          elif git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep -qvE '^docs/'; then
             echo "docs_only=false" >> $GITHUB_OUTPUT
           else
             echo "docs_only=true" >> $GITHUB_OUTPUT
