@@ -21,7 +21,7 @@ use ui::{
     h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
     FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
     LabelSize, LinkPreview, ModelContext, StatefulInteractiveElement, StyledExt, StyledImage,
-    ToggleState, Tooltip, VisibleOnHover, VisualContext as _, Window,
+    ToggleState, Tooltip, VisibleOnHover,
 };
 use workspace::Workspace;
 
@@ -195,7 +195,7 @@ fn render_markdown_list_item(
                     |this, callback| {
                         this.on_click({
                             let range = range.clone();
-                            move |selection, cx| {
+                            move |selection, window, cx| {
                                 let checked = match selection {
                                     ToggleState::Selected => true,
                                     ToggleState::Unselected => false,
@@ -203,7 +203,7 @@ fn render_markdown_list_item(
                                 };
 
                                 if window.modifiers().secondary() {
-                                    callback(checked, range.clone(), cx);
+                                    callback(checked, range.clone(), window, cx);
                                 }
                             }
                         })
@@ -211,7 +211,7 @@ fn render_markdown_list_item(
                 ),
             )
             .hover(|s| s.cursor_pointer())
-            .tooltip(|cx| {
+            .tooltip(|window, cx| {
                 InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", window, cx).into()
             })
             .into_any_element(),
@@ -386,7 +386,7 @@ fn render_markdown_code_block(
         .icon_size(IconSize::Small)
         .on_click({
             let contents = parsed.contents.clone();
-            move |_, cx| {
+            move |_, _window, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(contents.to_string()));
             }
         })
@@ -473,7 +473,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                         .tooltip({
                             let links = links.clone();
                             let link_ranges = link_ranges.clone();
-                            move |idx, cx| {
+                            move |idx, window, cx| {
                                 for (ix, range) in link_ranges.iter().enumerate() {
                                     if range.contains(&idx) {
                                         return Some(LinkPreview::new(
@@ -488,11 +488,11 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                         })
                         .on_click(
                             link_ranges,
-                            move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
-                                Link::Web { url } => window_cx.open_url(url),
+                            move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
+                                Link::Web { url } => cx.open_url(url),
                                 Link::Path { path, .. } => {
                                     if let Some(workspace) = &workspace {
-                                        _ = workspace.update(window_cx, |workspace, cx| {
+                                        _ = workspace.update(cx, |workspace, cx| {
                                             workspace
                                                 .open_abs_path(path.clone(), false, window, cx)
                                                 .detach();
@@ -525,7 +525,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                     }))
                     .tooltip({
                         let link = image.link.clone();
-                        move |cx| {
+                        move |window, cx| {
                             InteractiveMarkdownElementTooltip::new(
                                 Some(link.to_string()),
                                 "open image",
@@ -538,7 +538,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                     .on_click({
                         let workspace = workspace_clone.clone();
                         let link = image.link.clone();
-                        move |_, cx| {
+                        move |_, window, cx| {
                             if window.modifiers().secondary() {
                                 match &link {
                                     Link::Web { url } => cx.open_url(url),

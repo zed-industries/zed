@@ -20,7 +20,7 @@ impl QuickActionBar {
             workspace.update(cx, |workspace, cx| {
                 active_editor_is_markdown =
                     MarkdownPreviewView::resolve_active_item_as_markdown_editor(
-                        workspace, window, cx,
+                        workspace, cx,
                     )
                     .is_some();
             });
