@@ -82,7 +82,7 @@ impl ModalLayer {
                 return;
             }
         }
-        let new_modal = window.new_view(build_view, cx);
+        let new_modal = window.new_view(cx, build_view);
         self.show_modal(new_modal, window, cx);
     }
 
@@ -126,7 +126,7 @@ impl ModalLayer {
             return false;
         };
 
-        match active_modal.modal.on_before_dismiss(cx) {
+        match active_modal.modal.on_before_dismiss(window, cx) {
             DismissDecision::Dismiss(dismiss) => {
                 self.dismiss_on_focus_lost = !dismiss;
                 if !dismiss {
