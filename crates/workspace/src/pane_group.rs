@@ -686,7 +686,7 @@ impl PaneAxis {
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &Model<Pane>,
-        zoomed: Option<&AnyWeakModel>,
+        zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
@@ -1249,7 +1249,7 @@ mod element {
 
             window.on_mouse_event({
                 let dragged_handle = layout.dragged_handle.clone();
-                move |_: &MouseUpEvent, phase, _cx| {
+                move |_: &MouseUpEvent, phase, _window, _cx| {
                     if phase.bubble() {
                         dragged_handle.replace(None);
                     }
