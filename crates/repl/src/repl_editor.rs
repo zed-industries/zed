@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use editor::Editor;
-use gpui::{Window, AppContext, Model, prelude::*, Entity,  WeakView, };
+use gpui::{Window, AppContext, Model, prelude::*, Entity,  WeakModel, };
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
 
@@ -17,7 +17,7 @@ use crate::{
 
 pub fn assign_kernelspec(
     kernel_specification: KernelSpecification,
-    weak_editor: WeakView<Editor>,
+    weak_editor: WeakModel<Editor>,
     window: &mut Window, cx: &mut AppContext,
 ) -> Result<()> {
     let store = ReplStore::global(cx);
@@ -70,7 +70,7 @@ pub fn assign_kernelspec(
     Ok(())
 }
 
-pub fn run(editor: WeakView<Editor>, move_down: bool, window: &mut Window, cx: &mut AppContext) -> Result<()> {
+pub fn run(editor: WeakModel<Editor>, move_down: bool, window: &mut Window, cx: &mut AppContext) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
         return Ok(());
@@ -164,7 +164,7 @@ pub enum SessionSupport {
 }
 
 pub fn worktree_id_for_editor(
-    editor: WeakView<Editor>,
+    editor: WeakModel<Editor>,
     window: &mut Window, cx: &mut AppContext,
 ) -> Option<WorktreeId> {
     editor.upgrade().and_then(|editor| {
@@ -179,7 +179,7 @@ pub fn worktree_id_for_editor(
     })
 }
 
-pub fn session(editor: WeakView<Editor>, window: &mut Window, cx: &mut AppContext) -> SessionSupport {
+pub fn session(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppContext) -> SessionSupport {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
 
@@ -213,7 +213,7 @@ pub fn session(editor: WeakView<Editor>, window: &mut Window, cx: &mut AppContex
     }
 }
 
-pub fn clear_outputs(editor: WeakView<Editor>, window: &mut Window, cx: &mut AppContext) {
+pub fn clear_outputs(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
@@ -225,7 +225,7 @@ pub fn clear_outputs(editor: WeakView<Editor>, window: &mut Window, cx: &mut App
     });
 }
 
-pub fn interrupt(editor: WeakView<Editor>, window: &mut Window, cx: &mut AppContext) {
+pub fn interrupt(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
@@ -238,7 +238,7 @@ pub fn interrupt(editor: WeakView<Editor>, window: &mut Window, cx: &mut AppCont
     });
 }
 
-pub fn shutdown(editor: WeakView<Editor>, window: &mut Window, cx: &mut AppContext) {
+pub fn shutdown(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
@@ -251,7 +251,7 @@ pub fn shutdown(editor: WeakView<Editor>, window: &mut Window, cx: &mut AppConte
     });
 }
 
-pub fn restart(editor: WeakView<Editor>, window: &mut Window, cx: &mut AppContext) {
+pub fn restart(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppContext) {
     let Some(editor) = editor.upgrade() else {
         return;
     };
@@ -272,7 +272,7 @@ pub fn restart(editor: WeakView<Editor>, window: &mut Window, cx: &mut AppContex
     });
 }
 
-pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakView<Editor>) {
+pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakModel<Editor>) {
     editor
         .register_action({
             let editor_handle = editor_handle.clone();
@@ -448,7 +448,7 @@ fn language_supported(language: &Arc<Language>) -> bool {
     }
 }
 
-fn get_language(editor: WeakView<Editor>, window: &mut Window, cx: &mut AppContext) -> Option<Arc<Language>> {
+fn get_language(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppContext) -> Option<Arc<Language>> {
     editor
         .update(cx, |editor, cx| {
             let selection = editor.selections.newest::<usize>(cx);

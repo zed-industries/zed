@@ -6,7 +6,7 @@ use crate::PromptBuilder;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult};
 use feature_flags::FeatureFlag;
-use gpui::{AppContext, Task, WeakView, Window};
+use gpui::{AppContext, Task, WeakModel, Window};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRegistry, LanguageModelTool};
 use schemars::JsonSchema;
@@ -67,7 +67,7 @@ impl SlashCommand for ProjectSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
+        _workspace: Option<WeakModel<Workspace>>,
         _window: &mut Window,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -79,7 +79,7 @@ impl SlashCommand for ProjectSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<Anchor>],
         context_buffer: language::BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut Window,
         cx: &mut AppContext,

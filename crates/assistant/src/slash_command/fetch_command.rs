@@ -9,7 +9,7 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use futures::AsyncReadExt;
-use gpui::{Task, WeakView};
+use gpui::{Task, WeakModel};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{BufferSnapshot, LspAdapterDelegate};
@@ -124,7 +124,7 @@ impl SlashCommand for FetchSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
+        _workspace: Option<WeakModel<Workspace>>,
         _window: &mut Window,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -136,7 +136,7 @@ impl SlashCommand for FetchSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut Window,
         cx: &mut AppContext,

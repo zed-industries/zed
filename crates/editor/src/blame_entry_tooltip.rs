@@ -3,7 +3,7 @@ use git::blame::BlameEntry;
 use git::Oid;
 use gpui::{
     AppContext, Asset, ClipboardItem, Element, ParentElement, Render, ScrollHandle,
-    StatefulInteractiveElement, WeakView,
+    StatefulInteractiveElement, WeakModel,
 };
 use settings::Settings;
 use std::hash::Hash;
@@ -95,7 +95,7 @@ pub(crate) struct BlameEntryTooltip {
     blame_entry: BlameEntry,
     details: Option<CommitDetails>,
     editor_style: EditorStyle,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakModel<Workspace>>,
     scroll_handle: ScrollHandle,
 }
 
@@ -104,7 +104,7 @@ impl BlameEntryTooltip {
         blame_entry: BlameEntry,
         details: Option<CommitDetails>,
         style: &EditorStyle,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
     ) -> Self {
         Self {
             editor_style: style.clone(),

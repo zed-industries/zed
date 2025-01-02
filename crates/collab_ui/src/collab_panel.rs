@@ -16,7 +16,7 @@ use gpui::{
     EventEmitter, FocusHandle, FocusableView, FontStyle, InteractiveElement, IntoElement,
     ListOffset, ListState, Model, ModelContext, MouseDownEvent, ParentElement, Pixels, Point,
     PromptLevel, Render, SharedString, Styled, Subscription, Task, TextStyle, VisualContext,
-    WeakView, Window,
+    WeakModel, Window,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -127,7 +127,7 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -320,7 +320,7 @@ impl CollabPanel {
     }
 
     pub async fn load(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window: &mut Window,
         cx: &mut AppContext,
     ) -> anyhow::Result<Model<Self>> {
@@ -2526,7 +2526,7 @@ impl CollabPanel {
             .id(github_login.clone())
             .group("")
             .child(item)
-            .tooltip(move |cx| {
+            .tooltip(move |window, cx| {
                 let text = if !online {
                     format!(" {} is offline", &github_login)
                 } else if busy {
@@ -2567,13 +2567,13 @@ impl CollabPanel {
                         this.respond_to_contact_request(user_id, false, cx);
                     }))
                     .icon_color(color)
-                    .tooltip(|cx| Tooltip::text("Decline invite", cx)),
+                    .tooltip(|cx| Tooltip::text("Decline invite", window, cx)),
                 IconButton::new("accept-contact", IconName::Check)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, true, cx);
                     }))
                     .icon_color(color)
-                    .tooltip(|cx| Tooltip::text("Accept invite", cx)),
+                    .tooltip(|cx| Tooltip::text("Accept invite", window, cx)),
             ]
         } else {
             let github_login = github_login.clone();
@@ -2582,7 +2582,7 @@ impl CollabPanel {
                     this.remove_contact(user_id, &github_login, cx);
                 }))
                 .icon_color(color)
-                .tooltip(|cx| Tooltip::text("Cancel invite", cx))]
+                .tooltip(|cx| Tooltip::text("Cancel invite", window, cx))]
         };
 
         ListItem::new(github_login.clone())

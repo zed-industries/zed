@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{
     list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
     ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, WeakView,
+    TextStyleRefinement, WeakModel,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -19,7 +19,7 @@ use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
 use crate::ui::ContextPill;
 
 pub struct ActiveThread {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
     thread: Model<Thread>,
@@ -33,7 +33,7 @@ pub struct ActiveThread {
 impl ActiveThread {
     pub fn new(
         thread: Model<Thread>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
         window: &mut Window,

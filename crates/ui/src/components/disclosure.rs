@@ -70,7 +70,7 @@ impl RenderOnce for Disclosure {
         .icon_size(IconSize::Small)
         .toggle_state(self.selected)
         .when_some(self.on_toggle, move |this, on_toggle| {
-            this.on_click(move |event, window, cx| on_toggle(event, cx))
+            this.on_click(move |event, window, cx| on_toggle(event, window, cx))
         })
     }
 }

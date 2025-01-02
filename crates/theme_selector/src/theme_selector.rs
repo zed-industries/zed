@@ -2,7 +2,7 @@ use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusableView, Model, ModelContext, Render,
-    UpdateGlobal, VisualContext, WeakView, Window,
+    UpdateGlobal, VisualContext, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
@@ -81,12 +81,12 @@ pub struct ThemeSelectorDelegate {
     original_theme: Arc<Theme>,
     selection_completed: bool,
     selected_index: usize,
-    view: WeakView<ThemeSelector>,
+    view: WeakModel<ThemeSelector>,
 }
 
 impl ThemeSelectorDelegate {
     fn new(
-        weak_view: WeakView<ThemeSelector>,
+        weak_view: WeakModel<ThemeSelector>,
         fs: Arc<dyn Fs>,
         themes_filter: Option<&Vec<String>>,
         window: &mut Window,

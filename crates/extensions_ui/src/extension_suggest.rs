@@ -182,7 +182,7 @@ pub(crate) fn suggest(
                 .with_click_message("Yes")
                 .on_click({
                     let extension_id = extension_id.clone();
-                    move |cx| {
+                    move |window, cx| {
                         let extension_id = extension_id.clone();
                         let extension_store = ExtensionStore::global(cx);
                         extension_store.update(cx, move |store, cx| {

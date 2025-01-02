@@ -13,7 +13,7 @@ use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Axis, Context as _, EntityId,
     EventEmitter, FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement,
     KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
-    Subscription, Task, TextStyle, UpdateGlobal, VisualContext, WeakModel, WeakView, Window,
+    Subscription, Task, TextStyle, UpdateGlobal, VisualContext, WeakModel, WeakModel, Window,
 };
 use language::Buffer;
 use menu::Confirm;
@@ -154,7 +154,7 @@ enum InputPanel {
 }
 
 pub struct ProjectSearchView {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     focus_handle: FocusHandle,
     model: Model<ProjectSearch>,
     query_editor: Model<Editor>,
@@ -675,7 +675,7 @@ impl ProjectSearchView {
     }
 
     pub fn new(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         model: Model<ProjectSearch>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -1347,7 +1347,7 @@ impl ProjectSearchView {
         cx: &mut AppContext,
     ) -> Hsla {
         if self.panels_with_errors.contains(&panel) {
-            Color::Error.color(window, cx)
+            Color::Error.color(cx)
         } else {
             cx.theme().colors().border
         }
@@ -1754,7 +1754,7 @@ impl Render for ProjectSearchBar {
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
 
-        let input_base_styles = || {
+        let mut input_base_styles = || {
             h_flex()
                 .min_w_32()
                 .w(input_width)
@@ -2189,7 +2189,7 @@ fn register_workspace_action<A: Action>(
                 if let Some(search_bar) = workspace.item_of_type::<ProjectSearchBar>() {
                     search_bar.update(cx, move |search_bar, cx| {
                         if search_bar.active_project_search.is_some() {
-                            callback(search_bar, action, cx);
+                            callback(search_bar, action, window, cx);
                             cx.notify();
                         } else {
                             cx.propagate();
@@ -2220,7 +2220,7 @@ fn register_workspace_action_for_present_search<A: Action>(
             .map(|search_bar| search_bar.read(cx).active_project_search.is_some())
             .unwrap_or(false);
         if should_notify {
-            callback(workspace, action, cx);
+            callback(workspace, action, window, cx);
             cx.notify();
         } else {
             cx.propagate();
@@ -2280,7 +2280,7 @@ pub mod tests {
         });
 
         perform_search(search_view, "TWO", cx);
-        search_view.update(window, cx, |search_view, window, cx| {
+        search_view.update_in(cx, |search_view, window, cx| {
             assert_eq!(
                 search_view
                     .results_editor
@@ -3799,7 +3799,7 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 search_view
                     .results_editor
-                    .update(window, cx, |results_editor, cx| {
+                    .update_in(cx, |results_editor, cx| {
                         // Results are correct and scrolled to the top
                         assert_eq!(
                             results_editor.display_text(cx).match_indices(" A ").count(),
@@ -3824,7 +3824,7 @@ pub mod tests {
             .update(cx, |search_view, window, cx| {
                 search_view
                     .results_editor
-                    .update(window, cx, |results_editor, cx| {
+                    .update_in(cx, |results_editor, cx| {
                         // Results are correct...
                         assert_eq!(
                             results_editor.display_text(cx).match_indices(" B ").count(),
@@ -3921,7 +3921,7 @@ pub mod tests {
 
             language::init(cx);
             client::init_settings(cx);
-            editor::init(window, cx);
+            editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
             crate::init(cx);

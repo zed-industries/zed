@@ -16,7 +16,7 @@ use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     actions, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, KeyContext, Model, ModelContext, Modifiers, ModifiersChangedEvent,
-    ParentElement, Render, Styled, Task, VisualContext, WeakView, Window,
+    ParentElement, Render, Styled, Task, VisualContext, WeakModel, Window,
 };
 use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
@@ -336,8 +336,8 @@ impl Render for FileFinder {
 }
 
 pub struct FileFinderDelegate {
-    file_finder: WeakView<FileFinder>,
-    workspace: WeakView<Workspace>,
+    file_finder: WeakModel<FileFinder>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
     search_count: usize,
     latest_search_id: usize,
@@ -656,8 +656,8 @@ impl FileSearchQuery {
 
 impl FileFinderDelegate {
     fn new(
-        file_finder: WeakView<FileFinder>,
-        workspace: WeakView<Workspace>,
+        file_finder: WeakModel<FileFinder>,
+        workspace: WeakModel<Workspace>,
         project: Model<Project>,
         currently_opened_path: Option<FoundPath>,
         history_items: Vec<FoundPath>,
@@ -1177,6 +1177,7 @@ impl PickerDelegate for FileFinderDelegate {
                                         worktree_id,
                                         path: Arc::clone(&path.project.path),
                                     },
+                                    window,
                                     cx,
                                 )
                             } else {
@@ -1204,6 +1205,7 @@ impl PickerDelegate for FileFinderDelegate {
                                             worktree_id,
                                             path: Arc::clone(&path.project.path),
                                         },
+                                        window,
                                         cx,
                                     ),
                                 }
@@ -1215,6 +1217,7 @@ impl PickerDelegate for FileFinderDelegate {
                                 worktree_id: WorktreeId::from_usize(m.0.worktree_id),
                                 path: m.0.path.clone(),
                             },
+                            window,
                             cx,
                         ),
                     }

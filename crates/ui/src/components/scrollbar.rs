@@ -296,7 +296,7 @@ impl Element for Scrollbar {
                 let scroll = scroll.clone();
                 let state = self.state.clone();
                 let axis = self.kind;
-                move |event: &MouseDownEvent, phase, _cx| {
+                move |event: &MouseDownEvent, phase, window, cx| {
                     if !(phase.bubble() && bounds.contains(&event.position)) {
                         return;
                     }

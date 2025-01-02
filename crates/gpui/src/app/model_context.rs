@@ -624,7 +624,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     /// Schedule a future to be run asynchronously.
-    /// The given callback is invoked with a [`WeakView<V>`] to avoid leaking the view for a long-running process.
+    /// The given callback is invoked with a [`WeakModel<V>`] to avoid leaking the view for a long-running process.
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
     /// The returned future will be polled on the main thread.
     pub fn spawn_in<Fut, R>(

@@ -24,7 +24,7 @@ use util::ResultExt;
 
 use gpui::{
     point, AppContext, FocusableView, Global, HighlightStyle, Model, ModelContext, Subscription,
-    Task, UpdateGlobal, WeakModel, WeakView, Window,
+    Task, UpdateGlobal, WeakModel, WeakModel, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::LanguageModelRegistry;
@@ -69,7 +69,7 @@ pub struct InlineAssistant {
     next_assist_id: InlineAssistId,
     next_assist_group_id: InlineAssistGroupId,
     assists: HashMap<InlineAssistId, InlineAssist>,
-    assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
+    assists_by_editor: HashMap<WeakModel<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
     confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
@@ -283,7 +283,7 @@ impl InlineAssistant {
     pub fn assist(
         &mut self,
         editor: &Model<Editor>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         window: &mut Window,
         cx: &mut AppContext,
@@ -459,7 +459,7 @@ impl InlineAssistant {
         initial_prompt: String,
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         window: &mut Window,
         cx: &mut AppContext,
@@ -782,7 +782,7 @@ impl InlineAssistant {
 
     fn handle_editor_release(
         &mut self,
-        editor: WeakView<Editor>,
+        editor: WeakModel<Editor>,
         window: &mut Window,
         cx: &mut AppContext,
     ) {
@@ -1575,11 +1575,11 @@ impl InlineAssistGroupId {
 pub struct InlineAssist {
     group_id: InlineAssistGroupId,
     range: Range<Anchor>,
-    editor: WeakView<Editor>,
+    editor: WeakModel<Editor>,
     decorations: Option<InlineAssistDecorations>,
     codegen: Model<BufferCodegen>,
     _subscriptions: Vec<Subscription>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
 }
 
 impl InlineAssist {
@@ -1593,7 +1593,7 @@ impl InlineAssist {
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
         codegen: Model<BufferCodegen>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Self {
@@ -1694,8 +1694,8 @@ struct InlineAssistDecorations {
 }
 
 struct AssistantCodeActionProvider {
-    editor: WeakView<Editor>,
-    workspace: WeakView<Workspace>,
+    editor: WeakModel<Editor>,
+    workspace: WeakModel<Workspace>,
     thread_store: Option<WeakModel<ThreadStore>>,
 }
 

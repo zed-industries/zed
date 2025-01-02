@@ -18,7 +18,7 @@ use fs::Fs;
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Model, ModelContext, Subscription, TextStyle,
-    WeakModel, WeakView, Window,
+    WeakModel, WeakModel, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use language_model_selector::LanguageModelSelector;
@@ -158,7 +158,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                                     el.child(
                                         div()
                                             .id("error")
-                                            .tooltip(move |cx| {
+                                            .tooltip(move |window, cx| {
                                                 Tooltip::text(error_message.clone(), window, cx)
                                             })
                                             .child(
@@ -457,11 +457,12 @@ impl<T: 'static> PromptEditor<T> {
             CodegenStatus::Pending => vec![IconButton::new("stop", IconName::Stop)
                 .icon_color(Color::Error)
                 .shape(IconButtonShape::Square)
-                .tooltip(move |cx| {
+                .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         mode.tooltip_interrupt(),
                         Some(&menu::Cancel),
                         "Changes won't be discarded",
+                        window,
                         cx,
                     )
                 })
@@ -473,11 +474,12 @@ impl<T: 'static> PromptEditor<T> {
                     vec![IconButton::new("restart", IconName::RotateCw)
                         .icon_color(Color::Info)
                         .shape(IconButtonShape::Square)
-                        .tooltip(move |cx| {
+                        .tooltip(move |window, cx| {
                             Tooltip::with_meta(
                                 mode.tooltip_restart(),
                                 Some(&menu::Confirm),
                                 "Changes will be discarded",
+                                window,
                                 cx,
                             )
                         })
@@ -507,6 +509,7 @@ impl<T: 'static> PromptEditor<T> {
                                     Tooltip::for_action(
                                         "Execute Generated Command",
                                         &menu::SecondaryConfirm,
+                                        window,
                                         cx,
                                     )
                                 })
@@ -812,7 +815,7 @@ impl PromptEditor<BufferCodegen> {
         codegen: Model<BufferCodegen>,
         fs: Arc<dyn Fs>,
         context_store: Model<ContextStore>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         window: &mut Window,
         cx: &mut ModelContext<PromptEditor<BufferCodegen>>,
@@ -963,7 +966,7 @@ impl PromptEditor<TerminalCodegen> {
         codegen: Model<TerminalCodegen>,
         fs: Arc<dyn Fs>,
         context_store: Model<ContextStore>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,

@@ -261,7 +261,7 @@ impl RenderOnce for ListItem {
                     })
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                         this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                            (on_mouse_down)(event, cx)
+                            (on_mouse_down)(event, window, cx)
                         })
                     })
                     .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))

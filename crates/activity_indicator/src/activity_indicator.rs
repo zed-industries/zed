@@ -504,7 +504,7 @@ impl Render for ActivityIndicator {
                                             ))
                                             .size(LabelSize::Small),
                                         )
-                                        .tooltip(move |cx| {
+                                        .tooltip(move |window, cx| {
                                             Tooltip::text(&content.message, window, cx)
                                         })
                                 } else {

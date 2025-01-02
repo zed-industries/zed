@@ -2,7 +2,7 @@ use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     rems, AppContext, DismissEvent, FontWeight, Model, ModelContext, ParentElement, StyledText,
-    Task, WeakView, Window,
+    Task, WeakModel, Window,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -36,7 +36,7 @@ pub fn init(cx: &mut AppContext) {
 pub type ProjectSymbols = Model<Picker<ProjectSymbolsDelegate>>;
 
 pub struct ProjectSymbolsDelegate {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
     selected_match_index: usize,
     symbols: Vec<Symbol>,
@@ -47,7 +47,7 @@ pub struct ProjectSymbolsDelegate {
 }
 
 impl ProjectSymbolsDelegate {
-    fn new(workspace: WeakView<Workspace>, project: Model<Project>) -> Self {
+    fn new(workspace: WeakModel<Workspace>, project: Model<Project>) -> Self {
         Self {
             workspace,
             project,
@@ -412,7 +412,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
-            editor::init(window, cx);
+            editor::init(cx);
         });
     }
 

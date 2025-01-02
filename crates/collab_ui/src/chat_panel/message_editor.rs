@@ -6,7 +6,7 @@ use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorSt
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AsyncWindowContext, FocusableView, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
-    ModelContext, Render, Task, TextStyle, WeakView, Window,
+    ModelContext, Render, Task, TextStyle, WeakModel, Window,
 };
 use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
@@ -51,7 +51,7 @@ pub struct MessageEditor {
     edit_message_id: Option<u64>,
 }
 
-struct MessageEditorCompletionProvider(WeakView<MessageEditor>);
+struct MessageEditorCompletionProvider(WeakModel<MessageEditor>);
 
 impl CompletionProvider for MessageEditorCompletionProvider {
     fn completions(
@@ -464,7 +464,7 @@ impl MessageEditor {
     }
 
     async fn find_mentions(
-        this: WeakView<MessageEditor>,
+        this: WeakModel<MessageEditor>,
         buffer: BufferSnapshot,
         window: &mut Window,
         cx: &mut AppContext,

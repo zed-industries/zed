@@ -7,7 +7,7 @@ use gpui::{
     actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId,
     EventEmitter, FocusHandle, FocusableView, Model, ModelContext, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Render, Styled, Task,
-    VisualContext, WeakView, Window,
+    VisualContext, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -79,7 +79,7 @@ impl TabSwitcher {
                 else {
                     return;
                 };
-                if let Some(pane) = panel.pane(cx) {
+                if let Some(pane) = panel.pane(window, cx) {
                     weak_pane = pane.downgrade();
                 }
             })
@@ -173,9 +173,9 @@ struct TabMatch {
 
 pub struct TabSwitcherDelegate {
     select_last: bool,
-    tab_switcher: WeakView<TabSwitcher>,
+    tab_switcher: WeakModel<TabSwitcher>,
     selected_index: usize,
-    pane: WeakView<Pane>,
+    pane: WeakModel<Pane>,
     project: Model<Project>,
     matches: Vec<TabMatch>,
 }
@@ -184,8 +184,8 @@ impl TabSwitcherDelegate {
     fn new(
         project: Model<Project>,
         action: &Toggle,
-        tab_switcher: WeakView<TabSwitcher>,
-        pane: WeakView<Pane>,
+        tab_switcher: WeakModel<TabSwitcher>,
+        pane: WeakModel<Pane>,
         window: &mut Window,
         cx: &mut ModelContext<TabSwitcher>,
     ) -> Self {
@@ -201,7 +201,7 @@ impl TabSwitcherDelegate {
     }
 
     fn subscribe_to_updates(
-        pane: &WeakView<Pane>,
+        pane: &WeakModel<Pane>,
         window: &mut Window,
         cx: &mut ModelContext<TabSwitcher>,
     ) {
@@ -399,9 +399,9 @@ impl PickerDelegate for TabSwitcherDelegate {
             selected: true,
             preview: tab_match.preview,
         };
-        let label = tab_match.item.tab_content(params, cx);
+        let label = tab_match.item.tab_content(params, window, cx);
 
-        let icon = tab_match.item.tab_icon(cx).map(|icon| {
+        let icon = tab_match.item.tab_icon(window, cx).map(|icon| {
             let git_status_color = ItemSettings::get_global(cx)
                 .git_status
                 .then(|| {

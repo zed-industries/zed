@@ -5,10 +5,10 @@ use gpui::{
 use itertools::Itertools;
 use serde_json::json;
 use settings::get_key_equivalents;
-use ui::{Window, ModelContext, AppContext, 
-    div, h_flex, px, v_flex, ButtonCommon, Clickable, FluentBuilder, InteractiveElement, Label,
-    LabelCommon, LabelSize, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-     VisualContext, 
+use ui::{
+    div, h_flex, px, v_flex, AppContext, ButtonCommon, Clickable, FluentBuilder,
+    InteractiveElement, Label, LabelCommon, LabelSize, ModelContext, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, VisualContext, Window,
 };
 use ui::{Button, ButtonStyle};
 use workspace::Item;
@@ -37,7 +37,7 @@ struct KeyContextView {
 
 impl KeyContextView {
     pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let sub1 = cx.observe_keystrokes(window, |this, e, window, cx| {
+        let sub1 = cx.observe_keystrokes_in(window, |this, e, window, cx| {
             let mut pending = this.pending_keystrokes.take().unwrap_or_default();
             pending.push(e.keystroke.clone());
             let mut possibilities = window.all_bindings_for_input(&pending);
@@ -115,7 +115,12 @@ impl FocusableView for KeyContextView {
     }
 }
 impl KeyContextView {
-    fn set_context_stack(&mut self, stack: Vec<KeyContext>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_context_stack(
+        &mut self,
+        stack: Vec<KeyContext>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.context_stack = stack;
         cx.notify()
     }
@@ -156,7 +161,8 @@ impl Item for KeyContextView {
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<gpui::View<Self>>
     where
         Self: Sized,

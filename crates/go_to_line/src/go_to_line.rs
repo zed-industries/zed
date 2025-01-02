@@ -480,7 +480,7 @@ mod tests {
             let state = AppState::test(cx);
             language::init(cx);
             crate::init(cx);
-            editor::init(window, cx);
+            editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
             state

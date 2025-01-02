@@ -5,7 +5,7 @@ use gpui::{
     GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
     Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun,
-    TextStyle, UTF16Selection, UnderlineStyle, WeakView, WhiteSpace, Window, WindowTextSystem,
+    TextStyle, UTF16Selection, UnderlineStyle, WeakModel, WhiteSpace, Window, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -159,7 +159,7 @@ impl LayoutRect {
 pub struct TerminalElement {
     terminal: Model<Terminal>,
     terminal_view: Model<TerminalView>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
@@ -181,7 +181,7 @@ impl TerminalElement {
     pub fn new(
         terminal: Model<Terminal>,
         terminal_view: Model<TerminalView>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
@@ -612,11 +612,17 @@ impl Element for TerminalElement {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Self::PrepaintState {
-        let rem_size = self.rem_size(cx);
-        self.interactivity
-            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
+        let rem_size = self.rem_size(window, cx);
+        self.interactivity.prepaint(
+            global_id,
+            bounds,
+            bounds.size,
+            window,
+            cx,
+            |_, _, hitbox, window, cx| {
                 let hitbox = hitbox.unwrap();
                 let settings = ThemeSettings::get_global(cx).clone();
 
@@ -734,9 +740,11 @@ impl Element for TerminalElement {
                     let mut element = div()
                         .size_full()
                         .id("terminal-element")
-                        .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
+                        .tooltip(move |window, cx| {
+                            Tooltip::text(hovered_word.word.clone(), window, cx)
+                        })
                         .into_any_element();
-                    element.prepaint_as_root(offset, bounds.size.into(), cx);
+                    element.prepaint_as_root(offset, bounds.size.into(), window, cx);
                     element
                 });
 
@@ -771,6 +779,7 @@ impl Element for TerminalElement {
                     last_hovered_word
                         .as_ref()
                         .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                    window,
                     cx,
                 );
 
@@ -845,7 +854,7 @@ impl Element for TerminalElement {
                             + point(px(0.), target_line as f32 * dimensions.line_height())
                             - point(px(0.), scroll_top);
                         cx.with_rem_size(rem_size, |cx| {
-                            element.prepaint_as_root(origin, available_space, cx);
+                            element.prepaint_as_root(origin, available_space, window, cx);
                         });
                         Some(element)
                     } else {
@@ -870,7 +879,8 @@ impl Element for TerminalElement {
                     last_hovered_word,
                     block_below_cursor_element,
                 }
-            })
+            },
+        )
     }
 
     fn paint(
@@ -879,9 +889,10 @@ impl Element for TerminalElement {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
-        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let scroll_top = self.terminal_view.read(cx).scroll_top;
 
             cx.paint_quad(fill(bounds, layout.background_color));
@@ -897,7 +908,7 @@ impl Element for TerminalElement {
                 workspace: self.workspace.clone(),
             };
 
-            self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, cx);
+            self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, window, cx);
             if self.can_navigate_to_selected_word && layout.last_hovered_word.is_some() {
                 cx.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
             } else {
@@ -907,8 +918,13 @@ impl Element for TerminalElement {
             let cursor = layout.cursor.take();
             let hyperlink_tooltip = layout.hyperlink_tooltip.take();
             let block_below_cursor_element = layout.block_below_cursor_element.take();
-            self.interactivity
-                .paint(global_id, bounds, Some(&layout.hitbox), cx, |_, cx| {
+            self.interactivity.paint(
+                global_id,
+                bounds,
+                Some(&layout.hitbox),
+                window,
+                cx,
+                |_, window, cx| {
                     cx.handle_input(&self.focus, terminal_input_handler);
 
                     cx.on_key_event({
@@ -928,7 +944,7 @@ impl Element for TerminalElement {
                     });
 
                     for rect in &layout.rects {
-                        rect.paint(origin, &layout.dimensions, cx);
+                        rect.paint(origin, &layout.dimensions, window, cx);
                     }
 
                     for (relative_highlighted_range, color) in
@@ -944,28 +960,29 @@ impl Element for TerminalElement {
                                 color: *color,
                                 corner_radius: 0.15 * layout.dimensions.line_height,
                             };
-                            hr.paint(bounds, cx);
+                            hr.paint(bounds, window, cx);
                         }
                     }
 
                     for cell in &layout.cells {
-                        cell.paint(origin, &layout.dimensions, bounds, cx);
+                        cell.paint(origin, &layout.dimensions, bounds, window, cx);
                     }
 
                     if self.cursor_visible {
                         if let Some(mut cursor) = cursor {
-                            cursor.paint(origin, cx);
+                            cursor.paint(origin, window, cx);
                         }
                     }
 
                     if let Some(mut element) = block_below_cursor_element {
-                        element.paint(cx);
+                        element.paint(window, cx);
                     }
 
                     if let Some(mut element) = hyperlink_tooltip {
-                        element.paint(cx);
+                        element.paint(window, cx);
                     }
-                });
+                },
+            );
         });
     }
 }
@@ -980,7 +997,7 @@ impl IntoElement for TerminalElement {
 
 struct TerminalInputHandler {
     terminal: Model<Terminal>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     cursor_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -988,7 +1005,8 @@ impl InputHandler for TerminalInputHandler {
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Option<UTF16Selection> {
         if self
             .terminal
@@ -1023,7 +1041,8 @@ impl InputHandler for TerminalInputHandler {
         &mut self,
         _replacement_range: Option<std::ops::Range<usize>>,
         text: &str,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         self.terminal.update(cx, |terminal, _| {
             terminal.input(text.into());

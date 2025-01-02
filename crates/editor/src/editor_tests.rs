@@ -889,7 +889,7 @@ fn test_fold_action(cx: &mut TestAppContext) {
         build_editor(buffer.clone(), window, cx)
     });
 
-    _ = view.update(cx, |view, window, cx| {
+    _ = view.update_in(cx, |view, window, cx| {
         view.change_selections(None, window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(12), 0)
@@ -977,7 +977,7 @@ fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
         build_editor(buffer.clone(), window, cx)
     });
 
-    _ = view.update(cx, |view, window, cx| {
+    _ = view.update_in(cx, |view, window, cx| {
         view.change_selections(None, window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(6), 0)..DisplayPoint::new(DisplayRow(10), 0)
@@ -1059,7 +1059,7 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
         build_editor(buffer.clone(), window, cx)
     });
 
-    _ = view.update(cx, |view, window, cx| {
+    _ = view.update_in(cx, |view, window, cx| {
         view.change_selections(None, window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(6), 0)..DisplayPoint::new(DisplayRow(11), 0)
@@ -6940,7 +6940,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
         );
 
         // Can't move earlier than the first tab stop
-        assert!(!editor.move_to_prev_snippet_tabstop(cx));
+        assert!(!editor.move_to_prev_snippet_tabstop(window, cx));
         assert(
             editor,
             window,
@@ -10000,7 +10000,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         .unwrap()
         .await
         .unwrap();
-    _ = follower.update(window, cx, |follower, window, cx| {
+    _ = follower.update_in(cx, |follower, window, cx| {
         assert_eq!(follower.scroll_position(cx), gpui::Point::new(1.5, 0.0));
         assert_eq!(follower.selections.ranges(cx), vec![0..0]);
     });

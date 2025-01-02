@@ -14,7 +14,7 @@ use futures::future::join_all;
 use gpui::{
     actions, Action, AnyView, AppContext, AsyncWindowContext, Corner, Entity, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ModelContext, ParentElement,
-    Pixels, Render, Styled, Task, VisualContext, WeakView, Window,
+    Pixels, Render, Styled, Task, VisualContext, WeakModel, Window,
 };
 use itertools::Itertools;
 use project::{terminals::TerminalKind, Fs, Project, ProjectEntryId};
@@ -67,7 +67,7 @@ pub struct TerminalPanel {
     pub(crate) active_pane: Model<Pane>,
     pub(crate) center: PaneGroup,
     fs: Arc<dyn Fs>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     pub(crate) width: Option<Pixels>,
     pub(crate) height: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
@@ -228,7 +228,7 @@ impl TerminalPanel {
     }
 
     pub async fn load(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Result<Model<Self>> {
@@ -347,7 +347,7 @@ impl TerminalPanel {
             pane::Event::AddItem { item } => {
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        item.added_to_pane(workspace, pane.clone(), cx)
+                        item.added_to_pane(workspace, pane.clone(), window, cx)
                     })
                 }
                 self.serialize(window, cx);
@@ -990,7 +990,7 @@ fn is_enabled_in_workspace(
 }
 
 pub fn new_terminal_pane(
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
     zoomed: bool,
     window: &mut Window,

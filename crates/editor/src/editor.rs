@@ -83,7 +83,7 @@ use gpui::{
     FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, ModelContext,
     MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText,
     Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, ViewInputHandler, VisualContext, WeakFocusHandle, WeakView, Window,
+    UniformListScrollHandle, ViewInputHandler, VisualContext, WeakFocusHandle, WeakModel, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -197,7 +197,7 @@ pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
     parsed: &language::ParsedMarkdown,
     editor_style: &EditorStyle,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakModel<Workspace>>,
     window: &mut Window,
     cx: &mut AppContext,
 ) -> InteractiveText {
@@ -653,7 +653,7 @@ pub struct Editor {
     current_line_highlight: Option<CurrentLineHighlight>,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
-    workspace: Option<(WeakView<Workspace>, Option<WorkspaceId>)>,
+    workspace: Option<(WeakModel<Workspace>, Option<WorkspaceId>)>,
     input_enabled: bool,
     use_modal_editing: bool,
     read_only: bool,
@@ -4378,8 +4378,8 @@ impl Editor {
     }
 
     pub async fn open_project_transaction(
-        this: &WeakView<Editor>,
-        workspace: WeakView<Workspace>,
+        this: &WeakModel<Editor>,
+        workspace: WeakModel<Workspace>,
         transaction: ProjectTransaction,
         title: String,
         window: &mut Window,

@@ -373,7 +373,7 @@ impl RenderOnce for Icon {
             .size(self.size)
             .flex_none()
             .path(self.path)
-            .text_color(self.color.color(window, cx))
+            .text_color(self.color.color(cx))
     }
 }
 

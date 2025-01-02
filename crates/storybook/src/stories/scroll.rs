@@ -36,7 +36,7 @@ impl Render for ScrollStory {
                         };
                         div()
                             .id(id)
-                            .tooltip(move |cx| {
+                            .tooltip(move |window, cx| {
                                 Tooltip::text(format!("{}, {}", row, column), window, cx)
                             })
                             .bg(bg)

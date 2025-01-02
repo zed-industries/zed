@@ -200,7 +200,7 @@ impl Render for BufferSearchBar {
             key_context.add("in_replace");
         }
         let editor_border = if self.query_contains_error {
-            Color::Error.color(window, cx)
+            Color::Error.color(cx)
         } else {
             cx.theme().colors().border
         };
@@ -228,7 +228,7 @@ impl Render for BufferSearchBar {
                     .track_scroll(&self.editor_scroll_handle)
                     .child(self.render_text_input(
                         &self.query_editor,
-                        text_color.color(window, cx),
+                        text_color.color(cx),
                         window,
                         cx,
                     ))
@@ -673,7 +673,11 @@ impl BufferSearchBar {
     ) -> bool {
         if self.show(window, cx) {
             if let Some(active_item) = self.active_searchable_item.as_mut() {
-                active_item.toggle_filtered_search_ranges(deploy.selection_search_enabled, cx);
+                active_item.toggle_filtered_search_ranges(
+                    deploy.selection_search_enabled,
+                    window,
+                    cx,
+                );
             }
             self.search_suggested(window, cx);
             self.smartcase(window, cx);
@@ -1478,7 +1482,7 @@ mod tests {
             })
             .await
             .unwrap();
-        editor.update(window, cx, |editor, cx| {
+        editor.update_in(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
@@ -1494,7 +1498,7 @@ mod tests {
         });
         let mut editor_notifications = cx.notifications(&editor);
         editor_notifications.next().await;
-        editor.update(window, cx, |editor, cx| {
+        editor.update_in(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),]
@@ -1509,7 +1513,7 @@ mod tests {
             })
             .await
             .unwrap();
-        editor.update(window, cx, |editor, cx| {
+        editor.update_in(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
@@ -1530,7 +1534,7 @@ mod tests {
         });
         let mut editor_notifications = cx.notifications(&editor);
         editor_notifications.next().await;
-        editor.update(window, cx, |editor, cx| {
+        editor.update_in(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
@@ -1753,7 +1757,7 @@ mod tests {
             })
             .await
             .unwrap();
-        editor.update(window, cx, |editor, cx| {
+        editor.update_in(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),]
@@ -1778,7 +1782,7 @@ mod tests {
         });
         let mut editor_notifications = cx.notifications(&editor);
         editor_notifications.next().await;
-        editor.update(window, cx, |editor, cx| {
+        editor.update_in(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[DisplayPoint::new(DisplayRow(0), 35)..DisplayPoint::new(DisplayRow(0), 40),]
@@ -1837,7 +1841,7 @@ mod tests {
             .await
             .unwrap();
         let initial_selections = window
-            .update(window, cx, |_, window, cx| {
+            .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
                     window.focus(&handle);
@@ -1885,7 +1889,7 @@ mod tests {
             }).unwrap();
 
         window
-            .update(window, cx, |_, window, cx| {
+            .update(cx, |_, window, cx| {
                 assert!(
                     editor.read(cx).is_focused(cx),
                     "Should still have editor focused after SelectNextMatch"
@@ -1914,7 +1918,7 @@ mod tests {
             })
             .unwrap();
         window
-            .update(window, cx, |_, window, cx| {
+            .update(cx, |_, window, cx| {
                 assert!(
                     editor.read(cx).is_focused(cx),
                     "Should focus editor after successful SelectAllMatches"
@@ -1939,7 +1943,7 @@ mod tests {
             })
             .unwrap();
         let last_match_selections = window
-            .update(window, cx, |_, window, cx| {
+            .update(cx, |_, window, cx| {
                 assert!(
                     editor.read(cx).is_focused(cx),
                     "Should still have editor focused after SelectPrevMatch"
@@ -1979,7 +1983,7 @@ mod tests {
             .await
             .unwrap();
         window
-            .update(window, cx, |_, window, cx| {
+            .update_in(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.select_all_matches(&SelectAllMatches, window, cx);
                 });
@@ -2127,7 +2131,7 @@ mod tests {
             .await
             .unwrap();
         // Ensure that the latest search is active.
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -2136,14 +2140,14 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -2152,7 +2156,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -2161,7 +2165,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -2170,14 +2174,14 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "a");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "a");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -2186,7 +2190,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -2197,7 +2201,7 @@ mod tests {
             })
             .await
             .unwrap();
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "ba");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
@@ -2206,35 +2210,35 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "ba");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
-        search_bar.update(window, cx, |search_bar, cx| {
+        search_bar.update_in(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
@@ -2508,7 +2512,7 @@ mod tests {
             .await
             .unwrap();
 
-        editor.update(window, cx, |editor, cx| {
+        editor.update_in(cx, |editor, cx| {
             assert_eq!(
                 editor.search_background_highlights(cx),
                 &[
@@ -2594,7 +2598,7 @@ mod tests {
             .await
             .unwrap();
 
-        editor.update(window, cx, |editor, cx| {
+        editor.update_in(cx, |editor, cx| {
             assert_eq!(
                 editor.search_background_highlights(cx),
                 &[
@@ -2617,7 +2621,7 @@ mod tests {
             })
             .await
             .unwrap();
-        editor.update(window, cx, |editor, cx| {
+        editor.update_in(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
@@ -2634,7 +2638,7 @@ mod tests {
             })
             .await
             .unwrap_err();
-        editor.update(window, cx, |editor, cx| {
+        editor.update_in(cx, |editor, cx| {
             assert!(display_points_of(editor.all_text_background_highlights(cx)).is_empty(),);
         });
     }

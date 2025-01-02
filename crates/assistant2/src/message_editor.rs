@@ -3,7 +3,7 @@ use std::sync::Arc;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    AppContext, DismissEvent, FocusableView, Model, Subscription, TextStyle, WeakModel, WeakView,
+    AppContext, DismissEvent, FocusableView, Model, Subscription, TextStyle, WeakModel, WeakModel,
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
@@ -41,7 +41,7 @@ pub struct MessageEditor {
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         thread_store: WeakModel<ThreadStore>,
         thread: Model<Thread>,
         window: &mut Window,

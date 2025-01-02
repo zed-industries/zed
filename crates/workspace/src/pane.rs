@@ -18,7 +18,7 @@ use gpui::{
     AsyncWindowContext, ClickEvent, ClipboardItem, Corner, Div, DragMoveEvent, EntityId,
     EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
     ModelContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel,
-    Render, ScrollHandle, Subscription, Task, VisualContext, WeakFocusHandle, WeakModel, WeakView,
+    Render, ScrollHandle, Subscription, Task, VisualContext, WeakFocusHandle, WeakModel, WeakModel,
     Window,
 };
 use itertools::Itertools;
@@ -285,7 +285,7 @@ pub struct Pane {
     last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: Model<Toolbar>,
-    pub(crate) workspace: WeakView<Workspace>,
+    pub(crate) workspace: WeakModel<Workspace>,
     project: WeakModel<Project>,
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut AppContext) -> bool>>,
@@ -343,7 +343,7 @@ struct NavHistoryState {
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
     paths_by_item: HashMap<EntityId, (ProjectPath, Option<PathBuf>)>,
-    pane: WeakView<Pane>,
+    pane: WeakModel<Pane>,
     next_timestamp: Arc<AtomicUsize>,
 }
 
@@ -383,7 +383,7 @@ impl EventEmitter<Event> for Pane {}
 
 impl Pane {
     pub fn new(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         project: Model<Project>,
         next_timestamp: Arc<AtomicUsize>,
         can_drop_predicate: Option<
@@ -396,9 +396,9 @@ impl Pane {
         let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
-            cx.on_focus(&focus_handle, Pane::focus_in),
-            cx.on_focus_in(&focus_handle, Pane::focus_in),
-            cx.on_focus_out(&focus_handle, Pane::focus_out),
+            cx.on_focus(&focus_handle, window, Pane::focus_in),
+            cx.on_focus_in(&focus_handle, window, Pane::focus_in),
+            cx.on_focus_out(&focus_handle, window, Pane::focus_out),
             cx.observe_global::<SettingsStore>(Self::settings_changed),
             cx.subscribe(&project, Self::project_events),
         ];
@@ -1154,7 +1154,7 @@ impl Pane {
                 || matches!(self.nav_history.mode(), GoingBack | GoingForward)
             {
                 if let Some(prev_item) = self.items.get(prev_active_item_ix) {
-                    prev_item.deactivated(cx);
+                    prev_item.deactivated(window, cx);
                 }
             }
             cx.emit(Event::ActivateItem {
@@ -1722,7 +1722,7 @@ impl Pane {
             item_id: item.item_id(),
         });
         if self.items.is_empty() {
-            item.deactivated(cx);
+            item.deactivated(window, cx);
             if close_pane_if_empty {
                 self.update_toolbar(window, cx);
                 cx.emit(Event::Remove {
@@ -1737,7 +1737,7 @@ impl Pane {
 
         let mode = self.nav_history.mode();
         self.nav_history.set_mode(NavigationMode::ClosingItem);
-        item.deactivated(cx);
+        item.deactivated(window, cx);
         self.nav_history.set_mode(mode);
 
         if self.is_active_preview_item(item.item_id()) {
@@ -1775,7 +1775,7 @@ impl Pane {
 
     pub async fn save_item(
         project: Model<Project>,
-        pane: &WeakView<Pane>,
+        pane: &WeakModel<Pane>,
         item_ix: usize,
         item: &dyn ItemHandle,
         save_intent: SaveIntent,
@@ -1792,16 +1792,11 @@ impl Pane {
             return Ok(true);
         }
 
-        let (mut has_conflict, mut is_dirty, mut can_save, is_singleton, has_deleted_file) = cx
-            .update(|window, cx| {
-                (
-                    item.has_conflict(cx),
-                    item.is_dirty(cx),
-                    item.can_save(cx),
-                    item.is_singleton(cx),
-                    item.has_deleted_file(cx),
-                )
-            })?;
+        let mut has_conflict = item.has_conflict(cx);
+        let mut is_dirty = item.is_dirty(cx);
+        let mut can_save = item.can_save(cx);
+        let is_singleton = item.is_singleton(cx);
+        let has_deleted_file = item.has_deleted_file(cx);
 
         let can_save_as = is_singleton;
 
@@ -1836,7 +1831,7 @@ impl Pane {
                 })?;
                 match answer.await {
                     Ok(0) => {
-                        pane.update(cx, |_, cx| item.save(should_format, project, cx))?
+                        pane.update(cx, |_, cx| item.save(should_format, project, window, cx))?
                             .await?
                     }
                     Ok(1) => {
@@ -1860,16 +1855,19 @@ impl Pane {
                 })?;
                 match answer.await {
                     Ok(0) => {
-                        pane.update(cx, |_, cx| item.save(should_format, project, cx))?
+                        pane.update(cx, |_, cx| item.save(should_format, project, window, cx))?
                             .await?
                     }
-                    Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
+                    Ok(1) => {
+                        pane.update(cx, |_, cx| item.reload(project, window, cx))?
+                            .await?
+                    }
                     _ => return Ok(false),
                 }
             }
         } else if is_dirty && (can_save || can_save_as) {
             if save_intent == SaveIntent::Close {
-                let will_autosave = cx.update(|window, cx| {
+                let will_autosave = window.update(|_, window, cx| {
                     matches!(
                         item.workspace_settings(cx).autosave,
                         AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
@@ -1909,7 +1907,7 @@ impl Pane {
                                     if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
                                         pane.pinned_tab_count -= 1;
                                     }
-                                    item.discarded(project, cx)
+                                    item.discarded(project, window, cx)
                                 })
                                 .log_err();
                                 return Ok(true);
@@ -1927,7 +1925,7 @@ impl Pane {
                     if pane.is_active_preview_item(item.item_id()) {
                         pane.set_preview_item_id(None, cx);
                     }
-                    item.save(should_format, project, cx)
+                    item.save(should_format, project, window, cx)
                 })?
                 .await?;
             } else if can_save_as {
@@ -1942,7 +1940,7 @@ impl Pane {
                             pane.remove_item(item.item_id(), false, false, window, cx);
                         }
 
-                        item.save_as(project, abs_path, cx)
+                        item.save_as(project, abs_path, window, cx)
                     })?
                     .await?;
                 } else {
@@ -1976,7 +1974,7 @@ impl Pane {
             AutosaveSetting::AfterDelay { .. }
         );
         if Self::can_autosave_item(item, cx) {
-            item.save(format, project, cx)
+            item.save(format, project, window, cx)
         } else {
             Task::ready(Ok(()))
         }
@@ -2107,7 +2105,9 @@ impl Pane {
 
             self.workspace
                 .update(cx, |_, cx| {
-                    cx.defer(move |_, cx| move_item(&pane, &pane, id, destination_index, cx));
+                    cx.defer(move |_, cx| {
+                        move_item(&pane, &pane, id, destination_index, window, cx)
+                    });
                 })
                 .ok()?;
 
@@ -2125,7 +2125,9 @@ impl Pane {
 
             self.workspace
                 .update(cx, |_, cx| {
-                    cx.defer(move |_, cx| move_item(&pane, &pane, id, destination_index, cx));
+                    cx.defer(move |_, cx| {
+                        move_item(&pane, &pane, id, destination_index, window, cx)
+                    });
                 })
                 .ok()?;
 
@@ -2162,6 +2164,7 @@ impl Pane {
                 selected: is_active,
                 preview: is_preview,
             },
+            window,
             cx,
         );
 
@@ -2170,7 +2173,7 @@ impl Pane {
             .map_or(None, |project_path| self.diagnostics.get(&project_path));
 
         let decorated_icon = item_diagnostic.map_or(None, |diagnostic| {
-            let icon = match item.tab_icon(cx) {
+            let icon = match item.tab_icon(window, cx) {
                 Some(icon) => icon,
                 None => return None,
             };
@@ -2192,7 +2195,7 @@ impl Pane {
                 icon.size(IconSize::Small).color(Color::Muted),
                 Some(
                     IconDecoration::new(icon_decoration, knockout_item_color, window, cx)
-                        .color(icon_color.color(window, cx))
+                        .color(icon_color.color(cx))
                         .position(Point {
                             x: px(-2.),
                             y: px(-2.),
@@ -2205,7 +2208,9 @@ impl Pane {
             match item_diagnostic {
                 Some(&DiagnosticSeverity::ERROR) => None,
                 Some(&DiagnosticSeverity::WARNING) => None,
-                _ => item.tab_icon(cx).map(|icon| icon.color(Color::Muted)),
+                _ => item
+                    .tab_icon(window, cx)
+                    .map(|icon| icon.color(Color::Muted)),
             }
             .map(|icon| icon.size(IconSize::Small))
         } else {
@@ -2292,7 +2297,7 @@ impl Pane {
                 this.handle_external_paths_drop(paths, window, cx)
             }))
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
-                tab.tooltip(move |cx| Tooltip::text(text.clone(), window, cx))
+                tab.tooltip(move |window, cx| Tooltip::text(text.clone(), window, cx))
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
@@ -2583,7 +2588,7 @@ impl Pane {
             .icon_size(IconSize::Small)
             .on_click({
                 let view = cx.view().clone();
-                move |_, cx| view.update(window, cx, Self::navigate_backward)
+                move |_, cx| view.update_in(cx, Self::navigate_backward)
             })
             .disabled(!self.can_navigate_backward())
             .tooltip({
@@ -2595,7 +2600,7 @@ impl Pane {
             .icon_size(IconSize::Small)
             .on_click({
                 let view = cx.view().clone();
-                move |_, cx| view.update(window, cx, Self::navigate_forward)
+                move |_, cx| view.update_in(cx, Self::navigate_forward)
             })
             .disabled(!self.can_navigate_forward())
             .tooltip({

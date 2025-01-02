@@ -9,7 +9,7 @@ use fuzzy::StringMatch;
 use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
     Model, ModelContext, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle,
-    VisualContext, WeakView, Window,
+    VisualContext, WeakModel, Window,
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
@@ -114,7 +114,7 @@ impl OutlineView {
 }
 
 struct OutlineViewDelegate {
-    outline_view: WeakView<OutlineView>,
+    outline_view: WeakModel<OutlineView>,
     active_editor: Model<Editor>,
     outline: Outline<Anchor>,
     selected_match_index: usize,
@@ -127,7 +127,7 @@ enum OutlineRowHighlights {}
 
 impl OutlineViewDelegate {
     fn new(
-        outline_view: WeakView<OutlineView>,
+        outline_view: WeakModel<OutlineView>,
         outline: Outline<Anchor>,
         editor: Model<Editor>,
         window: &mut Window,
@@ -550,7 +550,7 @@ mod tests {
             let state = AppState::test(cx);
             language::init(cx);
             crate::init(cx);
-            editor::init(window, cx);
+            editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
             state

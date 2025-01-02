@@ -2,7 +2,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
     Model, ModelContext, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
-    UniformListScrollHandle, WeakView, Window,
+    UniformListScrollHandle, WeakModel, Window,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -144,7 +144,7 @@ impl CodeContextMenu {
         &self,
         style: &EditorStyle,
         max_size: Size<Pixels>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Option<AnyElement> {
@@ -637,7 +637,7 @@ impl CompletionsMenu {
         &self,
         style: &EditorStyle,
         max_size: Size<Pixels>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Option<AnyElement> {

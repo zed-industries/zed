@@ -10,7 +10,7 @@ use futures::FutureExt;
 use gpui::canvas;
 use gpui::ClipboardItem;
 use gpui::Task;
-use gpui::WeakView;
+use gpui::WeakModel;
 use gpui::{
     AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     ModelContext, PromptLevel, ScrollHandle, Window,
@@ -49,7 +49,7 @@ mod navigation_base {}
 pub struct RemoteServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     retained_connections: Vec<Model<SshRemoteClient>>,
 }
 
@@ -120,7 +120,7 @@ impl ProjectPicker {
         ix: usize,
         connection: SshConnectionOptions,
         project: Model<Project>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window: &mut Window,
         cx: &mut ModelContext<RemoteServerProjects>,
     ) -> Model<Self> {
@@ -341,7 +341,7 @@ impl RemoteServerProjects {
     pub fn new(
         window: &mut Window,
         cx: &mut ModelContext<Self>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
@@ -365,7 +365,7 @@ impl RemoteServerProjects {
         project: Model<Project>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
     ) -> Self {
         let mut this = Self::new(window, cx, workspace.clone());
         this.mode = Mode::ProjectPicker(ProjectPicker::new(
@@ -1059,7 +1059,7 @@ impl RemoteServerProjects {
                         .child({
                             let workspace = self.workspace.clone();
                             fn callback(
-                                workspace: WeakView<Workspace>,
+                                workspace: WeakModel<Workspace>,
                                 connection_string: SharedString,
                                 window: &mut Window,
                                 cx: &mut AppContext,

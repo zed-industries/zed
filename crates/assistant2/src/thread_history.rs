@@ -1,5 +1,5 @@
 use gpui::{
-    uniform_list, AppContext, FocusHandle, FocusableView, Model, UniformListScrollHandle, WeakView,
+    uniform_list, AppContext, FocusHandle, FocusableView, Model, UniformListScrollHandle, WeakModel,
 };
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
@@ -10,14 +10,14 @@ use crate::AssistantPanel;
 
 pub struct ThreadHistory {
     focus_handle: FocusHandle,
-    assistant_panel: WeakView<AssistantPanel>,
+    assistant_panel: WeakModel<AssistantPanel>,
     thread_store: Model<ThreadStore>,
     scroll_handle: UniformListScrollHandle,
 }
 
 impl ThreadHistory {
     pub(crate) fn new(
-        assistant_panel: WeakView<AssistantPanel>,
+        assistant_panel: WeakModel<AssistantPanel>,
         thread_store: Model<ThreadStore>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -86,11 +86,11 @@ impl Render for ThreadHistory {
 #[derive(IntoElement)]
 pub struct PastThread {
     thread: Model<Thread>,
-    assistant_panel: WeakView<AssistantPanel>,
+    assistant_panel: WeakModel<AssistantPanel>,
 }
 
 impl PastThread {
-    pub fn new(thread: Model<Thread>, assistant_panel: WeakView<AssistantPanel>) -> Self {
+    pub fn new(thread: Model<Thread>, assistant_panel: WeakModel<AssistantPanel>) -> Self {
         Self {
             thread,
             assistant_panel,

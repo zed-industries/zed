@@ -10,7 +10,7 @@ use gpui::{
     actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
     CursorStyle, EventEmitter, FocusHandle, FocusableView, KeyContext,
     ListHorizontalSizingBehavior, ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent,
-    MouseButton, ScrollStrategy, Stateful, Task, UniformListScrollHandle, WeakView,
+    MouseButton, ScrollStrategy, Stateful, Task, UniformListScrollHandle, WeakModel,
 };
 use language::{Buffer, BufferRow, OffsetRangeExt};
 use menu::{SelectNext, SelectPrev};
@@ -90,7 +90,7 @@ struct SerializedGitPanel {
 }
 
 pub struct GitPanel {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     current_modifiers: Modifiers,
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
@@ -146,7 +146,7 @@ impl WorktreeEntries {
 
 impl GitPanel {
     pub fn load(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {

@@ -1,7 +1,7 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ModelContext,
-    ParentElement as _, Render, Styled, Task, VisualContext, WeakView, Window,
+    ParentElement as _, Render, Styled, Task, VisualContext, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -59,7 +59,7 @@ impl Render for ContactFinder {
 }
 
 pub struct ContactFinderDelegate {
-    parent: WeakView<ContactFinder>,
+    parent: WeakModel<ContactFinder>,
     potential_contacts: Arc<[Arc<User>]>,
     user_store: Model<UserStore>,
     selected_index: usize,

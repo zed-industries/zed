@@ -30,14 +30,14 @@ struct ViewCacheKey {
 
 // todo! Remove
 // impl<V: 'static> Entity<V> for Model<V> {
-//     type Weak = WeakView<V>;
+//     type Weak = WeakModel<V>;
 
 //     fn entity_id(&self) -> EntityId {
 //         self.model.entity_id
 //     }
 
 //     fn downgrade(&self) -> Self::Weak {
-//         WeakView {
+//         WeakModel {
 //             model: self.model.downgrade(),
 //         }
 //     }
@@ -53,7 +53,7 @@ struct ViewCacheKey {
 
 // impl<V: 'static> Model<V> {
 //     /// Convert this strong view reference into a weak view reference.
-//     pub fn downgrade(&self) -> WeakView<V> {
+//     pub fn downgrade(&self) -> WeakModel<V> {
 //         Entity::downgrade(self)
 //     }
 
@@ -236,8 +236,8 @@ impl AnyView {
     }
 
     /// Convert this to a weak handle.
-    pub fn downgrade(&self) -> AnyWeakView {
-        AnyWeakView {
+    pub fn downgrade(&self) -> AnyWeakModel {
+        AnyWeakModel {
             model: self.model.downgrade(),
             render: self.render,
         }
@@ -425,12 +425,12 @@ impl IntoElement for AnyView {
 }
 
 /// A weak, dynamically-typed view handle that does not prevent the view from being released.
-pub struct AnyWeakView {
+pub struct AnyWeakModel {
     model: AnyWeakModel,
     render: fn(&AnyView, &mut Window, &mut AppContext) -> AnyElement,
 }
 
-impl AnyWeakView {
+impl AnyWeakModel {
     /// Convert to a strongly-typed handle if the referenced view has not yet been released.
     pub fn upgrade(&self) -> Option<AnyView> {
         let model = self.model.upgrade()?;
@@ -442,7 +442,7 @@ impl AnyWeakView {
     }
 }
 
-impl<V: 'static + Render> From<WeakModel<V>> for AnyWeakView {
+impl<V: 'static + Render> From<WeakModel<V>> for AnyWeakModel {
     fn from(view: WeakModel<V>) -> Self {
         Self {
             model: view.into(),
@@ -451,15 +451,15 @@ impl<V: 'static + Render> From<WeakModel<V>> for AnyWeakView {
     }
 }
 
-impl PartialEq for AnyWeakView {
+impl PartialEq for AnyWeakModel {
     fn eq(&self, other: &Self) -> bool {
         self.model == other.model
     }
 }
 
-impl std::fmt::Debug for AnyWeakView {
+impl std::fmt::Debug for AnyWeakModel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AnyWeakView")
+        f.debug_struct("AnyWeakModel")
             .field("entity_id", &self.model.entity_id)
             .finish_non_exhaustive()
     }

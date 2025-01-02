@@ -112,7 +112,8 @@ fn files_not_createad_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
                         message,
                         Some(&error_details),
                         &["Exit"],
-                    cx);
+                        cx,
+                    );
 
                     cx.spawn_in(window, |_, mut cx| async move {
                         response.await?;
@@ -440,7 +441,7 @@ fn main() {
             cx,
         );
         snippet_provider::init(cx);
-        inline_completion_registry::init(app_state.client.clone(), window, cx);
+        inline_completion_registry::init(app_state.client.clone(), cx);
         let prompt_builder = assistant::init(
             app_state.fs.clone(),
             app_state.client.clone(),
@@ -470,7 +471,7 @@ fn main() {
         crate::zed::linux_prompts::init(cx);
 
         app_state.languages.set_theme(cx.theme().clone());
-        editor::init(window, cx);
+        editor::init(cx);
         image_viewer::init(cx);
         repl::notebook::init(cx);
         diagnostics::init(cx);
@@ -482,20 +483,20 @@ fn main() {
         file_finder::init(cx);
         tab_switcher::init(cx);
         outline::init(cx);
-        project_symbols::init(window, cx);
+        project_symbols::init(cx);
         project_panel::init(Assets, cx);
-        git_ui::git_panel::init(window, cx);
+        git_ui::git_panel::init(cx);
         outline_panel::init(Assets, cx);
-        tasks_ui::init(window, cx);
+        tasks_ui::init(cx);
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
         search::init(cx);
         vim::init(cx);
         terminal_view::init(cx);
-        journal::init(app_state.clone(), window, cx);
+        journal::init(app_state.clone(), cx);
         language_selector::init(cx);
         toolchain_selector::init(cx);
-        theme_selector::init(window, cx);
+        theme_selector::init(cx);
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -624,7 +625,8 @@ fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                             MessageNotification::new(format!("Invalid keymap file\n{error}"))
                                 .with_click_message("Open keymap file")
                                 .on_click(|window, cx| {
-                                    window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+                                    window
+                                        .dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
                                     cx.emit(DismissEvent);
                                 })
                         })
@@ -657,7 +659,10 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                                     ))
                                     .with_click_message("Open settings file")
                                     .on_click(|window, cx| {
-                                        window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                                        window.dispatch_action(
+                                            zed_actions::OpenSettings.boxed_clone(),
+                                            cx,
+                                        );
                                         cx.emit(DismissEvent);
                                     })
                                 })
@@ -874,9 +879,14 @@ async fn restore_or_create_workspace(
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
         cx.update(|cx| {
-            workspace::open_new(Default::default(), app_state, cx, |workspace, window, cx| {
-                Editor::new_file(workspace, &Default::default(), window, cx)
-            })
+            workspace::open_new(
+                Default::default(),
+                app_state,
+                cx,
+                |workspace, window, cx| {
+                    Editor::new_file(workspace, &Default::default(), window, cx)
+                },
+            )
         })?
         .await?;
     }

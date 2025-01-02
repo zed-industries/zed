@@ -14,7 +14,8 @@ use client::{
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    Font, HighlightStyle, Model, ModelContext, Pixels, Point, SharedString, Task, WeakView, Window,
+    Font, HighlightStyle, Model, ModelContext, Pixels, Point, SharedString, Task, WeakModel,
+    Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
@@ -365,7 +366,7 @@ pub trait SerializableItem: Item {
 
     fn deserialize(
         _project: Model<Project>,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakModel<Workspace>,
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
         _window: &mut Window,
@@ -1009,7 +1010,7 @@ impl Clone for Box<dyn ItemHandle> {
     }
 }
 
-impl<T: Item> WeakItemHandle for WeakView<T> {
+impl<T: Item> WeakItemHandle for WeakModel<T> {
     fn id(&self) -> EntityId {
         self.entity_id()
     }
@@ -1216,7 +1217,7 @@ pub trait WeakFollowableItemHandle: Send + Sync {
     fn upgrade(&self) -> Option<Box<dyn FollowableItemHandle>>;
 }
 
-impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
+impl<T: FollowableItem> WeakFollowableItemHandle for WeakModel<T> {
     fn upgrade(&self) -> Option<Box<dyn FollowableItemHandle>> {
         Some(Box::new(self.upgrade()?))
     }
@@ -1229,7 +1230,7 @@ pub mod test {
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
         InteractiveElement, IntoElement, Model, ModelContext, Render, SharedString, Task,
-        VisualContext, WeakView, Window,
+        VisualContext, WeakModel, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};
@@ -1559,7 +1560,7 @@ pub mod test {
 
         fn deserialize(
             _project: Model<Project>,
-            _workspace: WeakView<Workspace>,
+            _workspace: WeakModel<Workspace>,
             workspace_id: WorkspaceId,
             _item_id: ItemId,
             window: &mut Window,

@@ -1,5 +1,5 @@
 use editor::{Editor, ToPoint};
-use gpui::{AppContext, FocusHandle, FocusableView, Model, Subscription, Task, WeakView};
+use gpui::{AppContext, FocusHandle, FocusableView, Model, Subscription, Task, WeakModel};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -23,7 +23,7 @@ pub struct CursorPosition {
     position: Option<Point>,
     selected_count: SelectionStats,
     context: Option<FocusHandle>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     update_position: Task<()>,
     _observe_active_editor: Option<Subscription>,
 }

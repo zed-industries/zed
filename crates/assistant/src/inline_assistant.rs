@@ -26,7 +26,7 @@ use futures::{
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, WeakView, Window,
+    Subscription, Task, TextStyle, UpdateGlobal, WeakModel, Window,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -84,7 +84,7 @@ pub struct InlineAssistant {
     next_assist_id: InlineAssistId,
     next_assist_group_id: InlineAssistGroupId,
     assists: HashMap<InlineAssistId, InlineAssist>,
-    assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
+    assists_by_editor: HashMap<WeakModel<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
     confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
@@ -199,7 +199,7 @@ impl InlineAssistant {
     pub fn assist(
         &mut self,
         editor: &Model<Editor>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         assistant_panel: Option<&Model<AssistantPanel>>,
         initial_prompt: Option<String>,
         window: &mut Window,
@@ -373,7 +373,7 @@ impl InlineAssistant {
         initial_prompt: String,
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         assistant_panel: Option<&Model<AssistantPanel>>,
         window: &mut Window,
         cx: &mut AppContext,
@@ -691,7 +691,7 @@ impl InlineAssistant {
 
     fn handle_editor_release(
         &mut self,
-        editor: WeakView<Editor>,
+        editor: WeakModel<Editor>,
         window: &mut Window,
         cx: &mut AppContext,
     ) {
@@ -1368,18 +1368,18 @@ impl EditorInlineAssists {
                     let editor = editor.downgrade();
                     |_, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
-                            this.handle_editor_release(editor, cx);
+                            this.handle_editor_release(editor, window, cx);
                         })
                     }
                 }),
                 cx.observe(editor, move |editor, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_editor_change(editor, cx)
+                        this.handle_editor_change(editor, window, cx)
                     })
                 }),
-                cx.subscribe(editor, move |editor, event, cx| {
+                cx.subscribe_in(editor, window, move |editor, event, window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_editor_event(editor, event, cx)
+                        this.handle_editor_event(editor, event, window cx)
                     })
                 }),
                 editor.update(cx, |editor, cx| {
@@ -1388,7 +1388,7 @@ impl EditorInlineAssists {
                         move |_: &editor::actions::Newline, cx: &mut WindowContext| {
                             InlineAssistant::update_global(cx, |this, cx| {
                                 if let Some(editor) = editor_handle.upgrade() {
-                                    this.handle_editor_newline(editor, cx)
+                                    this.handle_editor_newline(editor, window, cx)
                                 }
                             })
                         },
@@ -1400,7 +1400,7 @@ impl EditorInlineAssists {
                         move |_: &editor::actions::Cancel, cx: &mut WindowContext| {
                             InlineAssistant::update_global(cx, |this, cx| {
                                 if let Some(editor) = editor_handle.upgrade() {
-                                    this.handle_editor_cancel(editor, cx)
+                                    this.handle_editor_cancel(editor, window, cx)
                                 }
                             })
                         },
@@ -1480,7 +1480,7 @@ struct PromptEditor {
     pending_token_count: Task<Result<()>>,
     token_counts: Option<TokenCounts>,
     _token_count_subscriptions: Vec<Subscription>,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakModel<Workspace>>,
     show_rate_limit_notice: bool,
 }
 
@@ -1517,7 +1517,7 @@ impl Render for PromptEditor {
                     IconButton::new("start", IconName::SparkleAlt)
                         .icon_color(Color::Muted)
                         .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::for_action("Transform", &menu::Confirm, cx))
+                        .tooltip(|cx| Tooltip::for_action("Transform", &menu::Confirm, window, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
                         )
@@ -1529,7 +1529,7 @@ impl Render for PromptEditor {
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
                         .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
+                        .tooltip(|cx| Tooltip::text("Cancel Assist", window, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         )
@@ -1542,6 +1542,7 @@ impl Render for PromptEditor {
                                 "Interrupt Transformation",
                                 Some(&menu::Cancel),
                                 "Changes won't be discarded",
+                                window,
                                 cx,
                             )
                         })
@@ -1563,7 +1564,9 @@ impl Render for PromptEditor {
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
                         .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
+                        .tooltip(|cx| {
+                            Tooltip::for_action("Cancel Assist", &menu::Cancel, window, cx)
+                        })
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         )
@@ -1576,6 +1579,7 @@ impl Render for PromptEditor {
                                 "Regenerate Transformation",
                                 Some(restart_key),
                                 "Current change will be discarded",
+                                window,
                                 cx,
                             )
                         })
@@ -1587,7 +1591,9 @@ impl Render for PromptEditor {
                         IconButton::new("confirm", IconName::Check)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
-                            .tooltip(|cx| Tooltip::for_action("Confirm Assist", &menu::Confirm, cx))
+                            .tooltip(|cx| {
+                                Tooltip::for_action("Confirm Assist", &menu::Confirm, window, cx)
+                            })
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.emit(PromptEditorEvent::ConfirmRequested);
                             }))
@@ -1674,7 +1680,7 @@ impl Render for PromptEditor {
                             el.child(
                                 div()
                                     .id("error")
-                                    .tooltip(move |cx| {
+                                    .tooltip(move |window, cx| {
                                         Tooltip::text(error_message.clone(), window, cx)
                                     })
                                     .child(
@@ -1715,7 +1721,7 @@ impl PromptEditor {
         codegen: Model<Codegen>,
         parent_editor: &Model<Editor>,
         assistant_panel: Option<&Model<AssistantPanel>>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -2252,7 +2258,7 @@ impl PromptEditor {
             );
         if let Some(workspace) = self.workspace.clone() {
             token_count = token_count
-                .tooltip(move |cx| {
+                .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         format!(
                             "Tokens Used ({} from the Assistant Panel)",
@@ -2401,11 +2407,11 @@ fn set_rate_limit_notice_dismissed(is_dismissed: bool, cx: &mut AppContext) {
 struct InlineAssist {
     group_id: InlineAssistGroupId,
     range: Range<Anchor>,
-    editor: WeakView<Editor>,
+    editor: WeakModel<Editor>,
     decorations: Option<InlineAssistDecorations>,
     codegen: Model<Codegen>,
     _subscriptions: Vec<Subscription>,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakModel<Workspace>>,
     include_context: bool,
 }
 
@@ -2421,7 +2427,7 @@ impl InlineAssist {
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
         codegen: Model<Codegen>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Self {
@@ -2442,17 +2448,17 @@ impl InlineAssist {
             _subscriptions: vec![
                 cx.on_focus_in(&prompt_editor_focus_handle, move |cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_focus_in(assist_id, cx)
+                        this.handle_prompt_editor_focus_in(assist_id, window, cx)
                     })
                 }),
                 cx.on_focus_out(&prompt_editor_focus_handle, move |_, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_focus_out(assist_id, cx)
+                        this.handle_prompt_editor_focus_out(assist_id, window, cx)
                     })
                 }),
                 cx.subscribe(prompt_editor, |prompt_editor, event, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_event(prompt_editor, event, cx)
+                        this.handle_prompt_editor_event(prompt_editor, event, window, cx)
                     })
                 }),
                 cx.observe(&codegen, {
@@ -2466,14 +2472,14 @@ impl InlineAssist {
                                     editor_assists.highlight_updates.send(()).ok();
                                 }
 
-                                this.update_editor_blocks(&editor, assist_id, cx);
+                                this.update_editor_blocks(&editor, assist_id, window, cx);
                             })
                         }
                     }
                 }),
                 cx.subscribe(&codegen, move |codegen, event, cx| {
                     InlineAssistant::update_global(cx, |this, cx| match event {
-                        CodegenEvent::Undone => this.finish_assist(assist_id, false, cx),
+                        CodegenEvent::Undone => this.finish_assist(assist_id, false, window, cx),
                         CodegenEvent::Finished => {
                             let assist = if let Some(assist) = this.assists.get(&assist_id) {
                                 assist
@@ -2504,7 +2510,7 @@ impl InlineAssist {
                             }
 
                             if assist.decorations.is_none() {
-                                this.finish_assist(assist_id, false, cx);
+                                this.finish_assist(assist_id, false, window, cx);
                             }
                         }
                     })
@@ -3617,8 +3623,8 @@ where
 }
 
 struct AssistantCodeActionProvider {
-    editor: WeakView<Editor>,
-    workspace: WeakView<Workspace>,
+    editor: WeakModel<Editor>,
+    workspace: WeakModel<Workspace>,
 }
 
 impl CodeActionProvider for AssistantCodeActionProvider {

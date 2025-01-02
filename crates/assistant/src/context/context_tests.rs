@@ -17,7 +17,7 @@ use futures::{
     channel::mpsc,
     stream::{self, StreamExt},
 };
-use gpui::{prelude::*, AppContext, Model, SharedString, Task, TestAppContext, WeakView};
+use gpui::{prelude::*, AppContext, Model, SharedString, Task, TestAppContext, WeakModel};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
@@ -1642,7 +1642,7 @@ impl SlashCommand for FakeSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
+        _workspace: Option<WeakModel<Workspace>>,
         _window: &mut Window,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -1658,7 +1658,7 @@ impl SlashCommand for FakeSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _window: &mut Window,
         _cx: &mut AppContext,

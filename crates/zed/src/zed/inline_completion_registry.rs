@@ -5,13 +5,13 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
-use gpui::{Window, ModelContext, AnyWindowHandle, AppContext, Context,  WeakView};
+use gpui::{Window, ModelContext, AnyWindowHandle, AppContext, Context,  WeakModel};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
-    let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
+    let editors: Rc<RefCell<HashMap<WeakModel<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new_views({
         let editors = editors.clone();
         let client = client.clone();
@@ -87,7 +87,7 @@ fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut AppContext) {
 }
 
 fn assign_inline_completion_providers(
-    editors: &Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>>,
+    editors: &Rc<RefCell<HashMap<WeakModel<Editor>, AnyWindowHandle>>>,
     provider: InlineCompletionProvider,
     client: &Arc<Client>,
     cx: &mut AppContext,

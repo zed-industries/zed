@@ -1,6 +1,6 @@
 use gpui::{
     div, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ModelContext, ParentElement,
-    Render, SemanticVersion, StatefulInteractiveElement, Styled, WeakView, Window,
+    Render, SemanticVersion, StatefulInteractiveElement, Styled, WeakModel, Window,
 };
 use menu::Cancel;
 use release_channel::ReleaseChannel;
@@ -12,7 +12,7 @@ use workspace::{
 
 pub struct UpdateNotification {
     version: SemanticVersion,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
 }
 
 impl EventEmitter<DismissEvent> for UpdateNotification {}
@@ -60,7 +60,7 @@ impl Render for UpdateNotification {
 }
 
 impl UpdateNotification {
-    pub fn new(version: SemanticVersion, workspace: WeakView<Workspace>) -> Self {
+    pub fn new(version: SemanticVersion, workspace: WeakModel<Workspace>) -> Self {
         Self { version, workspace }
     }
 

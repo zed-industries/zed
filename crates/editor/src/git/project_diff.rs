@@ -15,7 +15,7 @@ use git::{
 };
 use gpui::{
     actions, AnyElement, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, Model, Render, Subscription, Task, WeakView,
+    InteractiveElement, Model, Render, Subscription, Task, WeakModel,
 };
 use language::{Buffer, BufferRow};
 use multi_buffer::{ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer};
@@ -46,7 +46,7 @@ struct ProjectDiffEditor {
     editor: Model<Editor>,
 
     project: Model<Project>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     focus_handle: FocusHandle,
     worktree_rescans: HashMap<WorktreeId, Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -87,7 +87,7 @@ impl ProjectDiffEditor {
 
     fn new(
         project: Model<Project>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {

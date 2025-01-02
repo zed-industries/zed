@@ -3,7 +3,7 @@ use gpui::{Window, ModelContext,
     actions, div, rems, uniform_list, AppContext, Div, EventEmitter, FocusHandle, FocusableView,
     Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent, MouseMoveEvent,
     ParentElement, Render, ScrollStrategy, SharedString, Styled, UniformListScrollHandle, 
-     VisualContext, WeakView, 
+     VisualContext, WeakModel, 
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
@@ -31,7 +31,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct SyntaxTreeView {
-    workspace_handle: WeakView<Workspace>,
+    workspace_handle: WeakModel<Workspace>,
     editor: Option<EditorState>,
     list_scroll_handle: UniformListScrollHandle,
     selected_descendant_ix: Option<usize>,
@@ -59,7 +59,7 @@ struct BufferState {
 
 impl SyntaxTreeView {
     pub fn new(
-        workspace_handle: WeakView<Workspace>,
+        workspace_handle: WeakModel<Workspace>,
         active_item: Option<Box<dyn ItemHandle>>,
         window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {

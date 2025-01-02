@@ -6,7 +6,7 @@ use extension_host::{ExtensionSettings, ExtensionStore};
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    prelude::*, AppContext, DismissEvent, EventEmitter, FocusableView, Model, Task, WeakView,
+    prelude::*, AppContext, DismissEvent, EventEmitter, FocusableView, Model, Task, WeakModel,
 };
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
@@ -49,7 +49,7 @@ impl ExtensionVersionSelector {
 
 pub struct ExtensionVersionSelectorDelegate {
     fs: Arc<dyn Fs>,
-    view: WeakView<ExtensionVersionSelector>,
+    view: WeakModel<ExtensionVersionSelector>,
     extension_versions: Vec<ExtensionMetadata>,
     selected_index: usize,
     matches: Vec<StringMatch>,
@@ -58,7 +58,7 @@ pub struct ExtensionVersionSelectorDelegate {
 impl ExtensionVersionSelectorDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
-        weak_view: WeakView<ExtensionVersionSelector>,
+        weak_view: WeakModel<ExtensionVersionSelector>,
         mut extension_versions: Vec<ExtensionMetadata>,
     ) -> Self {
         extension_versions.sort_unstable_by(|a, b| {

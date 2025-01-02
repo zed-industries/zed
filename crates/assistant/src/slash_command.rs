@@ -5,7 +5,7 @@ use assistant_slash_command::AfterCompletion;
 pub use assistant_slash_command::{SlashCommand, SlashCommandOutput};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{AppContext, Model, ModelContext, Task, WeakView, Window};
+use gpui::{AppContext, Model, ModelContext, Task, WeakModel, Window};
 use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
 use parking_lot::Mutex;
 use project::CompletionIntent;
@@ -43,8 +43,8 @@ pub mod terminal_command;
 pub(crate) struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    editor: Option<WeakView<ContextEditor>>,
-    workspace: Option<WeakView<Workspace>>,
+    editor: Option<WeakModel<ContextEditor>>,
+    workspace: Option<WeakModel<Workspace>>,
 }
 
 pub(crate) struct SlashCommandLine {
@@ -57,8 +57,8 @@ pub(crate) struct SlashCommandLine {
 impl SlashCommandCompletionProvider {
     pub fn new(
         slash_commands: Arc<SlashCommandWorkingSet>,
-        editor: Option<WeakView<ContextEditor>>,
-        workspace: Option<WeakView<Workspace>>,
+        editor: Option<WeakModel<ContextEditor>>,
+        workspace: Option<WeakModel<Workspace>>,
     ) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),

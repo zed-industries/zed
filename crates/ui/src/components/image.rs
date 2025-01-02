@@ -80,7 +80,7 @@ impl RenderOnce for Vector {
             .w(width)
             .h(height)
             .path(self.path)
-            .text_color(self.color.color(window, cx))
+            .text_color(self.color.color(cx))
     }
 }
 

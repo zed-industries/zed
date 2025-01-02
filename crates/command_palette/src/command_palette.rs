@@ -12,7 +12,7 @@ use command_palette_hooks::{
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global, Model,
-    ModelContext, ParentElement, Render, Styled, Task, UpdateGlobal, VisualContext, WeakView,
+    ModelContext, ParentElement, Render, Styled, Task, UpdateGlobal, VisualContext, WeakModel,
     Window,
 };
 use picker::{Picker, PickerDelegate};
@@ -90,7 +90,7 @@ impl CommandPalette {
         let filter = CommandPaletteFilter::try_global(cx);
 
         let commands = window
-            .available_actions()
+            .available_actions(cx)
             .into_iter()
             .filter_map(|action| {
                 if filter.is_some_and(|filter| filter.is_hidden(&*action)) {
@@ -136,7 +136,7 @@ impl Render for CommandPalette {
 }
 
 pub struct CommandPaletteDelegate {
-    command_palette: WeakView<CommandPalette>,
+    command_palette: WeakModel<CommandPalette>,
     all_commands: Vec<Command>,
     commands: Vec<Command>,
     matches: Vec<StringMatch>,
@@ -172,7 +172,7 @@ impl Global for HitCounts {}
 
 impl CommandPaletteDelegate {
     fn new(
-        command_palette: WeakView<CommandPalette>,
+        command_palette: WeakModel<CommandPalette>,
         commands: Vec<Command>,
         previous_focus_handle: FocusHandle,
     ) -> Self {
@@ -657,7 +657,7 @@ mod tests {
             let app_state = AppState::test(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
-            editor::init(window, cx);
+            editor::init(cx);
             menu::init();
             go_to_line::init(cx);
             workspace::init(app_state.clone(), cx);

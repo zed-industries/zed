@@ -11,7 +11,7 @@ use editor::actions::{
 use editor::{Editor, EditorSettings};
 use gpui::{Window, ModelContext, Model, 
     Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, ParentElement, Render, Styled, Subscription,   WeakView,
+    InteractiveElement, ParentElement, Render, Styled, Subscription,   WeakModel,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
@@ -32,7 +32,7 @@ pub struct QuickActionBar {
     show: bool,
     toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
 }
 
 impl QuickActionBar {

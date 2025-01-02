@@ -4,7 +4,7 @@ use git::repository::Branch;
 use gpui::{
     rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, VisualContext, WeakView, Window,
+    SharedString, Styled, Subscription, Task, VisualContext, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
@@ -107,7 +107,7 @@ impl BranchEntry {
 pub struct BranchListDelegate {
     matches: Vec<BranchEntry>,
     all_branches: Vec<Branch>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     selected_index: usize,
     last_query: String,
     /// Max length of branch name before we truncate it and add a trailing `...`.

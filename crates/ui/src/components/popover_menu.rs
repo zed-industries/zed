@@ -4,9 +4,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, AppContext,
-    Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, GlobalElementId, HitboxId,
-    InteractiveElement, IntoElement, LayoutId, Length, ManagedView, Model, MouseDownEvent,
-    ParentElement, Pixels, Point, Style, VisualContext, Window,
+    Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, FocusableView as _,
+    GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId, Length, ManagedView,
+    Model, MouseDownEvent, ParentElement, Pixels, Point, Style, VisualContext, Window,
 };
 
 use crate::prelude::*;
@@ -134,7 +134,7 @@ impl<M: ManagedView> PopoverMenu<M> {
             let open = menu.borrow().is_some();
             t.toggle_state(open)
                 .when_some(builder, |el, builder| {
-                    el.on_click(move |_, cx| show_menu(&builder, &menu, window, cx))
+                    el.on_click(move |_event, window, cx| show_menu(&builder, &menu, window, cx))
                 })
                 .into_any_element()
         }));
@@ -187,7 +187,7 @@ fn show_menu<M: ManagedView>(
     window: &mut Window,
     cx: &mut AppContext,
 ) {
-    let Some(new_menu) = (builder)(cx) else {
+    let Some(new_menu) = (builder)(window, cx) else {
         return;
     };
     let menu2 = menu.clone();

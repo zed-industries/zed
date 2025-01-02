@@ -340,14 +340,10 @@ impl Render for LanguageServerPrompt {
                                                 .map(|icon| {
                                                     if severity == DiagnosticSeverity::ERROR {
                                                         icon.path(IconName::Warning.path())
-                                                            .text_color(
-                                                                Color::Error.color(window, cx),
-                                                            )
+                                                            .text_color(Color::Error.color(cx))
                                                     } else {
                                                         icon.path(IconName::Warning.path())
-                                                            .text_color(
-                                                                Color::Warning.color(window, cx),
-                                                            )
+                                                            .text_color(Color::Warning.color(cx))
                                                     }
                                                 })
                                         }),
@@ -456,7 +452,7 @@ impl Render for ErrorMessagePrompt {
                                     .mt(px(-2.0))
                                     .map(|icon| {
                                         icon.path(IconName::Warning.path())
-                                            .text_color(Color::Error.color(window, cx))
+                                            .text_color(Color::Error.color(cx))
                                     }),
                             )
                             .child(ui::IconButton::new("close", ui::IconName::Close).on_click(

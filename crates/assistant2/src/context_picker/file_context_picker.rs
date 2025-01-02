@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use fuzzy::PathMatch;
 use gpui::{
-    AppContext, DismissEvent, FocusHandle, FocusableView, Model, Task, WeakModel, WeakView,
+    AppContext, DismissEvent, FocusHandle, FocusableView, Model, Task, WeakModel, WeakModel,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, WorktreeId};
@@ -24,8 +24,8 @@ pub struct FileContextPicker {
 
 impl FileContextPicker {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
+        context_picker: WeakModel<ContextPicker>,
+        workspace: WeakModel<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
         window: &mut Window,
@@ -56,8 +56,8 @@ impl Render for FileContextPicker {
 }
 
 pub struct FileContextPickerDelegate {
-    context_picker: WeakView<ContextPicker>,
-    workspace: WeakView<Workspace>,
+    context_picker: WeakModel<ContextPicker>,
+    workspace: WeakModel<Workspace>,
     context_store: WeakModel<ContextStore>,
     confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
@@ -66,8 +66,8 @@ pub struct FileContextPickerDelegate {
 
 impl FileContextPickerDelegate {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
+        context_picker: WeakModel<ContextPicker>,
+        workspace: WeakModel<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
     ) -> Self {

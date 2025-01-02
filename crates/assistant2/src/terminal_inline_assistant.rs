@@ -13,7 +13,7 @@ use editor::{actions::SelectAll, MultiBuffer};
 use fs::Fs;
 use gpui::{
     AppContext, Context, FocusableView, Global, Model, Subscription, UpdateGlobal, WeakModel,
-    WeakView,
+    WeakModel,
 };
 use language::Buffer;
 use language_model::{
@@ -69,7 +69,7 @@ impl TerminalInlineAssistant {
     pub fn assist(
         &mut self,
         terminal_view: &Model<TerminalView>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         window: &mut Window,
         cx: &mut AppContext,
@@ -386,10 +386,10 @@ impl TerminalInlineAssistant {
 }
 
 struct TerminalInlineAssist {
-    terminal: WeakView<TerminalView>,
+    terminal: WeakModel<TerminalView>,
     prompt_editor: Option<Model<PromptEditor<TerminalCodegen>>>,
     codegen: Model<TerminalCodegen>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     context_store: Model<ContextStore>,
     _subscriptions: Vec<Subscription>,
 }
@@ -399,7 +399,7 @@ impl TerminalInlineAssist {
         assist_id: TerminalInlineAssistId,
         terminal: &Model<TerminalView>,
         prompt_editor: Model<PromptEditor<TerminalCodegen>>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         context_store: Model<ContextStore>,
         window: &mut Window,
         cx: &mut AppContext,

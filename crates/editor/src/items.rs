@@ -13,7 +13,7 @@ use git::repository::GitFileStatus;
 use gpui::{
     point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
     IntoElement, Model, ModelContext, ParentElement, Pixels, SharedString, Styled, Task,
-    VisualContext, WeakView, Window,
+    VisualContext, WeakModel, Window,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
@@ -149,6 +149,7 @@ impl FollowableItem for Editor {
                     scroll_y: state.scroll_y,
                     ..Default::default()
                 },
+                window,
                 &mut cx,
             )
             .await?;
@@ -346,7 +347,7 @@ impl FollowableItem for Editor {
 }
 
 async fn update_editor_from_message(
-    this: WeakView<Editor>,
+    this: WeakModel<Editor>,
     project: Model<Project>,
     message: proto::update_view::Editor,
     window: &mut Window,
@@ -1005,7 +1006,7 @@ impl SerializableItem for Editor {
 
     fn deserialize(
         project: Model<Project>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: ItemId,
         window: &mut Window,

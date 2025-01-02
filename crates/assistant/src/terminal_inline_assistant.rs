@@ -14,7 +14,7 @@ use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
     AppContext, Context, EventEmitter, FocusHandle, FocusableView, Global, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, WeakView,
+    Subscription, Task, TextStyle, UpdateGlobal, WeakModel,
 };
 use language::Buffer;
 use language_model::{
@@ -88,7 +88,7 @@ impl TerminalInlineAssistant {
     pub fn assist(
         &mut self,
         terminal_view: &Model<TerminalView>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         assistant_panel: Option<&Model<AssistantPanel>>,
         initial_prompt: Option<String>,
         window: &mut Window,
@@ -418,10 +418,10 @@ impl TerminalInlineAssistant {
 }
 
 struct TerminalInlineAssist {
-    terminal: WeakView<TerminalView>,
+    terminal: WeakModel<TerminalView>,
     prompt_editor: Option<Model<PromptEditor>>,
     codegen: Model<Codegen>,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakModel<Workspace>>,
     include_context: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -432,7 +432,7 @@ impl TerminalInlineAssist {
         terminal: &Model<TerminalView>,
         include_context: bool,
         prompt_editor: Model<PromptEditor>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Self {
@@ -446,7 +446,7 @@ impl TerminalInlineAssist {
             _subscriptions: vec![
                 cx.subscribe(&prompt_editor, |prompt_editor, event, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_event(prompt_editor, event, cx)
+                        this.handle_prompt_editor_event(prompt_editor, event, window, cx)
                     })
                 }),
                 cx.subscribe(&codegen, move |codegen, event, cx| {
@@ -482,7 +482,7 @@ impl TerminalInlineAssist {
                             }
 
                             if assist.prompt_editor.is_none() {
-                                this.finish_assist(assist_id, false, false, cx);
+                                this.finish_assist(assist_id, false, false, window, cx);
                             }
                         }
                     })
@@ -516,7 +516,7 @@ struct PromptEditor {
     pending_token_count: Task<Result<()>>,
     token_count: Option<usize>,
     _token_count_subscriptions: Vec<Subscription>,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakModel<Workspace>>,
 }
 
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
@@ -530,14 +530,16 @@ impl Render for PromptEditor {
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
                         .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
+                        .tooltip(|cx| {
+                            Tooltip::for_action("Cancel Assist", &menu::Cancel, window, cx)
+                        })
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         ),
                     IconButton::new("start", IconName::SparkleAlt)
                         .icon_color(Color::Muted)
                         .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::for_action("Generate", &menu::Confirm, cx))
+                        .tooltip(|cx| Tooltip::for_action("Generate", &menu::Confirm, window, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
                         ),
@@ -548,7 +550,7 @@ impl Render for PromptEditor {
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
                         .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
+                        .tooltip(|cx| Tooltip::text("Cancel Assist", window, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         ),
@@ -560,6 +562,7 @@ impl Render for PromptEditor {
                                 "Interrupt Generation",
                                 Some(&menu::Cancel),
                                 "Changes won't be discarded",
+                                window,
                                 cx,
                             )
                         })
@@ -591,6 +594,7 @@ impl Render for PromptEditor {
                                     "Restart Generation",
                                     Some(&menu::Confirm),
                                     "Changes will be discarded",
+                                    window,
                                     cx,
                                 )
                             })
@@ -604,8 +608,13 @@ impl Render for PromptEditor {
                         IconButton::new("accept", IconName::Check)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
-                            .tooltip(|cx| {
-                                Tooltip::for_action("Accept Generated Command", &menu::Confirm, cx)
+                            .tooltip(|window, cx| {
+                                Tooltip::for_action(
+                                    "Accept Generated Command",
+                                    &menu::Confirm,
+                                    window,
+                                    cx,
+                                )
                             })
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
@@ -617,6 +626,7 @@ impl Render for PromptEditor {
                                 Tooltip::for_action(
                                     "Execute Generated Command",
                                     &menu::SecondaryConfirm,
+                                    window,
                                     cx,
                                 )
                             })
@@ -673,7 +683,7 @@ impl Render for PromptEditor {
                             Some(
                                 div()
                                     .id("error")
-                                    .tooltip(move |cx| {
+                                    .tooltip(move |window, cx| {
                                         Tooltip::text(error_message.clone(), window, cx)
                                     })
                                     .child(
@@ -714,7 +724,7 @@ impl PromptEditor {
         prompt_buffer: Model<MultiBuffer>,
         codegen: Model<Codegen>,
         assistant_panel: Option<&Model<AssistantPanel>>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,

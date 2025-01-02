@@ -9,7 +9,7 @@ use gpui::{
     actions, div, img, list, px, AnyElement, AppContext, AsyncWindowContext, CursorStyle,
     DismissEvent, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     IntoElement, ListAlignment, ListScrollEvent, ListState, Model, ModelContext, ParentElement,
-    Render, StatefulInteractiveElement, Styled, Task, VisualContext, WeakView, Window,
+    Render, StatefulInteractiveElement, Styled, Task, VisualContext, WeakModel, Window,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -44,7 +44,7 @@ pub struct NotificationPanel {
     notification_list: ListState,
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     current_notification_toast: Option<(u64, Task<()>)>,
     local_timezone: UtcOffset,
     focus_handle: FocusHandle,
@@ -179,7 +179,7 @@ impl NotificationPanel {
     }
 
     pub fn load(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
@@ -306,7 +306,7 @@ impl NotificationPanel {
                                                 .rounded_md()
                                         })
                                         .child(Label::new(relative_timestamp).color(Color::Muted))
-                                        .tooltip(move |cx| {
+                                        .tooltip(move |window, cx| {
                                             Tooltip::text(absolute_timestamp.clone(), window, cx)
                                         }),
                                 )
@@ -797,7 +797,7 @@ pub struct NotificationToast {
     notification_id: u64,
     actor: Option<Arc<User>>,
     text: String,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
 }
 
 impl NotificationToast {

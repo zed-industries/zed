@@ -9,7 +9,7 @@ use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
     FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
     MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, VisualContext,
-    WeakModel, WeakView,
+    WeakModel, WeakModel,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -72,7 +72,7 @@ pub struct SendKeystroke(String);
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut AppContext) {
-    terminal_panel::init(window, cx);
+    terminal_panel::init(cx);
     terminal::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
@@ -96,7 +96,7 @@ pub struct BlockContext<'a, 'b> {
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
 pub struct TerminalView {
     terminal: Model<Terminal>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: WeakModel<Project>,
     focus_handle: FocusHandle,
     //Currently using iTerm bell, show bell emoji in tab until input is received
@@ -146,7 +146,7 @@ impl TerminalView {
 
     pub fn new(
         terminal: Model<Terminal>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         workspace_id: Option<WorkspaceId>,
         project: WeakModel<Project>,
         window: &mut Window,
@@ -694,7 +694,7 @@ impl TerminalView {
 
 fn subscribe_for_terminal_events(
     terminal: &Model<Terminal>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     window: &mut Window,
     cx: &mut ModelContext<TerminalView>,
 ) -> Vec<Subscription> {
@@ -898,7 +898,7 @@ fn possible_open_paths_metadata(
 
 fn possible_open_targets(
     fs: Arc<dyn Fs>,
-    workspace: &WeakView<Workspace>,
+    workspace: &WeakModel<Workspace>,
     cwd: &Option<PathBuf>,
     maybe_path: &String,
     window: &mut Window,
@@ -1314,7 +1314,7 @@ impl SerializableItem for TerminalView {
 
     fn deserialize(
         project: Model<Project>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         window: &mut Window,

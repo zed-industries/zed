@@ -228,6 +228,9 @@ impl<T: 'static> Reservation<T> {
 /// This trait is used for the different visual contexts in GPUI that
 /// require a window to be present.
 pub trait VisualContext: Context {
+    /// Returns the handle of the window associated with this context.
+    fn window_handle(&self) -> AnyWindowHandle;
+
     /// Construct a new view in the window referenced by this context.
     fn new_view<V>(
         &mut self,

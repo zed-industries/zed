@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, WeakView};
+use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, WeakModel};
 use project::project_settings::ProjectSettings;
 use remote::SshConnectionOptions;
 use settings::Settings;
@@ -19,7 +19,7 @@ enum Host {
 }
 
 pub struct DisconnectedOverlay {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     host: Host,
     focus_handle: FocusHandle,
     finished: bool,

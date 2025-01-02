@@ -82,7 +82,7 @@ fn main() {
         ThemeSettings::override_global(theme_settings, cx);
 
         language::init(cx);
-        editor::init(window, cx);
+        editor::init(cx);
         Project::init_settings(cx);
         init(cx);
         load_storybook_keymap(cx);

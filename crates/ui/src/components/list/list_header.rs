@@ -120,7 +120,9 @@ impl RenderOnce for ListHeader {
                                     .children(self.start_slot)
                                     .child(Label::new(self.label.clone()).color(Color::Muted))
                                     .when_some(self.on_toggle, |this, on_toggle| {
-                                        this.on_click(move |event, window, cx| on_toggle(event, cx))
+                                        this.on_click(move |event, window, cx| {
+                                            on_toggle(event, window, cx)
+                                        })
                                     }),
                             ),
                     )

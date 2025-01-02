@@ -12,7 +12,7 @@ use editor::{
 };
 use gpui::{
     actions, AnyView, AppContext, ClipboardItem, Entity as _, EventEmitter, FocusableView, Model,
-    ModelContext, Pixels, Point, Render, Subscription, Task, VisualContext as _, WeakView, Window,
+    ModelContext, Pixels, Point, Render, Subscription, Task, VisualContext as _, WeakModel, Window,
 };
 use project::Project;
 use rpc::proto::ChannelVisibility;
@@ -38,7 +38,7 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct ChannelView {
     pub editor: Model<Editor>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
     channel_store: Model<ChannelStore>,
     channel_buffer: Model<ChannelBuffer>,
@@ -197,7 +197,7 @@ impl ChannelView {
 
     pub fn new(
         project: Model<Project>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         channel_store: Model<ChannelStore>,
         channel_buffer: Model<ChannelBuffer>,
         window: &mut Window,
@@ -522,7 +522,8 @@ impl Item for ChannelView {
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.editor.update(window, cx, Item::deactivated)
+        self.editor
+            .update(cx, |item, cx| item.deactivated(window, cx))
     }
 
     fn set_nav_history(

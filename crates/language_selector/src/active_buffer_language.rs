@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    div, IntoElement, Model, ModelContext, ParentElement, Render, Subscription, WeakView, Window,
+    div, IntoElement, Model, ModelContext, ParentElement, Render, Subscription, WeakModel, Window,
 };
 use language::LanguageName;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
@@ -10,7 +10,7 @@ use crate::{LanguageSelector, Toggle};
 
 pub struct ActiveBufferLanguage {
     active_language: Option<Option<LanguageName>>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     _observe_active_editor: Option<Subscription>,
 }
 

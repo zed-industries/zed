@@ -665,11 +665,6 @@ pub struct VisualTestContext {
 }
 
 impl VisualTestContext {
-    /// Get the underlying window handle underlying this context.
-    pub fn handle(&self) -> AnyWindowHandle {
-        self.window
-    }
-
     /// Provides the `WindowContext` for the duration of the closure.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut Window, &mut AppContext) -> R) -> R {
         self.cx
@@ -944,6 +939,11 @@ impl Context for VisualTestContext {
 }
 
 impl VisualContext for VisualTestContext {
+    /// Get the underlying window handle underlying this context.
+    fn window_handle(&self) -> AnyWindowHandle {
+        self.window
+    }
+
     fn new_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,

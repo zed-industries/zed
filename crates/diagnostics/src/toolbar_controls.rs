@@ -1,11 +1,11 @@
 use crate::ProjectDiagnosticsEditor;
-use gpui::{EventEmitter, Model, ModelContext, ParentElement, Render, WeakView, Window};
+use gpui::{EventEmitter, Model, ModelContext, ParentElement, Render, WeakModel, Window};
 use ui::prelude::*;
 use ui::{IconButton, IconButtonShape, IconName, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct ToolbarControls {
-    editor: Option<WeakView<ProjectDiagnosticsEditor>>,
+    editor: Option<WeakModel<ProjectDiagnosticsEditor>>,
 }
 
 impl Render for ToolbarControls {

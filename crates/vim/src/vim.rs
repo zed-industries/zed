@@ -27,7 +27,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,
-    KeystrokeEvent, Model, ModelContext, Render, Subscription, WeakView, Window,
+    KeystrokeEvent, Model, ModelContext, Render, Subscription, WeakModel, Window,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -218,7 +218,7 @@ pub(crate) struct Vim {
     selected_register: Option<char>,
     pub search: SearchState,
 
-    editor: WeakView<Editor>,
+    editor: WeakModel<Editor>,
 
     _subscriptions: Vec<Subscription>,
 }
@@ -244,7 +244,7 @@ impl Vim {
     pub fn new(window: &mut Window, cx: &mut ModelContext<Editor>) -> Model<Self> {
         let editor = cx.view().clone();
 
-        window.new_view(cx, window, window, |window, window, cx| Vim {
+        window.new_view(cx, |window, cx| Vim {
             mode: Mode::Normal,
             last_mode: Mode::Normal,
             temp_mode: false,
@@ -267,7 +267,7 @@ impl Vim {
             _subscriptions: vec![
                 cx.observe_keystrokes(Self::observe_keystrokes),
                 cx.subscribe(&editor, |this, _, event, cx| {
-                    this.handle_editor_event(event, cx)
+                    this.handle_editor_event(event, window, cx)
                 }),
             ],
         })

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, SharedString, Task,
-    WeakModel, WeakView,
+    WeakModel, WeakModel,
 };
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
@@ -45,7 +45,7 @@ pub(super) struct ContextPicker {
 
 impl ContextPicker {
     pub fn new(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
@@ -147,8 +147,8 @@ struct ContextPickerEntry {
 }
 
 pub(crate) struct ContextPickerDelegate {
-    context_picker: WeakView<ContextPicker>,
-    workspace: WeakView<Workspace>,
+    context_picker: WeakModel<ContextPicker>,
+    workspace: WeakModel<Workspace>,
     thread_store: Option<WeakModel<ThreadStore>>,
     context_store: WeakModel<ContextStore>,
     confirm_behavior: ConfirmBehavior,

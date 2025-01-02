@@ -37,7 +37,7 @@ use gpui::{
     InteractiveElement, IntoElement, Length, Model, ModelContext, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
     ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, Subscription, TextRun, TextStyleRefinement, WeakView, Window,
+    Style, Styled, Subscription, TextRun, TextStyleRefinement, WeakModel, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -5420,7 +5420,7 @@ fn render_inline_blame_entry(
     blame: &gpui::Model<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakModel<Workspace>>,
     window: &mut Window,
     cx: &mut AppContext,
 ) -> AnyElement {

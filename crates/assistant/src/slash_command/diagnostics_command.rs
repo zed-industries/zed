@@ -4,7 +4,7 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use fuzzy::{PathMatch, StringMatchCandidate};
-use gpui::{AppContext, Model, Task, WeakView};
+use gpui::{AppContext, Model, Task, WeakModel};
 use language::{
     Anchor, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, LspAdapterDelegate,
     OffsetRangeExt, ToOffset,
@@ -118,7 +118,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -173,7 +173,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut Window,
         cx: &mut AppContext,

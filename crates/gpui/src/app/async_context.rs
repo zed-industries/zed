@@ -379,6 +379,10 @@ impl Context for AsyncWindowContext {
 }
 
 impl VisualContext for AsyncWindowContext {
+    fn window_handle(&self) -> AnyWindowHandle {
+        self.window.clone()
+    }
+
     fn new_view<V>(
         &mut self,
         build_view_state: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,

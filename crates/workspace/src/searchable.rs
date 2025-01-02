@@ -2,8 +2,8 @@ use std::{any::Any, sync::Arc};
 
 use any_vec::AnyVec;
 use gpui::{
-    AnyView, AnyWeakView, AppContext, EventEmitter, Model, ModelContext, Subscription, Task,
-    WeakView, Window,
+    AnyView, AnyWeakModel, AppContext, EventEmitter, Model, ModelContext, Subscription, Task,
+    WeakModel, Window,
 };
 use project::search::SearchQuery;
 
@@ -407,15 +407,15 @@ impl Eq for Box<dyn SearchableItemHandle> {}
 pub trait WeakSearchableItemHandle: WeakItemHandle {
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
 
-    fn into_any(self) -> AnyWeakView;
+    fn into_any(self) -> AnyWeakModel;
 }
 
-impl<T: SearchableItem> WeakSearchableItemHandle for WeakView<T> {
+impl<T: SearchableItem> WeakSearchableItemHandle for WeakModel<T> {
     fn upgrade(&self, _cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.upgrade()?))
     }
 
-    fn into_any(self) -> AnyWeakView {
+    fn into_any(self) -> AnyWeakModel {
         self.into()
     }
 }

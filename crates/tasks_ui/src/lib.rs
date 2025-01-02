@@ -403,7 +403,7 @@ mod tests {
 
         assert_eq!(
             workspace
-                .update(cx, |workspace, cx| { task_context(workspace, cx) })
+                .update(cx, |workspace, cx| { task_context(workspace, window, cx) })
                 .await,
             TaskContext {
                 cwd: Some("/dir".into()),
@@ -427,8 +427,8 @@ mod tests {
             workspace
                 .update(cx, |workspace, cx| {
                     // Now, let's switch the active item to .ts file.
-                    workspace.activate_item(&editor1, true, true, cx);
-                    task_context(workspace, cx)
+                    workspace.activate_item(&editor1, true, true, window, cx);
+                    task_context(workspace, window, cx)
                 })
                 .await,
             TaskContext {

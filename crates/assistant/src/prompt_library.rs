@@ -275,7 +275,7 @@ impl PickerDelegate for PromptPickerDelegate {
                         div()
                             .id("built-in-prompt")
                             .child(Icon::new(IconName::FileLock).color(Color::Muted))
-                            .tooltip(move |cx| {
+                            .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
                                     "Built-in prompt",
                                     None,
@@ -547,90 +547,89 @@ impl PromptLibrary {
             self.pending_load = cx.spawn_in(window, |this, mut cx| async move {
                 let prompt = prompt.await;
                 let markdown = language_registry.language_for_name("Markdown").await;
-                this.update(
-                    &mut cx,
-                    window,
-                    window,
-                    |this, window, window, cx| match prompt {
-                        Ok(prompt) => {
-                            let title_editor = window.new_view(cx, |cx| {
-                                let mut editor = Editor::auto_width(window, cx);
-                                editor.set_placeholder_text("Untitled", window, cx);
-                                editor.set_text(
-                                    prompt_metadata.title.unwrap_or_default(),
-                                    window,
-                                    cx,
-                                );
-                                if prompt_id.is_built_in() {
-                                    editor.set_read_only(true);
-                                    editor.set_show_inline_completions(Some(false), window, cx);
-                                }
-                                editor
+                this.update_in(&mut cx, |this, window, cx| match prompt {
+                    Ok(prompt) => {
+                        let title_editor = window.new_view(cx, |cx| {
+                            let mut editor = Editor::auto_width(window, cx);
+                            editor.set_placeholder_text("Untitled", window, cx);
+                            editor.set_text(prompt_metadata.title.unwrap_or_default(), window, cx);
+                            if prompt_id.is_built_in() {
+                                editor.set_read_only(true);
+                                editor.set_show_inline_completions(Some(false), window, cx);
+                            }
+                            editor
+                        });
+                        let body_editor = window.new_view(cx, |window, cx| {
+                            let buffer = cx.new_model(|cx| {
+                                let mut buffer = Buffer::local(prompt, cx);
+                                buffer.set_language(markdown.log_err(), cx);
+                                buffer.set_language_registry(language_registry);
+                                buffer
                             });
-                            let body_editor = window.new_view(cx, |cx| {
-                                let buffer = cx.new_model(|cx| {
-                                    let mut buffer = Buffer::local(prompt, cx);
-                                    buffer.set_language(markdown.log_err(), cx);
-                                    buffer.set_language_registry(language_registry);
-                                    buffer
-                                });
 
-                                let mut editor = Editor::for_buffer(buffer, None, window, cx);
-                                if prompt_id.is_built_in() {
-                                    editor.set_read_only(true);
-                                    editor.set_show_inline_completions(Some(false), window, cx);
-                                }
-                                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, window, cx);
-                                editor.set_show_gutter(false, window, cx);
-                                editor.set_show_wrap_guides(false, window, cx);
-                                editor.set_show_indent_guides(false, window, cx);
-                                editor.set_use_modal_editing(false);
-                                editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
-                                editor.set_completion_provider(Some(Box::new(
-                                    SlashCommandCompletionProvider::new(
-                                        Arc::new(SlashCommandWorkingSet::default()),
-                                        None,
-                                        None,
-                                    ),
-                                )));
-                                if focus {
-                                    editor.focus(window, cx);
-                                }
-                                editor
-                            });
-                            let _subscriptions = vec![
-                                cx.subscribe(&title_editor, move |this, editor, event, cx| {
+                            let mut editor = Editor::for_buffer(buffer, None, window, cx);
+                            if prompt_id.is_built_in() {
+                                editor.set_read_only(true);
+                                editor.set_show_inline_completions(Some(false), window, cx);
+                            }
+                            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, window, cx);
+                            editor.set_show_gutter(false, window, cx);
+                            editor.set_show_wrap_guides(false, window, cx);
+                            editor.set_show_indent_guides(false, window, cx);
+                            editor.set_use_modal_editing(false);
+                            editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
+                            editor.set_completion_provider(Some(Box::new(
+                                SlashCommandCompletionProvider::new(
+                                    Arc::new(SlashCommandWorkingSet::default()),
+                                    None,
+                                    None,
+                                ),
+                            )));
+                            if focus {
+                                editor.focus(window, cx);
+                            }
+                            editor
+                        });
+                        let _subscriptions = vec![
+                            cx.subscribe_in(
+                                &title_editor,
+                                window,
+                                move |this, editor, event, window, cx| {
                                     this.handle_prompt_title_editor_event(
-                                        prompt_id, editor, event, cx,
+                                        prompt_id, editor, event, window, cx,
                                     )
-                                }),
-                                cx.subscribe(&body_editor, move |this, editor, event, cx| {
-                                    this.handle_prompt_body_editor_event(
-                                        prompt_id, editor, event, cx,
-                                    )
-                                }),
-                            ];
-                            this.prompt_editors.insert(
-                                prompt_id,
-                                PromptEditor {
-                                    title_editor,
-                                    body_editor,
-                                    next_title_and_body_to_save: None,
-                                    pending_save: None,
-                                    token_count: None,
-                                    pending_token_count: Task::ready(None),
-                                    _subscriptions,
                                 },
-                            );
-                            this.set_active_prompt(Some(prompt_id), window, cx);
-                            this.count_tokens(prompt_id, window, cx);
-                        }
-                        Err(error) => {
-                            // TODO: we should show the error in the UI.
-                            log::error!("error while loading prompt: {:?}", error);
-                        }
-                    },
-                )
+                            ),
+                            cx.subscribe_in(
+                                &body_editor,
+                                window,
+                                move |this, editor, event, window, cx| {
+                                    this.handle_prompt_body_editor_event(
+                                        prompt_id, editor, event, window, cx,
+                                    )
+                                },
+                            ),
+                        ];
+                        this.prompt_editors.insert(
+                            prompt_id,
+                            PromptEditor {
+                                title_editor,
+                                body_editor,
+                                next_title_and_body_to_save: None,
+                                pending_save: None,
+                                token_count: None,
+                                pending_token_count: Task::ready(None),
+                                _subscriptions,
+                            },
+                        );
+                        this.set_active_prompt(Some(prompt_id), window, cx);
+                        this.count_tokens(prompt_id, window, cx);
+                    }
+                    Err(error) => {
+                        // TODO: we should show the error in the UI.
+                        log::error!("error while loading prompt: {:?}", error);
+                    }
+                })
                 .ok();
             });
         }
@@ -1077,7 +1076,7 @@ impl PromptLibrary {
 
                                                         h_flex()
                                                             .id("token_count")
-                                                            .tooltip(move |cx| {
+                                                            .tooltip(move |window, cx| {
                                                                 let token_count =
                                                                     token_count.clone();
 
@@ -1116,7 +1115,7 @@ impl PromptLibrary {
                                                             Icon::new(IconName::FileLock)
                                                                 .color(Color::Muted),
                                                         )
-                                                        .tooltip(move |cx| {
+                                                        .tooltip(move |window, cx| {
                                                             Tooltip::with_meta(
                                                                 "Built-in prompt",
                                                                 None,

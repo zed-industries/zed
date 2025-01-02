@@ -32,11 +32,11 @@ use futures::{
 };
 use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
-    transparent_black, Action, AnyView, AnyWeakView, AppContext, AsyncAppContext,
+    transparent_black, Action, AnyView, AnyWeakModel, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
     EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke,
     ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
-    ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakView, WindowBounds, WindowHandle,
+    ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakModel, WindowBounds, WindowHandle,
     WindowId, WindowOptions,
 };
 pub use item::{
@@ -448,7 +448,7 @@ impl FollowableViewRegistry {
             TypeId::of::<I>(),
             FollowableViewDescriptor {
                 from_state_proto: |workspace, id, state, cx| {
-                    I::from_state_proto(workspace, id, state, cx).map(|task| {
+                    I::from_state_proto(workspace, id, state, window, cx).map(|task| {
                         cx.foreground_executor()
                             .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
                     })
@@ -467,7 +467,7 @@ impl FollowableViewRegistry {
     ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>> {
         cx.update_default_global(|this: &mut Self, cx| {
             this.0.values().find_map(|descriptor| {
-                (descriptor.from_state_proto)(workspace.clone(), view_id, &mut state, cx)
+                (descriptor.from_state_proto)(workspace.clone(), view_id, &mut state, window, cx)
             })
         })
     }
@@ -487,7 +487,7 @@ impl FollowableViewRegistry {
 struct SerializableItemDescriptor {
     deserialize: fn(
         Model<Project>,
-        WeakView<Workspace>,
+        WeakModel<Workspace>,
         WorkspaceId,
         ItemId,
         &mut Window,
@@ -509,7 +509,7 @@ impl SerializableItemRegistry {
     fn deserialize(
         item_kind: &str,
         project: Model<Project>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         workspace_id: WorkspaceId,
         item_item: ItemId,
         window: &mut Window,
@@ -522,7 +522,7 @@ impl SerializableItemRegistry {
             )));
         };
 
-        (descriptor.deserialize)(project, workspace, workspace_id, item_item, cx)
+        (descriptor.deserialize)(project, workspace, workspace_id, item_item, window, cx)
     }
 
     fn cleanup(
@@ -539,7 +539,7 @@ impl SerializableItemRegistry {
             )));
         };
 
-        (descriptor.cleanup)(workspace_id, loaded_items, cx)
+        (descriptor.cleanup)(workspace_id, loaded_items, window, cx)
     }
 
     fn view_to_serializable_item_handle(
@@ -718,12 +718,12 @@ pub enum Event {
     ItemRemoved,
     ActiveItemChanged,
     UserSavedItem {
-        pane: WeakView<Pane>,
+        pane: WeakModel<Pane>,
         item: Box<dyn WeakItemHandle>,
         save_intent: SaveIntent,
     },
     ContactRequestedJoin(u64),
-    WorkspaceCreated(WeakView<Workspace>),
+    WorkspaceCreated(WeakModel<Workspace>),
     SpawnTask {
         action: Box<SpawnInTerminal>,
     },
@@ -767,18 +767,18 @@ type PromptForOpenPath = Box<
 /// The `Workspace` owns everybody's state and serves as a default, "global context",
 /// that can be used to register a global action to be triggered from any place in the window.
 pub struct Workspace {
-    weak_self: WeakView<Self>,
+    weak_self: WeakModel<Self>,
     workspace_actions: Vec<Box<dyn Fn(Div, &mut Window, &mut ModelContext<Self>) -> Div>>,
-    zoomed: Option<AnyWeakView>,
+    zoomed: Option<AnyWeakModel>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
     left_dock: Model<Dock>,
     bottom_dock: Model<Dock>,
     right_dock: Model<Dock>,
     panes: Vec<Model<Pane>>,
-    panes_by_item: HashMap<EntityId, WeakView<Pane>>,
+    panes_by_item: HashMap<EntityId, WeakModel<Pane>>,
     active_pane: Model<Pane>,
-    last_active_center_pane: Option<WeakView<Pane>>,
+    last_active_center_pane: Option<WeakModel<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: Model<StatusBar>,
     modal_layer: Model<ModalLayer>,
@@ -786,7 +786,7 @@ pub struct Workspace {
     notifications: Vec<(NotificationId, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
     follower_states: HashMap<PeerId, FollowerState>,
-    last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
+    last_leaders_by_pane: HashMap<WeakModel<Pane>, PeerId>,
     window_edited: bool,
     active_call: Option<(Model<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -1297,7 +1297,7 @@ impl Workspace {
         })
     }
 
-    pub fn weak_handle(&self) -> WeakView<Self> {
+    pub fn weak_handle(&self) -> WeakModel<Self> {
         self.weak_self.clone()
     }
 
@@ -1412,7 +1412,7 @@ impl Workspace {
 
     fn navigate_history(
         &mut self,
-        pane: WeakView<Pane>,
+        pane: WeakModel<Pane>,
         mode: NavigationMode,
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
@@ -1538,7 +1538,7 @@ impl Workspace {
 
     pub fn go_back(
         &mut self,
-        pane: WeakView<Pane>,
+        pane: WeakModel<Pane>,
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Task<Result<()>> {
@@ -1547,7 +1547,7 @@ impl Workspace {
 
     pub fn go_forward(
         &mut self,
-        pane: WeakView<Pane>,
+        pane: WeakModel<Pane>,
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Task<Result<()>> {
@@ -1914,7 +1914,7 @@ impl Workspace {
                     };
                     cx.update(|window, cx| {
                         let focused = window.focused(cx);
-                        window.dispatch_keystroke(keystroke.clone());
+                        window.dispatch_keystroke(keystroke.clone(), cx);
                         if window.focused(cx) != focused {
                             // dispatch_keystroke may cause the focus to change.
                             // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
@@ -2076,7 +2076,7 @@ impl Workspace {
         &mut self,
         mut abs_paths: Vec<PathBuf>,
         visible: OpenVisible,
-        pane: Option<WeakView<Pane>>,
+        pane: Option<WeakModel<Pane>>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
@@ -2766,7 +2766,7 @@ impl Workspace {
     pub fn open_path(
         &mut self,
         path: impl Into<ProjectPath>,
-        pane: Option<WeakView<Pane>>,
+        pane: Option<WeakModel<Pane>>,
         focus_item: bool,
         window: &mut Window,
         cx: &mut AppContext,
@@ -2777,7 +2777,7 @@ impl Workspace {
     pub fn open_path_preview(
         &mut self,
         path: impl Into<ProjectPath>,
-        pane: Option<WeakView<Pane>>,
+        pane: Option<WeakModel<Pane>>,
         focus_item: bool,
         allow_preview: bool,
         window: &mut Window,
@@ -3413,9 +3413,9 @@ impl Workspace {
 
     pub fn split_pane_with_item(
         &mut self,
-        pane_to_split: WeakView<Pane>,
+        pane_to_split: WeakModel<Pane>,
         split_direction: SplitDirection,
-        from: WeakView<Pane>,
+        from: WeakModel<Pane>,
         item_id_to_move: EntityId,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -3437,7 +3437,7 @@ impl Workspace {
 
     pub fn split_pane_with_project_entry(
         &mut self,
-        pane_to_split: WeakView<Pane>,
+        pane_to_split: WeakModel<Pane>,
         split_direction: SplitDirection,
         project_entry: ProjectEntryId,
         window: &mut Window,
@@ -3889,7 +3889,7 @@ impl Workspace {
     }
 
     async fn process_leader_update(
-        this: &WeakView<Self>,
+        this: &WeakModel<Self>,
         leader_id: PeerId,
         update: proto::UpdateFollowers,
         window: &mut Window,
@@ -3963,7 +3963,7 @@ impl Workspace {
     }
 
     async fn add_view_from_leader(
-        this: WeakView<Self>,
+        this: WeakModel<Self>,
         leader_id: PeerId,
         view: &proto::View,
         window: &mut Window,
@@ -4003,7 +4003,7 @@ impl Workspace {
                 Err(anyhow!("missing view variant"))?;
             }
 
-            let task = cx.update(|window, cx| {
+            let task = window.update(|_, window, cx| {
                 FollowableViewRegistry::from_state_proto(this.clone(), id, variant, window, cx)
             })?;
 
@@ -4560,7 +4560,7 @@ impl Workspace {
     }
 
     async fn serialize_items(
-        this: &WeakView<Self>,
+        this: &WeakModel<Self>,
         items_rx: UnboundedReceiver<Box<dyn SerializableItemHandle>>,
         window: &mut Window,
         cx: &mut AppContext,
@@ -4948,7 +4948,7 @@ impl Workspace {
         cx.read_window(&window, |workspace, _| workspace).ok()
     }
 
-    pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
+    pub fn zoomed_item(&self) -> Option<&AnyWeakModel> {
         self.zoomed.as_ref()
     }
 }
@@ -7312,7 +7312,7 @@ mod tests {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(cx));
             assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7323,7 +7323,7 @@ mod tests {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(cx));
             assert!(!panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7334,7 +7334,7 @@ mod tests {
             workspace.toggle_dock(DockPosition::Right, window, cx);
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             assert!(!workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(cx));
             assert!(!panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7345,7 +7345,7 @@ mod tests {
             workspace.toggle_dock(DockPosition::Right, window, cx);
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(cx));
             assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7357,7 +7357,7 @@ mod tests {
             panel.set_zoomed(true, window, cx)
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
             assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7368,7 +7368,7 @@ mod tests {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             assert!(!workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
             assert!(!panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7379,7 +7379,7 @@ mod tests {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
             assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7390,7 +7390,7 @@ mod tests {
             workspace.toggle_dock(DockPosition::Right, window, cx)
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             assert!(!workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
             assert!(workspace.zoomed.is_none());
@@ -7402,7 +7402,7 @@ mod tests {
             workspace.toggle_dock(DockPosition::Right, window, cx)
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
             assert!(workspace.zoomed.is_some());
@@ -7732,7 +7732,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
 
-        let (panel_1, panel_2) = workspace.update(window, cx, |workspace, cx| {
+        let (panel_1, panel_2) = workspace.update_in(cx, |workspace, cx| {
             let panel_1 = window.new_view(cx, |cx| TestPanel::new(DockPosition::Left, window, cx));
             workspace.add_panel(panel_1.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Left, window, cx);
@@ -7771,7 +7771,7 @@ mod tests {
             panel_1.set_position(DockPosition::Right, window, cx)
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             // Since panel_1 was visible on the left, it should now be visible now that it's been moved to the right.
             // Since it was the only panel on the left, the left dock should now be closed.
             assert!(!workspace.left_dock().read(cx).is_open());
@@ -7811,7 +7811,7 @@ mod tests {
             panel_1.set_position(DockPosition::Left, window, cx)
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             // Since panel_1 was visible on the right, we open the left dock and make panel_1 active.
             let left_dock = workspace.left_dock();
             assert!(left_dock.read(cx).is_open());
@@ -7827,7 +7827,7 @@ mod tests {
             panel_1.set_position(DockPosition::Bottom, window, cx);
         });
 
-        workspace.update(window, cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, cx| {
             // Since panel_1 was visible on the left, we close the left dock.
             assert!(!workspace.left_dock().read(cx).is_open());
             // The bottom dock is sized based on the panel's default size,

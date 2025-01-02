@@ -6,7 +6,7 @@ use client::zed_urls;
 use fs::Fs;
 use gpui::{
     prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Model, ModelContext, Pixels, Task, WeakView, Window,
+    FocusHandle, FocusableView, FontWeight, Model, ModelContext, Pixels, Task, WeakModel, Window,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -53,7 +53,7 @@ enum ActiveView {
 }
 
 pub struct AssistantPanel {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Model<ThreadStore>,
@@ -69,7 +69,7 @@ pub struct AssistantPanel {
 
 impl AssistantPanel {
     pub fn load(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {

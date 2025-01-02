@@ -1,4 +1,6 @@
-use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext};
+use crate::{
+    seal::Sealed, AppContext, Context, Entity, Flatten, ModelContext, VisualContext, Window,
+};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -616,9 +618,29 @@ impl<T: 'static> WeakModel<T> {
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity release"))
+                .ok_or_else(|| anyhow!("entity released"))
                 .map(|this| cx.update_model(&this, update)),
         )
+    }
+
+    /// Updates the entity referenced by this model with the given function if
+    /// the referenced entity still exists, within a visual context that has a window.
+    /// Returns an error if the entity has been released.
+    pub fn update_in<C, R>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut Window, &mut ModelContext<'_, T>) -> R,
+    ) -> Result<R>
+    where
+        C: VisualContext,
+        Result<C::Result<R>>: crate::Flatten<R>,
+    {
+        let window = cx.window_handle();
+        let this = self.upgrade().ok_or_else(|| anyhow!("entity released"))?;
+
+        crate::Flatten::flatten(window.update(cx, |_, window, cx| {
+            this.update(cx, |model, cx| update(model, window, cx))
+        }))
     }
 
     /// Reads the entity referenced by this model with the given function if

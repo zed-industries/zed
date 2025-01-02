@@ -171,21 +171,21 @@ impl ButtonStyle {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: element_bg_from_elevation(elevation, window, cx),
                 border_color: transparent_black(),
-                label_color: Color::Default.color(window, cx),
-                icon_color: Color::Default.color(window, cx),
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Tinted(tint) => tint.button_like_style(window, cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: transparent_black(),
-                label_color: Color::Default.color(window, cx),
-                icon_color: Color::Default.color(window, cx),
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
-                label_color: Color::Default.color(window, cx),
-                icon_color: Color::Default.color(window, cx),
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
         }
     }
@@ -204,8 +204,8 @@ impl ButtonStyle {
                 ButtonLikeStyles {
                     background: filled_background,
                     border_color: transparent_black(),
-                    label_color: Color::Default.color(window, cx),
-                    icon_color: Color::Default.color(window, cx),
+                    label_color: Color::Default.color(cx),
+                    icon_color: Color::Default.color(cx),
                 }
             }
             ButtonStyle::Tinted(tint) => {
@@ -217,16 +217,16 @@ impl ButtonStyle {
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
-                label_color: Color::Default.color(window, cx),
-                icon_color: Color::Default.color(window, cx),
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
                 // TODO: These are not great
-                label_color: Color::Muted.color(window, cx),
+                label_color: Color::Muted.color(cx),
                 // TODO: These are not great
-                icon_color: Color::Muted.color(window, cx),
+                icon_color: Color::Muted.color(cx),
             },
         }
     }
@@ -236,23 +236,23 @@ impl ButtonStyle {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_active,
                 border_color: transparent_black(),
-                label_color: Color::Default.color(window, cx),
-                icon_color: Color::Default.color(window, cx),
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Tinted(tint) => tint.button_like_style(window, cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_active,
                 border_color: transparent_black(),
-                label_color: Color::Default.color(window, cx),
-                icon_color: Color::Default.color(window, cx),
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
                 // TODO: These are not great
-                label_color: Color::Muted.color(window, cx),
+                label_color: Color::Muted.color(cx),
                 // TODO: These are not great
-                icon_color: Color::Muted.color(window, cx),
+                icon_color: Color::Muted.color(cx),
             },
         }
     }
@@ -263,21 +263,21 @@ impl ButtonStyle {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_background,
                 border_color: cx.theme().colors().border_focused,
-                label_color: Color::Default.color(window, cx),
-                icon_color: Color::Default.color(window, cx),
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Tinted(tint) => tint.button_like_style(window, cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: cx.theme().colors().border_focused,
-                label_color: Color::Default.color(window, cx),
-                icon_color: Color::Default.color(window, cx),
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: cx.theme().colors().border_focused,
-                label_color: Color::Accent.color(window, cx),
-                icon_color: Color::Accent.color(window, cx),
+                label_color: Color::Accent.color(cx),
+                icon_color: Color::Accent.color(cx),
             },
         }
     }
@@ -293,21 +293,21 @@ impl ButtonStyle {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_disabled,
                 border_color: cx.theme().colors().border_disabled,
-                label_color: Color::Disabled.color(window, cx),
-                icon_color: Color::Disabled.color(window, cx),
+                label_color: Color::Disabled.color(cx),
+                icon_color: Color::Disabled.color(cx),
             },
             ButtonStyle::Tinted(tint) => tint.button_like_style(window, cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_disabled,
                 border_color: cx.theme().colors().border_disabled,
-                label_color: Color::Disabled.color(window, cx),
-                icon_color: Color::Disabled.color(window, cx),
+                label_color: Color::Disabled.color(cx),
+                icon_color: Color::Disabled.color(cx),
             },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
-                label_color: Color::Disabled.color(window, cx),
-                icon_color: Color::Disabled.color(window, cx),
+                label_color: Color::Disabled.color(cx),
+                icon_color: Color::Disabled.color(cx),
             },
         }
     }

@@ -5,7 +5,7 @@ use editor::items::entry_git_aware_label_color;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ModelContext, ObjectFit,
-    ParentElement, Render, Styled, Task, VisualContext, WeakView, Window,
+    ParentElement, Render, Styled, Task, VisualContext, WeakModel, Window,
 };
 use persistence::IMAGE_VIEWER;
 use theme::Theme;
@@ -193,7 +193,7 @@ impl SerializableItem for ImageView {
 
     fn deserialize(
         project: Model<Project>,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakModel<Workspace>,
         workspace_id: WorkspaceId,
         item_id: ItemId,
         window: &mut Window,
@@ -361,7 +361,7 @@ impl ProjectItem for ImageView {
 }
 
 pub fn init(cx: &mut AppContext) {
-    workspace::register_project_item::<ImageView>(window, cx);
+    workspace::register_project_item::<ImageView>(cx);
     workspace::register_serializable_item::<ImageView>(cx)
 }
 

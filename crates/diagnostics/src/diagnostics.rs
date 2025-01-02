@@ -19,7 +19,7 @@ use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ModelContext,
     ParentElement, Render, SharedString, Styled, StyledText, Subscription, Task, VisualContext,
-    WeakView, Window,
+    WeakModel, Window,
 };
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
@@ -61,7 +61,7 @@ pub fn init(cx: &mut AppContext) {
 
 struct ProjectDiagnosticsEditor {
     project: Model<Project>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     focus_handle: FocusHandle,
     editor: Model<Editor>,
     summary: DiagnosticSummary,
@@ -126,7 +126,7 @@ impl ProjectDiagnosticsEditor {
         context: u32,
         include_warnings: bool,
         project_handle: Model<Project>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -260,7 +260,7 @@ impl ProjectDiagnosticsEditor {
     fn new(
         project_handle: Model<Project>,
         include_warnings: bool,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -930,10 +930,10 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                         |icon| {
                                             if diagnostic.severity == DiagnosticSeverity::ERROR {
                                                 icon.path(IconName::XCircle.path())
-                                                    .text_color(Color::Error.color(window, cx))
+                                                    .text_color(Color::Error.color(cx))
                                             } else {
                                                 icon.path(IconName::Warning.path())
-                                                    .text_color(Color::Warning.color(window, cx))
+                                                    .text_color(Color::Warning.color(cx))
                                             }
                                         },
                                     ),

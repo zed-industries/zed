@@ -10,7 +10,7 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{Anchor, ClipboardSelection, Editor};
 use gpui::{
-    Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global, Model, WeakView,
+    Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global, Model, WeakModel,
 };
 use language::Point;
 use serde::{Deserialize, Serialize};
@@ -175,7 +175,7 @@ pub struct VimGlobals {
     pub registers: HashMap<char, Register>,
     pub recordings: HashMap<char, Vec<ReplayableAction>>,
 
-    pub focused_vim: Option<WeakView<Vim>>,
+    pub focused_vim: Option<WeakModel<Vim>>,
 }
 impl Global for VimGlobals {}
 

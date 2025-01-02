@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
+use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakModel};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip};
 
@@ -10,7 +10,7 @@ use crate::SlashCommandWorkingSet;
 #[derive(IntoElement)]
 pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
     working_set: Arc<SlashCommandWorkingSet>,
-    active_context_editor: WeakView<ContextEditor>,
+    active_context_editor: WeakModel<ContextEditor>,
     trigger: T,
 }
 
@@ -44,14 +44,14 @@ impl AsRef<str> for SlashCommandEntry {
 pub(crate) struct SlashCommandDelegate {
     all_commands: Vec<SlashCommandEntry>,
     filtered_commands: Vec<SlashCommandEntry>,
-    active_context_editor: WeakView<ContextEditor>,
+    active_context_editor: WeakModel<ContextEditor>,
     selected_index: usize,
 }
 
 impl<T: PopoverTrigger> SlashCommandSelector<T> {
     pub(crate) fn new(
         working_set: Arc<SlashCommandWorkingSet>,
-        active_context_editor: WeakView<ContextEditor>,
+        active_context_editor: WeakModel<ContextEditor>,
         trigger: T,
     ) -> Self {
         SlashCommandSelector {

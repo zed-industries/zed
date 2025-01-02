@@ -120,7 +120,7 @@ impl RenderOnce for HighlightedLabel {
         );
 
         let mut text_style = window.text_style();
-        text_style.color = self.base.color.color(window, cx);
+        text_style.color = self.base.color.color(cx);
 
         self.base
             .child(StyledText::new(self.label).with_highlights(&text_style, highlights))

@@ -8,7 +8,7 @@ use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
-    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, ModelContext,
+    point, size, Along, AnyView, AnyWeakModel, Axis, Bounds, IntoElement, Model, ModelContext,
     MouseButton, Pixels, Point, StyleRefinement, Window,
 };
 use parking_lot::Mutex;
@@ -128,7 +128,7 @@ impl PaneGroup {
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &Model<Pane>,
-        zoomed: Option<&AnyWeakView>,
+        zoomed: Option<&AnyWeakModel>,
         app_state: &Arc<AppState>,
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
@@ -236,7 +236,7 @@ impl Member {
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &Model<Pane>,
-        zoomed: Option<&AnyWeakView>,
+        zoomed: Option<&AnyWeakModel>,
         app_state: &Arc<AppState>,
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
@@ -686,7 +686,7 @@ impl PaneAxis {
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &Model<Pane>,
-        zoomed: Option<&AnyWeakView>,
+        zoomed: Option<&AnyWeakModel>,
         app_state: &Arc<AppState>,
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
@@ -822,7 +822,7 @@ mod element {
     use gpui::{
         px, relative, size, Along, AnyElement, AppContext, Axis, Bounds, Element, GlobalElementId,
         IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-        Size, Style, WeakView, Window,
+        Size, Style, WeakModel, Window,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -844,7 +844,7 @@ mod element {
         basis: usize,
         flexes: Arc<Mutex<Vec<f32>>>,
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
     ) -> PaneAxisElement {
         PaneAxisElement {
             axis,
@@ -864,7 +864,7 @@ mod element {
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
     }
 
     pub struct PaneAxisLayout {
@@ -897,7 +897,7 @@ mod element {
             axis: Axis,
             child_start: Point<Pixels>,
             container_size: Size<Pixels>,
-            workspace: WeakView<Workspace>,
+            workspace: WeakModel<Workspace>,
             window: &mut Window,
             cx: &mut AppContext,
         ) {
@@ -1104,7 +1104,7 @@ mod element {
 
                 bounding_boxes.push(Some(child_bounds));
                 child.layout_as_root(child_size.into(), window, cx);
-                child.prepaint_at(origin, cx);
+                child.prepaint_at(origin, window, cx);
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
                 layout.children.push(PaneAxisChildLayout {

@@ -17,7 +17,7 @@ use editor::{
 };
 use futures::FutureExt as _;
 use gpui::{Window, ModelContext, 
-    div, prelude::*, EventEmitter, Model, Render, Subscription, Task,   WeakView,
+    div, prelude::*, EventEmitter, Model, Render, Subscription, Task,   WeakModel,
 };
 use language::Point;
 use project::Fs;
@@ -32,7 +32,7 @@ use util::ResultExt as _;
 
 pub struct Session {
     fs: Arc<dyn Fs>,
-    editor: WeakView<Editor>,
+    editor: WeakModel<Editor>,
     pub kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
     pub kernel_specification: KernelSpecification,
@@ -51,7 +51,7 @@ type CloseBlockFn =
 
 impl EditorBlock {
     fn new(
-        editor: WeakView<Editor>,
+        editor: WeakModel<Editor>,
         code_range: Range<Anchor>,
         status: ExecutionStatus,
         on_close: CloseBlockFn,
@@ -190,7 +190,7 @@ impl EditorBlock {
 
 impl Session {
     pub fn new(
-        editor: WeakView<Editor>,
+        editor: WeakModel<Editor>,
         fs: Arc<dyn Fs>,
         kernel_specification: KernelSpecification,
         window: &mut Window, cx: &mut ModelContext<Self>,
@@ -628,7 +628,7 @@ impl Session {
 }
 
 pub enum SessionEvent {
-    Shutdown(WeakView<Editor>),
+    Shutdown(WeakModel<Editor>),
 }
 
 impl EventEmitter<SessionEvent> for Session {}

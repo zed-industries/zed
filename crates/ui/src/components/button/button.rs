@@ -359,7 +359,7 @@ impl ButtonCommon for Button {
     /// use ui::Tooltip;
     ///
     /// Button::new("button_id", "Click me!")
-    ///     .tooltip(move |cx| {
+    ///     .tooltip(move |window, cx| {
     ///         Tooltip::text("This is a tooltip", cx)
     ///     })
     ///     .on_click(|event, cx| {

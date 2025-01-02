@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use assistant_tool::Tool;
 use chrono::{Local, Utc};
-use gpui::{AppContext, Task, WeakView, Window};
+use gpui::{AppContext, Task, WeakModel, Window};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +41,7 @@ impl Tool for NowTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _workspace: WeakView<workspace::Workspace>,
+        _workspace: WeakModel<workspace::Workspace>,
         _window: &mut Window,
         _cx: &mut AppContext,
     ) -> Task<Result<String>> {

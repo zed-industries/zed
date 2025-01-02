@@ -15,7 +15,7 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, uniform_list, Action, AppContext, ClipboardItem, EventEmitter, Flatten, FocusableView,
     InteractiveElement, KeyContext, Model, ModelContext, ParentElement, Render, Styled, Task,
-    TextStyle, UniformListScrollHandle, VisualContext, WeakView, Window,
+    TextStyle, UniformListScrollHandle, VisualContext, WeakModel, Window,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -190,7 +190,7 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
 }
 
 pub struct ExtensionsPage {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     list: UniformListScrollHandle,
     is_fetching_extensions: bool,
     filter: ExtensionFilter,
@@ -263,7 +263,7 @@ impl ExtensionsPage {
 
     fn on_extension_installed(
         &mut self,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         extension_id: &str,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -460,7 +460,7 @@ impl ExtensionsPage {
                                 )
                                 .on_click({
                                     let extension_id = extension.id.clone();
-                                    move |_, cx| {
+                                    move |_, window, cx| {
                                         ExtensionStore::global(cx).update(cx, |store, cx| {
                                             store.rebuild_dev_extension(extension_id.clone(), cx)
                                         });
@@ -473,7 +473,7 @@ impl ExtensionsPage {
                                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
                                     .on_click({
                                         let extension_id = extension.id.clone();
-                                        move |_, cx| {
+                                        move |_, window, cx| {
                                             ExtensionStore::global(cx).update(cx, |store, cx| {
                                                 store.uninstall_extension(extension_id.clone(), cx)
                                             });
@@ -761,7 +761,7 @@ impl ExtensionsPage {
             ExtensionStatus::NotInstalled => (
                 Button::new(SharedString::from(extension.id.clone()), "Install").on_click({
                     let extension_id = extension.id.clone();
-                    move |_, cx| {
+                    move |_, window, cx| {
                         telemetry::event!("Extension Installed");
                         ExtensionStore::global(cx).update(cx, |store, cx| {
                             store.install_latest_extension(extension_id.clone(), cx)
@@ -783,7 +783,7 @@ impl ExtensionsPage {
             ExtensionStatus::Installed(installed_version) => (
                 Button::new(SharedString::from(extension.id.clone()), "Uninstall").on_click({
                     let extension_id = extension.id.clone();
-                    move |_, cx| {
+                    move |_, window, cx| {
                         telemetry::event!("Extension Uninstalled", extension_id);
                         ExtensionStore::global(cx).update(cx, |store, cx| {
                             store.uninstall_extension(extension_id.clone(), cx)
@@ -812,7 +812,7 @@ impl ExtensionsPage {
                             .on_click({
                                 let extension_id = extension.id.clone();
                                 let version = extension.manifest.version.clone();
-                                move |_, cx| {
+                                move |_, window, cx| {
                                     telemetry::event!("Extension Installed", extension_id, version);
                                     ExtensionStore::global(cx).update(cx, |store, cx| {
                                         store
@@ -840,7 +840,7 @@ impl ExtensionsPage {
         key_context.add("BufferSearchBar");
 
         let editor_border = if self.query_contains_error {
-            Color::Error.color(window, cx)
+            Color::Error.color(cx)
         } else {
             cx.theme().colors().border
         };

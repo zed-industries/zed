@@ -7,7 +7,7 @@ use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, svg, Action, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     Model, ModelContext, ParentElement, Render, Styled, Subscription, Task, VisualContext,
-    WeakView, Window,
+    WeakModel, Window,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -68,7 +68,7 @@ pub fn show_welcome_view(
 }
 
 pub struct WelcomePage {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     focus_handle: FocusHandle,
     telemetry: Arc<Telemetry>,
     _settings_subscription: Subscription,
@@ -375,7 +375,7 @@ impl WelcomePage {
         div()
             .pl_1()
             .font_buffer(window, cx)
-            .text_color(Color::Muted.color(window, cx))
+            .text_color(Color::Muted.color(cx))
     }
 
     fn update_settings<T: Settings>(

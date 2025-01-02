@@ -1664,7 +1664,7 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     });
 
     // a unshares the project
-    cx_a.update(|cx| {
+    cx_a.update(|window, cx| {
         let project = workspace_a.read(cx).project().clone();
         ActiveCall::global(cx).update(cx, |call, cx| {
             call.unshare_project(project, cx).unwrap();

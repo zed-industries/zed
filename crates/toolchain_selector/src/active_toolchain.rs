@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
     div, AsyncWindowContext, IntoElement, Model, ModelContext, ParentElement, Render, Subscription,
-    Task, WeakModel, WeakView, Window,
+    Task, WeakModel, WeakModel, Window,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
 use project::{Project, WorktreeId};
@@ -13,7 +13,7 @@ use crate::ToolchainSelector;
 pub struct ActiveToolchain {
     active_toolchain: Option<Toolchain>,
     term: SharedString,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     active_buffer: Option<(WorktreeId, WeakModel<Buffer>, Subscription)>,
     _update_toolchain_task: Task<Option<()>>,
 }
@@ -99,7 +99,7 @@ impl ActiveToolchain {
     }
 
     fn active_toolchain(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
         window: &mut Window,

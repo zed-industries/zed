@@ -5,7 +5,7 @@ use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    ModelContext, ParentElement, Render, Styled, Task, VisualContext, WeakView, Window,
+    ModelContext, ParentElement, Render, Styled, Task, VisualContext, WeakModel, Window,
 };
 use language::{LanguageName, Toolchain, ToolchainList};
 use picker::{Picker, PickerDelegate};
@@ -82,7 +82,7 @@ impl ToolchainSelector {
     }
 
     fn new(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         project: Model<Project>,
         active_toolchain: Option<Toolchain>,
         worktree_id: WorktreeId,
@@ -126,11 +126,11 @@ impl EventEmitter<DismissEvent> for ToolchainSelector {}
 impl ModalView for ToolchainSelector {}
 
 pub struct ToolchainSelectorDelegate {
-    toolchain_selector: WeakView<ToolchainSelector>,
+    toolchain_selector: WeakModel<ToolchainSelector>,
     candidates: ToolchainList,
     matches: Vec<StringMatch>,
     selected_index: usize,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     worktree_id: WorktreeId,
     worktree_abs_path_root: Arc<Path>,
     placeholder_text: Arc<str>,
@@ -141,8 +141,8 @@ impl ToolchainSelectorDelegate {
     #[allow(clippy::too_many_arguments)]
     fn new(
         active_toolchain: Option<Toolchain>,
-        language_selector: WeakView<ToolchainSelector>,
-        workspace: WeakView<Workspace>,
+        language_selector: WeakModel<ToolchainSelector>,
+        workspace: WeakModel<Workspace>,
         worktree_id: WorktreeId,
         worktree_abs_path_root: Arc<Path>,
         project: Model<Project>,

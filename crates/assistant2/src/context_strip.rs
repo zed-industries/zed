@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use gpui::{FocusHandle, Model, WeakModel, WeakView};
+use gpui::{FocusHandle, Model, WeakModel, WeakModel};
 use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
@@ -21,7 +21,7 @@ pub struct ContextStrip {
 impl ContextStrip {
     pub fn new(
         context_store: Model<ContextStore>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         focus_handle: FocusHandle,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,

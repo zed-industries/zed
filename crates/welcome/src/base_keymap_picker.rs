@@ -2,7 +2,7 @@ use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusableView, Model, ModelContext, Render,
-    Task, VisualContext, WeakView, Window,
+    Task, VisualContext, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Fs;
@@ -68,7 +68,7 @@ impl Render for BaseKeymapSelector {
 }
 
 pub struct BaseKeymapSelectorDelegate {
-    view: WeakView<BaseKeymapSelector>,
+    view: WeakModel<BaseKeymapSelector>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     fs: Arc<dyn Fs>,
@@ -76,7 +76,7 @@ pub struct BaseKeymapSelectorDelegate {
 
 impl BaseKeymapSelectorDelegate {
     fn new(
-        weak_view: WeakView<BaseKeymapSelector>,
+        weak_view: WeakModel<BaseKeymapSelector>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut ModelContext<BaseKeymapSelector>,

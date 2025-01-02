@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
 use futures::{stream::FuturesUnordered, StreamExt as _};
-use gpui::{AsyncWindowContext, Axis, Model, Task, WeakView};
+use gpui::{AsyncWindowContext, Axis, Model, Task, WeakModel};
 use project::{terminals::TerminalKind, Project};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -93,7 +93,7 @@ fn serialize_pane(
 }
 
 pub(crate) fn deserialize_terminal_panel(
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
     database_id: WorkspaceId,
     serialized_panel: SerializedTerminalPanel,
@@ -170,7 +170,7 @@ fn populate_pane_items(
 
 #[async_recursion(?Send)]
 async fn deserialize_pane_group(
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
     panel: Model<TerminalPanel>,
     workspace_id: WorkspaceId,
@@ -288,7 +288,7 @@ async fn deserialize_pane_group(
 async fn deserialize_terminal_views(
     workspace_id: WorkspaceId,
     project: Model<Project>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     item_ids: &[u64],
     window: &mut Window,
     cx: &mut AppContext,
@@ -297,17 +297,18 @@ async fn deserialize_terminal_views(
     let mut deserialized_items = item_ids
         .iter()
         .map(|item_id| {
-            cx.update(|window, cx| {
-                TerminalView::deserialize(
-                    project.clone(),
-                    workspace.clone(),
-                    workspace_id,
-                    *item_id,
-                    window,
-                    cx,
-                )
-            })
-            .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
+            window
+                .update(|_, window, cx| {
+                    TerminalView::deserialize(
+                        project.clone(),
+                        workspace.clone(),
+                        workspace_id,
+                        *item_id,
+                        window,
+                        cx,
+                    )
+                })
+                .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
         })
         .collect::<FuturesUnordered<_>>();
     while let Some(item) = deserialized_items.next().await {
