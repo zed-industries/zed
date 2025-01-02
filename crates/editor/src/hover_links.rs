@@ -664,8 +664,7 @@ pub fn show_link_definition(
 pub(crate) fn find_url(
     buffer: &Model<language::Buffer>,
     position: text::Anchor,
-    window: &mut Window,
-    cx: &mut AppContext,
+    mut cx: AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
@@ -727,8 +726,7 @@ pub(crate) fn find_url(
 pub(crate) fn find_url_from_range(
     buffer: &Model<language::Buffer>,
     range: Range<text::Anchor>,
-    window: &mut Window,
-    cx: &mut AppContext,
+    mut cx: AsyncWindowContext,
 ) -> Option<String> {
     const LIMIT: usize = 2048;
 
@@ -788,8 +786,7 @@ pub(crate) async fn find_file(
     buffer: &Model<language::Buffer>,
     project: Option<Model<Project>>,
     position: text::Anchor,
-    window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
     let project = project?;
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
@@ -800,8 +797,7 @@ pub(crate) async fn find_file(
         candidate_file_path: &str,
         project: &Model<Project>,
         buffer: &Model<language::Buffer>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut AsyncWindowContext,
     ) -> Option<ResolvedPath> {
         project
             .update(cx, |project, cx| {
@@ -812,9 +808,7 @@ pub(crate) async fn find_file(
             .filter(|s| s.is_file())
     }
 
-    if let Some(existing_path) =
-        check_path(&candidate_file_path, &project, buffer, window, cx).await
-    {
+    if let Some(existing_path) = check_path(&candidate_file_path, &project, buffer, cx).await {
         return Some((range, existing_path));
     }
 
@@ -825,8 +819,7 @@ pub(crate) async fn find_file(
             }
 
             let suffixed_candidate = format!("{candidate_file_path}.{suffix}");
-            if let Some(existing_path) =
-                check_path(&suffixed_candidate, &project, buffer, window, cx).await
+            if let Some(existing_path) = check_path(&suffixed_candidate, &project, buffer, cx).await
             {
                 return Some((range, existing_path));
             }

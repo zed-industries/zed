@@ -226,7 +226,7 @@ pub enum BlockStyle {
 }
 
 pub struct BlockContext<'a, 'b> {
-    window: &'a mut Window,
+    pub window: &'a mut Window,
     pub context: &'b mut AppContext,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
