@@ -174,7 +174,7 @@ impl Render for ModalLayer {
             .size_full()
             .top_0()
             .left_0()
-            .when(active_modal.modal.fade_out_background(cx), |el| {
+            .when(active_modal.modal.fade_out_background(window, cx), |el| {
                 let mut background = cx.theme().colors().elevated_surface_background;
                 background.fade_out(0.2);
                 el.bg(background)

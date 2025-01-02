@@ -5,7 +5,7 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
-use gpui::{Window, ModelContext, AnyWindowHandle, AppContext, Context,  WeakModel};
+use gpui::{AnyWindowHandle, AppContext, Context, ModelContext, WeakModel, Window};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -23,7 +23,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
             register_backward_compatible_actions(editor, window, cx);
 
             let editor_handle = cx.view().downgrade();
-            cx.subscribe_in(window, {
+            cx.subscribe(window, {
                 let editor_handle = editor_handle.clone();
                 let editors = editors.clone();
                 move |_, _, _| {
@@ -101,27 +101,37 @@ fn assign_inline_completion_providers(
     }
 }
 
-fn register_backward_compatible_actions(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>) {
+fn register_backward_compatible_actions(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
+) {
     // We renamed some of these actions to not be copilot-specific, but that
     // would have not been backwards-compatible. So here we are re-registering
     // the actions with the old names to not break people's keymaps.
     editor
         .register_action(cx.listener(
-            |editor, _: &copilot::Suggest, window: &mut Window, cx: &mut ModelContext<Editor><Editor>| {
+            |editor, _: &copilot::Suggest, window: &mut Window, cx: &mut ModelContext<Editor>| {
                 editor.show_inline_completion(&Default::default(), window, cx);
             },
         ))
         .detach();
     editor
         .register_action(cx.listener(
-            |editor, _: &copilot::NextSuggestion, window: &mut Window, cx: &mut ModelContext<Editor><Editor>| {
+            |editor,
+             _: &copilot::NextSuggestion,
+             window: &mut Window,
+             cx: &mut ModelContext<Editor>| {
                 editor.next_inline_completion(&Default::default(), window, cx);
             },
         ))
         .detach();
     editor
         .register_action(cx.listener(
-            |editor, _: &copilot::PreviousSuggestion, window: &mut Window, cx: &mut ModelContext<Editor><Editor>| {
+            |editor,
+             _: &copilot::PreviousSuggestion,
+             window: &mut Window,
+             cx: &mut ModelContext<Editor>| {
                 editor.previous_inline_completion(&Default::default(), window, cx);
             },
         ))
@@ -130,7 +140,8 @@ fn register_backward_compatible_actions(editor: &mut Editor, window: &mut Window
         .register_action(cx.listener(
             |editor,
              _: &editor::actions::AcceptPartialCopilotSuggestion,
-             window: &mut Window, cx: &mut ModelContext<Editor><Editor>| {
+             window: &mut Window,
+             cx: &mut ModelContext<Editor>| {
                 editor.accept_partial_inline_completion(&Default::default(), window, cx);
             },
         ))
@@ -141,7 +152,8 @@ fn assign_inline_completion_provider(
     editor: &mut Editor,
     provider: language::language_settings::InlineCompletionProvider,
     client: &Arc<Client>,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) {
     match provider {
         language::language_settings::InlineCompletionProvider::None => {}

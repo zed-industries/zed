@@ -1266,7 +1266,7 @@ impl Workspace {
                 cx.open_window(options, {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
-                    move |cx| {
+                    move |window, cx| {
                         window.new_view(cx, |window, cx| {
                             let mut workspace = Workspace::new(
                                 Some(workspace_id),
@@ -1437,7 +1437,7 @@ impl Workspace {
 
                         let mut navigated = prev_active_item_index != pane.active_item_index();
                         if let Some(data) = entry.data {
-                            navigated |= pane.active_item()?.navigate(data, cx);
+                            navigated |= pane.active_item()?.navigate(data, window, cx);
                         }
 
                         if navigated {
@@ -1485,7 +1485,7 @@ impl Workspace {
                             navigated |= Some(item.item_id()) != prev_active_item_id;
                             pane.nav_history_mut().set_mode(NavigationMode::Normal);
                             if let Some(data) = entry.data {
-                                navigated |= item.navigate(data, cx);
+                                navigated |= item.navigate(data, window, cx);
                             }
                         })?;
                     }
@@ -6662,7 +6662,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
         let item1 = cx.new_view(|cx| {
@@ -6727,7 +6727,7 @@ mod tests {
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
@@ -6808,7 +6808,7 @@ mod tests {
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.new_view(TestItem::new);
@@ -6858,7 +6858,7 @@ mod tests {
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // When there are dirty untitled items, but they can serialize, then there is no prompt.
         let item1 = cx.new_view(|cx| {
@@ -6889,7 +6889,8 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let item1 = cx.new_view(|cx| {
             TestItem::new(window, cx)
@@ -6998,7 +6999,8 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
@@ -7109,7 +7111,8 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         let item = cx.new_view(|cx| {
@@ -7233,7 +7236,8 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let item = cx.new_view(|cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -7288,7 +7292,8 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let panel = workspace.update(cx, |workspace, cx| {
             let panel = window.new_view(cx, |cx| TestPanel::new(DockPosition::Right, window, cx));
@@ -7438,7 +7443,8 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         // Let's arrange the panes like this:
         //
@@ -7653,7 +7659,8 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         add_an_item_to_active_pane(cx, &workspace, 1);
         split_pane(cx, &workspace);
@@ -7730,7 +7737,8 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let (panel_1, panel_2) = workspace.update_in(cx, |workspace, cx| {
             let panel_1 = window.new_view(cx, |cx| TestPanel::new(DockPosition::Left, window, cx));
@@ -7959,7 +7967,8 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new_view(|cx| {
@@ -8104,7 +8113,8 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new_view(|cx| {
@@ -8208,7 +8218,8 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new_view(|cx| {
@@ -8290,7 +8301,8 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new_view(|cx| {
@@ -8605,7 +8617,7 @@ mod tests {
 
             let project = Project::test(fs, ["root1".as_ref()], cx).await;
             let (workspace, cx) =
-                cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
             let worktree_id = project.update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -8669,7 +8681,7 @@ mod tests {
 
             let project = Project::test(fs, ["root1".as_ref()], cx).await;
             let (workspace, cx) =
-                cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
             let worktree_id = project.update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()

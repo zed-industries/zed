@@ -303,7 +303,7 @@ impl Render for MessageEditor {
                                             .map(|binding| binding.into_any_element()),
                                         )
                                         .on_click(move |_event, window, cx| {
-                                            focus_handle.dispatch_action(&Chat, window);
+                                            focus_handle.dispatch_action(&Chat, window, cx);
                                         }),
                                 ),
                             ),

@@ -142,7 +142,7 @@ impl Workspace {
         let notification = build_notification(cx);
         cx.subscribe_in(&notification, window, {
             let id = id.clone();
-            move |this, _, _: &DismissEvent, cx| {
+            move |this, _, _: &DismissEvent, window, cx| {
                 this.dismiss_notification_internal(&id, window, cx);
             }
         })

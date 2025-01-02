@@ -2588,24 +2588,26 @@ impl Pane {
             .icon_size(IconSize::Small)
             .on_click({
                 let view = cx.view().clone();
-                move |_, cx| view.update_in(cx, Self::navigate_backward)
+                move |_, window, cx| view.update(cx, |pane, cx| pane.navigate_backward(window, cx))
             })
             .disabled(!self.can_navigate_backward())
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, window, cx)
+                move |window, cx| {
+                    Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, window, cx)
+                }
             });
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
             .on_click({
                 let view = cx.view().clone();
-                move |_, cx| view.update_in(cx, Self::navigate_forward)
+                move |_, window, cx| view.update(cx, |pane, cx| pane.navigate_forward(window, cx))
             })
             .disabled(!self.can_navigate_forward())
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |cx| {
+                move |window, cx| {
                     Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, window, cx)
                 }
             });
@@ -2939,7 +2941,7 @@ impl Pane {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
-            if let ControlFlow::Break(()) = custom_drop_handle(self, paths, cx) {
+            if let ControlFlow::Break(()) = custom_drop_handle(self, paths, window, cx) {
                 return;
             }
         }
@@ -3058,7 +3060,7 @@ impl Render for Pane {
         }
 
         let should_display_tab_bar = self.should_display_tab_bar.clone();
-        let display_tab_bar = should_display_tab_bar(cx);
+        let display_tab_bar = should_display_tab_bar(window, cx);
         let Some(project) = self.project.upgrade() else {
             return div().track_focus(&self.focus_handle(cx));
         };
@@ -3578,6 +3580,7 @@ impl Render for DraggedTab {
                 selected: false,
                 preview: false,
             },
+            window,
             cx,
         );
         Tab::new("")
@@ -3606,10 +3609,10 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        pane.update(window, cx, |pane, cx| {
+        pane.update_in(cx, |pane, cx| {
             assert!(pane
                 .close_active_item(&CloseActiveItem { save_intent: None }, cx)
                 .is_none())
@@ -3623,7 +3626,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         for i in 0..7 {
@@ -3633,7 +3636,7 @@ mod tests {
         add_labeled_item(&pane, "7", false, cx);
         // Remove items to respect the max tab cap.
         assert_item_labels(&pane, ["3", "4", "5", "6", "7*"], cx);
-        pane.update(cx, |pane, cx| {
+        pane.update_in(cx, |pane, window, cx| {
             pane.activate_item(0, false, false, window, cx);
         });
         add_labeled_item(&pane, "X", false, cx);
@@ -3672,7 +3675,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -3755,7 +3758,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -3831,7 +3834,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         // singleton view
@@ -3936,7 +3939,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         add_labeled_item(&pane, "A", false, cx);
@@ -4001,7 +4004,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         add_labeled_item(&pane, "A", false, cx);
@@ -4066,7 +4069,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         add_labeled_item(&pane, "A", false, cx);
@@ -4131,7 +4134,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
@@ -4159,7 +4162,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         add_labeled_item(&pane, "A", true, cx);
@@ -4191,7 +4194,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
@@ -4218,7 +4221,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
@@ -4245,7 +4248,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         let item_a = add_labeled_item(&pane, "A", false, cx);
@@ -4350,7 +4353,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         let item_a = add_labeled_item(&pane, "A", false, cx);

@@ -26,7 +26,7 @@ pub enum PanelEvent {
 
 pub use proto::PanelId;
 
-pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
+pub trait Panel: FocusableView + EventEmitter<PanelEvent> + Sized {
     fn persistent_name() -> &'static str;
     fn position(&self, window: &mut Window, cx: &mut AppContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
@@ -544,7 +544,7 @@ impl Dock {
 
             if serialized.zoom {
                 if let Some(panel) = self.active_panel() {
-                    panel.set_zoomed(true, cx)
+                    panel.set_zoomed(true, window, cx)
                 }
             }
             self.set_open(serialized.visible, window, cx);
@@ -593,12 +593,12 @@ impl Dock {
     ) {
         if Some(panel_ix) != self.active_panel_index {
             if let Some(active_panel) = self.active_panel_entry() {
-                active_panel.panel.set_active(false, cx);
+                active_panel.panel.set_active(false, window, cx);
             }
 
             self.active_panel_index = Some(panel_ix);
             if let Some(active_panel) = self.active_panel_entry() {
-                active_panel.panel.set_active(true, cx);
+                active_panel.panel.set_active(true, window, cx);
             }
 
             cx.notify();
@@ -629,7 +629,7 @@ impl Dock {
         cx: &mut AppContext,
     ) -> Option<Arc<dyn PanelHandle>> {
         let entry = self.visible_entry()?;
-        if entry.panel.is_zoomed(cx) {
+        if entry.panel.is_zoomed(window, cx) {
             Some(entry.panel.clone())
         } else {
             None
@@ -666,7 +666,7 @@ impl Dock {
         if let Some(entry) = self.active_panel_entry() {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
 
-            entry.panel.set_size(size, cx);
+            entry.panel.set_size(size, window, cx);
             cx.notify();
         }
     }
@@ -690,7 +690,7 @@ impl Dock {
         let max_size = px((max_size.0 - RESIZE_HANDLE_SIZE.0).abs());
         for panel in self.panel_entries.iter().map(|entry| &entry.panel) {
             if panel.size(window, cx) > max_size {
-                panel.set_size(Some(max_size.max(RESIZE_HANDLE_SIZE)), cx);
+                panel.set_size(Some(max_size.max(RESIZE_HANDLE_SIZE)), window, cx);
             }
         }
     }

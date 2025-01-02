@@ -414,7 +414,7 @@ impl TerminalInlineAssist {
             _subscriptions: vec![
                 cx.subscribe(&prompt_editor, |prompt_editor, event, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_event(prompt_editor, event, cx)
+                        this.handle_prompt_editor_event(prompt_editor, event, window, cx)
                     })
                 }),
                 cx.subscribe(&codegen, move |codegen, event, cx| {
@@ -439,14 +439,14 @@ impl TerminalInlineAssist {
                                                     assist_id.0,
                                                 );
 
-                                            workspace.show_toast(Toast::new(id, error), cx);
+                                            workspace.show_toast(Toast::new(id, error), window, cx);
                                         })
                                     }
                                 }
                             }
 
                             if assist.prompt_editor.is_none() {
-                                this.finish_assist(assist_id, false, false, cx);
+                                this.finish_assist(assist_id, false, false, window, cx);
                             }
                         }
                     })

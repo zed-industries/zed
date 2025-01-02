@@ -48,7 +48,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    assistant_panel::init(window, cx);
+    assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new_model(|cx| {
@@ -189,7 +189,7 @@ fn test_message_splitting(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
     LanguageModelRegistry::test(cx);
-    assistant_panel::init(window, cx);
+    assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
@@ -294,7 +294,7 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    assistant_panel::init(window, cx);
+    assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new_model(|cx| {
@@ -1446,7 +1446,7 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    assistant_panel::init(window, cx);
+    assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new_model(|cx| {

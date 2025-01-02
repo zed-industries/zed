@@ -757,6 +757,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             client::ChannelId(channel_id),
                             heading,
                             workspace.clone(),
+                            window,
                             cx,
                         )
                         .log_err()

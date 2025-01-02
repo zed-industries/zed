@@ -806,8 +806,8 @@ impl RemoteServerProjects {
             .anchor_scroll(navigation.scroll_anchor.clone())
             .on_action(cx.listener({
                 let callback = callback.clone();
-                move |this, _: &menu::Confirm, cx| {
-                    callback(this, cx);
+                move |this, _: &menu::Confirm, window, cx| {
+                    callback(this, window, cx);
                 }
             }))
             .child(
@@ -821,7 +821,7 @@ impl RemoteServerProjects {
                             .size(IconSize::Small),
                     )
                     .child(Label::new(project.paths.join(", ")))
-                    .on_click(cx.listener(move |this, _, window, cx| callback(this, cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| callback(this, window, cx)))
                     .end_hover_slot::<AnyElement>(Some(
                         div()
                             .mr_2()
@@ -1305,7 +1305,7 @@ impl RemoteServerProjects {
                 state = new_state.clone();
             }
         }
-        let scroll_state = state.scrollbar.parent_view(cx.view());
+        let scroll_state = state.scrollbar.parent_view(&cx.model());
         let connect_button = div()
             .id("ssh-connect-new-server-container")
             .track_focus(&state.add_new_server.focus_handle)
@@ -1402,7 +1402,7 @@ impl RemoteServerProjects {
                                     modal_section
                                 },
                                 |_, mut modal_section, window, cx| {
-                                    modal_section.paint(cx);
+                                    modal_section.paint(window, cx);
                                 },
                             )
                             .size_full(),

@@ -1611,7 +1611,7 @@ impl InlineAssist {
             codegen: codegen.clone(),
             workspace: workspace.clone(),
             _subscriptions: vec![
-                cx.on_focus_in(&prompt_editor_focus_handle, move |cx| {
+                cx.on_focus_in(&prompt_editor_focus_handle, move |window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
                         this.handle_prompt_editor_focus_in(assist_id, cx)
                     })

@@ -178,7 +178,7 @@ impl TabContentParams {
     }
 }
 
-pub trait Item: FocusableView + EventEmitter<Self::Event> {
+pub trait Item: FocusableView + EventEmitter<Self::Event> + Sized {
     type Event;
 
     /// Returns the tab contents.

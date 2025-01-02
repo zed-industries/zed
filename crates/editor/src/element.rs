@@ -1447,7 +1447,7 @@ impl EditorElement {
                     AvailableSpace::MinContent,
                     AvailableSpace::Definite(line_height * 0.55),
                 );
-                let crease_toggle_size = crease_toggle.layout_as_root(available_space, cx);
+                let crease_toggle_size = crease_toggle.layout_as_root(available_space, window, cx);
 
                 let position = point(
                     gutter_dimensions.width - gutter_dimensions.right_padding,
@@ -1458,7 +1458,7 @@ impl EditorElement {
                     (line_height - crease_toggle_size.height) / 2.,
                 );
                 let origin = gutter_hitbox.origin + position + centering_offset;
-                crease_toggle.prepaint_as_root(origin, available_space, cx);
+                crease_toggle.prepaint_as_root(origin, available_space, window, cx);
             }
         }
     }
@@ -1484,7 +1484,7 @@ impl EditorElement {
                     AvailableSpace::MinContent,
                     AvailableSpace::Definite(line_height),
                 );
-                let size = element.layout_as_root(available_space, cx);
+                let size = element.layout_as_root(available_space, window, cx);
 
                 let line = &lines[ix];
                 let padding = if line.width == Pixels::ZERO {
@@ -1498,7 +1498,7 @@ impl EditorElement {
                 );
                 let centering_offset = point(px(0.), (line_height - size.height) / 2.);
                 let origin = content_origin + position + centering_offset;
-                element.prepaint_as_root(origin, available_space, cx);
+                element.prepaint_as_root(origin, available_space, window, cx);
                 Some(CreaseTrailerLayout {
                     element,
                     bounds: Bounds::new(origin, size),
@@ -1673,7 +1673,7 @@ impl EditorElement {
         };
 
         let absolute_offset = point(start_x, start_y);
-        element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), cx);
+        element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
 
         Some(element)
     }
@@ -2637,13 +2637,16 @@ impl EditorElement {
         };
 
         // Discover the element's content height, then round up to the nearest multiple of line height.
-        let preliminary_size =
-            element.layout_as_root(size(available_width, AvailableSpace::MinContent), cx);
+        let preliminary_size = element.layout_as_root(
+            size(available_width, AvailableSpace::MinContent),
+            window,
+            cx,
+        );
         let quantized_height = (preliminary_size.height / line_height).ceil() * line_height;
         let final_size = if preliminary_size.height == quantized_height {
             preliminary_size
         } else {
-            element.layout_as_root(size(available_width, quantized_height.into()), cx)
+            element.layout_as_root(size(available_width, quantized_height.into()), window, cx)
         };
 
         if let BlockId::Custom(custom_block_id) = block_id {
@@ -3222,7 +3225,7 @@ impl EditorElement {
             return;
         };
 
-        let menu_size = menu_element.layout_as_root(AvailableSpace::min_size(), cx);
+        let menu_size = menu_element.layout_as_root(AvailableSpace::min_size(), window, cx);
         let menu_position = gpui::Point {
             // Snap the right edge of the list to the right edge of the window if its horizontal bounds
             // overflow. Include space for the scrollbar.
@@ -3536,7 +3539,7 @@ impl EditorElement {
                     .child(styled_text)
                     .into_any();
 
-                let element_bounds = element.layout_as_root(AvailableSpace::min_size(), cx);
+                let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                 let is_fully_visible =
                     editor_width >= longest_line_width + PADDING_X + element_bounds.width;
 
@@ -3564,7 +3567,7 @@ impl EditorElement {
                         )
                 };
 
-                element.prepaint_as_root(origin, element_bounds.into(), cx);
+                element.prepaint_as_root(origin, element_bounds.into(), window, cx);
                 Some(element)
             }
         }
@@ -3635,7 +3638,7 @@ impl EditorElement {
             )
         })?;
 
-        element.prepaint_as_root(position, AvailableSpace::min_size(), cx);
+        element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
         Some(element)
     }
 
@@ -3695,7 +3698,7 @@ impl EditorElement {
         let mut overall_height = Pixels::ZERO;
         let mut measured_hover_popovers = Vec::new();
         for mut hover_popover in hover_popovers {
-            let size = hover_popover.layout_as_root(AvailableSpace::min_size(), cx);
+            let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
             let horizontal_offset =
                 (text_hitbox.top_right().x - (hovered_point.x + size.width)).min(Pixels::ZERO);
 
@@ -3720,7 +3723,7 @@ impl EditorElement {
                 .occlude()
                 .on_mouse_move(|_, window, cx| cx.stop_propagation())
                 .into_any_element();
-            occlusion.layout_as_root(size(width, HOVER_POPOVER_GAP).into(), cx);
+            occlusion.layout_as_root(size(width, HOVER_POPOVER_GAP).into(), window, cx);
             window.defer_draw(occlusion, origin, 2);
         }
 
@@ -3820,7 +3823,7 @@ impl EditorElement {
         });
         if let Some(mut element) = maybe_element {
             let window_size = window.viewport_size();
-            let size = element.layout_as_root(Size::<AvailableSpace>::default(), cx);
+            let size = element.layout_as_root(Size::<AvailableSpace>::default(), window, cx);
             let mut point = point(start_x, start_y - size.height);
 
             // Adjusting to ensure the popover does not overflow in the X-axis direction.
@@ -4235,19 +4238,19 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        window.paint_layer(layout.gutter_hitbox.bounds, |cx| {
+        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
             window.with_element_namespace("crease_toggles", |window| {
                 for crease_toggle in layout.crease_toggles.iter_mut().flatten() {
-                    crease_toggle.paint(cx);
+                    crease_toggle.paint(window, cx);
                 }
             });
 
             for test_indicator in layout.test_indicators.iter_mut() {
-                test_indicator.paint(cx);
+                test_indicator.paint(window, cx);
             }
 
             if let Some(indicator) = layout.code_actions_indicator.as_mut() {
-                indicator.paint(cx);
+                indicator.paint(window, cx);
             }
         });
     }
@@ -4320,7 +4323,7 @@ impl EditorElement {
 
         window.paint_layer(layout.gutter_hitbox.bounds, |cx| {
             for mut blame_element in blamed_display_rows.into_iter() {
-                blame_element.paint(cx);
+                blame_element.paint(window, cx);
             }
         })
     }
@@ -4351,7 +4354,7 @@ impl EditorElement {
                 self.paint_inline_blame(layout, window, cx);
                 window.with_element_namespace("crease_trailers", |window| {
                     for trailer in layout.crease_trailers.iter_mut().flatten() {
-                        trailer.element.paint(cx);
+                        trailer.element.paint(window, cx);
                     }
                 });
             },
@@ -4431,7 +4434,7 @@ impl EditorElement {
         }
 
         for line_element in &mut layout.line_elements {
-            line_element.paint(cx);
+            line_element.paint(window, cx);
         }
     }
 
@@ -5035,7 +5038,7 @@ impl EditorElement {
     ) {
         if let Some(mut inline_blame) = layout.inline_blame.take() {
             window.paint_layer(layout.text_hitbox.bounds, |cx| {
-                inline_blame.paint(cx);
+                inline_blame.paint(window, cx);
             })
         }
     }
@@ -5047,7 +5050,7 @@ impl EditorElement {
         cx: &mut AppContext,
     ) {
         for mut block in layout.blocks.drain(..) {
-            block.element.paint(cx);
+            block.element.paint(window, cx);
         }
     }
 
@@ -5058,7 +5061,7 @@ impl EditorElement {
         cx: &mut AppContext,
     ) {
         if let Some(inline_completion_popover) = layout.inline_completion_popover.as_mut() {
-            inline_completion_popover.paint(cx);
+            inline_completion_popover.paint(window, cx);
         }
     }
 
@@ -5069,7 +5072,7 @@ impl EditorElement {
         cx: &mut AppContext,
     ) {
         if let Some(mouse_context_menu) = layout.mouse_context_menu.as_mut() {
-            mouse_context_menu.paint(cx);
+            mouse_context_menu.paint(window, cx);
         }
     }
 
@@ -5937,7 +5940,7 @@ impl LineWithInvisibles {
         let invisible_iter = self.invisibles.iter().map(extract_whitespace_info);
         match whitespace_setting {
             ShowWhitespaceSetting::None => (),
-            ShowWhitespaceSetting::All => invisible_iter.for_each(|(_, paint)| paint(cx)),
+            ShowWhitespaceSetting::All => invisible_iter.for_each(|(_, paint)| paint(window, cx)),
             ShowWhitespaceSetting::Selection => invisible_iter.for_each(|([start, _], paint)| {
                 let invisible_point = DisplayPoint::new(row, start as u32);
                 if !selection_ranges
@@ -5947,7 +5950,7 @@ impl LineWithInvisibles {
                     return;
                 }
 
-                paint(cx);
+                paint(window, cx);
             }),
 
             // For a whitespace to be on a boundary, any of the following conditions need to be met:
@@ -5973,7 +5976,7 @@ impl LineWithInvisibles {
                     };
 
                     if should_render || start == 0 || end == self.len {
-                        paint(cx);
+                        paint(window, cx);
 
                         // Since we are scanning from the left, we will skip over the first available whitespace that is part
                         // of a boundary between non-whitespace segments, so we correct by manually redrawing it if needed.
@@ -5990,7 +5993,7 @@ impl LineWithInvisibles {
                     if selection_ranges.iter().any(|region| {
                         region.start <= invisible_point && invisible_point < region.end
                     }) {
-                        paint(cx);
+                        paint(window, cx);
                     }
 
                     last_seen = Some((should_render, end, paint));
@@ -7149,7 +7152,7 @@ impl Element for EditorElement {
 
                     window.with_element_namespace("blocks", |window| {
                         if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
-                            sticky_header.paint(cx)
+                            sticky_header.paint(window, cx)
                         }
                     });
 
@@ -7629,7 +7632,7 @@ impl CursorLayout {
         };
 
         if let Some(name) = &mut self.cursor_name {
-            name.paint(cx);
+            name.paint(window, cx);
         }
 
         window.paint_quad(cursor);

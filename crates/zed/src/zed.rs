@@ -198,7 +198,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(cursor_position, window, cx);
         });
 
-        auto_update_ui::notify_of_any_new_update(window, cx);
+        auto_update_ui::notify_of_any_new_update_in(window, cx);
 
         let handle = cx.view().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -325,7 +325,7 @@ fn initialize_panels(
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
-            collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+            colab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let chat_panel =
             collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
         let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
@@ -1466,7 +1466,7 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         workspace_1
-            .update(window, |workspace, window, cx| {
+            .update_in(window, |workspace, window, cx| {
                 assert_eq!(workspace.worktrees(cx).count(), 2);
                 assert!(workspace.left_dock().read(cx).is_open());
                 assert!(workspace
@@ -3304,28 +3304,28 @@ mod tests {
         // Reopen all the closed items, ensuring they are reopened in the same order
         // in which they were closed.
         workspace
-            .update(window, cx, Workspace::reopen_closed_item)
+            .update_in(window, cx, Workspace::reopen_closed_item)
             .unwrap()
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         workspace
-            .update(window, cx, Workspace::reopen_closed_item)
+            .update_in(window, cx, Workspace::reopen_closed_item)
             .unwrap()
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
         workspace
-            .update(window, cx, Workspace::reopen_closed_item)
+            .update_in(window, cx, Workspace::reopen_closed_item)
             .unwrap()
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         workspace
-            .update(window, cx, Workspace::reopen_closed_item)
+            .update_in(window, cx, Workspace::reopen_closed_item)
             .unwrap()
             .await
             .unwrap();
@@ -3333,7 +3333,7 @@ mod tests {
 
         // Reopening past the last closed item is a no-op.
         workspace
-            .update(window, cx, Workspace::reopen_closed_item)
+            .update_in(window, cx, Workspace::reopen_closed_item)
             .unwrap()
             .await
             .unwrap();
@@ -3789,7 +3789,7 @@ mod tests {
         line: u32,
     ) {
         let available_actions = cx
-            .update(|cx| window.update(cx, |_, window, cx| window.available_actions()))
+            .update(|cx| window.update(cx, |_, window, cx| window.available_actions(cx)))
             .unwrap();
         for (key, action) in actions {
             let bindings = cx

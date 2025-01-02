@@ -1289,7 +1289,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
-            crate::init(window, cx);
+            crate::init(cx);
             cx.set_staff(true);
         });
     }

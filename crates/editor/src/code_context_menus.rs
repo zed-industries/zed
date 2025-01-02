@@ -431,6 +431,7 @@ impl CompletionsMenu {
             self.buffer.clone(),
             candidate_ids,
             self.completions.clone(),
+            window,
             cx,
         );
 

@@ -67,7 +67,7 @@ impl SlashCommand for SelectionCommand {
         let mut events = vec![];
 
         let Some(creases) = workspace
-            .update(window, cx, selections_creases)
+            .update_in(cx, selections_creases)
             .unwrap_or_else(|e| {
                 events.push(Err(e));
                 None

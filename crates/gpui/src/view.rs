@@ -236,8 +236,8 @@ impl AnyView {
     }
 
     /// Convert this to a weak handle.
-    pub fn downgrade(&self) -> AnyWeakModel {
-        AnyWeakModel {
+    pub fn downgrade(&self) -> AnyWeakView {
+        AnyWeakView {
             model: self.model.downgrade(),
             render: self.render,
         }
@@ -425,12 +425,12 @@ impl IntoElement for AnyView {
 }
 
 /// A weak, dynamically-typed view handle that does not prevent the view from being released.
-pub struct AnyWeakModel {
+pub struct AnyWeakView {
     model: AnyWeakModel,
     render: fn(&AnyView, &mut Window, &mut AppContext) -> AnyElement,
 }
 
-impl AnyWeakModel {
+impl AnyWeakView {
     /// Convert to a strongly-typed handle if the referenced view has not yet been released.
     pub fn upgrade(&self) -> Option<AnyView> {
         let model = self.model.upgrade()?;
@@ -442,24 +442,24 @@ impl AnyWeakModel {
     }
 }
 
-impl<V: 'static + Render> From<WeakModel<V>> for AnyWeakModel {
+impl<V: 'static + Render> From<WeakModel<V>> for AnyWeakView {
     fn from(view: WeakModel<V>) -> Self {
-        Self {
+        AnyWeakView {
             model: view.into(),
             render: any_view::render::<V>,
         }
     }
 }
 
-impl PartialEq for AnyWeakModel {
+impl PartialEq for AnyWeakView {
     fn eq(&self, other: &Self) -> bool {
         self.model == other.model
     }
 }
 
-impl std::fmt::Debug for AnyWeakModel {
+impl std::fmt::Debug for AnyWeakView {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AnyWeakModel")
+        f.debug_struct("AnyWeakView")
             .field("entity_id", &self.model.entity_id)
             .finish_non_exhaustive()
     }
