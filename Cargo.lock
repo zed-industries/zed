@@ -494,7 +494,6 @@ dependencies = [
  "project",
  "proto",
  "rand 0.8.5",
- "release_channel",
  "rope",
  "schemars",
  "serde",
