@@ -150,7 +150,7 @@ pub struct ScrollbarAxes {
     pub vertical: bool,
 }
 
-/// Which diagnostic indicator levels to show in the scrollbar.
+/// Which diagnostic indicators to show in the scrollbar.
 ///
 /// Default: all
 #[derive(Copy, Clone, Debug, Serialize, JsonSchema, PartialEq, Eq)]
@@ -415,12 +415,7 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub selected_symbol: Option<bool>,
-    /// Which diagnostic indicator levels to show in the scrollbar:
-    ///  - "none" or false: do not show diagnostics
-    ///  - "error": show only errors
-    ///  - "warning": show only errors and warnings
-    ///  - "information": show only errors, warnings, and information
-    ///  - "all" or true: show all diagnostics
+    /// Which diagnostic indicators to show in the scrollbar:
     ///
     /// Default: all
     pub diagnostics: Option<ScrollbarDiagnostics>,
