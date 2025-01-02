@@ -19,7 +19,7 @@ use workspace::Workspace;
 use crate::active_thread::ActiveThread;
 use crate::assistant_settings::{AssistantDockPosition, AssistantSettings};
 use crate::message_editor::MessageEditor;
-use crate::thread::{ThreadError, ThreadId};
+use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{NewThread, OpenHistory, ToggleFocus};
@@ -204,6 +204,10 @@ impl AssistantPanel {
             )
         });
         self.message_editor.focus_handle(cx).focus(cx);
+    }
+
+    pub(crate) fn active_thread(&self, cx: &AppContext) -> Model<Thread> {
+        self.thread.read(cx).thread.clone()
     }
 
     pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {

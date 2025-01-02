@@ -36,7 +36,7 @@ impl RenderOnce for ContextPill {
             ContextKind::File(_) => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::FetchedUrl => IconName::Globe,
-            ContextKind::Thread => IconName::MessageCircle,
+            ContextKind::Thread(_) => IconName::MessageCircle,
         };
 
         h_flex()
