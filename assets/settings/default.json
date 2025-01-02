@@ -256,7 +256,7 @@
     "search_results": true,
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
-    // Which diagnostic indicator levels to show in the scrollbar:
+    // Which diagnostic indicators to show in the scrollbar:
     //  - "none" or false: do not show diagnostics
     //  - "error": show only errors
     //  - "warning": show only errors and warnings
