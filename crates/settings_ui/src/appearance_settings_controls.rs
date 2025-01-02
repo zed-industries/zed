@@ -89,11 +89,11 @@ impl RenderOnce for ThemeControl {
                     menu = menu.custom_entry(
                         {
                             let theme = theme.clone();
-                            move |_cx| Label::new(theme.clone()).into_any_element()
+                            move |_window, _cx| Label::new(theme.clone()).into_any_element()
                         },
                         {
                             let theme = theme.clone();
-                            move |cx| {
+                            move |_window, cx| {
                                 Self::write(theme.to_string(), cx);
                             }
                         },
@@ -210,11 +210,11 @@ impl RenderOnce for UiFontFamilyControl {
                         menu = menu.custom_entry(
                             {
                                 let font_name = font_name.clone();
-                                move |_cx| Label::new(font_name.clone()).into_any_element()
+                                move |_window, _cx| Label::new(font_name.clone()).into_any_element()
                             },
                             {
                                 let font_name = font_name.clone();
-                                move |cx| {
+                                move |_window, cx| {
                                     Self::write(font_name.clone(), cx);
                                 }
                             },
@@ -312,7 +312,7 @@ impl RenderOnce for UiFontWeightControl {
                         menu = menu.custom_entry(
                             move |_window, _cx| Label::new(weight.0.to_string()).into_any_element(),
                             {
-                                move |cx| {
+                                move |_window, cx| {
                                     Self::write(weight, cx);
                                 }
                             },

@@ -21,7 +21,7 @@ impl FeatureFlag for SettingsUiFeatureFlag {
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, cx| {
+    cx.observe_new_views(|workspace: &mut Workspace, window, cx| {
         workspace.register_action(|workspace, _: &OpenSettingsEditor, window, cx| {
             let existing = workspace
                 .active_pane()
@@ -43,17 +43,20 @@ pub fn init(cx: &mut AppContext) {
             filter.hide_action_types(&settings_ui_actions);
         });
 
-        cx.observe_flag::<SettingsUiFeatureFlag, _>(move |is_enabled, _view, window, cx| {
-            if is_enabled {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.show_action_types(settings_ui_actions.iter());
-                });
-            } else {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.hide_action_types(&settings_ui_actions);
-                });
-            }
-        })
+        cx.observe_flag::<SettingsUiFeatureFlag, _>(
+            window,
+            move |is_enabled, _view, window, cx| {
+                if is_enabled {
+                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                        filter.show_action_types(settings_ui_actions.iter());
+                    });
+                } else {
+                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                        filter.hide_action_types(&settings_ui_actions);
+                    });
+                }
+            },
+        )
         .detach();
     })
     .detach();
@@ -69,7 +72,7 @@ impl SettingsPage {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
-        window.new_view(cx, |cx| Self {
+        window.new_view(cx, |window, cx| Self {
             focus_handle: cx.focus_handle(),
         })
     }
@@ -86,11 +89,11 @@ impl FocusableView for SettingsPage {
 impl Item for SettingsPage {
     type Event = ItemEvent;
 
-    fn tab_icon(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::Settings))
     }
 
-    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         Some("Settings".into())
     }
 
