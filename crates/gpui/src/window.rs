@@ -4601,12 +4601,12 @@ impl Window {
     }
 
     // todo! remove this? seems trivial
-    fn focus_view<V: crate::FocusableView>(&mut self, view: &Model<V>, cx: &AppContext) {
+    pub fn focus_view<V: crate::FocusableView>(&mut self, view: &Model<V>, cx: &AppContext) {
         self.focus(&view.read(cx).focus_handle(cx));
     }
 
     // todo! remove this or simplify? seems trivial
-    fn dismiss_view<V>(&mut self, view: &Model<V>, cx: &mut AppContext)
+    pub fn dismiss_view<V>(&mut self, view: &Model<V>, cx: &mut AppContext)
     where
         V: ManagedView,
     {
