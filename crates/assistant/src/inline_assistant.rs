@@ -1344,8 +1344,7 @@ struct InlineAssistScrollLock {
 }
 
 impl EditorInlineAssists {
-    #[allow(clippy::too_many_arguments)]
-    fn new(editor: &Model<Editor>, window: &mut Window, cx: &mut AppContext) -> Self {
+    fn new(editor: &Model<Editor>, window: &mut Window, cx: &mut ModelContext<Editor>) -> Self {
         let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
         Self {
             assist_ids: Vec::new(),

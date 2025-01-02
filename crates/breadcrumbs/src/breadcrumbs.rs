@@ -44,7 +44,7 @@ impl Render for Breadcrumbs {
             .id("breadcrumb-container")
             .flex_grow()
             .overflow_x_scroll()
-            .text_ui(window, cx);
+            .text_ui(cx);
 
         let Some(active_item) = self.active_item.as_ref() else {
             return element;
@@ -79,7 +79,7 @@ impl Render for Breadcrumbs {
                 text_style.font_style = font.style;
                 text_style.font_weight = font.weight;
             }
-            text_style.color = Color::Muted.color(window, cx);
+            text_style.color = Color::Muted.color(cx);
 
             StyledText::new(segment.text.replace('\n', "␤"))
                 .with_highlights(&text_style, segment.highlights.unwrap_or_default())
@@ -101,12 +101,12 @@ impl Render for Breadcrumbs {
                     .style(ButtonStyle::Transparent)
                     .on_click({
                         let editor = editor.clone();
-                        move |_, cx| {
+                        move |_, window, cx| {
                             if let Some((editor, callback)) = editor
                                 .upgrade()
                                 .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
                             {
-                                callback(editor.to_any(), cx);
+                                callback(editor.to_any(), window, cx);
                             }
                         }
                     })
@@ -154,8 +154,9 @@ impl ToolbarItemView for Breadcrumbs {
 
         let this = cx.view().downgrade();
         self.subscription = Some(item.subscribe_to_item_events(
+            window,
             cx,
-            Box::new(move |event, cx| {
+            Box::new(move |event, window, cx| {
                 if let ItemEvent::UpdateBreadcrumbs = event {
                     this.update(cx, |this, cx| {
                         cx.notify();
