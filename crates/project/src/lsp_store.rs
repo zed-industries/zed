@@ -49,8 +49,8 @@ use lsp::{
     FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
     InsertTextFormat, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
     LanguageServerId, LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
-    RenameFilesParams, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url,
-    WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
+    RenameFilesParams, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, WillRenameFiles,
+    WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -3012,7 +3012,7 @@ impl LspStore {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)
                 }),
                 registered_buffers: HashMap::default(),
-                lsp_tree: LanguageServerTree::new(languages.clone(), project_tree, cx),
+                lsp_tree: LanguageServerTree::new(project_tree, cx),
             }),
             last_formatting_failure: None,
             downstream_client: None,

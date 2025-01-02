@@ -25,7 +25,6 @@ use super::{AdapterWrapper, ProjectTree};
 pub struct LanguageServerTree {
     /// Language servers for which we can just update workspaceFolders when we detect a new project root
     project_tree: Model<ProjectTree>,
-    languages: Arc<LanguageRegistry>,
     instances: HashMap<ProjectPath, BTreeMap<LanguageServerName, LanguageServerTreeNode>>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
 }
@@ -69,14 +68,9 @@ struct InnerTreeNode {
 }
 
 impl LanguageServerTree {
-    pub(crate) fn new(
-        languages: Arc<LanguageRegistry>,
-        project_tree: Model<ProjectTree>,
-        cx: &mut AppContext,
-    ) -> Model<Self> {
+    pub(crate) fn new(project_tree: Model<ProjectTree>, cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|_| Self {
             project_tree,
-            languages,
             instances: Default::default(),
             attach_kind_cache: Default::default(),
         })

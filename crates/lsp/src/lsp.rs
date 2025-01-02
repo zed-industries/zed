@@ -1304,8 +1304,6 @@ impl FakeLanguageServer {
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
         let (notifications_tx, notifications_rx) = channel::unbounded();
 
-        let root = Self::root_path();
-
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
         let mut server = LanguageServer::new_internal(
@@ -1316,7 +1314,6 @@ impl FakeLanguageServer {
             None::<async_pipe::PipeReader>,
             Arc::new(Mutex::new(None)),
             None,
-            root,
             None,
             cx.clone(),
             |_| {},
@@ -1333,8 +1330,6 @@ impl FakeLanguageServer {
                     None::<async_pipe::PipeReader>,
                     Arc::new(Mutex::new(None)),
                     None,
-                    root,
-                    root,
                     None,
                     cx,
                     move |msg| {
@@ -1369,16 +1364,6 @@ impl FakeLanguageServer {
         });
 
         (server, fake)
-    }
-
-    #[cfg(target_os = "windows")]
-    fn root_path() -> &'static Path {
-        Path::new("C:\\")
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn root_path() -> &'static Path {
-        Path::new("/")
     }
 }
 

@@ -2,7 +2,7 @@ use std::{
     collections::{btree_map::Entry, BTreeMap},
     ffi::OsStr,
     ops::ControlFlow,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -12,7 +12,7 @@ use std::{
 /// For example, if there's a project root at path `python/project` and we query for a path `python/project/subdir/another_subdir/file.py`, there is
 /// a known root at `python/project` and the unexplored part is `subdir/another_subdir` - we need to run a scan on these 2 directories.
 pub(super) struct RootPathTrie<Label> {
-    path_component: Arc<OsStr>,
+    worktree_relative_path: Arc<Path>,
     labels: BTreeMap<Label, LabelPresence>,
     children: BTreeMap<Arc<OsStr>, RootPathTrie<Label>>,
 }
@@ -39,11 +39,11 @@ pub(super) enum LabelPresence {
 
 impl<Label: Ord> RootPathTrie<Label> {
     pub(super) fn new() -> Self {
-        Self::new_with_key(Arc::from(OsStr::new("")))
+        Self::new_with_key(Arc::from(Path::new("")))
     }
-    fn new_with_key(path_component: Arc<OsStr>) -> Self {
+    fn new_with_key(worktree_relative_path: Arc<Path>) -> Self {
         RootPathTrie {
-            path_component,
+            worktree_relative_path,
             labels: Default::default(),
             children: Default::default(),
         }
@@ -51,11 +51,12 @@ impl<Label: Ord> RootPathTrie<Label> {
     pub(super) fn insert(&mut self, path: &TriePath, value: Label, presence: LabelPresence) {
         let mut current = self;
 
+        let mut path_so_far = PathBuf::new();
         for key in path.0.iter() {
+            path_so_far.push(Path::new(key));
             current = match current.children.entry(key.clone()) {
-                Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(RootPathTrie::new_with_key(key.clone()))
-                }
+                Entry::Vacant(vacant_entry) => vacant_entry
+                    .insert(RootPathTrie::new_with_key(Arc::from(path_so_far.as_path()))),
                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
             };
         }
@@ -71,10 +72,9 @@ impl<Label: Ord> RootPathTrie<Label> {
         ) -> ControlFlow<()>,
     ) {
         let mut current = self;
-        let tmp_path = Arc::from(Path::new(""));
         for key in path.0.iter() {
             if !current.labels.is_empty() {
-                if (callback)(&tmp_path, &current.labels).is_break() {
+                if (callback)(&current.worktree_relative_path, &current.labels).is_break() {
                     return;
                 };
             }
@@ -84,7 +84,7 @@ impl<Label: Ord> RootPathTrie<Label> {
             };
         }
         if !current.labels.is_empty() {
-            (callback)(&tmp_path, &current.labels);
+            (callback)(&current.worktree_relative_path, &current.labels);
         }
     }
 
@@ -126,5 +126,99 @@ pub(super) struct TriePath(Arc<[Arc<OsStr>]>);
 impl From<&Path> for TriePath {
     fn from(value: &Path) -> Self {
         TriePath(value.components().map(|c| c.as_os_str().into()).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    #[test]
+    fn test_insert_and_lookup() {
+        let mut trie = RootPathTrie::<()>::new();
+        trie.insert(
+            &TriePath::from(Path::new("a/b/c")),
+            (),
+            LabelPresence::Present,
+        );
+
+        trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, nodes| {
+            assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
+            assert_eq!(path.as_ref(), Path::new("a/b/c"));
+            ControlFlow::Continue(())
+        });
+        // Now let's annotate a parent with "Known missing" node.
+        trie.insert(
+            &TriePath::from(Path::new("a")),
+            (),
+            LabelPresence::KnownAbsent,
+        );
+
+        // Ensure that we walk from the root to the leaf.
+        let mut visited_paths = BTreeSet::new();
+        trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, nodes| {
+            if path.as_ref() == Path::new("a/b/c") {
+                assert_eq!(
+                    visited_paths,
+                    BTreeSet::from_iter([Arc::from(Path::new("a/"))])
+                );
+                assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
+            } else if path.as_ref() == Path::new("a/") {
+                assert!(visited_paths.is_empty());
+                assert_eq!(nodes.get(&()), Some(&LabelPresence::KnownAbsent));
+            } else {
+                panic!("Unknown path");
+            }
+            // Assert that we only ever visit a path once.
+            assert!(visited_paths.insert(path.clone()));
+            ControlFlow::Continue(())
+        });
+
+        // Test breaking from the tree-walk.
+        let mut visited_paths = BTreeSet::new();
+        trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, nodes| {
+            if path.as_ref() == Path::new("a/") {
+                assert!(visited_paths.is_empty());
+                assert_eq!(nodes.get(&()), Some(&LabelPresence::KnownAbsent));
+            } else {
+                panic!("Unknown path");
+            }
+            // Assert that we only ever visit a path once.
+            assert!(visited_paths.insert(path.clone()));
+            ControlFlow::Break(())
+        });
+        assert_eq!(visited_paths.len(), 1);
+
+        // Entry removal.
+        trie.insert(
+            &TriePath::from(Path::new("a/b")),
+            (),
+            LabelPresence::KnownAbsent,
+        );
+        let mut visited_paths = BTreeSet::new();
+        trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, nodes| {
+            // Assert that we only ever visit a path once.
+            assert!(visited_paths.insert(path.clone()));
+            ControlFlow::Continue(())
+        });
+        assert_eq!(visited_paths.len(), 3);
+        trie.remove(&TriePath::from(Path::new("a/b/")));
+        let mut visited_paths = BTreeSet::new();
+        trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, nodes| {
+            // Assert that we only ever visit a path once.
+            assert!(visited_paths.insert(path.clone()));
+            ControlFlow::Continue(())
+        });
+        assert_eq!(visited_paths.len(), 1);
+    }
+
+    #[test]
+    fn test_remove() {
+        // let mut trie = RootPathTrie::new();
+        // trie.insert(&TriePath::from(Path::new("a/b/c")), BTreeMap::new());
+        // trie.remove(&TriePath::from(Path::new("a/b/c")));
+        // assert!(trie.lookup(&TriePath::from(Path::new("a/b/c"))).is_none());
     }
 }
