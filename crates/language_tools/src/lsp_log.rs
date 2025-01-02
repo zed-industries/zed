@@ -4,8 +4,8 @@ use editor::{actions::MoveToEnd, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions, div, AppContext, Context, Corner, EventEmitter, FocusHandle, FocusableView,
-    IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, VisualContext,
-    WeakModel, Window,
+    IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, WeakModel,
+    Window,
 };
 use language::LanguageServerId;
 use lsp::{
@@ -222,7 +222,7 @@ pub fn init(cx: &mut AppContext) {
             if project.is_local() || project.is_via_ssh() {
                 workspace.split_item(
                     SplitDirection::Right,
-                    Box::new(window.new_view(cx, |cx| {
+                    Box::new(window.new_view(cx, |window, cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
                     })),
                     window,
@@ -705,7 +705,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> (Model<Editor>, Vec<Subscription>) {
-        let editor = window.new_view(cx, |cx| {
+        let editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::multi_line(window, cx);
             editor.set_text(log_contents, window, cx);
             editor.move_to_end(&MoveToEnd, window, cx);
@@ -735,7 +735,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> (Model<Editor>, Vec<Subscription>) {
-        let editor = window.new_view(cx, |cx| {
+        let editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::multi_line(window, cx);
             editor.set_text(
                 serde_json::to_string_pretty(&capabilities).unwrap(),
@@ -868,7 +868,7 @@ impl LspLogView {
         });
 
         if let Some(log_contents) = log_contents {
-            self.editor.update(cx, move |editor, cx| {
+            self.editor.update(cx, |editor, cx| {
                 editor.set_text(log_contents, window, cx);
                 editor.move_to_end(&MoveToEnd, window, cx);
             });
@@ -1044,7 +1044,7 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         Some("LSP Logs".into())
     }
 
@@ -1065,7 +1065,7 @@ impl Item for LspLogView {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |cx| {
+        Some(window.new_view(cx, |window, cx| {
             let mut new_view = Self::new(self.project.clone(), self.log_store.clone(), window, cx);
             if let Some(server_id) = self.current_server_id {
                 match self.active_entry_kind {
@@ -1236,7 +1236,7 @@ impl Render for LspLogToolbarItemView {
             ))
             .menu({
                 let log_view = log_view.clone();
-                move |cx| {
+                move |window, cx| {
                     let log_view = log_view.clone();
                     ContextMenu::build(window, cx, |mut menu, window, cx| {
                         for (server_id, name, worktree_root, active_entry_kind) in
@@ -1310,7 +1310,7 @@ impl Render for LspLogToolbarItemView {
                             .custom_entry(
                                 {
                                     let log_toolbar_view = log_toolbar_view.clone();
-                                    move |cx| {
+                                    move |window, cx| {
                                         h_flex()
                                             .w_full()
                                             .justify_between()
@@ -1402,7 +1402,7 @@ impl Render for LspLogToolbarItemView {
                                                     ] {
                                                         menu = menu.entry(label, None, {
                                                             let log_view = log_view.clone();
-                                                            move |cx| {
+                                                            move |window, cx| {
                                                                 log_view.update(cx, |this, cx| {
                                                                     if let Some(id) =
                                                                         this.current_server_id
@@ -1462,7 +1462,7 @@ impl Render for LspLogToolbarItemView {
                                                     ] {
                                                         menu = menu.entry(label, None, {
                                                             let log_view = log_view.clone();
-                                                            move |cx| {
+                                                            move |window, cx| {
                                                                 log_view.update(cx, |this, cx| {
                                                                     if let Some(id) =
                                                                         this.current_server_id

@@ -1,14 +1,14 @@
 use gpui::{
     actions, Action, AppContext, EventEmitter, FocusHandle, FocusableView,
-    KeyBindingContextPredicate, KeyContext, Keystroke, MouseButton, Render, Subscription,
+    KeyBindingContextPredicate, KeyContext, Keystroke, Model, MouseButton, Render, Subscription,
 };
 use itertools::Itertools;
 use serde_json::json;
 use settings::get_key_equivalents;
 use ui::{
-    div, h_flex, px, v_flex, AppContext, ButtonCommon, Clickable, FluentBuilder,
-    InteractiveElement, Label, LabelCommon, LabelSize, ModelContext, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, VisualContext, Window,
+    div, h_flex, px, v_flex, ButtonCommon, Clickable, FluentBuilder, InteractiveElement, Label,
+    LabelCommon, LabelSize, ModelContext, ParentElement, SharedString, StatefulInteractiveElement,
+    Styled, Window,
 };
 use ui::{Button, ButtonStyle};
 use workspace::Item;
@@ -17,9 +17,9 @@ use workspace::Workspace;
 actions!(debug, [OpenKeyContextView]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenKeyContextView, window, cx| {
-            let key_context_view = window.new_view(KeyContextView::new, cx);
+            let key_context_view = window.new_view(cx, KeyContextView::new);
             workspace.add_item_to_active_pane(Box::new(key_context_view), None, true, window, cx)
         });
     })
@@ -37,10 +37,10 @@ struct KeyContextView {
 
 impl KeyContextView {
     pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let sub1 = cx.observe_keystrokes_in(window, |this, e, window, cx| {
+        let sub1 = cx.observe_keystrokes(|this, e, window, cx| {
             let mut pending = this.pending_keystrokes.take().unwrap_or_default();
             pending.push(e.keystroke.clone());
-            let mut possibilities = window.all_bindings_for_input(&pending);
+            let mut possibilities = window.all_bindings_for_input(&pending, cx);
             possibilities.reverse();
             this.context_stack = window.context_stack();
             this.last_keystrokes = Some(
@@ -150,7 +150,7 @@ impl Item for KeyContextView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         Some("Keyboard Context".into())
     }
 
@@ -163,11 +163,11 @@ impl Item for KeyContextView {
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
-    ) -> Option<gpui::View<Self>>
+    ) -> Option<Model<Self>>
     where
         Self: Sized,
     {
-        Some(window.new_view(Self::new, cx))
+        Some(window.new_view(cx, Self::new))
     }
 }
 
