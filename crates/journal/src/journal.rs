@@ -122,7 +122,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
             let (journal_dir, entry_path) = create_entry.await?;
             let opened = if open_new_workspace {
                 let (new_workspace, _) = cx
-                    .update(|window, cx| {
+                    .update(|_window, cx| {
                         workspace::open_paths(
                             &[journal_dir],
                             app_state,
@@ -138,7 +138,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
                     .await
             } else {
                 view_snapshot
-                    .update(&mut cx, |workspace, cx| {
+                    .update_in(&mut cx, |workspace, window, cx| {
                         workspace.open_paths(vec![entry_path], OpenVisible::All, None, window, cx)
                     })?
                     .await
@@ -146,7 +146,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
 
             if let Some(Some(Ok(item))) = opened.first() {
                 if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
-                    editor.update(&mut cx, |editor, cx| {
+                    editor.update_in(&mut cx, |editor, window, cx| {
                         let len = editor.buffer().read(cx).len(cx);
                         editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
                             s.select_ranges([len..len])

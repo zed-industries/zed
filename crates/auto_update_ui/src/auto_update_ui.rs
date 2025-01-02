@@ -17,7 +17,7 @@ use crate::update_notification::UpdateNotification;
 actions!(auto_update, [ViewReleaseNotesLocally]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+    cx.observe_new_views(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
             view_release_notes_locally(workspace, window, cx);
         });
@@ -80,7 +80,7 @@ fn view_release_notes_locally(
 
                 if let Ok(body) = body {
                     workspace
-                        .update(&mut cx, |workspace, cx| {
+                        .update_in(&mut cx, |workspace, window, cx| {
                             let project = workspace.project().clone();
                             let buffer = project.update(cx, |project, cx| {
                                 project.create_local_buffer("", markdown, cx)
@@ -93,7 +93,7 @@ fn view_release_notes_locally(
                             let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
                             let tab_description = SharedString::from(body.title.to_string());
-                            let editor = window.new_view(cx, |cx| {
+                            let editor = window.new_view(cx, |window, cx| {
                                 Editor::for_multibuffer(buffer, Some(project), true, window, cx)
                             });
                             let workspace_handle = workspace.weak_handle();
@@ -134,14 +134,16 @@ pub fn notify_of_any_new_update(
     cx.spawn_in(window, |workspace, mut cx| async move {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
-            workspace.update(&mut cx, |workspace, cx| {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
                 let workspace_handle = workspace.weak_handle();
                 workspace.show_notification(
                     NotificationId::unique::<UpdateNotification>(),
                     window,
                     cx,
                     |window, cx| {
-                        window.new_view(cx, |_| UpdateNotification::new(version, workspace_handle))
+                        window.new_view(cx, |_, _| {
+                            UpdateNotification::new(version, workspace_handle)
+                        })
                     },
                 );
                 updater.update(cx, |updater, cx| {
