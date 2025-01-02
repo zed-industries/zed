@@ -1652,13 +1652,12 @@ impl DapStore {
                 }
             }
             BreakpointEditAction::EditLogMessage(log_message) => {
-                if matches!(&breakpoint.kind, BreakpointKind::Log(_)) {
-                    breakpoint_set.remove(&breakpoint);
-                }
-
                 if !log_message.is_empty() {
                     breakpoint.kind = BreakpointKind::Log(log_message.clone());
+                    breakpoint_set.remove(&breakpoint);
                     breakpoint_set.insert(breakpoint);
+                } else if matches!(&breakpoint.kind, BreakpointKind::Log(_)) {
+                    breakpoint_set.remove(&breakpoint);
                 }
             }
         }
