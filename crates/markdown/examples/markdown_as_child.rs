@@ -62,17 +62,17 @@ pub fn main() {
                         background_color: Some(cx.theme().colors().editor_background),
                         ..Default::default()
                     },
-                    rule_color: Color::Muted.color(window, cx),
-                    block_quote_border_color: Color::Muted.color(window, cx),
+                    rule_color: Color::Muted.color(cx),
+                    block_quote_border_color: Color::Muted.color(cx),
                     block_quote: gpui::TextStyleRefinement {
-                        color: Some(Color::Muted.color(window, cx)),
+                        color: Some(Color::Muted.color(cx)),
                         ..Default::default()
                     },
                     link: gpui::TextStyleRefinement {
-                        color: Some(Color::Accent.color(window, cx)),
+                        color: Some(Color::Accent.color(cx)),
                         underline: Some(gpui::UnderlineStyle {
                             thickness: px(1.),
-                            color: Some(Color::Accent.color(window, cx)),
+                            color: Some(Color::Accent.color(cx)),
                             wavy: false,
                         }),
                         ..Default::default()
@@ -86,7 +86,7 @@ pub fn main() {
                     break_style: Default::default(),
                     heading: Default::default(),
                 };
-                let markdown = window.new_view(cx, |cx| {
+                let markdown = window.new_view(cx, |window, cx| {
                     Markdown::new(
                         MARKDOWN_EXAMPLE.into(),
                         markdown_style,

@@ -4078,7 +4078,7 @@ mod tests {
         add_labeled_item(&pane, "D", false, cx);
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
-        pane.update(cx, |pane, cx| {
+        pane.update_in(cx, |pane, window, cx| {
             pane.activate_item(1, false, false, window, cx)
         });
         add_labeled_item(&pane, "1", false, cx);

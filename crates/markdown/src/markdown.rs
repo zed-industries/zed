@@ -183,7 +183,7 @@ impl Markdown {
         self.pending_parse = Some(cx.spawn_in(window, |this, mut cx| {
             async move {
                 let parsed = parsed.await?;
-                this.update(&mut cx, |this, cx| {
+                this.update_in(&mut cx, |this, window, cx| {
                     this.parsed_markdown = parsed;
                     this.pending_parse.take();
                     if this.should_reparse {
@@ -412,7 +412,7 @@ impl MarkdownElement {
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
-            move |markdown, event: &MouseDownEvent, phase, cx| {
+            move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
                     if phase.bubble() {
                         if let Some(link) = rendered_text.link_for_position(event.position) {
@@ -452,7 +452,7 @@ impl MarkdownElement {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
             let was_hovering_link = is_hovering_link;
-            move |markdown, event: &MouseMoveEvent, phase, cx| {
+            move |markdown, event: &MouseMoveEvent, phase, window, cx| {
                 if phase.capture() {
                     return;
                 }
@@ -476,7 +476,7 @@ impl MarkdownElement {
         });
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
-            move |markdown, event: &MouseUpEvent, phase, cx| {
+            move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
                     if let Some(pressed_link) = markdown.pressed_link.take() {
                         if Some(&pressed_link) == rendered_text.link_for_position(event.position) {
@@ -533,9 +533,9 @@ impl MarkdownElement {
     ) {
         window.on_mouse_event({
             let markdown = self.markdown.downgrade();
-            move |event, phase, cx| {
+            move |event, phase, window, cx| {
                 markdown
-                    .update(cx, |markdown, cx| f(markdown, event, phase, cx))
+                    .update(cx, |markdown, cx| f(markdown, event, phase, window, cx))
                     .log_err();
             }
         });
@@ -746,7 +746,7 @@ impl Element for MarkdownElement {
             }
         }
         let mut rendered_markdown = builder.build();
-        let child_layout_id = rendered_markdown.element.request_layout(cx);
+        let child_layout_id = rendered_markdown.element.request_layout(window, cx);
         let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
         (layout_id, rendered_markdown)
     }
@@ -783,7 +783,7 @@ impl Element for MarkdownElement {
         let view = self.markdown.clone();
         window.on_action(std::any::TypeId::of::<crate::Copy>(), {
             let text = rendered_markdown.text.clone();
-            move |_, phase, cx| {
+            move |_, phase, window, cx| {
                 let text = text.clone();
                 if phase == DispatchPhase::Bubble {
                     view.update(cx, move |this, cx| this.copy(&text, window, cx))
