@@ -32,11 +32,9 @@ impl ImageView {
     pub fn new(
         image_item: Model<ImageItem>,
         project: Model<Project>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        cx.subscribe_in(&image_item, window, Self::on_image_event)
-            .detach();
+        cx.subscribe(&image_item, Self::on_image_event).detach();
         Self {
             image_item,
             project,
@@ -48,7 +46,6 @@ impl ImageView {
         &mut self,
         _: Model<ImageItem>,
         event: &ImageItemEvent,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         match event {
@@ -100,8 +97,8 @@ impl Item for ImageView {
     fn tab_content(
         &self,
         params: TabContentParams,
-        window: &mut Window,
-        cx: &mut AppContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> AnyElement {
         let project_path = self.image_item.read(cx).project_path(cx);
         let label_color = if ItemSettings::get_global(cx).git_status {
@@ -130,7 +127,7 @@ impl Item for ImageView {
             .into_any_element()
     }
 
-    fn tab_icon(&self, window: &mut Window, cx: &mut AppContext) -> Option<Icon> {
+    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
         let path = self.image_item.read(cx).path();
         ItemSettings::get_global(cx)
             .file_icons
@@ -161,7 +158,7 @@ impl Item for ImageView {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |cx| Self {
+        Some(window.new_view(cx, |window, cx| Self {
             image_item: self.image_item.clone(),
             project: self.project.clone(),
             focus_handle: cx.focus_handle(),
@@ -222,9 +219,7 @@ impl SerializableItem for ImageView {
                 .await?;
 
             cx.update(|window, cx| {
-                Ok(window.new_view(cx, |window, cx| {
-                    ImageView::new(image_item, project, window, cx)
-                }))
+                Ok(window.new_view(cx, |_window, cx| ImageView::new(image_item, project, cx)))
             })?
         })
     }
@@ -245,7 +240,7 @@ impl SerializableItem for ImageView {
         workspace: &mut Workspace,
         item_id: ItemId,
         _closing: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
@@ -356,7 +351,7 @@ impl ProjectItem for ImageView {
     where
         Self: Sized,
     {
-        Self::new(item, project, window, cx)
+        Self::new(item, project, cx)
     }
 }
 
