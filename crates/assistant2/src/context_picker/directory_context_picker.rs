@@ -1,14 +1,12 @@
-// TODO: Remove this when we finish the implementation.
-#![allow(unused)]
-
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, WorktreeId};
+use project::{PathMatchCandidateSet, Worktree, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -193,6 +191,18 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
+            let worktree = project.update(&mut cx, |project, cx| {
+                project
+                    .worktree_for_id(worktree_id, cx)
+                    .ok_or_else(|| anyhow!("no worktree found for {worktree_id:?}"))
+            })??;
+
+            let files = worktree.update(&mut cx, |worktree, cx| {
+                collect_files_in_path(worktree, &path)
+            })?;
+
+            dbg!(&files);
+
             this.update(&mut cx, |this, cx| {
                 let mut text = String::new();
 
@@ -246,4 +256,18 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 .child(h_flex().gap_2().child(Label::new(directory_name))),
         )
     }
+}
+
+fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
+    let mut files = Vec::new();
+
+    for entry in worktree.child_entries(path) {
+        if entry.is_dir() {
+            files.extend(collect_files_in_path(worktree, &entry.path));
+        } else if entry.is_file() {
+            files.push(entry.path.clone());
+        }
+    }
+
+    files
 }
