@@ -75,7 +75,7 @@ impl TabSwitcher {
             dock.update(cx, |this, cx| {
                 let Some(panel) = this
                     .active_panel()
-                    .filter(|panel| panel.focus_handle(cx).contains_focused(window, cx))
+                    .filter(|panel| panel.panel_focus_handle(cx).contains_focused(window, cx))
                 else {
                     return;
                 };

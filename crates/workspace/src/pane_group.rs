@@ -160,8 +160,7 @@ impl PaneGroup {
         &mut self,
         active_pane: &Model<Pane>,
         direction: SplitDirection,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Option<&Model<Pane>> {
         let bounding_box = self.bounding_box_for_pane(active_pane)?;
         let cursor = active_pane.read(cx).pixel_position_of_cursor(cx);

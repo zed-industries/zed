@@ -560,7 +560,7 @@ impl Pane {
         }
     }
 
-    pub fn has_focus(&self, window: &mut Window, cx: &mut AppContext) -> bool {
+    pub fn has_focus(&self, window: &Window, cx: &AppContext) -> bool {
         // We not only check whether our focus handle contains focus, but also
         // whether the active item might have focus, because we might have just activated an item
         // that hasn't rendered yet.
