@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fmt::Debug, ops::Range, sync::Arc};
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
-use ui::{Window, AppContext, IconName, SharedString, };
+use ui::{AppContext, IconName, SharedString, Window};
 
 use crate::{BlockStyle, FoldPlaceholder, RenderBlock};
 
@@ -118,7 +118,8 @@ type RenderToggleFn = Arc<
             MultiBufferRow,
             bool,
             Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut AppContextAppContext)>,
-            &mut Window, &mut AppContext,
+            &mut Window,
+            &mut AppContext,
         ) -> AnyElement,
 >;
 type RenderTrailerFn =
@@ -186,7 +187,8 @@ impl<T> Crease<T> {
                 MultiBufferRow,
                 bool,
                 Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut AppContextAppContext)>,
-                &mut Window, &mut AppContext,
+                &mut Window,
+                &mut AppContext,
             ) -> ToggleElement
             + 'static,
         ToggleElement: IntoElement,

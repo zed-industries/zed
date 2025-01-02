@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use gpui::{Window, AppContext, WindowBackgroundAppearance, };
+use gpui::{AppContext, Window, WindowBackgroundAppearance};
 
 /// Returns the [WindowBackgroundAppearance].
 fn window_appearance(window: &mut Window, cx: &mut AppContext) -> WindowBackgroundAppearance {
@@ -13,7 +13,7 @@ fn window_appearance(window: &mut Window, cx: &mut AppContext) -> WindowBackgrou
 /// transparent backgrounds.
 pub fn window_is_transparent(window: &mut Window, cx: &mut AppContext) -> bool {
     matches!(
-        window_appearance(cx),
+        window_appearance(window, cx),
         WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred
     )
 }

@@ -6,7 +6,7 @@ use crate::{
     SelectMode, ToDisplayPoint, ToggleCodeActions,
 };
 use gpui::prelude::FluentBuilder;
-use gpui::{Window, ModelContext, Model, DismissEvent, Pixels, Point, Subscription,  };
+use gpui::{DismissEvent, Model, ModelContext, Pixels, Point, Subscription, Window};
 use std::ops::Range;
 use text::PointUtf16;
 use workspace::OpenInTerminal;
@@ -45,7 +45,8 @@ impl MouseContextMenu {
         source: multi_buffer::Anchor,
         position: Point<Pixels>,
         context_menu: Model<ui::ContextMenu>,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> Option<Self> {
         let editor_snapshot = editor.snapshot(window, cx);
         let content_origin = editor.last_bounds?.origin
@@ -58,20 +59,27 @@ impl MouseContextMenu {
             source,
             offset: position - (source_position + content_origin),
         };
-        return Some(MouseContextMenu::new(menu_position, context_menu, window, cx));
+        return Some(MouseContextMenu::new(
+            menu_position,
+            context_menu,
+            window,
+            cx,
+        ));
     }
 
     pub(crate) fn new(
         position: MenuPosition,
         context_menu: Model<ui::ContextMenu>,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> Self {
         let context_menu_focus = context_menu.focus_handle(cx);
         window.focus(&context_menu_focus);
 
         let _subscription = cx.subscribe_in(
             &context_menu,
-            window, move |editor, _, _event: &DismissEvent, window, cx| {
+            window,
+            move |editor, _, _event: &DismissEvent, window, cx| {
                 editor.mouse_context_menu.take();
                 if context_menu_focus.contains_focused(window, cx) {
                     editor.focus(window, cx);
@@ -106,7 +114,8 @@ pub fn deploy_context_menu(
     editor: &mut Editor,
     position: Option<Point<Pixels>>,
     point: DisplayPoint,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) {
     if !editor.is_focused(window, cx) {
         editor.focus(window, cx);
@@ -199,15 +208,25 @@ pub fn deploy_context_menu(
     };
 
     editor.mouse_context_menu = match position {
-        Some(position) => {
-            MouseContextMenu::pinned_to_editor(editor, source_anchor, position, context_menu, window, cx)
-        }
+        Some(position) => MouseContextMenu::pinned_to_editor(
+            editor,
+            source_anchor,
+            position,
+            context_menu,
+            window,
+            cx,
+        ),
         None => {
             let menu_position = MenuPosition::PinnedToEditor {
                 source: source_anchor,
                 offset: editor.character_size(window, cx),
             };
-            Some(MouseContextMenu::new(menu_position, context_menu, window, cx))
+            Some(MouseContextMenu::new(
+                menu_position,
+                context_menu,
+                window,
+                cx,
+            ))
         }
     };
     cx.notify();

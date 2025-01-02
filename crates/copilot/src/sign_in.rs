@@ -1,8 +1,8 @@
 use crate::{request::PromptUserDeviceFlow, Copilot, Status};
-use gpui::{Window, ModelContext, 
+use gpui::{
     div, AppContext, ClipboardItem, DismissEvent, Element, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, Model, MouseDownEvent, ParentElement, Render,
-    Styled, Subscription, 
+    FocusableView, InteractiveElement, IntoElement, Model, ModelContext, MouseDownEvent,
+    ParentElement, Render, Styled, Subscription, Window,
 };
 use ui::{prelude::*, Button, Label, Vector, VectorName};
 use util::ResultExt as _;
@@ -33,45 +33,53 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut AppContext) {
                         NotificationId::unique::<CopilotStartingToast>(),
                         "Copilot is starting...",
                     ),
-                    window, cx,
+                    window,
+                    cx,
                 );
                 workspace.weak_handle()
             }) else {
                 return;
             };
 
-            window.spawn(cx, |mut cx| async move {
-                task.await;
-                if let Some(copilot) = cx.update(|window, cx| Copilot::global(cx)).ok().flatten() {
-                    workspace
-                        .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
-                            Status::Authorized => workspace.show_toast(
-                                Toast::new(
-                                    NotificationId::unique::<CopilotStartingToast>(),
-                                    "Copilot has started!",
+            window
+                .spawn(cx, |mut cx| async move {
+                    task.await;
+                    if let Some(copilot) =
+                        cx.update(|window, cx| Copilot::global(cx)).ok().flatten()
+                    {
+                        workspace
+                            .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
+                                Status::Authorized => workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<CopilotStartingToast>(),
+                                        "Copilot has started!",
+                                    ),
+                                    window,
+                                    cx,
                                 ),
-                                window, cx,
-                            ),
-                            _ => {
-                                workspace.dismiss_toast(
-                                    &NotificationId::unique::<CopilotStartingToast>(),
-                                    window, cx,
-                                );
-                                copilot
-                                    .update(cx, |copilot, cx| copilot.sign_in(cx))
-                                    .detach_and_log_err(cx);
-                            }
-                        })
-                        .log_err();
-                }
-            })
-            .detach();
+                                _ => {
+                                    workspace.dismiss_toast(
+                                        &NotificationId::unique::<CopilotStartingToast>(),
+                                        window,
+                                        cx,
+                                    );
+                                    copilot
+                                        .update(cx, |copilot, cx| copilot.sign_in(cx))
+                                        .detach_and_log_err(cx);
+                                }
+                            })
+                            .log_err();
+                    }
+                })
+                .detach();
         }
         _ => {
             copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
             workspace
                 .update(cx, |this, window, cx| {
-                    this.toggle_modal(window, cx, |window, cx| CopilotCodeVerification::new(&copilot, window, cx));
+                    this.toggle_modal(window, cx, |window, cx| {
+                        CopilotCodeVerification::new(&copilot, window, cx)
+                    });
                 })
                 .ok();
         }
@@ -120,7 +128,8 @@ impl CopilotCodeVerification {
 
     fn render_device_code(
         data: &PromptUserDeviceFlow,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> impl IntoElement {
         let copied = cx
             .read_from_clipboard()
@@ -152,7 +161,8 @@ impl CopilotCodeVerification {
     fn render_prompting_modal(
         connect_clicked: bool,
         data: &PromptUserDeviceFlow,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> impl Element {
         let connect_button_label = if connect_clicked {
             "Waiting for connection..."
@@ -236,7 +246,8 @@ impl Render for CopilotCodeVerification {
         let prompt = match &self.status {
             Status::SigningIn {
                 prompt: Some(prompt),
-            } => Self::render_prompting_modal(self.connect_clicked, prompt, window, cx).into_any_element(),
+            } => Self::render_prompting_modal(self.connect_clicked, prompt, window, cx)
+                .into_any_element(),
             Status::Unauthorized => {
                 self.connect_clicked = false;
                 Self::render_unauthorized_modal(window, cx).into_any_element()

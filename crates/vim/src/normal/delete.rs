@@ -14,7 +14,8 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.stop_recording(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
@@ -81,7 +82,13 @@ impl Vim {
         });
     }
 
-    pub fn delete_object(&mut self, object: Object, around: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn delete_object(
+        &mut self,
+        object: Object,
+        around: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.stop_recording(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {

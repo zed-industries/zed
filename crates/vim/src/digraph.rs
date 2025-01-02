@@ -49,13 +49,16 @@ impl Vim {
         &mut self,
         first_char: char,
         second_char: char,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let text = lookup_digraph(first_char, second_char, cx);
 
         self.pop_operator(window, cx);
         if self.editor_input_enabled() {
-            self.update_editor(window, cx, |_, editor, window, cx| editor.insert(&text, window, cx));
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.insert(&text, window, cx)
+            });
         } else {
             self.input_ignored(text, window, cx);
         }
@@ -80,7 +83,8 @@ impl Vim {
         &mut self,
         keystroke_event: &KeystrokeEvent,
         prefix: String,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         // handled by handle_literal_input
         if keystroke_event.keystroke.key_char.is_some() {
@@ -108,7 +112,8 @@ impl Vim {
         &mut self,
         mut prefix: String,
         text: &str,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let first = prefix.chars().next();
         let next = text.chars().next().unwrap_or(' ');
@@ -185,11 +190,18 @@ impl Vim {
             Operator::Literal {
                 prefix: Some(prefix),
             },
-            window, cx,
+            window,
+            cx,
         );
     }
 
-    fn insert_literal(&mut self, ch: Option<char>, suffix: &str, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn insert_literal(
+        &mut self,
+        ch: Option<char>,
+        suffix: &str,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.pop_operator(window, cx);
         let mut text = String::new();
         if let Some(c) = ch {
@@ -202,7 +214,9 @@ impl Vim {
         text.push_str(suffix);
 
         if self.editor_input_enabled() {
-            self.update_editor(window, cx, |_, editor, window, cx| editor.insert(&text, window, cx));
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.insert(&text, window, cx)
+            });
         } else {
             self.input_ignored(text.into(), window, cx);
         }

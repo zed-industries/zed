@@ -1,5 +1,7 @@
 use editor::Editor;
-use gpui::{Window, ModelContext, Model, div, IntoElement, ParentElement, Render, Subscription,   WeakView};
+use gpui::{
+    div, IntoElement, Model, ModelContext, ParentElement, Render, Subscription, WeakView, Window,
+};
 use language::LanguageName;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
@@ -21,7 +23,12 @@ impl ActiveBufferLanguage {
         }
     }
 
-    fn update_language(&mut self, editor: Model<Editor>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_language(
+        &mut self,
+        editor: Model<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.active_language = Some(None);
 
         let editor = editor.read(cx);
@@ -54,7 +61,9 @@ impl Render for ActiveBufferLanguage {
                             });
                         }
                     }))
-                    .tooltip(|window, cx| Tooltip::for_action("Select Language", &Toggle, window, cx)),
+                    .tooltip(|window, cx| {
+                        Tooltip::for_action("Select Language", &Toggle, window, cx)
+                    }),
             )
         })
     }
@@ -64,10 +73,12 @@ impl StatusItemView for ActiveBufferLanguage {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
-            self._observe_active_editor = Some(cx.observe_in(&editor, window, Self::update_language));
+            self._observe_active_editor =
+                Some(cx.observe_in(&editor, window, Self::update_language));
             self.update_language(editor, window, cx);
         } else {
             self.active_language = None;

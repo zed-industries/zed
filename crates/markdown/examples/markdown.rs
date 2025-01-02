@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{Model, prelude::*, rgb, App, KeyBinding, StyleRefinement,  WindowOptions};
+use gpui::{prelude::*, rgb, App, KeyBinding, Model, StyleRefinement, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
@@ -7,7 +7,7 @@ use settings::SettingsStore;
 use std::sync::Arc;
 use theme::LoadThemes;
 use ui::prelude::*;
-use ui::{Window, AppContext, div, };
+use ui::{div, AppContext, Window};
 
 const MARKDOWN_EXAMPLE: &str = r#"
 # Markdown Example Document
@@ -158,7 +158,8 @@ pub fn main() {
                     MARKDOWN_EXAMPLE.to_string(),
                     markdown_style,
                     language_registry,
-                    window, cx,
+                    window,
+                    cx,
                 )
             })
         })
@@ -175,10 +176,12 @@ impl MarkdownExample {
         text: String,
         style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Self {
-        let markdown =
-            window.new_view(cx, |window, cx| Markdown::new(text, style, Some(language_registry), None, window, cx));
+        let markdown = window.new_view(cx, |window, cx| {
+            Markdown::new(text, style, Some(language_registry), None, window, cx)
+        });
         Self { markdown }
     }
 }

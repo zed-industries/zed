@@ -59,7 +59,9 @@ impl RenderOnce for Indicator {
         let container = div().flex_none();
         let container = if let Some(border_color) = self.border_color {
             if matches!(self.kind, IndicatorKind::Dot | IndicatorKind::Bar) {
-                container.border_1().border_color(border_color.color(window, cx))
+                container
+                    .border_1()
+                    .border_color(border_color.color(window, cx))
             } else {
                 container
             }

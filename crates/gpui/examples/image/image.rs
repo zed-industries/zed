@@ -4,10 +4,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::{Window, ModelContext, 
+use gpui::{
     actions, div, img, prelude::*, px, rgb, size, App, AppContext, AssetSource, Bounds,
-    ImageSource, KeyBinding, Menu, MenuItem, Point, SharedString, SharedUri, TitlebarOptions,
-     WindowBounds,  WindowOptions,
+    ImageSource, KeyBinding, Menu, MenuItem, ModelContext, Point, SharedString, SharedUri,
+    TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 
 struct Assets {

@@ -2,7 +2,7 @@ use crate::ProjectIndex;
 use gpui::{
     canvas, div, list, uniform_list, AnyElement, AppContext, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, IntoElement, ListOffset, ListState, Model, MouseMoveEvent, Render,
-    UniformListScrollHandle, 
+    UniformListScrollHandle,
 };
 use project::WorktreeId;
 use settings::Settings;
@@ -33,14 +33,20 @@ enum Row {
 }
 
 impl ProjectIndexDebugView {
-    pub fn new(index: Model<ProjectIndex>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        index: Model<ProjectIndex>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let mut this = Self {
             rows: Vec::new(),
             list_scroll_handle: UniformListScrollHandle::new(),
             selected_path: None,
             hovered_row_ix: None,
             focus_handle: cx.focus_handle(),
-            _subscription: cx.subscribe_in(&index, window, |this, _, _, window, cx| this.update_rows(window, cx)),
+            _subscription: cx.subscribe_in(&index, window, |this, _, _, window, cx| {
+                this.update_rows(window, cx)
+            }),
             index,
         };
         this.update_rows(window, cx);
@@ -83,7 +89,8 @@ impl ProjectIndexDebugView {
         &mut self,
         worktree_id: WorktreeId,
         file_path: Arc<Path>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         let project_index = self.index.read(cx);
         let fs = project_index.fs().clone();
@@ -136,7 +143,12 @@ impl ProjectIndexDebugView {
         None
     }
 
-    fn render_chunk(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_chunk(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> AnyElement {
         let buffer_font = ThemeSettings::get_global(cx).buffer_font.clone();
         let Some(state) = &self.selected_path else {
             return div().into_any();
@@ -170,9 +182,9 @@ impl ProjectIndexDebugView {
                             .child(
                                 Button::new(("next", ix), "next")
                                     .disabled(ix + 1 == state.chunks.len())
-                                    .on_click(
-                                        cx.listener(move |this, _, _, _| this.scroll_to_chunk(ix + 1)),
-                                    ),
+                                    .on_click(cx.listener(move |this, _, _, _| {
+                                        this.scroll_to_chunk(ix + 1)
+                                    })),
                             ),
                     ),
             )
@@ -236,18 +248,25 @@ impl Render for ProjectIndexDebugView {
                                 .id(ix)
                                 .pl_8()
                                 .child(Label::new(file_path.to_string_lossy().to_string()))
-                                .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, window, cx| {
-                                    if this.hovered_row_ix != Some(ix) {
-                                        this.hovered_row_ix = Some(ix);
-                                        cx.notify();
-                                    }
-                                }))
+                                .on_mouse_move(cx.listener(
+                                    move |this, _: &MouseMoveEvent, window, cx| {
+                                        if this.hovered_row_ix != Some(ix) {
+                                            this.hovered_row_ix = Some(ix);
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
                                 .cursor(CursorStyle::PointingHand)
                                 .on_click(cx.listener({
                                     let worktree_id = *worktree_id;
                                     let file_path = file_path.clone();
                                     move |this, _, cx| {
-                                        this.handle_path_click(worktree_id, file_path.clone(), window, cx);
+                                        this.handle_path_click(
+                                            worktree_id,
+                                            file_path.clone(),
+                                            window,
+                                            cx,
+                                        );
                                     }
                                 })),
                         })
@@ -286,7 +305,8 @@ impl Item for ProjectIndexDebugView {
     fn clone_on_split(
         &self,
         _: Option<workspace::WorkspaceId>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>>
     where
         Self: Sized,

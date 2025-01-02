@@ -82,8 +82,15 @@ async fn test_host_disconnect(
 
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
 
-    let workspace_b = cx_b
-        .add_window(|cx| Workspace::new(None, project_b.clone(), client_b.app_state.clone(), window, cx));
+    let workspace_b = cx_b.add_window(|cx| {
+        Workspace::new(
+            None,
+            project_b.clone(),
+            client_b.app_state.clone(),
+            window,
+            cx,
+        )
+    });
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
     let workspace_b_view = workspace_b.root_view(cx_b).unwrap();
 
@@ -232,8 +239,9 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
     editor_cx_b.set_selections_state(indoc! {"
         Some textˇ
     "});
-    editor_cx_a
-        .update_editor(|editor, window, cx| editor.newline_above(&editor::actions::NewlineAbove, window, cx));
+    editor_cx_a.update_editor(|editor, window, cx| {
+        editor.newline_above(&editor::actions::NewlineAbove, window, cx)
+    });
     executor.run_until_parked();
     editor_cx_a.assert_editor_state(indoc! {"
         ˇ
@@ -253,8 +261,9 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
 
         Some textˇ
     "});
-    editor_cx_a
-        .update_editor(|editor, window, cx| editor.newline_below(&editor::actions::NewlineBelow, window, cx));
+    editor_cx_a.update_editor(|editor, window, cx| {
+        editor.newline_below(&editor::actions::NewlineBelow, window, cx)
+    });
     executor.run_until_parked();
     editor_cx_a.assert_editor_state(indoc! {"
 
@@ -317,8 +326,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
-    let editor_b =
-        cx_b.new_view(|cx| Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), window, cx));
+    let editor_b = cx_b
+        .new_view(|cx| Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), window, cx));
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     cx_a.background_executor.run_until_parked();
@@ -663,7 +672,8 @@ async fn test_collaborating_with_code_actions(
             &ToggleCodeActions {
                 deployed_from_indicator: None,
             },
-            window, cx,
+            window,
+            cx,
         );
     });
     cx_a.background_executor.run_until_parked();
@@ -1298,7 +1308,8 @@ async fn test_on_input_format_from_host_to_guest(
         .await
         .unwrap();
     let cx_a = cx_a.add_empty_window();
-    let editor_a = cx_a.new_view(|cx| Editor::for_buffer(buffer_a, Some(project_a.clone()), window, cx));
+    let editor_a =
+        cx_a.new_view(|cx| Editor::for_buffer(buffer_a, Some(project_a.clone()), window, cx));
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
@@ -1418,7 +1429,8 @@ async fn test_on_input_format_from_guest_to_host(
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
-    let editor_b = cx_b.new_view(|cx| Editor::for_buffer(buffer_b, Some(project_b.clone()), window, cx));
+    let editor_b =
+        cx_b.new_view(|cx| Editor::for_buffer(buffer_b, Some(project_b.clone()), window, cx));
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();

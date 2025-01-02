@@ -6,7 +6,7 @@ use assistant_slash_command::{
 };
 use collections::HashSet;
 use futures::future;
-use gpui::{Window, AppContext, Task, WeakView, };
+use gpui::{AppContext, Task, WeakView, Window};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
 use text::OffsetRangeExt;
@@ -41,7 +41,8 @@ impl SlashCommand for DeltaSlashCommand {
         _arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _window: &mut Window, _cx: &mut AppContext,
+        _window: &mut Window,
+        _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -53,7 +54,8 @@ impl SlashCommand for DeltaSlashCommand {
         context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let mut paths = HashSet::default();
         let mut file_command_old_outputs = Vec::new();
@@ -77,7 +79,8 @@ impl SlashCommand for DeltaSlashCommand {
                         context_buffer.clone(),
                         workspace.clone(),
                         delegate.clone(),
-                        window, cx,
+                        window,
+                        cx,
                     ));
                 }
             }

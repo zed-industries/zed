@@ -32,7 +32,8 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         target: SurroundsType,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.stop_recording(window, cx);
         let count = Vim::take_count(cx);
@@ -133,7 +134,12 @@ impl Vim {
         self.switch_mode(Mode::Normal, false, window, cx);
     }
 
-    pub fn delete_surrounds(&mut self, text: Arc<str>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn delete_surrounds(
+        &mut self,
+        text: Arc<str>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.stop_recording(window, cx);
 
         // only legitimate surrounds can be removed
@@ -224,7 +230,13 @@ impl Vim {
         });
     }
 
-    pub fn change_surrounds(&mut self, text: Arc<str>, target: Object, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn change_surrounds(
+        &mut self,
+        text: Arc<str>,
+        target: Object,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if let Some(will_replace_pair) = object_to_bracket_pair(target) {
             self.stop_recording(window, cx);
             self.update_editor(window, cx, |_, editor, window, cx| {
@@ -336,7 +348,8 @@ impl Vim {
     pub fn check_and_move_to_valid_bracket_pair(
         &mut self,
         object: Object,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> bool {
         let mut valid = false;
         if let Some(pair) = object_to_bracket_pair(object) {

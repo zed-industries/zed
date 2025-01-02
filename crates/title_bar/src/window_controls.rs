@@ -82,7 +82,12 @@ pub struct WindowControl {
 }
 
 impl WindowControl {
-    pub fn new(id: impl Into<ElementId>, icon: WindowControlType, window: &mut Window, cx: &mut AppContext) -> Self {
+    pub fn new(
+        id: impl Into<ElementId>,
+        icon: WindowControlType,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Self {
         let style = WindowControlStyle::default(window, cx);
 
         Self {
@@ -97,7 +102,8 @@ impl WindowControl {
         id: impl Into<ElementId>,
         icon: WindowControlType,
         close_action: Box<dyn Action>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Self {
         let style = WindowControlStyle::default(window, cx);
 
@@ -157,7 +163,8 @@ impl RenderOnce for WindowControl {
                             .as_ref()
                             .expect("Use WindowControl::new_close() for close control.")
                             .boxed_clone(),
-                    cx),
+                        cx,
+                    ),
                 }
             })
     }

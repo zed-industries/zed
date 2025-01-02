@@ -1,8 +1,8 @@
 use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{Window, ModelContext, 
-    rems, AppContext, DismissEvent, FontWeight, Model, ParentElement, StyledText, Task, 
-     WeakView, 
+use gpui::{
+    rems, AppContext, DismissEvent, FontWeight, Model, ModelContext, ParentElement, StyledText,
+    Task, WeakView, Window,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -18,14 +18,16 @@ use workspace::{
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>| {
-            workspace.register_action(|workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
-                let project = workspace.project().clone();
-                let handle = cx.view().downgrade();
-                workspace.toggle_modal(window, cx, move |window, cx| {
-                    let delegate = ProjectSymbolsDelegate::new(handle, project);
-                    Picker::uniform_list(delegate, window, cx).width(rems(34.))
-                })
-            });
+            workspace.register_action(
+                |workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
+                    let project = workspace.project().clone();
+                    let handle = cx.view().downgrade();
+                    workspace.toggle_modal(window, cx, move |window, cx| {
+                        let delegate = ProjectSymbolsDelegate::new(handle, project);
+                        Picker::uniform_list(delegate, window, cx).width(rems(34.))
+                    })
+                },
+            );
         },
     )
     .detach();
@@ -105,7 +107,12 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         "Search project symbols...".into()
     }
 
-    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         if let Some(symbol) = self
             .matches
             .get(self.selected_match_index)
@@ -154,11 +161,21 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         self.selected_match_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_match_index = ix;
     }
 
-    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         self.filter(&query, window, cx);
         self.show_worktree_root_name = self.project.read(cx).visible_worktrees(cx).count() > 1;
         let symbols = self
@@ -196,7 +213,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let string_match = &self.matches[ix];
         let symbol = &self.symbols[string_match.candidate_id];
@@ -333,13 +351,15 @@ mod tests {
             },
         );
 
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
 
         // Create the project symbols view.
         let symbols = cx.new_view(|cx| {
             Picker::uniform_list(
                 ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
-                window, cx,
+                window,
+                cx,
             )
         });
 

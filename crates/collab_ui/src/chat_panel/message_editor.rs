@@ -4,9 +4,9 @@ use client::{UserId, UserStore};
 use collections::HashSet;
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{Window, ModelContext, 
+use gpui::{
     AsyncWindowContext, FocusableView, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
-    Render, Task, TextStyle,   WeakView,
+    ModelContext, Render, Task, TextStyle, WeakView, Window,
 };
 use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
@@ -59,7 +59,8 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         buffer: &Model<Buffer>,
         buffer_position: language::Anchor,
         _: editor::CompletionContext,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> Task<anyhow::Result<Vec<Completion>>> {
         let Some(handle) = self.0.upgrade() else {
             return Task::ready(Ok(Vec::new()));
@@ -74,7 +75,8 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         _buffer: Model<Buffer>,
         _completion_indices: Vec<usize>,
         _completions: Rc<RefCell<Box<[Completion]>>>,
-        _window: &mut Window, _cx: &mut ModelContext<Editor>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Editor>,
     ) -> Task<anyhow::Result<bool>> {
         Task::ready(Ok(false))
     }
@@ -85,7 +87,8 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         _position: language::Anchor,
         text: &str,
         _trigger_in_words: bool,
-        _window: &mut Window, _cx: &mut ModelContext<Editor>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Editor>,
     ) -> bool {
         text == "@"
     }
@@ -97,7 +100,8 @@ impl MessageEditor {
         user_store: Model<UserStore>,
         channel_chat: Option<Model<ChannelChat>>,
         editor: Model<Editor>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let this = cx.view().downgrade();
         editor.update(cx, |editor, cx| {
@@ -121,7 +125,8 @@ impl MessageEditor {
             .as_singleton()
             .expect("message editor must be singleton");
 
-        cx.subscribe_in(&buffer, window, Self::on_buffer_event).detach();
+        cx.subscribe_in(&buffer, window, Self::on_buffer_event)
+            .detach();
         cx.observe_global_in::<settings::SettingsStore>(window, |view, window, cx| {
             view.editor.update(cx, |editor, cx| {
                 editor.set_auto_replace_emoji_shortcode(
@@ -177,7 +182,12 @@ impl MessageEditor {
         self.edit_message_id = None;
     }
 
-    pub fn set_channel_chat(&mut self, chat: Model<ChannelChat>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_channel_chat(
+        &mut self,
+        chat: Model<ChannelChat>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let channel_id = chat.read(cx).channel_id;
         self.channel_chat = Some(chat);
         let channel_name = ChannelStore::global(cx)
@@ -193,7 +203,11 @@ impl MessageEditor {
         });
     }
 
-    pub fn take_message(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> MessageParams {
+    pub fn take_message(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> MessageParams {
         self.editor.update(cx, |editor, cx| {
             let highlights = editor.text_highlights::<Self>(cx);
             let text = editor.text(cx);
@@ -224,7 +238,8 @@ impl MessageEditor {
         &mut self,
         buffer: Model<Buffer>,
         event: &language::BufferEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
             let buffer = buffer.read(cx).snapshot();
@@ -241,7 +256,8 @@ impl MessageEditor {
         &mut self,
         buffer: &Model<Buffer>,
         end_anchor: Anchor,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         if let Some((start_anchor, query, candidates)) =
             self.collect_mention_candidates(buffer, end_anchor, window, cx)
@@ -281,7 +297,8 @@ impl MessageEditor {
     }
 
     async fn resolve_completions_for_candidates(
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
         query: &str,
         candidates: &[StringMatchCandidate],
         range: Range<Anchor>,
@@ -338,7 +355,8 @@ impl MessageEditor {
         &mut self,
         buffer: &Model<Buffer>,
         end_anchor: Anchor,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<(Anchor, String, Vec<StringMatchCandidate>)> {
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
@@ -387,7 +405,8 @@ impl MessageEditor {
         &mut self,
         buffer: &Model<Buffer>,
         end_anchor: Anchor,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<(Anchor, String, &'static [StringMatchCandidate])> {
         static EMOJI_FUZZY_MATCH_CANDIDATES: LazyLock<Vec<StringMatchCandidate>> =
             LazyLock::new(|| {
@@ -447,7 +466,8 @@ impl MessageEditor {
     async fn find_mentions(
         this: WeakView<MessageEditor>,
         buffer: BufferSnapshot,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         let (buffer, ranges) = cx
             .background_executor()
@@ -489,7 +509,8 @@ impl MessageEditor {
                         font_weight: Some(FontWeight::BOLD),
                         ..Default::default()
                     },
-                    window, cx,
+                    window,
+                    cx,
                 )
             });
 

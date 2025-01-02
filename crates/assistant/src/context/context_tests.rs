@@ -35,7 +35,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToOffset};
-use ui::{Window, AppContext, IconName, };
+use ui::{AppContext, IconName, Window};
 use unindent::Unindent;
 use util::{
     test::{generate_marked_text, marked_text_ranges},
@@ -1643,7 +1643,8 @@ impl SlashCommand for FakeSlashCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _window: &mut Window, _cx: &mut AppContext,
+        _window: &mut Window,
+        _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(vec![]))
     }
@@ -1659,7 +1660,8 @@ impl SlashCommand for FakeSlashCommand {
         _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        _window: &mut Window, _cx: &mut AppContext,
+        _window: &mut Window,
+        _cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         Task::ready(Ok(SlashCommandOutput {
             text: format!("Executed fake command: {}", self.0),

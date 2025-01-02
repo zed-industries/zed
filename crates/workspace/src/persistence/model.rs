@@ -8,7 +8,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model,  WeakView};
+use gpui::{AsyncWindowContext, Model, WeakView};
 use project::Project;
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
@@ -333,8 +333,13 @@ impl SerializedPaneGroup {
         project: &Model<Project>,
         workspace_id: WorkspaceId,
         workspace: WeakView<Workspace>,
-        window: &mut Window, cx: &mut AppContext,
-    ) -> Option<(Member, Option<Model<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<(
+        Member,
+        Option<Model<Pane>>,
+        Vec<Option<Box<dyn ItemHandle>>>,
+    )> {
         match self {
             SerializedPaneGroup::Group {
                 axis,
@@ -371,7 +376,9 @@ impl SerializedPaneGroup {
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
-                    .update(cx, |workspace, cx| workspace.add_pane(window, cx).downgrade())
+                    .update(cx, |workspace, cx| {
+                        workspace.add_pane(window, cx).downgrade()
+                    })
                     .log_err()?;
                 let active = serialized_pane.active;
                 let new_items = serialized_pane
@@ -422,7 +429,8 @@ impl SerializedPane {
         pane: &WeakView<Pane>,
         workspace_id: WorkspaceId,
         workspace: WeakView<Workspace>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut item_tasks = Vec::new();
         let mut active_item_index = None;
@@ -436,7 +444,8 @@ impl SerializedPane {
                     workspace.clone(),
                     workspace_id,
                     item.item_id,
-                    window, cx,
+                    window,
+                    cx,
                 )
             })?);
             if item.active {

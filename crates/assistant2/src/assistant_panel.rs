@@ -4,10 +4,9 @@ use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
 use client::zed_urls;
 use fs::Fs;
-use gpui::{Window, ModelContext, 
+use gpui::{
     prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Model, Pixels, Task,   WeakView,
-    
+    FocusHandle, FocusableView, FontWeight, Model, ModelContext, Pixels, Task, WeakView, Window,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -71,7 +70,8 @@ pub struct AssistantPanel {
 impl AssistantPanel {
     pub fn load(
         workspace: WeakView<Workspace>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         cx.spawn(|mut cx| async move {
             let tools = Arc::new(ToolWorkingSet::default());
@@ -83,7 +83,9 @@ impl AssistantPanel {
                 .await?;
 
             workspace.update(&mut cx, |workspace, cx| {
-                window.new_view(cx, |cx| Self::new(workspace, thread_store, tools, window, cx))
+                window.new_view(cx, |cx| {
+                    Self::new(workspace, thread_store, tools, window, cx)
+                })
             })
         })
     }
@@ -92,7 +94,8 @@ impl AssistantPanel {
         workspace: &Workspace,
         thread_store: Model<ThreadStore>,
         tools: Arc<ToolWorkingSet>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
@@ -112,7 +115,8 @@ impl AssistantPanel {
                     workspace.clone(),
                     language_registry,
                     tools.clone(),
-                    window, cx,
+                    window,
+                    cx,
                 )
             }),
             message_editor: window.new_view(cx, |cx| {
@@ -121,7 +125,8 @@ impl AssistantPanel {
                     workspace,
                     thread_store.downgrade(),
                     thread.clone(),
-                    window, cx,
+                    window,
+                    cx,
                 )
             }),
             tools,
@@ -129,7 +134,9 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
-            history: window.new_view(cx, |cx| ThreadHistory::new(weak_self, thread_store, window, cx)),
+            history: window.new_view(cx, |cx| {
+                ThreadHistory::new(weak_self, thread_store, window, cx)
+            }),
             width: None,
             height: None,
         }
@@ -155,7 +162,8 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.language_registry.clone(),
                 self.tools.clone(),
-                window, cx,
+                window,
+                cx,
             )
         });
         self.message_editor = window.new_view(cx, |cx| {
@@ -164,7 +172,8 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.thread_store.downgrade(),
                 thread,
-                window, cx,
+                window,
+                cx,
             )
         });
         self.message_editor.focus_handle(cx).focus(window);
@@ -176,7 +185,12 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    pub(crate) fn open_thread(&mut self, thread_id: &ThreadId, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn open_thread(
+        &mut self,
+        thread_id: &ThreadId,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let Some(thread) = self
             .thread_store
             .update(cx, |this, cx| this.open_thread(thread_id, cx))
@@ -191,7 +205,8 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.language_registry.clone(),
                 self.tools.clone(),
-                window, cx,
+                window,
+                cx,
             )
         });
         self.message_editor = window.new_view(cx, |cx| {
@@ -200,13 +215,19 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.thread_store.downgrade(),
                 thread,
-                window, cx,
+                window,
+                cx,
             )
         });
         self.message_editor.focus_handle(cx).focus(window);
     }
 
-    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn delete_thread(
+        &mut self,
+        thread_id: &ThreadId,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx));
     }
@@ -236,7 +257,12 @@ impl Panel for AssistantPanel {
         true
     }
 
-    fn set_position(&mut self, position: DockPosition, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_position(
+        &mut self,
+        position: DockPosition,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         settings::update_settings_file::<AssistantSettings>(
             self.fs.clone(),
             cx,
@@ -324,7 +350,8 @@ impl AssistantPanel {
                                         "New Thread",
                                         &NewThread,
                                         &focus_handle,
-                                        window, cx,
+                                        window,
+                                        cx,
                                     )
                                 }
                             })
@@ -343,7 +370,8 @@ impl AssistantPanel {
                                         "Open History",
                                         &OpenHistory,
                                         &focus_handle,
-                                        window, cx,
+                                        window,
+                                        cx,
                                     )
                                 }
                             })
@@ -355,7 +383,9 @@ impl AssistantPanel {
                         IconButton::new("configure-assistant", IconName::Settings)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
-                            .tooltip(move |window, cx| Tooltip::text("Configure Assistant", window, cx))
+                            .tooltip(move |window, cx| {
+                                Tooltip::text("Configure Assistant", window, cx)
+                            })
                             .on_click(move |_event, _window, _cx| {
                                 println!("Configure Assistant");
                             }),
@@ -363,15 +393,25 @@ impl AssistantPanel {
             )
     }
 
-    fn render_active_thread_or_empty_state(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_active_thread_or_empty_state(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> AnyElement {
         if self.thread.read(cx).is_empty() {
-            return self.render_thread_empty_state(window, cx).into_any_element();
+            return self
+                .render_thread_empty_state(window, cx)
+                .into_any_element();
         }
 
         self.thread.clone().into_any()
     }
 
-    fn render_thread_empty_state(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_thread_empty_state(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let recent_threads = self
             .thread_store
             .update(cx, |this, cx| this.recent_threads(3, cx));
@@ -413,7 +453,8 @@ impl AssistantPanel {
                                 .key_binding(KeyBinding::for_action_in(
                                     &OpenHistory,
                                     &self.focus_handle(cx),
-                                    window, cx,
+                                    window,
+                                    cx,
                                 ))
                                 .on_click(move |_event, window, cx| {
                                     window.dispatch_action(OpenHistory.boxed_clone(), cx);
@@ -423,7 +464,11 @@ impl AssistantPanel {
             })
     }
 
-    fn render_last_error(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
+    fn render_last_error(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<AnyElement> {
         let last_error = self.thread.read(cx).last_error()?;
 
         Some(
@@ -449,7 +494,11 @@ impl AssistantPanel {
         )
     }
 
-    fn render_payment_required_error(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_payment_required_error(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> AnyElement {
         const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
 
         v_flex()
@@ -495,7 +544,11 @@ impl AssistantPanel {
             .into_any()
     }
 
-    fn render_max_monthly_spend_reached_error(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_max_monthly_spend_reached_error(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> AnyElement {
         const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
 
         v_flex()
@@ -546,7 +599,8 @@ impl AssistantPanel {
     fn render_error_message(
         &self,
         error_message: &SharedString,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> AnyElement {
         v_flex()
             .gap_0p5()

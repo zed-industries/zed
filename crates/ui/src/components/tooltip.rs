@@ -14,54 +14,65 @@ pub struct Tooltip {
 }
 
 impl Tooltip {
-    pub fn text(title: impl Into<SharedString>, window: &mut Window, cx: &mut AppContext) -> AnyView {
-        window.new_view(cx, |_window, _cx| Self {
-            title: title.into(),
-            meta: None,
-            key_binding: None,
-        })
-        .into()
+    pub fn text(
+        title: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> AnyView {
+        window
+            .new_view(cx, |_window, _cx| Self {
+                title: title.into(),
+                meta: None,
+                key_binding: None,
+            })
+            .into()
     }
 
     pub fn for_action(
         title: impl Into<SharedString>,
         action: &dyn Action,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> AnyView {
-        window.new_view(cx, |window, cx| Self {
-            title: title.into(),
-            meta: None,
-            key_binding: KeyBinding::for_action(action, window, cx),
-        })
-        .into()
+        window
+            .new_view(cx, |window, cx| Self {
+                title: title.into(),
+                meta: None,
+                key_binding: KeyBinding::for_action(action, window, cx),
+            })
+            .into()
     }
 
     pub fn for_action_in(
         title: impl Into<SharedString>,
         action: &dyn Action,
         focus_handle: &FocusHandle,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> AnyView {
-        window.new_view(cx, |window, cx| Self {
-            title: title.into(),
-            meta: None,
-            key_binding: KeyBinding::for_action_in(action, focus_handle, window, cx),
-        })
-        .into()
+        window
+            .new_view(cx, |window, cx| Self {
+                title: title.into(),
+                meta: None,
+                key_binding: KeyBinding::for_action_in(action, focus_handle, window, cx),
+            })
+            .into()
     }
 
     pub fn with_meta(
         title: impl Into<SharedString>,
         action: Option<&dyn Action>,
         meta: impl Into<SharedString>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> AnyView {
-        window.new_view(cx, |window, cx| Self {
-            title: title.into(),
-            meta: Some(meta.into()),
-            key_binding: action.and_then(|action| KeyBinding::for_action(action, window, cx)),
-        })
-        .into()
+        window
+            .new_view(cx, |window, cx| Self {
+                title: title.into(),
+                meta: Some(meta.into()),
+                key_binding: action.and_then(|action| KeyBinding::for_action(action, window, cx)),
+            })
+            .into()
     }
 
     pub fn with_meta_in(
@@ -69,15 +80,17 @@ impl Tooltip {
         action: Option<&dyn Action>,
         meta: impl Into<SharedString>,
         focus_handle: &FocusHandle,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> AnyView {
-        window.new_view(cx, |window, cx| Self {
-            title: title.into(),
-            meta: Some(meta.into()),
-            key_binding: action
-                .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window, cx)),
-        })
-        .into()
+        window
+            .new_view(cx, |window, cx| Self {
+                title: title.into(),
+                meta: Some(meta.into()),
+                key_binding: action
+                    .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window, cx)),
+            })
+            .into()
     }
 
     pub fn new(title: impl Into<SharedString>) -> Self {
@@ -118,7 +131,8 @@ impl Render for Tooltip {
 }
 
 pub fn tooltip_container<V>(
-    window: &mut Window, cx: &mut ModelContext<V>,
+    window: &mut Window,
+    cx: &mut ModelContext<V>,
     f: impl FnOnce(Div, &mut Window, &mut ModelContext<V>) -> Div,
 ) -> impl IntoElement {
     let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
@@ -153,10 +167,11 @@ impl LinkPreview {
             }
             wrapped_url.push(ch);
         }
-        window.new_view(cx, |_window, _cx| LinkPreview {
-            link: wrapped_url.into(),
-        })
-        .into()
+        window
+            .new_view(cx, |_window, _cx| LinkPreview {
+                link: wrapped_url.into(),
+            })
+            .into()
     }
 }
 

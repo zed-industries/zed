@@ -122,7 +122,10 @@ impl ButtonCommon for IconButton {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static) -> Self {
+    fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+    ) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }

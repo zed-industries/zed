@@ -10,7 +10,7 @@ use std::{
     },
 };
 use ui::{prelude::*, LabelLike, ListItemSpacing};
-use ui::{Window, ModelContext, ListItem, };
+use ui::{ListItem, ModelContext, Window};
 use util::{maybe, paths::compare_paths};
 use workspace::Workspace;
 
@@ -47,7 +47,11 @@ struct DirectoryState {
 }
 
 impl OpenPathPrompt {
-    pub(crate) fn register(workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>) {
+    pub(crate) fn register(
+        workspace: &mut Workspace,
+        _window: &mut Window,
+        _: &mut ModelContext<Workspace>,
+    ) {
         workspace.set_prompt_for_open_path(Box::new(|workspace, lister, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
             Self::prompt_for_open_path(workspace, lister, tx, window, cx);
@@ -59,7 +63,8 @@ impl OpenPathPrompt {
         workspace: &mut Workspace,
         lister: DirectoryLister,
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = OpenPathDelegate::new(tx, lister.clone());
@@ -83,7 +88,12 @@ impl PickerDelegate for OpenPathDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix;
         cx.notify();
     }
@@ -91,7 +101,8 @@ impl PickerDelegate for OpenPathDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> gpui::Task<()> {
         let lister = self.lister.clone();
         let (mut dir, suffix) = if let Some(index) = query.rfind('/') {
@@ -223,7 +234,8 @@ impl PickerDelegate for OpenPathDelegate {
     fn confirm_completion(
         &mut self,
         query: String,
-        _window: &mut Window, _: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _: &mut ModelContext<Picker<Self>>,
     ) -> Option<String> {
         Some(
             maybe!({
@@ -273,7 +285,8 @@ impl PickerDelegate for OpenPathDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window, _: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let m = self.matches.get(ix)?;
         let directory_state = self.directory_state.as_ref()?;

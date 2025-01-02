@@ -29,7 +29,10 @@ impl AvatarAudioStatusIndicator {
     }
 
     /// Sets the tooltip for the indicator.
-    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static) -> Self {
+    pub fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+    ) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }

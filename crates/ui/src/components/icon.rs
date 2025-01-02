@@ -436,7 +436,12 @@ pub struct IconDecoration {
 
 impl IconDecoration {
     /// Create a new icon decoration
-    pub fn new(kind: IconDecorationKind, knockout_color: Hsla, window: &mut Window, cx: &mut AppContext) -> Self {
+    pub fn new(
+        kind: IconDecorationKind,
+        knockout_color: Hsla,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Self {
         let color = cx.theme().colors().icon;
         let position = Point::default();
 
@@ -581,7 +586,8 @@ impl ComponentPreview for DecoratedIcon {
         let decoration_x = IconDecoration::new(
             IconDecorationKind::X,
             cx.theme().colors().surface_background,
-            window, cx,
+            window,
+            cx,
         )
         .color(cx.theme().status().error)
         .position(Point {
@@ -592,7 +598,8 @@ impl ComponentPreview for DecoratedIcon {
         let decoration_triangle = IconDecoration::new(
             IconDecorationKind::Triangle,
             cx.theme().colors().surface_background,
-            window, cx,
+            window,
+            cx,
         )
         .color(cx.theme().status().error)
         .position(Point {
@@ -603,7 +610,8 @@ impl ComponentPreview for DecoratedIcon {
         let decoration_dot = IconDecoration::new(
             IconDecorationKind::Dot,
             cx.theme().colors().surface_background,
-            window, cx,
+            window,
+            cx,
         )
         .color(cx.theme().status().error)
         .position(Point {

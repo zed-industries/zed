@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{Window, AnyElement, AppContext, EntityId, Pixels, };
+use gpui::{AnyElement, AppContext, EntityId, Pixels, Window};
 use language::{Chunk, Patch, Point};
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToOffset,

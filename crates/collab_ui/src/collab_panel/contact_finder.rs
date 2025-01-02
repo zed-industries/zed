@@ -1,7 +1,7 @@
 use client::{ContactRequestStatus, User, UserStore};
-use gpui::{Window, ModelContext, 
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ParentElement as _,
-    Render, Styled, Task,   VisualContext, WeakView,
+use gpui::{
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ModelContext,
+    ParentElement as _, Render, Styled, Task, VisualContext, WeakView, Window,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -14,14 +14,20 @@ pub struct ContactFinder {
 }
 
 impl ContactFinder {
-    pub fn new(user_store: Model<UserStore>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        user_store: Model<UserStore>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let delegate = ContactFinderDelegate {
             parent: cx.view().downgrade(),
             user_store,
             potential_contacts: Arc::from([]),
             selected_index: 0,
         };
-        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        let picker = window.new_view(cx, |cx| {
+            Picker::uniform_list(delegate, window, cx).modal(false)
+        });
 
         Self { picker }
     }
@@ -79,7 +85,12 @@ impl PickerDelegate for ContactFinderDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, _: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix;
     }
 
@@ -87,7 +98,12 @@ impl PickerDelegate for ContactFinderDelegate {
         "Search collaborator by username...".into()
     }
 
-    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let search_users = self
             .user_store
             .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
@@ -135,7 +151,8 @@ impl PickerDelegate for ContactFinderDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let user = &self.potential_contacts[ix];
         let request_status = self.user_store.read(cx).contact_request_status(user);

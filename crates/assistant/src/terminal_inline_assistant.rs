@@ -14,7 +14,7 @@ use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
     AppContext, Context, EventEmitter, FocusHandle, FocusableView, Global, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal,  WeakView,
+    Subscription, Task, TextStyle, UpdateGlobal, WeakView,
 };
 use language::Buffer;
 use language_model::{
@@ -91,7 +91,8 @@ impl TerminalInlineAssistant {
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&Model<AssistantPanel>>,
         initial_prompt: Option<String>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
@@ -109,7 +110,8 @@ impl TerminalInlineAssistant {
                 assistant_panel,
                 workspace.clone(),
                 self.fs.clone(),
-                window, cx,
+                window,
+                cx,
             )
         });
         let prompt_editor_render = prompt_editor.clone();
@@ -127,7 +129,8 @@ impl TerminalInlineAssistant {
             assistant_panel.is_some(),
             prompt_editor,
             workspace.clone(),
-            window, cx,
+            window,
+            cx,
         );
 
         self.assists.insert(assist_id, terminal_assistant);
@@ -135,7 +138,12 @@ impl TerminalInlineAssistant {
         self.focus_assist(assist_id, window, cx);
     }
 
-    fn focus_assist(&mut self, assist_id: TerminalInlineAssistId, window: &mut Window, cx: &mut AppContext) {
+    fn focus_assist(
+        &mut self,
+        assist_id: TerminalInlineAssistId,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
         let assist = &self.assists[&assist_id];
         if let Some(prompt_editor) = assist.prompt_editor.as_ref() {
             prompt_editor.update(cx, |this, cx| {
@@ -151,7 +159,8 @@ impl TerminalInlineAssistant {
         &mut self,
         prompt_editor: Model<PromptEditor>,
         event: &PromptEditorEvent,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         let assist_id = prompt_editor.read(cx).id;
         match event {
@@ -176,7 +185,12 @@ impl TerminalInlineAssistant {
         }
     }
 
-    fn start_assist(&mut self, assist_id: TerminalInlineAssistId, window: &mut Window, cx: &mut AppContext) {
+    fn start_assist(
+        &mut self,
+        assist_id: TerminalInlineAssistId,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -207,14 +221,22 @@ impl TerminalInlineAssistant {
             .log_err();
 
         let codegen = assist.codegen.clone();
-        let Some(request) = self.request_for_inline_assist(assist_id, window, cx).log_err() else {
+        let Some(request) = self
+            .request_for_inline_assist(assist_id, window, cx)
+            .log_err()
+        else {
             return;
         };
 
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
     }
 
-    fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, window: &mut Window, cx: &mut AppContext) {
+    fn stop_assist(
+        &mut self,
+        assist_id: TerminalInlineAssistId,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -227,7 +249,8 @@ impl TerminalInlineAssistant {
     fn request_for_inline_assist(
         &self,
         assist_id: TerminalInlineAssistId,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
@@ -297,7 +320,8 @@ impl TerminalInlineAssistant {
         assist_id: TerminalInlineAssistId,
         undo: bool,
         execute: bool,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         self.dismiss_assist(assist_id, window, cx);
 
@@ -349,7 +373,8 @@ impl TerminalInlineAssistant {
     fn dismiss_assist(
         &mut self,
         assist_id: TerminalInlineAssistId,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> bool {
         let Some(assist) = self.assists.get_mut(&assist_id) else {
             return false;
@@ -371,7 +396,8 @@ impl TerminalInlineAssistant {
         &mut self,
         assist_id: TerminalInlineAssistId,
         height: u8,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         if let Some(assist) = self.assists.get_mut(&assist_id) {
             if let Some(prompt_editor) = assist.prompt_editor.as_ref().cloned() {
@@ -407,7 +433,8 @@ impl TerminalInlineAssist {
         include_context: bool,
         prompt_editor: Model<PromptEditor>,
         workspace: Option<WeakView<Workspace>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Self {
         let codegen = prompt_editor.read(cx).codegen.clone();
         Self {
@@ -545,8 +572,12 @@ impl Render for PromptEditor {
                 let cancel = IconButton::new("cancel", IconName::Close)
                     .icon_color(Color::Muted)
                     .shape(IconButtonShape::Square)
-                    .tooltip(|window, cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, window, cx))
-                    .on_click(cx.listener(|_, _, window, cx| cx.emit(PromptEditorEvent::CancelRequested)));
+                    .tooltip(|window, cx| {
+                        Tooltip::for_action("Cancel Assist", &menu::Cancel, window, cx)
+                    })
+                    .on_click(
+                        cx.listener(|_, _, window, cx| cx.emit(PromptEditorEvent::CancelRequested)),
+                    );
 
                 let has_error = matches!(status, CodegenStatus::Error(_));
                 if has_error || self.edited_since_done {
@@ -631,7 +662,8 @@ impl Render for PromptEditor {
                                     ),
                                     None,
                                     "Change Model",
-                                    window, cx,
+                                    window,
+                                    cx,
                                 )
                             }),
                     ))
@@ -641,7 +673,9 @@ impl Render for PromptEditor {
                             Some(
                                 div()
                                     .id("error")
-                                    .tooltip(move |cx| Tooltip::text(error_message.clone(), window, cx))
+                                    .tooltip(move |cx| {
+                                        Tooltip::text(error_message.clone(), window, cx)
+                                    })
                                     .child(
                                         Icon::new(IconName::XCircle)
                                             .size(IconSize::Small)
@@ -682,7 +716,8 @@ impl PromptEditor {
         assistant_panel: Option<&Model<AssistantPanel>>,
         workspace: Option<WeakView<Workspace>>,
         fs: Arc<dyn Fs>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let prompt_editor = window.new_view(cx, |cx| {
             let mut editor = Editor::new(
@@ -692,17 +727,25 @@ impl PromptEditor {
                 prompt_buffer,
                 None,
                 false,
-                window, cx,
+                window,
+                cx,
             );
-            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, window, cx);
+            editor.set_soft_wrap_mode(
+                language::language_settings::SoftWrap::EditorWidth,
+                window,
+                cx,
+            );
             editor.set_placeholder_text(Self::placeholder_text(window, cx), window, cx);
             editor
         });
 
         let mut token_count_subscriptions = Vec::new();
         if let Some(assistant_panel) = assistant_panel {
-            token_count_subscriptions
-                .push(cx.subscribe_in(assistant_panel, window, Self::handle_assistant_panel_event));
+            token_count_subscriptions.push(cx.subscribe_in(
+                assistant_panel,
+                window,
+                Self::handle_assistant_panel_event,
+            ));
         }
 
         let mut this = Self {
@@ -719,7 +762,8 @@ impl PromptEditor {
                             move |settings, _| settings.set_model(model.clone()),
                         );
                     },
-                    window, cx,
+                    window,
+                    cx,
                 )
             }),
             edited_since_done: false,
@@ -750,10 +794,16 @@ impl PromptEditor {
 
     fn subscribe_to_editor(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.editor_subscriptions.clear();
-        self.editor_subscriptions
-            .push(cx.observe_in(&self.editor, window, Self::handle_prompt_editor_changed));
-        self.editor_subscriptions
-            .push(cx.subscribe_in(&self.editor, window, Self::handle_prompt_editor_events));
+        self.editor_subscriptions.push(cx.observe_in(
+            &self.editor,
+            window,
+            Self::handle_prompt_editor_changed,
+        ));
+        self.editor_subscriptions.push(cx.subscribe_in(
+            &self.editor,
+            window,
+            Self::handle_prompt_editor_events,
+        ));
     }
 
     fn prompt(&self, cx: &AppContext) -> String {
@@ -780,7 +830,8 @@ impl PromptEditor {
         &mut self,
         _: Model<AssistantPanel>,
         event: &AssistantPanelEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let AssistantPanelEvent::ContextEdited { .. } = event;
         self.count_tokens(window, cx);
@@ -798,7 +849,9 @@ impl PromptEditor {
                     inline_assistant.request_for_inline_assist(assist_id, window, cx)
                 })??;
 
-            let token_count = cx.update(|window, cx| model.count_tokens(request, cx))?.await?;
+            let token_count = cx
+                .update(|window, cx| model.count_tokens(request, cx))?
+                .await?;
             this.update(&mut cx, |this, cx| {
                 this.token_count = Some(token_count);
                 cx.notify();
@@ -806,7 +859,12 @@ impl PromptEditor {
         })
     }
 
-    fn handle_prompt_editor_changed(&mut self, _: Model<Editor>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_prompt_editor_changed(
+        &mut self,
+        _: Model<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.count_lines(window, cx);
     }
 
@@ -814,7 +872,8 @@ impl PromptEditor {
         &mut self,
         _: Model<Editor>,
         event: &EditorEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             EditorEvent::Edited { .. } => {
@@ -837,7 +896,12 @@ impl PromptEditor {
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: Model<Codegen>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_codegen_changed(
+        &mut self,
+        _: Model<Codegen>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
                 self.editor
@@ -855,7 +919,12 @@ impl PromptEditor {
         }
     }
 
-    fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(
+        &mut self,
+        _: &editor::actions::Cancel,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
                 cx.emit(PromptEditorEvent::CancelRequested);
@@ -889,7 +958,12 @@ impl PromptEditor {
         }
     }
 
-    fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn secondary_confirm(
+        &mut self,
+        _: &menu::SecondaryConfirm,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if matches!(self.codegen.read(cx).status, CodegenStatus::Done) {
             cx.emit(PromptEditorEvent::ConfirmRequested { execute: true });
         }
@@ -935,7 +1009,11 @@ impl PromptEditor {
         }
     }
 
-    fn render_token_count(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
+    fn render_token_count(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<impl IntoElement> {
         let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
@@ -970,11 +1048,14 @@ impl PromptEditor {
                         "Tokens Used by Inline Assistant",
                         None,
                         "Click to Open Assistant Panel",
-                        window, cx,
+                        window,
+                        cx,
                     )
                 })
                 .cursor_pointer()
-                .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| cx.stop_propagation())
+                .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    cx.stop_propagation()
+                })
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     workspace
@@ -992,7 +1073,11 @@ impl PromptEditor {
         Some(token_count)
     }
 
-    fn render_prompt_editor(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_prompt_editor(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.editor.read(cx).read_only(cx) {

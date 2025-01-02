@@ -1,6 +1,6 @@
-use gpui::{Window, AppContext, 
-    div, AnyElement, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId, Hitbox,
-    IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled, 
+use gpui::{
+    div, AnyElement, AppContext, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId,
+    Hitbox, IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled, Window,
 };
 
 /// An element that sets a particular rem size for its children.
@@ -43,9 +43,12 @@ impl Element for WithRemSize {
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        window.with_rem_size(Some(self.rem_size), |window| self.div.request_layout(id, window, cx))
+        window.with_rem_size(Some(self.rem_size), |window| {
+            self.div.request_layout(id, window, cx)
+        })
     }
 
     fn prepaint(
@@ -53,7 +56,8 @@ impl Element for WithRemSize {
         id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Self::PrepaintState {
         window.with_rem_size(Some(self.rem_size), |window| {
             self.div.prepaint(id, bounds, request_layout, window, cx)
@@ -66,10 +70,12 @@ impl Element for WithRemSize {
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         window.with_rem_size(Some(self.rem_size), |window| {
-            self.div.paint(id, bounds, request_layout, prepaint, window, cx)
+            self.div
+                .paint(id, bounds, request_layout, prepaint, window, cx)
         })
     }
 }

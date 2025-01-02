@@ -1,9 +1,14 @@
-use gpui::{Window, AppContext, hsla, Styled, };
+use gpui::{hsla, AppContext, Styled, Window};
 
 use crate::prelude::*;
 use crate::ElevationIndex;
 
-fn elevated<E: Styled>(this: E, window: &mut Window, cx: &mut AppContext, index: ElevationIndex) -> E {
+fn elevated<E: Styled>(
+    this: E,
+    window: &mut Window,
+    cx: &mut AppContext,
+    index: ElevationIndex,
+) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .rounded_lg()
         .border_1()
@@ -11,7 +16,12 @@ fn elevated<E: Styled>(this: E, window: &mut Window, cx: &mut AppContext, index:
         .shadow(index.shadow())
 }
 
-fn elevated_borderless<E: Styled>(this: E, window: &mut Window, cx: &mut AppContext, index: ElevationIndex) -> E {
+fn elevated_borderless<E: Styled>(
+    this: E,
+    window: &mut Window,
+    cx: &mut AppContext,
+    index: ElevationIndex,
+) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .rounded_lg()
         .shadow(index.shadow())

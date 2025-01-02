@@ -1,8 +1,8 @@
 use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
-use gpui::{Window, ModelContext, Model, 
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, Task, 
-     VisualContext, WeakView,
+use gpui::{
+    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Model, ModelContext, Render,
+    Task, VisualContext, WeakView, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Fs;
@@ -24,13 +24,15 @@ pub fn init(cx: &mut AppContext) {
 pub fn toggle(
     workspace: &mut Workspace,
     _: &ToggleBaseKeymapSelector,
-    window: &mut Window, cx: &mut ModelContext<Workspace>,
+    window: &mut Window,
+    cx: &mut ModelContext<Workspace>,
 ) {
     let fs = workspace.app_state().fs.clone();
     workspace.toggle_modal(window, cx, |window, cx| {
         BaseKeymapSelector::new(
             BaseKeymapSelectorDelegate::new(cx.view().downgrade(), fs, window, cx),
-            window, cx,
+            window,
+            cx,
         )
     });
 }
@@ -51,7 +53,8 @@ impl ModalView for BaseKeymapSelector {}
 impl BaseKeymapSelector {
     pub fn new(
         delegate: BaseKeymapSelectorDelegate,
-        window: &mut Window, cx: &mut ModelContext<BaseKeymapSelector>,
+        window: &mut Window,
+        cx: &mut ModelContext<BaseKeymapSelector>,
     ) -> Self {
         let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
@@ -75,7 +78,8 @@ impl BaseKeymapSelectorDelegate {
     fn new(
         weak_view: WeakView<BaseKeymapSelector>,
         fs: Arc<dyn Fs>,
-        window: &mut Window, cx: &mut ModelContext<BaseKeymapSelector>,
+        window: &mut Window,
+        cx: &mut ModelContext<BaseKeymapSelector>,
     ) -> Self {
         let base = BaseKeymap::get(None, cx);
         let selected_index = BaseKeymap::OPTIONS
@@ -109,7 +113,8 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        _window: &mut Window, _: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
+        _window: &mut Window,
+        _: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
     ) {
         self.selected_index = ix;
     }
@@ -117,7 +122,8 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        window: &mut Window, cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
     ) -> Task<()> {
         let background = cx.background_executor().clone();
         let candidates = BaseKeymap::names()
@@ -160,7 +166,12 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>) {
+    fn confirm(
+        &mut self,
+        _: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
+    ) {
         if let Some(selection) = self.matches.get(self.selected_index) {
             let base_keymap = BaseKeymap::from_names(&selection.string);
 
@@ -182,7 +193,11 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             .ok();
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>) {
+    fn dismissed(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
+    ) {
         self.view
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -194,7 +209,8 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let keymap_match = &self.matches[ix];
 

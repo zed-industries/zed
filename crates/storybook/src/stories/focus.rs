@@ -1,5 +1,6 @@
-use gpui::{Window, AppContext, Model, 
-    actions, div, prelude::*, FocusHandle, KeyBinding, Render, Subscription,  
+use gpui::{
+    actions, div, prelude::*, AppContext, FocusHandle, KeyBinding, Model, Render, Subscription,
+    Window,
 };
 use ui::prelude::*;
 
@@ -20,38 +21,47 @@ impl FocusStory {
             KeyBinding::new("cmd-c", ActionC, None),
         ]);
 
-        window.new_view(cx, window, window, window, window, window, window, move |window, window, window, window, window, window, window, cx| {
-            let parent_focus = cx.focus_handle();
-            let child_1_focus = cx.focus_handle();
-            let child_2_focus = cx.focus_handle();
-            let _focus_subscriptions = vec![
-                cx.on_focus(&parent_focus, |_, _| {
-                    println!("Parent focused");
-                }),
-                cx.on_blur(&parent_focus, |_, _| {
-                    println!("Parent blurred");
-                }),
-                cx.on_focus(&child_1_focus, |_, _| {
-                    println!("Child 1 focused");
-                }),
-                cx.on_blur(&child_1_focus, |_, _| {
-                    println!("Child 1 blurred");
-                }),
-                cx.on_focus(&child_2_focus, |_, _| {
-                    println!("Child 2 focused");
-                }),
-                cx.on_blur(&child_2_focus, |_, _| {
-                    println!("Child 2 blurred");
-                }),
-            ];
+        window.new_view(
+            cx,
+            window,
+            window,
+            window,
+            window,
+            window,
+            window,
+            move |window, window, window, window, window, window, window, cx| {
+                let parent_focus = cx.focus_handle();
+                let child_1_focus = cx.focus_handle();
+                let child_2_focus = cx.focus_handle();
+                let _focus_subscriptions = vec![
+                    cx.on_focus(&parent_focus, |_, _| {
+                        println!("Parent focused");
+                    }),
+                    cx.on_blur(&parent_focus, |_, _| {
+                        println!("Parent blurred");
+                    }),
+                    cx.on_focus(&child_1_focus, |_, _| {
+                        println!("Child 1 focused");
+                    }),
+                    cx.on_blur(&child_1_focus, |_, _| {
+                        println!("Child 1 blurred");
+                    }),
+                    cx.on_focus(&child_2_focus, |_, _| {
+                        println!("Child 2 focused");
+                    }),
+                    cx.on_blur(&child_2_focus, |_, _| {
+                        println!("Child 2 blurred");
+                    }),
+                ];
 
-            Self {
-                parent_focus,
-                child_1_focus,
-                child_2_focus,
-                _focus_subscriptions,
-            }
-        })
+                Self {
+                    parent_focus,
+                    child_1_focus,
+                    child_2_focus,
+                    _focus_subscriptions,
+                }
+            },
+        )
     }
 }
 
@@ -96,7 +106,9 @@ impl Render for FocusStory {
                     .on_key_down(
                         cx.listener(|_, event, _, _| println!("Key down on child 1 {:?}", event)),
                     )
-                    .on_key_up(cx.listener(|_, event, _, _| println!("Key up on child 1 {:?}", event)))
+                    .on_key_up(
+                        cx.listener(|_, event, _, _| println!("Key up on child 1 {:?}", event)),
+                    )
                     .child("Child 1"),
             )
             .child(
@@ -112,7 +124,9 @@ impl Render for FocusStory {
                     .on_key_down(
                         cx.listener(|_, event, _, _| println!("Key down on child 2 {:?}", event)),
                     )
-                    .on_key_up(cx.listener(|_, event, _, _| println!("Key up on child 2 {:?}", event)))
+                    .on_key_up(
+                        cx.listener(|_, event, _, _| println!("Key up on child 2 {:?}", event)),
+                    )
                     .child("Child 2"),
             )
     }

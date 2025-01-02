@@ -15,7 +15,7 @@ use git::{
 };
 use gpui::{
     actions, AnyElement, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, Model, Render, Subscription, Task,  WeakView,
+    InteractiveElement, Model, Render, Subscription, Task, WeakView,
 };
 use language::{Buffer, BufferRow};
 use multi_buffer::{ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer};
@@ -64,7 +64,12 @@ impl ProjectDiffEditor {
         workspace.register_action(Self::deploy);
     }
 
-    fn deploy(workspace: &mut Workspace, _: &Deploy, window: &mut Window, cx: &mut ModelContext<Workspace>) {
+    fn deploy(
+        workspace: &mut Workspace,
+        _: &Deploy,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
+    ) {
         if !cx.is_staff() {
             return;
         }
@@ -73,8 +78,9 @@ impl ProjectDiffEditor {
             workspace.activate_item(&existing, true, true, window, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
-            let project_diff =
-                window.new_view(cx, |cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
+            let project_diff = window.new_view(cx, |cx| {
+                Self::new(workspace.project().clone(), workspace_handle, window, cx)
+            });
             workspace.add_item_to_active_pane(Box::new(project_diff), None, true, window, cx);
         }
     }
@@ -82,7 +88,8 @@ impl ProjectDiffEditor {
     fn new(
         project: Model<Project>,
         workspace: WeakView<Workspace>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         // TODO diff change subscriptions. For that, needed:
         // * `-20/+50` stats retrieval: some background process that reacts on file changes
@@ -185,7 +192,12 @@ impl ProjectDiffEditor {
             .retain(|worktree_id, _| current_worktrees.contains(worktree_id));
     }
 
-    fn schedule_worktree_rescan(&mut self, id: WorktreeId, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn schedule_worktree_rescan(
+        &mut self,
+        id: WorktreeId,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let project = self.project.clone();
         self.worktree_rescans.insert(
             id,
@@ -309,7 +321,13 @@ impl ProjectDiffEditor {
 
                 project_diff_editor
                     .update(&mut cx, |project_diff_editor, cx| {
-                        project_diff_editor.update_excerpts(id, new_changes, new_entry_order, window, cx);
+                        project_diff_editor.update_excerpts(
+                            id,
+                            new_changes,
+                            new_entry_order,
+                            window,
+                            cx,
+                        );
                         project_diff_editor.editor.update(cx, |editor, cx| {
                             for change_set in change_sets {
                                 editor.diff_map.add_change_set(change_set, window, cx)
@@ -326,7 +344,8 @@ impl ProjectDiffEditor {
         worktree_id: WorktreeId,
         new_changes: HashMap<ProjectEntryId, Changes>,
         new_entry_order: Vec<(ProjectPath, ProjectEntryId)>,
-        window: &mut Window, cx: &mut ModelContext<ProjectDiffEditor>,
+        window: &mut Window,
+        cx: &mut ModelContext<ProjectDiffEditor>,
     ) {
         if let Some(current_order) = self.entry_order.get(&worktree_id) {
             let current_entries = self.buffer_changes.entry(worktree_id).or_default();
@@ -915,10 +934,16 @@ impl Item for ProjectDiffEditor {
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.editor.update(cx, |editor, cx| editor.deactivated(window, cx));
+        self.editor
+            .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn navigate(&mut self, data: Box<dyn Any>, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn navigate(
+        &mut self,
+        data: Box<dyn Any>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
@@ -927,7 +952,12 @@ impl Item for ProjectDiffEditor {
         Some("Project Diff".into())
     }
 
-    fn tab_content(&self, params: TabContentParams, _window: &mut Window, _: &mut AppContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        params: TabContentParams,
+        _window: &mut Window,
+        _: &mut AppContext,
+    ) -> AnyElement {
         if self.buffer_changes.is_empty() {
             Label::new("No changes")
                 .color(if params.selected {
@@ -987,7 +1017,12 @@ impl Item for ProjectDiffEditor {
         false
     }
 
-    fn set_nav_history(&mut self, nav_history: ItemNavHistory, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_nav_history(
+        &mut self,
+        nav_history: ItemNavHistory,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.editor.update(cx, |editor, _| {
             editor.set_nav_history(Some(nav_history));
         });
@@ -996,7 +1031,8 @@ impl Item for ProjectDiffEditor {
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>>
     where
         Self: Sized,
@@ -1022,7 +1058,8 @@ impl Item for ProjectDiffEditor {
         &mut self,
         format: bool,
         project: Model<Project>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.editor.save(format, project, window, cx)
     }
@@ -1031,7 +1068,8 @@ impl Item for ProjectDiffEditor {
         &mut self,
         _: Model<Project>,
         _: ProjectPath,
-        _window: &mut Window, _: &mut ModelContext<Self>,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         unreachable!()
     }
@@ -1039,7 +1077,8 @@ impl Item for ProjectDiffEditor {
     fn reload(
         &mut self,
         project: Model<Project>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.editor.reload(project, window, cx)
     }
@@ -1067,9 +1106,15 @@ impl Item for ProjectDiffEditor {
         self.editor.breadcrumbs(theme, cx)
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.added_to_workspace(workspace, window, cx));
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.added_to_workspace(workspace, window, cx)
+        });
     }
 }
 

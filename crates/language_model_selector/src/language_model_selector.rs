@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use feature_flags::ZedPro;
-use gpui::{Model, 
-    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Task,
-     WeakView,
+use gpui::{
+    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    Task, WeakView,
 };
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
@@ -22,7 +22,8 @@ pub struct LanguageModelSelector {
 impl LanguageModelSelector {
     pub fn new(
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &AppContext) + 'static,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let on_model_changed = Arc::new(on_model_changed);
 
@@ -54,8 +55,9 @@ impl LanguageModelSelector {
             selected_index: 0,
         };
 
-        let picker =
-            window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into())));
+        let picker = window.new_view(cx, |cx| {
+            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
+        });
 
         LanguageModelSelector { picker }
     }
@@ -138,7 +140,12 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix.min(self.filtered_models.len().saturating_sub(1));
         cx.notify();
     }
@@ -147,7 +154,12 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         "Select a model...".into()
     }
 
-    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let all_models = self.all_models.clone();
 
         let llm_registry = LanguageModelRegistry::global(cx);
@@ -202,7 +214,12 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         if let Some(model_info) = self.filtered_models.get(self.selected_index) {
             let model = model_info.model.clone();
             (self.on_model_changed)(model.clone(), cx);
@@ -217,7 +234,11 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             .ok();
     }
 
-    fn render_header(&self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_header(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Option<AnyElement> {
         let configured_models_count = LanguageModelRegistry::global(cx)
             .read(cx)
             .providers()
@@ -244,7 +265,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         use feature_flags::FeatureFlagAppExt;
         let show_badges = cx.has_flag::<ZedPro>();
@@ -313,7 +335,11 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         )
     }
 
-    fn render_footer(&self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
 
         let plan = proto::Plan::ZedPro;
@@ -336,7 +362,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                             .icon_color(Color::Muted)
                             .icon_position(IconPosition::Start)
                             .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
+                                window
+                                    .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
                             }),
                         // Free user
                         Plan::Free => Button::new(

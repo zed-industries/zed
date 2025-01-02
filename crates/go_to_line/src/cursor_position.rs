@@ -1,13 +1,13 @@
 use editor::{Editor, ToPoint};
-use gpui::{Model, AppContext, FocusHandle, FocusableView, Subscription, Task,  WeakView};
+use gpui::{AppContext, FocusHandle, FocusableView, Model, Subscription, Task, WeakView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use std::{fmt::Write, time::Duration};
 use text::{Point, Selection};
-use ui::{Window, ModelContext, 
-    div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ParentElement,
-    Render, Tooltip, 
+use ui::{
+    div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ModelContext,
+    ParentElement, Render, Tooltip, Window,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
@@ -44,7 +44,8 @@ impl CursorPosition {
         &mut self,
         editor: Model<Editor>,
         debounce: Option<Duration>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let editor = editor.downgrade();
         self.update_position = cx.spawn_in(window, |cursor_position, mut cx| async move {
@@ -183,8 +184,9 @@ impl Render for CursorPosition {
                                     .active_item(cx)
                                     .and_then(|item| item.act_as::<Editor>(cx))
                                 {
-                                    workspace
-                                        .toggle_modal(window, cx, |window, cx| crate::GoToLine::new(editor, window, cx))
+                                    workspace.toggle_modal(window, cx, |window, cx| {
+                                        crate::GoToLine::new(editor, window, cx)
+                                    })
                                 }
                             });
                         }
@@ -194,12 +196,14 @@ impl Render for CursorPosition {
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
                             context,
-                            window, cx,
+                            window,
+                            cx,
                         ),
                         None => Tooltip::for_action(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
-                            window, cx,
+                            window,
+                            cx,
                         ),
                     }),
             )
@@ -213,13 +217,22 @@ impl StatusItemView for CursorPosition {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
             self._observe_active_editor =
-                Some(cx.observe_in(&editor, window, |cursor_position, editor, window, cx| {
-                    Self::update_position(cursor_position, editor, Some(UPDATE_DEBOUNCE), window, cx)
-                }));
+                Some(
+                    cx.observe_in(&editor, window, |cursor_position, editor, window, cx| {
+                        Self::update_position(
+                            cursor_position,
+                            editor,
+                            Some(UPDATE_DEBOUNCE),
+                            window,
+                            cx,
+                        )
+                    }),
+                );
             self.update_position(editor, None, window, cx);
         } else {
             self.position = None;

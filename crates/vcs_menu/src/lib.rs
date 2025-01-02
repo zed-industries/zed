@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Context, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
-use gpui::{Window, ModelContext, Model, 
+use gpui::{
     rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Task,   VisualContext, WeakView, 
+    FocusableView, InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, VisualContext, WeakView, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
@@ -29,14 +29,21 @@ pub struct BranchList {
 }
 
 impl BranchList {
-    pub fn open(_: &mut Workspace, _: &OpenRecent, window: &mut Window, cx: &mut ModelContext<Workspace>) {
+    pub fn open(
+        _: &mut Workspace,
+        _: &OpenRecent,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
+    ) {
         let this = cx.view().clone();
         cx.spawn_in(window, |_, mut cx| async move {
             // Modal branch picker has a longer trailoff than a popover one.
             let delegate = BranchListDelegate::new(this.clone(), 70, &cx).await?;
 
             this.update(&mut cx, |workspace, cx| {
-                workspace.toggle_modal(window, cx, |window, cx| BranchList::new(delegate, 34., window, cx))
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    BranchList::new(delegate, 34., window, cx)
+                })
             })?;
 
             Ok(())
@@ -44,9 +51,15 @@ impl BranchList {
         .detach_and_prompt_err("Failed to read branches", window, cx, |_, _, _| None)
     }
 
-    fn new(delegate: BranchListDelegate, rem_width: f32, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    fn new(
+        delegate: BranchListDelegate,
+        rem_width: f32,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
-        let _subscription = cx.subscribe_in(&picker, window, |_, _, _, window, cx| cx.emit(DismissEvent));
+        let _subscription =
+            cx.subscribe_in(&picker, window, |_, _, _, window, cx| cx.emit(DismissEvent));
         Self {
             picker,
             rem_width,
@@ -145,11 +158,21 @@ impl PickerDelegate for BranchListDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, _: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix;
     }
 
-    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         cx.spawn_in(window, move |picker, mut cx| async move {
             let candidates = picker.update(&mut cx, |view, _| {
                 const RECENT_BRANCHES_COUNT: usize = 10;
@@ -270,7 +293,8 @@ impl PickerDelegate for BranchListDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
         let shortened_branch_name =
@@ -299,7 +323,11 @@ impl PickerDelegate for BranchListDelegate {
         )
     }
 
-    fn render_header(&self, _window: &mut Window, _: &mut ModelContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        _: &mut ModelContext<Picker<Self>>,
+    ) -> Option<AnyElement> {
         let label = if self.last_query.is_empty() {
             Label::new("Recent Branches")
                 .size(LabelSize::Small)

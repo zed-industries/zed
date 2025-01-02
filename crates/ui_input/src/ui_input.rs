@@ -6,7 +6,7 @@
 //!
 
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{Model, AppContext, FocusHandle, FocusableView, FontStyle, Hsla, TextStyle, };
+use gpui::{AppContext, FocusHandle, FocusableView, FontStyle, Hsla, Model, TextStyle};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -56,7 +56,8 @@ impl FocusableView for TextField {
 
 impl TextField {
     pub fn new(
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
         label: impl Into<SharedString>,
         placeholder: impl Into<SharedString>,
     ) -> Self {
@@ -88,7 +89,12 @@ impl TextField {
         self
     }
 
-    pub fn set_disabled(&mut self, disabled: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_disabled(
+        &mut self,
+        disabled: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.disabled = disabled;
         self.editor
             .update(cx, |editor, _| editor.set_read_only(disabled))

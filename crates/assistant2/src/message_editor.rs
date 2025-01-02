@@ -3,8 +3,7 @@ use std::sync::Arc;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    AppContext, DismissEvent, FocusableView, Model, Subscription, TextStyle,  WeakModel,
-    WeakView,
+    AppContext, DismissEvent, FocusableView, Model, Subscription, TextStyle, WeakModel, WeakView,
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
@@ -45,7 +44,8 @@ impl MessageEditor {
         workspace: WeakView<Workspace>,
         thread_store: WeakModel<ThreadStore>,
         thread: Model<Thread>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let context_store = cx.new_model(|_cx| ContextStore::new());
         let context_picker_menu_handle = PopoverMenuHandle::default();
@@ -65,7 +65,8 @@ impl MessageEditor {
                 Some(thread_store.clone()),
                 context_store.downgrade(),
                 ConfirmBehavior::Close,
-                window, cx,
+                window,
+                cx,
             )
         });
         let subscriptions = vec![
@@ -87,7 +88,8 @@ impl MessageEditor {
                     Some(thread_store.clone()),
                     editor.focus_handle(cx),
                     context_picker_menu_handle.clone(),
-                    window, cx,
+                    window,
+                    cx,
                 )
             }),
             context_picker_menu_handle,
@@ -102,11 +104,21 @@ impl MessageEditor {
         }
     }
 
-    fn toggle_model_selector(&mut self, _: &ToggleModelSelector, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_model_selector(
+        &mut self,
+        _: &ToggleModelSelector,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.model_selector_menu_handle.toggle(window, cx)
     }
 
-    fn toggle_context_picker(&mut self, _: &ToggleContextPicker, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_context_picker(
+        &mut self,
+        _: &ToggleContextPicker,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.context_picker_menu_handle.toggle(window, cx);
     }
 
@@ -117,7 +129,8 @@ impl MessageEditor {
     fn send_to_model(
         &mut self,
         request_kind: RequestKind,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
@@ -165,7 +178,8 @@ impl MessageEditor {
         &mut self,
         editor: Model<Editor>,
         event: &EditorEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             EditorEvent::SelectionsChanged { .. } => {
@@ -189,7 +203,8 @@ impl MessageEditor {
         &mut self,
         _inline_context_picker: Model<ContextPicker>,
         _event: &DismissEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let editor_focus_handle = self.editor.focus_handle(cx);
         window.focus(&editor_focus_handle);
@@ -279,8 +294,13 @@ impl Render for MessageEditor {
                                         .layer(ElevationIndex::ModalSurface)
                                         .child(Label::new("Submit"))
                                         .children(
-                                            KeyBinding::for_action_in(&Chat, &focus_handle, window, cx)
-                                                .map(|binding| binding.into_any_element()),
+                                            KeyBinding::for_action_in(
+                                                &Chat,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|binding| binding.into_any_element()),
                                         )
                                         .on_click(move |_event, window, cx| {
                                             focus_handle.dispatch_action(&Chat, window);

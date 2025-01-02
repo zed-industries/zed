@@ -9,13 +9,13 @@ use crate::{UseSystemClipboard, Vim, VimSettings};
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{Anchor, ClipboardSelection, Editor};
-use gpui::{Model, 
-    Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global,  WeakView,
+use gpui::{
+    Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global, Model, WeakView,
 };
 use language::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use ui::{Window, ModelContext, SharedString, };
+use ui::{ModelContext, SharedString, Window};
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -218,7 +218,8 @@ impl VimGlobals {
         register: Option<char>,
         is_yank: bool,
         linewise: bool,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) {
         if let Some(register) = register {
             let lower = register.to_lowercase().next().unwrap_or(register);
@@ -292,7 +293,8 @@ impl VimGlobals {
         &mut self,
         register: Option<char>,
         editor: Option<&mut Editor>,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
@@ -337,7 +339,11 @@ impl VimGlobals {
         }
     }
 
-    fn system_clipboard_is_newer(&self, window: &mut Window, cx: &mut ModelContext<Editor>) -> bool {
+    fn system_clipboard_is_newer(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
+    ) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
             if let Some(last_state) = &self.last_yank {
                 Some(last_state.as_ref()) != item.text().as_deref()

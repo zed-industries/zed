@@ -85,13 +85,11 @@ impl Render for ListItemStory {
                     )),
             )
             .child(Story::label("With `on_click`"))
-            .child(
-                ListItem::new("with_on_click")
-                    .child("Click me")
-                    .on_click(|_event, _window, _cx| {
-                        println!("Clicked!");
-                    }),
-            )
+            .child(ListItem::new("with_on_click").child("Click me").on_click(
+                |_event, _window, _cx| {
+                    println!("Clicked!");
+                },
+            ))
             .child(Story::label("With `on_secondary_mouse_down`"))
             .child(
                 ListItem::new("with_on_secondary_mouse_down")

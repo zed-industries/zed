@@ -1,5 +1,6 @@
-use gpui::{Window, AppContext, 
-    div, rems, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, 
+use gpui::{
+    div, rems, AppContext, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled,
+    Window,
 };
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};

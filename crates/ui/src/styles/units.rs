@@ -1,4 +1,4 @@
-use gpui::{Window, AppContext, rems, Length, Rems, };
+use gpui::{rems, AppContext, Length, Rems, Window};
 
 /// The base size of a rem, in pixels.
 pub const BASE_REM_SIZE_IN_PX: f32 = 16.;

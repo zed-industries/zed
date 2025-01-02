@@ -27,7 +27,11 @@ impl<'a> CommitAvatar<'a> {
 }
 
 impl<'a> CommitAvatar<'a> {
-    fn render(&'a self, window: &mut Window, cx: &mut ModelContext<BlameEntryTooltip>) -> Option<impl IntoElement> {
+    fn render(
+        &'a self,
+        window: &mut Window,
+        cx: &mut ModelContext<BlameEntryTooltip>,
+    ) -> Option<impl IntoElement> {
         let remote = self
             .details
             .and_then(|details| details.remote.as_ref())
@@ -114,7 +118,8 @@ impl BlameEntryTooltip {
 
 impl Render for BlameEntryTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
-        let avatar = CommitAvatar::new(self.details.as_ref(), self.blame_entry.sha).render(window, cx);
+        let avatar =
+            CommitAvatar::new(self.details.as_ref(), self.blame_entry.sha).render(window, cx);
 
         let author = self
             .blame_entry
@@ -137,7 +142,8 @@ impl Render for BlameEntryTooltip {
                     &details.parsed_message,
                     &self.editor_style,
                     self.workspace.clone(),
-                    window, cx,
+                    window,
+                    cx,
                 )
                 .into_any()
             })

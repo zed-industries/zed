@@ -2,9 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use client::{Client, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
-use gpui::{Window, 
+use gpui::{
     actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
-    SemanticVersion, Task, 
+    SemanticVersion, Task, Window,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -179,7 +179,8 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut AppContext) {
             "Zed was installed via a package manager.",
             Some(message),
             &["Ok"],
-        cx));
+            cx,
+        ));
         return;
     }
 
@@ -189,7 +190,8 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut AppContext) {
             "Zed was installed via a package manager.",
             Some(&message),
             &["Ok"],
-        cx));
+            cx,
+        ));
         return;
     }
 
@@ -208,7 +210,8 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut AppContext) {
             "Could not check for updates",
             Some("Auto-updates disabled for non-bundled app."),
             &["Ok"],
-        cx));
+            cx,
+        ));
     }
 }
 

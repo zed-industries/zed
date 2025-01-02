@@ -4,7 +4,7 @@ use editor::{
     scroll::ScrollAmount,
     DisplayPoint, Editor, EditorSettings,
 };
-use gpui::{Window, ModelContext, actions, };
+use gpui::{actions, ModelContext, Window};
 use language::Bias;
 use settings::Settings;
 
@@ -50,7 +50,8 @@ impl Vim {
     fn scroll(
         &mut self,
         move_cursor: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
         by: fn(c: Option<f32>) -> ScrollAmount,
     ) {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
@@ -64,7 +65,8 @@ fn scroll_editor(
     editor: &mut Editor,
     preserve_cursor_position: bool,
     amount: &ScrollAmount,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) {
     let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
     let old_top_anchor = editor.scroll_manager.anchor().anchor;

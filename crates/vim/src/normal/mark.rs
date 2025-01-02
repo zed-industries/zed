@@ -16,7 +16,13 @@ use crate::{
 };
 
 impl Vim {
-    pub fn create_mark(&mut self, text: Arc<str>, tail: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn create_mark(
+        &mut self,
+        text: Arc<str>,
+        tail: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let Some(anchors) = self.update_editor(window, cx, |_, editor, _, _| {
             editor
                 .selections
@@ -39,7 +45,12 @@ impl Vim {
         }
     }
 
-    pub(crate) fn create_visual_marks(&mut self, mode: Mode, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn create_visual_marks(
+        &mut self,
+        mode: Mode,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let mut starts = vec![];
         let mut ends = vec![];
         let mut reversed = vec![];
@@ -65,7 +76,13 @@ impl Vim {
         self.stored_visual_mode.replace((mode, reversed));
     }
 
-    pub fn jump(&mut self, text: Arc<str>, line: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn jump(
+        &mut self,
+        text: Arc<str>,
+        line: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.pop_operator(window, cx);
 
         let anchors = match &*text {
@@ -98,7 +115,8 @@ impl Vim {
                         anchor: *anchor,
                         line,
                     },
-                    window, cx,
+                    window,
+                    cx,
                 )
             }
         } else {

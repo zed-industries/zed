@@ -5,7 +5,7 @@ use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
 };
-use gpui::{Window, ModelContext, px, AppContext, AsyncWindowContext, Model, Modifiers, Task, };
+use gpui::{px, AppContext, AsyncWindowContext, Model, ModelContext, Modifiers, Task, Window};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
@@ -117,7 +117,8 @@ impl Editor {
         point_for_position: PointForPosition,
         snapshot: &EditorSnapshot,
         modifiers: Modifiers,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
         let hovered_link_modifier = match multi_cursor_setting {
@@ -146,7 +147,8 @@ impl Editor {
                     self,
                     hovered_link_modifier,
                     modifiers.shift,
-                    window, cx,
+                    window,
+                    cx,
                 );
             }
         }
@@ -161,7 +163,8 @@ impl Editor {
         &mut self,
         point: PointForPosition,
         modifiers: Modifiers,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) {
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, window, cx);
         cx.spawn_in(window, |editor, mut cx| async move {
@@ -182,7 +185,12 @@ impl Editor {
         .detach();
     }
 
-    pub fn scroll_hover(&mut self, amount: &ScrollAmount, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    pub fn scroll_hover(
+        &mut self,
+        amount: &ScrollAmount,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         let selection = self.selections.newest_anchor().head();
         let snapshot = self.snapshot(window, cx);
 
@@ -201,7 +209,8 @@ impl Editor {
         &mut self,
         point: PointForPosition,
         modifiers: Modifiers,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> Task<anyhow::Result<Navigated>> {
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
             self.hide_hovered_link(window, cx);
@@ -245,7 +254,8 @@ impl Editor {
                 add: false,
                 click_count: 1,
             },
-            window, cx,
+            window,
+            cx,
         );
 
         if point.as_valid().is_some() {
@@ -266,7 +276,8 @@ pub fn update_inlay_link_and_hover_points(
     editor: &mut Editor,
     secondary_held: bool,
     shift_held: bool,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) {
     let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
         Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
@@ -310,7 +321,8 @@ pub fn update_inlay_link_and_hover_points(
                                 buffer_id,
                                 excerpt_id,
                                 hovered_hint.id,
-                                window, cx,
+                                window,
+                                cx,
                             );
                         }
                     }
@@ -349,7 +361,8 @@ pub fn update_inlay_link_and_hover_points(
                                                     ..hovered_hint.text.len() + extra_shift_right,
                                             },
                                         },
-                                        window, cx,
+                                        window,
+                                        cx,
                                     );
                                     hover_updated = true;
                                 }
@@ -393,7 +406,8 @@ pub fn update_inlay_link_and_hover_points(
                                                 },
                                                 range: highlight.clone(),
                                             },
-                                            window, cx,
+                                            window,
+                                            cx,
                                         );
                                         hover_updated = true;
                                     }
@@ -413,7 +427,8 @@ pub fn update_inlay_link_and_hover_points(
                                                     language_server_id,
                                                 ),
                                                 snapshot,
-                                                window, cx,
+                                                window,
+                                                cx,
                                             );
                                         }
                                     }
@@ -440,7 +455,8 @@ pub fn show_link_definition(
     editor: &mut Editor,
     trigger_point: TriggerPoint,
     snapshot: &EditorSnapshot,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) {
     let preferred_kind = match trigger_point {
         TriggerPoint::Text(_) if !shift_held => GotoDefinitionKind::Symbol,
@@ -614,9 +630,19 @@ pub fn show_link_definition(
 
                         match highlight_range {
                             RangeInEditor::Text(text_range) => editor
-                                .highlight_text::<HoveredLinkState>(vec![text_range], style, window, cx),
+                                .highlight_text::<HoveredLinkState>(
+                                    vec![text_range],
+                                    style,
+                                    window,
+                                    cx,
+                                ),
                             RangeInEditor::Inlay(highlight) => editor
-                                .highlight_inlays::<HoveredLinkState>(vec![highlight], style, window, cx),
+                                .highlight_inlays::<HoveredLinkState>(
+                                    vec![highlight],
+                                    style,
+                                    window,
+                                    cx,
+                                ),
                         }
                     }
                 } else {
@@ -635,7 +661,8 @@ pub fn show_link_definition(
 pub(crate) fn find_url(
     buffer: &Model<language::Buffer>,
     position: text::Anchor,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
@@ -697,7 +724,8 @@ pub(crate) fn find_url(
 pub(crate) fn find_url_from_range(
     buffer: &Model<language::Buffer>,
     range: Range<text::Anchor>,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> Option<String> {
     const LIMIT: usize = 2048;
 
@@ -757,7 +785,8 @@ pub(crate) async fn find_file(
     buffer: &Model<language::Buffer>,
     project: Option<Model<Project>>,
     position: text::Anchor,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
     let project = project?;
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
@@ -768,7 +797,8 @@ pub(crate) async fn find_file(
         candidate_file_path: &str,
         project: &Model<Project>,
         buffer: &Model<language::Buffer>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Option<ResolvedPath> {
         project
             .update(cx, |project, cx| {
@@ -779,7 +809,9 @@ pub(crate) async fn find_file(
             .filter(|s| s.is_file())
     }
 
-    if let Some(existing_path) = check_path(&candidate_file_path, &project, buffer, window, cx).await {
+    if let Some(existing_path) =
+        check_path(&candidate_file_path, &project, buffer, window, cx).await
+    {
         return Some((range, existing_path));
     }
 
@@ -790,7 +822,8 @@ pub(crate) async fn find_file(
             }
 
             let suffixed_candidate = format!("{candidate_file_path}.{suffix}");
-            if let Some(existing_path) = check_path(&suffixed_candidate, &project, buffer, window, cx).await
+            if let Some(existing_path) =
+                check_path(&suffixed_candidate, &project, buffer, window, cx).await
             {
                 return Some((range, existing_path));
             }
@@ -1556,7 +1589,8 @@ mod tests {
         .await;
 
         // Insert a new file
-        let fs = cx.update_workspace(|workspace, window, cx| workspace.project().read(cx).fs().clone());
+        let fs =
+            cx.update_workspace(|workspace, window, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
             .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
             .await;
@@ -1692,7 +1726,8 @@ mod tests {
         .await;
 
         // Insert a new file
-        let fs = cx.update_workspace(|workspace, window, cx| workspace.project().read(cx).fs().clone());
+        let fs =
+            cx.update_workspace(|workspace, window, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
             .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
             .await;

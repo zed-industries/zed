@@ -1,21 +1,36 @@
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, Bias, Direction, Editor};
-use gpui::{Window, ModelContext, actions, };
+use gpui::{actions, ModelContext, Window};
 
 use crate::{state::Mode, Vim};
 
 actions!(vim, [ChangeListOlder, ChangeListNewer]);
 
 pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, |vim, _: &ChangeListOlder, window, cx| {
-        vim.move_to_change(Direction::Prev, window, cx);
-    });
-    Vim::action(editor, window, cx, |vim, _: &ChangeListNewer, window, cx| {
-        vim.move_to_change(Direction::Next, window, cx);
-    });
+    Vim::action(
+        editor,
+        window,
+        cx,
+        |vim, _: &ChangeListOlder, window, cx| {
+            vim.move_to_change(Direction::Prev, window, cx);
+        },
+    );
+    Vim::action(
+        editor,
+        window,
+        cx,
+        |vim, _: &ChangeListNewer, window, cx| {
+            vim.move_to_change(Direction::Next, window, cx);
+        },
+    );
 }
 
 impl Vim {
-    fn move_to_change(&mut self, direction: Direction, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn move_to_change(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = Vim::take_count(cx).unwrap_or(1);
         if self.change_list.is_empty() {
             return;

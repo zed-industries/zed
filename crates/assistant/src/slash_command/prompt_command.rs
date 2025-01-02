@@ -38,7 +38,8 @@ impl SlashCommand for PromptSlashCommand {
         arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let store = PromptStore::global(cx);
         let query = arguments.to_owned().join(" ");
@@ -66,7 +67,8 @@ impl SlashCommand for PromptSlashCommand {
         _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let title = arguments.to_owned().join(" ");
         if title.trim().is_empty() {

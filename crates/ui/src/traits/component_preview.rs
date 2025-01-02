@@ -37,7 +37,7 @@ pub trait ComponentPreview: IntoElement {
     }
 
     fn component_previews(window: &mut Window, cx: &mut AppContext) -> Vec<AnyElement> {
-        Self::examples(cx)
+        Self::examples(window, cx)
             .into_iter()
             .map(|example| Self::render_example_group(example))
             .collect()
@@ -78,9 +78,10 @@ pub trait ComponentPreview: IntoElement {
                         )
                     }),
             )
-            .when_some(Self::custom_example(window, cx).into(), |this, custom_example| {
-                this.child(custom_example)
-            })
+            .when_some(
+                Self::custom_example(window, cx).into(),
+                |this, custom_example| this.child(custom_example),
+            )
             .children(Self::component_previews(window, cx))
             .into_any_element()
     }

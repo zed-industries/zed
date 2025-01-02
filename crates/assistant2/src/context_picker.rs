@@ -5,8 +5,8 @@ mod thread_context_picker;
 
 use std::sync::Arc;
 
-use gpui::{Model, 
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, SharedString, Task, 
+use gpui::{
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, SharedString, Task,
     WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -49,7 +49,8 @@ impl ContextPicker {
         thread_store: Option<WeakModel<ThreadStore>>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let mut entries = Vec::new();
         entries.push(ContextPickerEntry {
@@ -92,7 +93,8 @@ impl ContextPicker {
         };
 
         let picker = window.new_view(cx, |cx| {
-            Picker::nonsearchable_uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
+            Picker::nonsearchable_uniform_list(delegate, window, cx)
+                .max_height(Some(rems(20.).into()))
         });
 
         ContextPicker {
@@ -165,7 +167,12 @@ impl PickerDelegate for ContextPickerDelegate {
         self.selected_ix
     }
 
-    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_ix = ix.min(self.entries.len().saturating_sub(1));
         cx.notify();
     }
@@ -174,11 +181,21 @@ impl PickerDelegate for ContextPickerDelegate {
         "Select a context source…".into()
     }
 
-    fn update_matches(&mut self, _query: String, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        _query: String,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         if let Some(entry) = self.entries.get(self.selected_ix) {
             self.context_picker
                 .update(cx, |this, cx| {
@@ -190,7 +207,8 @@ impl PickerDelegate for ContextPickerDelegate {
                                     self.workspace.clone(),
                                     self.context_store.clone(),
                                     self.confirm_behavior,
-                                    window, cx,
+                                    window,
+                                    cx,
                                 )
                             }));
                         }
@@ -201,7 +219,8 @@ impl PickerDelegate for ContextPickerDelegate {
                                     self.workspace.clone(),
                                     self.context_store.clone(),
                                     self.confirm_behavior,
-                                    window, cx,
+                                    window,
+                                    cx,
                                 )
                             }));
                         }
@@ -212,7 +231,8 @@ impl PickerDelegate for ContextPickerDelegate {
                                     self.workspace.clone(),
                                     self.context_store.clone(),
                                     self.confirm_behavior,
-                                    window, cx,
+                                    window,
+                                    cx,
                                 )
                             }));
                         }
@@ -224,7 +244,8 @@ impl PickerDelegate for ContextPickerDelegate {
                                         self.context_picker.clone(),
                                         self.context_store.clone(),
                                         self.confirm_behavior,
-                                        window, cx,
+                                        window,
+                                        cx,
                                     )
                                 }));
                             }
@@ -253,7 +274,8 @@ impl PickerDelegate for ContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = &self.entries[ix];
 

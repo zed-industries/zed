@@ -5,9 +5,9 @@ use crate::{
 use collections::BTreeMap;
 use futures::Future;
 use git::diff::DiffHunkStatus;
-use gpui::{Window, Model, 
-    prelude::*, AnyWindowHandle, AppContext, Keystroke, ModelContext, Pixels, Point, 
-     VisualTestContext, WindowHandle,
+use gpui::{
+    prelude::*, AnyWindowHandle, AppContext, Keystroke, Model, ModelContext, Pixels, Point,
+    VisualTestContext, Window, WindowHandle,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
@@ -57,8 +57,12 @@ impl EditorTestContext {
             .await
             .unwrap();
         let editor = cx.add_window(|cx| {
-            let editor =
-                build_editor_with_project(project, MultiBuffer::build_from_buffer(buffer, cx), window, cx);
+            let editor = build_editor_with_project(
+                project,
+                MultiBuffer::build_from_buffer(buffer, cx),
+                window,
+                cx,
+            );
             editor.focus(window, cx);
             editor
         });
@@ -278,8 +282,9 @@ impl EditorTestContext {
 
     pub fn set_diff_base(&mut self, diff_base: &str) {
         self.cx.run_until_parked();
-        let fs = self
-            .update_editor(|editor, window, cx| editor.project.as_ref().unwrap().read(cx).fs().as_fake());
+        let fs = self.update_editor(|editor, window, cx| {
+            editor.project.as_ref().unwrap().read(cx).fs().as_fake()
+        });
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         fs.set_index_for_repo(
             &Self::root_path().join(".git"),

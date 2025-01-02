@@ -73,7 +73,12 @@ impl PickerDelegate for SlashCommandDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix.min(self.filtered_commands.len().saturating_sub(1));
         cx.notify();
     }
@@ -82,7 +87,12 @@ impl PickerDelegate for SlashCommandDelegate {
         "Select a command...".into()
     }
 
-    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let all_commands = self.all_commands.clone();
         cx.spawn_in(window, |this, mut cx| async move {
             let filtered_commands = cx
@@ -139,7 +149,12 @@ impl PickerDelegate for SlashCommandDelegate {
         ret
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         if let Some(command) = self.filtered_commands.get(self.selected_index) {
             match command {
                 SlashCommandEntry::Info(info) => {
@@ -167,7 +182,8 @@ impl PickerDelegate for SlashCommandDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let command_info = self.filtered_commands.get(ix)?;
 
@@ -179,7 +195,11 @@ impl PickerDelegate for SlashCommandDelegate {
                     .toggle_state(selected)
                     .tooltip({
                         let description = info.description.clone();
-                        move |cx| window.new_view(cx, |_, _| Tooltip::new(description.clone())).into()
+                        move |cx| {
+                            window
+                                .new_view(cx, |_, _| Tooltip::new(description.clone()))
+                                .into()
+                        }
                     })
                     .child(
                         v_flex()
@@ -305,7 +325,8 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
         };
 
         let picker_view = window.new_view(cx, |window, cx| {
-            let picker = Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()));
+            let picker =
+                Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()));
             picker
         });
 

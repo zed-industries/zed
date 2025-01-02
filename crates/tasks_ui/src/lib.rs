@@ -1,6 +1,6 @@
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
-use gpui::{Window, ModelContext, AppContext, Task as AsyncTask,  };
+use gpui::{AppContext, ModelContext, Task as AsyncTask, Window};
 use modal::{TaskOverrides, TasksModal};
 use project::{Location, WorktreeId};
 use task::{RevealTarget, TaskId};
@@ -54,7 +54,8 @@ pub fn init(cx: &mut AppContext) {
                                             &original_task,
                                             &task_context,
                                             false,
-                                            window, cx,
+                                            window,
+                                            cx,
                                         )
                                     })
                                     .ok()
@@ -75,7 +76,8 @@ pub fn init(cx: &mut AppContext) {
                                 task_source_kind,
                                 last_scheduled_task,
                                 false,
-                                window, cx,
+                                window,
+                                cx,
                             );
                         }
                     } else {
@@ -87,7 +89,12 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, window: &mut Window, cx: &mut ModelContext<Workspace>) {
+fn spawn_task_or_modal(
+    workspace: &mut Workspace,
+    action: &Spawn,
+    window: &mut Window,
+    cx: &mut ModelContext<Workspace>,
+) {
     match action {
         Spawn::ByName {
             task_name,
@@ -98,14 +105,17 @@ fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, window: &mut W
             });
             spawn_task_with_name(task_name.clone(), overrides, window, cx).detach_and_log_err(cx)
         }
-        Spawn::ViaModal { reveal_target } => toggle_modal(workspace, *reveal_target, window, cx).detach(),
+        Spawn::ViaModal { reveal_target } => {
+            toggle_modal(workspace, *reveal_target, window, cx).detach()
+        }
     }
 }
 
 fn toggle_modal(
     workspace: &mut Workspace,
     reveal_target: Option<RevealTarget>,
-    window: &mut Window, cx: &mut ModelContext<Workspace>,
+    window: &mut Window,
+    cx: &mut ModelContext<Workspace>,
 ) -> AsyncTask<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
@@ -126,7 +136,8 @@ fn toggle_modal(
                                 reveal_target: Some(target),
                             }),
                             workspace_handle,
-                            window, cx,
+                            window,
+                            cx,
                         )
                     })
                 })
@@ -140,7 +151,8 @@ fn toggle_modal(
 fn spawn_task_with_name(
     name: String,
     overrides: Option<TaskOverrides>,
-    window: &mut Window, cx: &mut ModelContext<Workspace>,
+    window: &mut Window,
+    cx: &mut ModelContext<Workspace>,
 ) -> AsyncTask<anyhow::Result<()>> {
     cx.spawn_in(window, |workspace, mut cx| async move {
         let context_task =
@@ -187,7 +199,8 @@ fn spawn_task_with_name(
                     &target_task,
                     &task_context,
                     false,
-                    window, cx,
+                    window,
+                    cx,
                 );
                 Some(())
             })?
@@ -200,7 +213,8 @@ fn spawn_task_with_name(
                         &Spawn::ViaModal {
                             reveal_target: overrides.and_then(|overrides| overrides.reveal_target),
                         },
-                        window, cx,
+                        window,
+                        cx,
                     );
                 })
                 .ok();
@@ -212,7 +226,8 @@ fn spawn_task_with_name(
 
 fn active_item_selection_properties(
     workspace: &Workspace,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> (Option<WorktreeId>, Option<Location>) {
     let active_item = workspace.active_item(cx);
     let worktree_id = active_item
@@ -324,7 +339,8 @@ mod tests {
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
 
         let buffer1 = workspace
             .update(cx, |this, cx| {
@@ -336,7 +352,8 @@ mod tests {
         buffer1.update(cx, |this, cx| {
             this.set_language(Some(typescript_language), cx)
         });
-        let editor1 = cx.new_view(|cx| Editor::for_buffer(buffer1, Some(project.clone()), window, cx));
+        let editor1 =
+            cx.new_view(|cx| Editor::for_buffer(buffer1, Some(project.clone()), window, cx));
         let buffer2 = workspace
             .update(cx, |this, cx| {
                 this.project().update(cx, |this, cx| {
@@ -379,7 +396,9 @@ mod tests {
 
         // And now, let's select an identifier.
         editor2.update(cx, |editor, cx| {
-            editor.change_selections(None, window, cx, |selections| selections.select_ranges([14..18]))
+            editor.change_selections(None, window, cx, |selections| {
+                selections.select_ranges([14..18])
+            })
         });
 
         assert_eq!(

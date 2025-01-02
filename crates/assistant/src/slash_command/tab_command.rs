@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{Window, AppContext, prelude::*, ActiveTheme, };
+use ui::{prelude::*, ActiveTheme, AppContext, Window};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -52,7 +52,8 @@ impl SlashCommand for TabSlashCommand {
         arguments: &[String],
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let mut has_all_tabs_completion_item = false;
         let argument_set = arguments
@@ -139,14 +140,16 @@ impl SlashCommand for TabSlashCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let tab_items_search = tab_items_for_queries(
             Some(workspace),
             arguments,
             Arc::new(AtomicBool::new(false)),
             true,
-            window, cx,
+            window,
+            cx,
         );
 
         cx.background_executor().spawn(async move {
@@ -164,7 +167,8 @@ fn tab_items_for_queries(
     queries: &[String],
     cancel: Arc<AtomicBool>,
     strict_match: bool,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> Task<anyhow::Result<Vec<(Option<PathBuf>, BufferSnapshot, usize)>>> {
     let empty_query = queries.is_empty() || queries.iter().all(|query| query.trim().is_empty());
     let queries = queries.to_owned();
@@ -281,7 +285,8 @@ fn tab_items_for_queries(
 
 fn active_item_buffer(
     workspace: &mut Workspace,
-    window: &mut Window, cx: &mut ModelContext<Workspace>,
+    window: &mut Window,
+    cx: &mut ModelContext<Workspace>,
 ) -> anyhow::Result<BufferSnapshot> {
     let active_editor = workspace
         .active_item(cx)

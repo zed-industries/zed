@@ -35,7 +35,8 @@ pub struct ListItem {
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static>>,
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static>>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut AppContext) -> AnyView + 'static>>,
-    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut AppContext) + 'static>>,
+    on_secondary_mouse_down:
+        Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut AppContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
     outlined: bool,
@@ -79,7 +80,10 @@ impl ListItem {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -92,7 +96,10 @@ impl ListItem {
         self
     }
 
-    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static) -> Self {
+    pub fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+    ) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }

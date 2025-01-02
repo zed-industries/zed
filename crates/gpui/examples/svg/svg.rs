@@ -2,9 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use gpui::{Window, ModelContext, 
-    div, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds, SharedString,
-     WindowBounds, WindowOptions,
+use gpui::{
+    div, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds, ModelContext,
+    SharedString, Window, WindowBounds, WindowOptions,
 };
 
 struct Assets {

@@ -40,9 +40,9 @@ pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use git::{blame::Blame, repository::GitRepository};
-use gpui::{Window, 
+use gpui::{
     AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, EventEmitter, Hsla,
-    Model, ModelContext, SharedString, Task, WeakModel, 
+    Model, ModelContext, SharedString, Task, WeakModel, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -357,7 +357,8 @@ pub struct Completion {
     /// Returns, whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
-    pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut AppContext) -> bool>>,
+    pub confirm:
+        Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut AppContext) -> bool>>,
 }
 
 impl std::fmt::Debug for Completion {

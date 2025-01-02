@@ -2,7 +2,7 @@ mod update_notification;
 
 use auto_update::AutoUpdater;
 use editor::{Editor, MultiBuffer};
-use gpui::{Window, ModelContext, Model, actions, prelude::*, AppContext, SharedString,  };
+use gpui::{actions, prelude::*, AppContext, Model, ModelContext, SharedString, Window};
 use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
@@ -31,7 +31,11 @@ struct ReleaseNotesBody {
     release_notes: String,
 }
 
-fn view_release_notes_locally(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelContext<Workspace>) {
+fn view_release_notes_locally(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut ModelContext<Workspace>,
+) {
     let release_channel = ReleaseChannel::global(cx);
 
     let url = match release_channel {
@@ -99,13 +103,15 @@ fn view_release_notes_locally(workspace: &mut Workspace, window: &mut Window, cx
                                 workspace_handle,
                                 language_registry,
                                 Some(tab_description),
-                                window, cx,
+                                window,
+                                cx,
                             );
                             workspace.add_item_to_active_pane(
                                 Box::new(view.clone()),
                                 None,
                                 true,
-                                window, cx,
+                                window,
+                                cx,
                             );
                             cx.notify();
                         })
@@ -117,7 +123,10 @@ fn view_release_notes_locally(workspace: &mut Workspace, window: &mut Window, cx
         .detach();
 }
 
-pub fn notify_of_any_new_update(window: &mut Window, cx: &mut ModelContext<Workspace>) -> Option<()> {
+pub fn notify_of_any_new_update(
+    window: &mut Window,
+    cx: &mut ModelContext<Workspace>,
+) -> Option<()> {
     let updater = AutoUpdater::get(cx)?;
     let version = updater.read(cx).current_version();
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
@@ -129,8 +138,11 @@ pub fn notify_of_any_new_update(window: &mut Window, cx: &mut ModelContext<Works
                 let workspace_handle = workspace.weak_handle();
                 workspace.show_notification(
                     NotificationId::unique::<UpdateNotification>(),
-                    window, cx,
-                    |window, cx| window.new_view(cx, |_| UpdateNotification::new(version, workspace_handle)),
+                    window,
+                    cx,
+                    |window, cx| {
+                        window.new_view(cx, |_| UpdateNotification::new(version, workspace_handle))
+                    },
                 );
                 updater.update(cx, |updater, cx| {
                     updater

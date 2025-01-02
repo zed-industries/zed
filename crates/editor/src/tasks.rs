@@ -1,6 +1,6 @@
 use crate::Editor;
 
-use gpui::{Window, AppContext, Task as AsyncTask, };
+use gpui::{AppContext, Task as AsyncTask, Window};
 use project::Location;
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{ToOffset, ToPoint};
@@ -8,7 +8,8 @@ use workspace::Workspace;
 
 fn task_context_with_editor(
     editor: &mut Editor,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> AsyncTask<Option<TaskContext>> {
     let Some(project) = editor.project.clone() else {
         return AsyncTask::ready(None);
@@ -74,7 +75,11 @@ fn task_context_with_editor(
     })
 }
 
-pub fn task_context(workspace: &Workspace, window: &mut Window, cx: &mut AppContext) -> AsyncTask<TaskContext> {
+pub fn task_context(
+    workspace: &Workspace,
+    window: &mut Window,
+    cx: &mut AppContext,
+) -> AsyncTask<TaskContext> {
     let Some(editor) = workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx))

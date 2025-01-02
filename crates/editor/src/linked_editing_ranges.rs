@@ -42,7 +42,8 @@ const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 // TODO do not refresh anything at all, if the settings/capabilities do not have it enabled.
 pub(super) fn refresh_linked_ranges(
     editor: &mut Editor,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) -> Option<()> {
     if editor.pending_rename.is_some() {
         return None;

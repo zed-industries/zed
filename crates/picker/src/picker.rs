@@ -1,10 +1,10 @@
 use anyhow::Result;
 use editor::{scroll::Autoscroll, Editor};
-use gpui::{Window, ModelContext, Model, 
+use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent,
     DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListSizingBehavior, ListState,
-    MouseButton, MouseUpEvent, Render, ScrollStrategy, Task, UniformListScrollHandle, 
-     
+    Model, ModelContext, MouseButton, MouseUpEvent, Render, ScrollStrategy, Task,
+    UniformListScrollHandle, Window,
 };
 use head::Head;
 use serde::Deserialize;
@@ -68,12 +68,18 @@ pub trait PickerDelegate: Sized + 'static {
     fn separators_after_indices(&self) -> Vec<usize> {
         Vec::new()
     }
-    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<Self>>);
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    );
     // Allows binding some optional effect to when the selection changes.
     fn selected_index_changed(
         &self,
         _ix: usize,
-        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Box<dyn Fn(&mut Window, &mut AppContext) + 'static>> {
         None
     }
@@ -81,7 +87,12 @@ pub trait PickerDelegate: Sized + 'static {
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut AppContext) -> SharedString {
         "No matches".into()
     }
-    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()>;
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()>;
 
     // Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
     // work for up to `duration` to try and get a result synchronously.
@@ -91,19 +102,35 @@ pub trait PickerDelegate: Sized + 'static {
         &mut self,
         _query: String,
         _duration: Duration,
-        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
     ) -> bool {
         false
     }
 
     /// Override if you want to have <enter> update the query instead of confirming.
-    fn confirm_update_query(&mut self, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) -> Option<String> {
+    fn confirm_update_query(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) -> Option<String> {
         None
     }
-    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>);
+    fn confirm(
+        &mut self,
+        secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    );
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
-    fn confirm_input(&mut self, _secondary: bool, _window: &mut Window, _: &mut ModelContext<Picker<Self>>) {}
+    fn confirm_input(
+        &mut self,
+        _secondary: bool,
+        _window: &mut Window,
+        _: &mut ModelContext<Picker<Self>>,
+    ) {
+    }
     fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>);
     fn should_dismiss(&self) -> bool {
         true
@@ -111,7 +138,8 @@ pub trait PickerDelegate: Sized + 'static {
     fn confirm_completion(
         &mut self,
         _query: String,
-        _window: &mut Window, _: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _: &mut ModelContext<Picker<Self>>,
     ) -> Option<String> {
         None
     }
@@ -120,7 +148,12 @@ pub trait PickerDelegate: Sized + 'static {
         PickerEditorPosition::default()
     }
 
-    fn render_editor(&self, editor: &Model<Editor>, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) -> Div {
+    fn render_editor(
+        &self,
+        editor: &Model<Editor>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) -> Div {
         v_flex()
             .when(
                 self.editor_position() == PickerEditorPosition::End,
@@ -144,12 +177,21 @@ pub trait PickerDelegate: Sized + 'static {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem>;
-    fn render_header(&self, _window: &mut Window, _: &mut ModelContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        _: &mut ModelContext<Picker<Self>>,
+    ) -> Option<AnyElement> {
         None
     }
-    fn render_footer(&self, _window: &mut Window, _: &mut ModelContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        _: &mut ModelContext<Picker<Self>>,
+    ) -> Option<AnyElement> {
         None
     }
 }
@@ -177,7 +219,9 @@ impl<D: PickerDelegate> Picker<D> {
         let head = Head::editor(
             delegate.placeholder_text(cx),
             Self::on_input_editor_event,
-            window, cxndow, cx,
+            window,
+            cxndow,
+            cx,
         );
 
         Self::new(delegate, ContainerKind::UniformList, head, window, cx)
@@ -185,7 +229,11 @@ impl<D: PickerDelegate> Picker<D> {
 
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
-    pub fn nonsearchable_uniform_list(delegate: D, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn nonsearchable_uniform_list(
+        delegate: D,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let head = Head::empty(Self::on_empty_head_blur, window, cxndow, cx);
 
         Self::new(delegate, ContainerKind::UniformList, head, window, cx)
@@ -198,13 +246,21 @@ impl<D: PickerDelegate> Picker<D> {
         let head = Head::editor(
             delegate.placeholder_text(cx),
             Self::on_input_editor_event,
-            window, cxndow, cx,
+            window,
+            cxndow,
+            cx,
         );
 
         Self::new(delegate, ContainerKind::List, head, window, cx)
     }
 
-    fn new(delegate: D, container: ContainerKind, head: Head, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    fn new(
+        delegate: D,
+        container: ContainerKind,
+        head: Head,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let mut this = Self {
             delegate,
             head,
@@ -224,7 +280,8 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn create_element_container(
         container: ContainerKind,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> ElementContainer {
         match container {
             ContainerKind::UniformList => {
@@ -277,7 +334,8 @@ impl<D: PickerDelegate> Picker<D> {
         &mut self,
         ix: usize,
         scroll_to_index: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let previous_index = self.delegate.selected_index();
         self.delegate.set_selected_index(ix, cx);
@@ -293,7 +351,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn select_next(
+        &mut self,
+        _: &menu::SelectNext,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -303,7 +366,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_prev(
+        &mut self,
+        _: &menu::SelectPrev,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -313,7 +381,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.delegate.match_count();
         if count > 0 {
             self.set_selected_index(0, true, window, cx);
@@ -321,7 +394,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_last(
+        &mut self,
+        _: &menu::SelectLast,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.delegate.match_count();
         if count > 0 {
             self.set_selected_index(count - 1, true, window, cx);
@@ -346,9 +424,12 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.pending_update_matches.is_some()
-            && !self
-                .delegate
-                .finalize_update_matches(self.query(cx), Duration::from_millis(16), window, cx)
+            && !self.delegate.finalize_update_matches(
+                self.query(cx),
+                Duration::from_millis(16),
+                window,
+                cx,
+            )
         {
             self.confirm_on_update = Some(false)
         } else {
@@ -357,11 +438,19 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn secondary_confirm(
+        &mut self,
+        _: &menu::SecondaryConfirm,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if self.pending_update_matches.is_some()
-            && !self
-                .delegate
-                .finalize_update_matches(self.query(cx), Duration::from_millis(16), window, cx)
+            && !self.delegate.finalize_update_matches(
+                self.query(cx),
+                Duration::from_millis(16),
+                window,
+                cx,
+            )
         {
             self.confirm_on_update = Some(true)
         } else {
@@ -369,11 +458,21 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn confirm_input(&mut self, input: &ConfirmInput, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn confirm_input(
+        &mut self,
+        input: &ConfirmInput,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.delegate.confirm_input(input.secondary, window, cx);
     }
 
-    fn confirm_completion(&mut self, _: &ConfirmCompletion, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn confirm_completion(
+        &mut self,
+        _: &ConfirmCompletion,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), window, cx) {
             self.set_query(new_query, window, cx);
         } else {
@@ -381,7 +480,13 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn handle_click(&mut self, ix: usize, secondary: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_click(
+        &mut self,
+        ix: usize,
+        secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         cx.stop_propagation();
         window.prevent_default();
         self.set_selected_index(ix, false, window, cx);
@@ -401,7 +506,8 @@ impl<D: PickerDelegate> Picker<D> {
         &mut self,
         _: Model<Editor>,
         event: &editor::EditorEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let Head::Editor(ref editor) = &self.head else {
             panic!("unexpected call");
@@ -443,7 +549,12 @@ impl<D: PickerDelegate> Picker<D> {
         self.update_matches(query, window, cx);
     }
 
-    pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let delegate_pending_update_matches = self.delegate.update_matches(query, cx);
 
         self.matches_updated(window, cx);
@@ -514,7 +625,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn render_element(&self, window: &mut Window, cx: &mut ModelContext<Self>, ix: usize) -> impl IntoElement {
+    fn render_element(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+        ix: usize,
+    ) -> impl IntoElement {
         div()
             .id(("item", ix))
             .cursor_pointer()
@@ -548,7 +664,11 @@ impl<D: PickerDelegate> Picker<D> {
             )
     }
 
-    fn render_element_container(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_element_container(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let sizing_behavior = if self.max_height.is_some() {
             ListSizingBehavior::Infer
         } else {
@@ -643,7 +763,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
                             .spacing(ListItemSpacing::Sparse)
                             .disabled(true)
                             .child(
-                                Label::new(self.delegate.no_matches_text(window, cx)).color(Color::Muted),
+                                Label::new(self.delegate.no_matches_text(window, cx))
+                                    .color(Color::Muted),
                             ),
                     ),
                 )

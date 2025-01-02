@@ -7,9 +7,9 @@ use collab_ui::{
     notifications::project_shared_notification::ProjectSharedNotification,
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
-use gpui::{Model, 
-    point, BackgroundExecutor, BorrowAppContext, Context, Entity, SharedString, TestAppContext,
-     VisualContext, VisualTestContext,
+use gpui::{
+    point, BackgroundExecutor, BorrowAppContext, Context, Entity, Model, SharedString,
+    TestAppContext, VisualContext, VisualTestContext,
 };
 use language::Capability;
 use project::WorktreeSettings;
@@ -131,7 +131,9 @@ async fn test_basic_following(
     });
 
     // When client B starts following client A, only the active view state is replicated to client B.
-    workspace_b.update(cx_b, |workspace, cx| workspace.follow(peer_id_a, window, cx));
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.follow(peer_id_a, window, cx)
+    });
 
     cx_c.executor().run_until_parked();
     let editor_b2 = workspace_b.update(cx_b, |workspace, cx| {
@@ -165,7 +167,9 @@ async fn test_basic_following(
     drop(project_c);
 
     // Client C also follows client A.
-    workspace_c.update(cx_c, |workspace, cx| workspace.follow(peer_id_a, window, cx));
+    workspace_c.update(cx_c, |workspace, cx| {
+        workspace.follow(peer_id_a, window, cx)
+    });
 
     cx_d.executor().run_until_parked();
     let active_call_d = cx_d.read(ActiveCall::global);
@@ -203,7 +207,9 @@ async fn test_basic_following(
     }
 
     // Client C re-follows client A.
-    workspace_c.update(cx_c, |workspace, cx| workspace.follow(peer_id_a, window, cx));
+    workspace_c.update(cx_c, |workspace, cx| {
+        workspace.follow(peer_id_a, window, cx)
+    });
 
     // All clients see that clients B and C are following client A.
     cx_c.executor().run_until_parked();
@@ -216,9 +222,13 @@ async fn test_basic_following(
     }
 
     // Client D follows client B, then switches to following client C.
-    workspace_d.update(cx_d, |workspace, cx| workspace.follow(peer_id_b, window, cx));
+    workspace_d.update(cx_d, |workspace, cx| {
+        workspace.follow(peer_id_b, window, cx)
+    });
     cx_a.executor().run_until_parked();
-    workspace_d.update(cx_d, |workspace, cx| workspace.follow(peer_id_c, window, cx));
+    workspace_d.update(cx_d, |workspace, cx| {
+        workspace.follow(peer_id_c, window, cx)
+    });
 
     // All clients see that D is following C
     cx_a.executor().run_until_parked();
@@ -408,7 +418,9 @@ async fn test_basic_following(
     );
 
     // Client A starts following client B.
-    workspace_a.update(cx_a, |workspace, cx| workspace.follow(peer_id_b, window, cx));
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.follow(peer_id_b, window, cx)
+    });
     executor.run_until_parked();
     assert_eq!(
         workspace_a.update(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
@@ -624,7 +636,9 @@ async fn test_following_tab_order(
     assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt"]);
 
     //Follow client B as client A
-    workspace_a.update(cx_a, |workspace, cx| workspace.follow(client_b_id, window, cx));
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.follow(client_b_id, window, cx)
+    });
     executor.run_until_parked();
 
     //Open just 2 on client B
@@ -722,14 +736,24 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 
     // Clients A and B follow each other in split panes
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Right, window, cx);
+        workspace.split_and_clone(
+            workspace.active_pane().clone(),
+            SplitDirection::Right,
+            window,
+            cx,
+        );
     });
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.follow(client_b.peer_id().unwrap(), window, cx)
     });
     executor.run_until_parked();
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Right, window, cx);
+        workspace.split_and_clone(
+            workspace.active_pane().clone(),
+            SplitDirection::Right,
+            window,
+            cx,
+        );
     });
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.follow(client_a.peer_id().unwrap(), window, cx)
@@ -737,8 +761,12 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     executor.run_until_parked();
 
     // Clients A and B return focus to the original files they had open
-    workspace_a.update(cx_a, |workspace, cx| workspace.activate_next_pane(window, cx));
-    workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(window, cx));
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.activate_next_pane(window, cx)
+    });
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.activate_next_pane(window, cx)
+    });
     executor.run_until_parked();
 
     // Both clients see the other client's focused file in their right pane.
@@ -831,7 +859,9 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     );
 
     // Client A focuses their right pane, in which they're following client B.
-    workspace_a.update(cx_a, |workspace, cx| workspace.activate_next_pane(window, cx));
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.activate_next_pane(window, cx)
+    });
     executor.run_until_parked();
 
     // Client B sees that client A is now looking at the same file as them.
@@ -877,7 +907,9 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 
     // Client B focuses their right pane, in which they're following client A,
     // who is following them.
-    workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(window, cx));
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.activate_next_pane(window, cx)
+    });
     executor.run_until_parked();
 
     // Client A sees that client B is now looking at the same file as them.
@@ -1228,7 +1260,9 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     let leader_id = project_b.update(cx_b, |project, _| {
         project.collaborators().values().next().unwrap().peer_id
     });
-    workspace_b.update(cx_b, |workspace, cx| workspace.follow(leader_id, window, cx));
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.follow(leader_id, window, cx)
+    });
     executor.run_until_parked();
     assert_eq!(
         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
@@ -1251,7 +1285,9 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         None
     );
 
-    workspace_b.update(cx_b, |workspace, cx| workspace.follow(leader_id, window, cx));
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.follow(leader_id, window, cx)
+    });
     executor.run_until_parked();
     assert_eq!(
         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
@@ -1265,7 +1301,9 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         None
     );
 
-    workspace_b.update(cx_b, |workspace, cx| workspace.follow(leader_id, window, cx));
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.follow(leader_id, window, cx)
+    });
     executor.run_until_parked();
     assert_eq!(
         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
@@ -1281,7 +1319,9 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         None
     );
 
-    workspace_b.update(cx_b, |workspace, cx| workspace.follow(leader_id, window, cx));
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.follow(leader_id, window, cx)
+    });
     executor.run_until_parked();
     assert_eq!(
         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
@@ -1297,7 +1337,9 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         Some(leader_id)
     );
 
-    workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(window, cx));
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.activate_next_pane(window, cx)
+    });
     assert_eq!(
         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
         Some(leader_id)
@@ -1352,8 +1394,12 @@ async fn test_peers_simultaneously_following_each_other(
         project.collaborators().values().next().unwrap().peer_id
     });
 
-    workspace_a.update(cx_a, |workspace, cx| workspace.follow(client_b_id, window, cx));
-    workspace_b.update(cx_b, |workspace, cx| workspace.follow(client_a_id, window, cx));
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.follow(client_b_id, window, cx)
+    });
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.follow(client_a_id, window, cx)
+    });
     executor.run_until_parked();
 
     workspace_a.update(cx_a, |workspace, _| {
@@ -1735,7 +1781,9 @@ async fn test_following_into_excluded_file(
     });
 
     // When client B starts following client A, currently visible file is replicated
-    workspace_b.update(cx_b, |workspace, cx| workspace.follow(peer_id_a, window, cx));
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.follow(peer_id_a, window, cx)
+    });
     executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     executor.run_until_parked();
 

@@ -156,7 +156,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             true,
             project.clone(),
             workspace.downgrade(),
-            window, cx,
+            window,
+            cx,
         )
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
@@ -487,7 +488,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             true,
             project.clone(),
             workspace.downgrade(),
-            window, cx,
+            window,
+            cx,
         )
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
@@ -764,7 +766,8 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
             true,
             project.clone(),
             workspace.downgrade(),
-            window, cx,
+            window,
+            cx,
         )
     });
 
@@ -868,7 +871,8 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
             true,
             project.clone(),
             workspace.downgrade(),
-            window, cx,
+            window,
+            cx,
         )
     });
     cx.executor()

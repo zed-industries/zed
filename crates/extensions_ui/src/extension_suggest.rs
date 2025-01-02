@@ -7,7 +7,7 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use gpui::{Model, VisualContext};
 use language::Buffer;
-use ui::{Window, ModelContext, SharedString, };
+use ui::{ModelContext, SharedString, Window};
 use workspace::{
     notifications::{simple_message_notification, NotificationId},
     Workspace,
@@ -136,7 +136,11 @@ fn language_extension_key(extension_id: &str) -> String {
     format!("{}_extension_suggest", extension_id)
 }
 
-pub(crate) fn suggest(buffer: Model<Buffer>, window: &mut Window, cx: &mut ModelContext<Workspace>) {
+pub(crate) fn suggest(
+    buffer: Model<Buffer>,
+    window: &mut Window,
+    cx: &mut ModelContext<Workspace>,
+) {
     let Some(file) = buffer.read(cx).file().cloned() else {
         return;
     };

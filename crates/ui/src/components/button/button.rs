@@ -368,7 +368,10 @@ impl ButtonCommon for Button {
     /// ```
     ///
     /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
-    fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static) -> Self {
+    fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+    ) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }

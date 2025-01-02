@@ -19,7 +19,8 @@ impl ThreadHistory {
     pub(crate) fn new(
         assistant_panel: WeakView<AssistantPanel>,
         thread_store: Model<ThreadStore>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),

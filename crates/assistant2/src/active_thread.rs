@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{
     list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
     ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement,  WeakView,
+    TextStyleRefinement, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -36,7 +36,8 @@ impl ActiveThread {
         workspace: WeakView<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let subscriptions = vec![
             cx.observe(&thread, |_, _, cx| cx.notify()),
@@ -84,7 +85,13 @@ impl ActiveThread {
         self.last_error.take();
     }
 
-    fn push_message(&mut self, id: &MessageId, text: String, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn push_message(
+        &mut self,
+        id: &MessageId,
+        text: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let old_len = self.messages.len();
         self.messages.push(*id);
         self.list_state.splice(old_len..old_len, 1);
@@ -149,7 +156,8 @@ impl ActiveThread {
                 markdown_style,
                 Some(self.language_registry.clone()),
                 None,
-                window, cx,
+                window,
+                cx,
             )
         });
         self.rendered_messages_by_id.insert(*id, markdown);
@@ -163,7 +171,8 @@ impl ActiveThread {
         &mut self,
         _: Model<Thread>,
         event: &ThreadEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             ThreadEvent::ShowError(error) => {
@@ -219,7 +228,12 @@ impl ActiveThread {
         }
     }
 
-    fn render_message(&self, ix: usize, window: &mut Window, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_message(
+        &self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();

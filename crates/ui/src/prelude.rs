@@ -1,10 +1,10 @@
 //! The prelude of this crate. When building UI in Zed you almost always want to import this.
 
 pub use gpui::prelude::*;
-pub use gpui::{Window, ModelContext, AppContext, 
-    div, px, relative, rems, AbsoluteLength, DefiniteLength, Div, Element, ElementId,
-    InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString, Styled, 
-    
+pub use gpui::{
+    div, px, relative, rems, AbsoluteLength, AppContext, DefiniteLength, Div, Element, ElementId,
+    InteractiveElement, ModelContext, ParentElement, Pixels, Rems, RenderOnce, SharedString,
+    Styled, Window,
 };
 
 pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle, StyledTypography, TextSize};

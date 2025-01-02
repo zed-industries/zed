@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
-use gpui::{Window, ModelContext, impl_actions, };
+use gpui::{impl_actions, ModelContext, Window};
 use language::{Bias, Point};
 use serde::Deserialize;
 
@@ -39,7 +39,13 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
 }
 
 impl Vim {
-    fn increment(&mut self, mut delta: i64, step: i32, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn increment(
+        &mut self,
+        mut delta: i64,
+        step: i32,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let mut edits = Vec::new();

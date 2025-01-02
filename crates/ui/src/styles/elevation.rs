@@ -1,6 +1,6 @@
 use std::fmt::{self, Display, Formatter};
 
-use gpui::{Window, AppContext, hsla, point, px, BoxShadow, Hsla, };
+use gpui::{hsla, point, px, AppContext, BoxShadow, Hsla, Window};
 use smallvec::{smallvec, SmallVec};
 use theme::ActiveTheme;
 

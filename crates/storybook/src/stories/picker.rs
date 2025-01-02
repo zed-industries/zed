@@ -1,5 +1,7 @@
 use fuzzy::StringMatchCandidate;
-use gpui::{Window, AppContext, Model, div, prelude::*, KeyBinding, Render, SharedString, Styled, Task,  };
+use gpui::{
+    div, prelude::*, AppContext, KeyBinding, Model, Render, SharedString, Styled, Task, Window,
+};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{prelude::*, ListItemSpacing};
@@ -45,7 +47,8 @@ impl PickerDelegate for Delegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidate_ix = self.matches.get(ix)?;
         // TASK: Make StringMatchCandidate::string a SharedString
@@ -64,12 +67,22 @@ impl PickerDelegate for Delegate {
         self.selected_ix
     }
 
-    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_ix = ix;
         cx.notify();
     }
 
-    fn confirm(&mut self, secondary: bool, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        secondary: bool,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) {
         let candidate_ix = self.matches[self.selected_ix];
         let candidate = self.candidates[candidate_ix].string.clone();
 
@@ -84,7 +97,12 @@ impl PickerDelegate for Delegate {
         cx.quit();
     }
 
-    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let candidates = self.candidates.clone();
         self.matches = cx
             .background_executor()

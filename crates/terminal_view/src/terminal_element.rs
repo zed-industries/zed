@@ -1,11 +1,11 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
-use gpui::{Window, AppContext, 
-    div, fill, point, px, relative, size, AnyElement, AvailableSpace, Bounds, ContentMask,
-    DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
-    HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
-    Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle,  WeakView, WhiteSpace,  WindowTextSystem,
+use gpui::{
+    div, fill, point, px, relative, size, AnyElement, AppContext, AvailableSpace, Bounds,
+    ContentMask, DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight,
+    GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
+    Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun,
+    TextStyle, UTF16Selection, UnderlineStyle, WeakView, WhiteSpace, Window, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -88,7 +88,8 @@ impl LayoutCell {
         origin: Point<Pixels>,
         dimensions: &TerminalSize,
         _visible_bounds: Bounds<Pixels>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         let pos = {
             let point = self.point;
@@ -99,7 +100,9 @@ impl LayoutCell {
             )
         };
 
-        self.text.paint(pos, dimensions.line_height, window, cx).ok();
+        self.text
+            .paint(pos, dimensions.line_height, window, cx)
+            .ok();
     }
 }
 
@@ -127,7 +130,13 @@ impl LayoutRect {
         }
     }
 
-    pub fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalSize, window: &mut Window, cx: &mut AppContext) {
+    pub fn paint(
+        &self,
+        origin: Point<Pixels>,
+        dimensions: &TerminalSize,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
         let position = {
             let alac_point = self.point;
             point(
@@ -202,7 +211,8 @@ impl TerminalElement {
         // terminal_theme: &TerminalStyle,
         text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let theme = cx.theme();
         let mut cells = vec![];
@@ -428,7 +438,8 @@ impl TerminalElement {
         origin: Point<Pixels>,
         mode: TermMode,
         hitbox: &Hitbox,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();

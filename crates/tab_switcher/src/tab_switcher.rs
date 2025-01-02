@@ -3,10 +3,11 @@ mod tab_switcher_tests;
 
 use collections::HashMap;
 use editor::items::entry_git_aware_label_color;
-use gpui::{Window, ModelContext, 
+use gpui::{
     actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Model, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseUpEvent, ParentElement, Render, Styled, Task,   VisualContext, WeakView,
+    EventEmitter, FocusHandle, FocusableView, Model, ModelContext, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Render, Styled, Task,
+    VisualContext, WeakView, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -59,7 +60,12 @@ impl TabSwitcher {
         });
     }
 
-    fn open(action: &Toggle, workspace: &mut Workspace, window: &mut Window, cx: &mut ModelContext<Workspace>) {
+    fn open(
+        action: &Toggle,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
+    ) {
         let mut weak_pane = workspace.active_pane().downgrade();
         for dock in [
             workspace.left_dock(),
@@ -81,15 +87,27 @@ impl TabSwitcher {
 
         let project = workspace.project().clone();
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate =
-                TabSwitcherDelegate::new(project, action, cx.view().downgrade(), weak_pane, window, cx);
+            let delegate = TabSwitcherDelegate::new(
+                project,
+                action,
+                cx.view().downgrade(),
+                weak_pane,
+                window,
+                cx,
+            );
             TabSwitcher::new(delegate, window, cx)
         });
     }
 
-    fn new(delegate: TabSwitcherDelegate, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    fn new(
+        delegate: TabSwitcherDelegate,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         Self {
-            picker: window.new_view(cx, |cx| Picker::nonsearchable_uniform_list(delegate, window, cx)),
+            picker: window.new_view(cx, |cx| {
+                Picker::nonsearchable_uniform_list(delegate, window, cx)
+            }),
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
         }
     }
@@ -97,7 +115,8 @@ impl TabSwitcher {
     fn handle_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let Some(init_modifiers) = self.init_modifiers else {
             return;
@@ -112,7 +131,12 @@ impl TabSwitcher {
         }
     }
 
-    fn handle_close_selected_item(&mut self, _: &CloseSelectedItem, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_close_selected_item(
+        &mut self,
+        _: &CloseSelectedItem,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.picker.update(cx, |picker, cx| {
             picker
                 .delegate
@@ -162,7 +186,8 @@ impl TabSwitcherDelegate {
         action: &Toggle,
         tab_switcher: WeakView<TabSwitcher>,
         pane: WeakView<Pane>,
-        window: &mut Window, cx: &mut ModelContext<TabSwitcher>,
+        window: &mut Window,
+        cx: &mut ModelContext<TabSwitcher>,
     ) -> Self {
         Self::subscribe_to_updates(&pane, window, cx);
         Self {
@@ -175,7 +200,11 @@ impl TabSwitcherDelegate {
         }
     }
 
-    fn subscribe_to_updates(pane: &WeakView<Pane>, window: &mut Window, cx: &mut ModelContext<TabSwitcher>) {
+    fn subscribe_to_updates(
+        pane: &WeakView<Pane>,
+        window: &mut Window,
+        cx: &mut ModelContext<TabSwitcher>,
+    ) {
         let Some(pane) = pane.upgrade() else {
             return;
         };
@@ -253,7 +282,8 @@ impl TabSwitcherDelegate {
     fn select_item(
         &mut self,
         item_id: EntityId,
-        window: &mut Window, cx: &mut ModelContext<Picker<TabSwitcherDelegate>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<TabSwitcherDelegate>>,
     ) {
         let selected_idx = self
             .matches
@@ -263,7 +293,12 @@ impl TabSwitcherDelegate {
         self.set_selected_index(selected_idx, window, cx);
     }
 
-    fn close_item_at(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<TabSwitcherDelegate>>) {
+    fn close_item_at(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<TabSwitcherDelegate>>,
+    ) {
         let Some(tab_match) = self.matches.get(ix) else {
             return;
         };
@@ -296,7 +331,12 @@ impl PickerDelegate for TabSwitcherDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix;
         cx.notify();
     }
@@ -308,13 +348,19 @@ impl PickerDelegate for TabSwitcherDelegate {
     fn update_matches(
         &mut self,
         _raw_query: String,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<()> {
         self.update_matches(window, cx);
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<TabSwitcherDelegate>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<TabSwitcherDelegate>>,
+    ) {
         let Some(pane) = self.pane.upgrade() else {
             return;
         };
@@ -326,7 +372,11 @@ impl PickerDelegate for TabSwitcherDelegate {
         });
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<TabSwitcherDelegate>>) {
+    fn dismissed(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<TabSwitcherDelegate>>,
+    ) {
         self.tab_switcher
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -336,7 +386,8 @@ impl PickerDelegate for TabSwitcherDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let tab_match = self
             .matches

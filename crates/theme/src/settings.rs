@@ -2,9 +2,9 @@ use crate::fallback_themes::zed_default_dark;
 use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
-use gpui::{Window, ModelContext, 
-    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Subscription,  
+use gpui::{
+    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, ModelContext,
+    Pixels, Subscription, Window,
 };
 use refineable::Refineable;
 use schemars::{
@@ -491,7 +491,8 @@ impl ThemeSettings {
 
 /// Observe changes to the adjusted buffer font size.
 pub fn observe_buffer_font_size_adjustment<V: 'static>(
-    window: &mut Window, cx: &mut ModelContext<V>,
+    window: &mut Window,
+    cx: &mut ModelContext<V>,
     f: impl 'static + Fn(&mut V, &mut Window, &mut ModelContext<V>),
 ) -> Subscription {
     cx.observe_global_in::<AdjustedBufferFontSize>(window, f)

@@ -56,12 +56,17 @@ impl ThemePreview {
     pub fn view(
         &self,
         page: ThemePreviewPage,
-        window: &mut Window, cx: &mut ModelContext<ThemePreview>,
+        window: &mut Window,
+        cx: &mut ModelContext<ThemePreview>,
     ) -> impl IntoElement {
         match page {
             ThemePreviewPage::Overview => self.render_overview_page(window, cx).into_any_element(),
-            ThemePreviewPage::Typography => self.render_typography_page(window, cx).into_any_element(),
-            ThemePreviewPage::Components => self.render_components_page(window, cx).into_any_element(),
+            ThemePreviewPage::Typography => {
+                self.render_typography_page(window, cx).into_any_element()
+            }
+            ThemePreviewPage::Components => {
+                self.render_components_page(window, cx).into_any_element()
+            }
         }
     }
 }
@@ -92,7 +97,8 @@ impl Item for ThemePreview {
     fn clone_on_split(
         &self,
         _workspace_id: Option<crate::WorkspaceId>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<gpui::View<Self>>
     where
         Self: Sized,
@@ -108,7 +114,12 @@ impl ThemePreview {
         cx.theme().colors().editor_background
     }
 
-    fn render_text(&self, layer: ElevationIndex, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_text(
+        &self,
+        layer: ElevationIndex,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let bg = layer.bg(window, cx);
 
         let label_with_contrast = |label: &str, fg: Hsla| {
@@ -269,7 +280,12 @@ impl ThemePreview {
             )
     }
 
-    fn render_colors(&self, layer: ElevationIndex, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_colors(
+        &self,
+        layer: ElevationIndex,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let bg = layer.bg(window, cx);
         let all_colors = all_theme_colors(window, cx);
 
@@ -301,7 +317,13 @@ impl ThemePreview {
                                 .style(ButtonStyle::Transparent)
                                 .tooltip(move |window, cx| {
                                     let name = name.clone();
-                                    Tooltip::with_meta(name, None, format!("{:?}", color), window, cx)
+                                    Tooltip::with_meta(
+                                        name,
+                                        None,
+                                        format!("{:?}", color),
+                                        window,
+                                        cx,
+                                    )
                                 }),
                         )
                     })),
@@ -311,7 +333,8 @@ impl ThemePreview {
     fn render_theme_layer(
         &self,
         layer: ElevationIndex,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> impl IntoElement {
         v_flex()
             .p_4()
@@ -323,7 +346,11 @@ impl ThemePreview {
             .child(self.render_colors(layer, window, cx))
     }
 
-    fn render_overview_page(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_overview_page(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         v_flex()
             .id("theme-preview-overview")
             .overflow_scroll()
@@ -339,7 +366,11 @@ impl ThemePreview {
             .child(self.render_theme_layer(ElevationIndex::ElevatedSurface, window, cx))
     }
 
-    fn render_typography_page(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_typography_page(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         v_flex()
             .id("theme-preview-typography")
             .overflow_scroll()
@@ -383,7 +414,11 @@ impl ThemePreview {
             .child(Table::render_component_previews(window, cx))
     }
 
-    fn render_page_nav(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_page_nav(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         h_flex()
             .id("theme-preview-nav")
             .items_center()

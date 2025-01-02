@@ -1,7 +1,7 @@
 use std::{iter::Peekable, str::Chars, time::Duration};
 
 use editor::Editor;
-use gpui::{Window, ModelContext, actions, impl_actions, };
+use gpui::{actions, impl_actions, ModelContext, Window};
 use language::Point;
 use search::{buffer_search, BufferSearchBar, SearchOptions};
 use serde_derive::Deserialize;
@@ -83,31 +83,53 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
 }
 
 impl Vim {
-    fn move_to_next(&mut self, action: &MoveToNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn move_to_next(
+        &mut self,
+        action: &MoveToNext,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.move_to_internal(
             Direction::Next,
             action.case_sensitive,
             !action.partial_word,
             action.regex,
-            window, cx,
+            window,
+            cx,
         )
     }
 
-    fn move_to_prev(&mut self, action: &MoveToPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn move_to_prev(
+        &mut self,
+        action: &MoveToPrev,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.move_to_internal(
             Direction::Prev,
             action.case_sensitive,
             !action.partial_word,
             action.regex,
-            window, cx,
+            window,
+            cx,
         )
     }
 
-    fn move_to_next_match(&mut self, _: &MoveToNextMatch, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn move_to_next_match(
+        &mut self,
+        _: &MoveToNextMatch,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.move_to_match_internal(self.search.direction, window, cx)
     }
 
-    fn move_to_prev_match(&mut self, _: &MoveToPrevMatch, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn move_to_prev_match(
+        &mut self,
+        _: &MoveToPrevMatch,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.move_to_match_internal(self.search.direction.opposite(), window, cx)
     }
 
@@ -159,14 +181,21 @@ impl Vim {
     }
 
     // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
-    fn search_deploy(&mut self, _: &buffer_search::Deploy, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn search_deploy(
+        &mut self,
+        _: &buffer_search::Deploy,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.search = Default::default();
         cx.propagate();
     }
 
     pub fn search_submit(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.store_visual_marks(window, cx);
-        let Some(pane) = self.pane(window, cx) else { return };
+        let Some(pane) = self.pane(window, cx) else {
+            return;
+        };
         let result = pane.update(cx, |pane, cx| {
             let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
             search_bar.update(cx, |search_bar, cx| {
@@ -202,7 +231,8 @@ impl Vim {
         // If the active editor has changed during a search, don't panic.
         if prior_selections.iter().any(|s| {
             self.update_editor(window, cx, |_, editor, window, cx| {
-                !s.start.is_valid(&editor.snapshot(window, cx).buffer_snapshot)
+                !s.start
+                    .is_valid(&editor.snapshot(window, cx).buffer_snapshot)
             })
             .unwrap_or(true)
         }) {
@@ -220,12 +250,20 @@ impl Vim {
                 prior_selections,
                 new_selections,
             },
-            window, cx,
+            window,
+            cx,
         );
     }
 
-    pub fn move_to_match_internal(&mut self, direction: Direction, window: &mut Window, cx: &mut ModelContext<Self>) {
-        let Some(pane) = self.pane(window, cx) else { return };
+    pub fn move_to_match_internal(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(pane) = self.pane(window, cx) else {
+            return;
+        };
         let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(window, cx);
 
@@ -251,7 +289,8 @@ impl Vim {
                 prior_selections,
                 new_selections,
             },
-            window, cx,
+            window,
+            cx,
         );
     }
 
@@ -261,9 +300,12 @@ impl Vim {
         case_sensitive: bool,
         whole_word: bool,
         regex: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
-        let Some(pane) = self.pane(window, cx) else { return };
+        let Some(pane) = self.pane(window, cx) else {
+            return;
+        };
         let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(window, cx);
         let vim = cx.view().clone();
@@ -310,7 +352,8 @@ impl Vim {
                                 prior_selections,
                                 new_selections,
                             },
-                            window, cx,
+                            window,
+                            cx,
                         )
                     });
                 })?;
@@ -328,8 +371,15 @@ impl Vim {
         }
     }
 
-    fn find_command(&mut self, action: &FindCommand, window: &mut Window, cx: &mut ModelContext<Self>) {
-        let Some(pane) = self.pane(window, cx) else { return };
+    fn find_command(
+        &mut self,
+        action: &FindCommand,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(pane) = self.pane(window, cx) else {
+            return;
+        };
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 let search = search_bar.update(cx, |search_bar, cx| {
@@ -370,10 +420,17 @@ impl Vim {
         })
     }
 
-    fn replace_command(&mut self, action: &ReplaceCommand, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn replace_command(
+        &mut self,
+        action: &ReplaceCommand,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let replacement = action.replacement.clone();
-        let Some(((pane, workspace), editor)) =
-            self.pane(window, cx).zip(self.workspace(window, cx)).zip(self.editor())
+        let Some(((pane, workspace), editor)) = self
+            .pane(window, cx)
+            .zip(self.workspace(window, cx))
+            .zip(self.editor())
         else {
             return;
         };
@@ -431,7 +488,9 @@ impl Vim {
                                 .timer(Duration::from_millis(200))
                                 .await;
                             editor
-                                .update(&mut cx, |editor, cx| editor.clear_search_within_ranges(window, cx))
+                                .update(&mut cx, |editor, cx| {
+                                    editor.clear_search_within_ranges(window, cx)
+                                })
                                 .ok();
                         })
                         .detach();
@@ -441,7 +500,8 @@ impl Vim {
                                     display_lines: false,
                                 },
                                 None,
-                                window, cx,
+                                window,
+                                cx,
                             )
                         });
                     }
@@ -681,7 +741,9 @@ mod test {
         cx.simulate_keystrokes("/ d");
         cx.simulate_keystrokes("enter");
         cx.assert_state("aa\nbb\nˇdd\ncc\nbb\n", Mode::Normal);
-        cx.update_editor(|editor, window, cx| editor.move_to_beginning(&Default::default(), window, cx));
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_beginning(&Default::default(), window, cx)
+        });
         cx.assert_state("ˇaa\nbb\ndd\ncc\nbb\n", Mode::Normal);
         cx.simulate_keystrokes("/ b");
         cx.simulate_keystrokes("enter");

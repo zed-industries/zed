@@ -24,7 +24,8 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         mode: CaseTarget,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.stop_recording(window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -40,8 +41,12 @@ impl Vim {
                     });
                 });
                 match mode {
-                    CaseTarget::Lowercase => editor.convert_to_lower_case(&Default::default(), window, cx),
-                    CaseTarget::Uppercase => editor.convert_to_upper_case(&Default::default(), window, cx),
+                    CaseTarget::Lowercase => {
+                        editor.convert_to_lower_case(&Default::default(), window, cx)
+                    }
+                    CaseTarget::Uppercase => {
+                        editor.convert_to_upper_case(&Default::default(), window, cx)
+                    }
                     CaseTarget::OppositeCase => {
                         editor.convert_to_opposite_case(&Default::default(), window, cx)
                     }
@@ -62,7 +67,8 @@ impl Vim {
         object: Object,
         around: bool,
         mode: CaseTarget,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.stop_recording(window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -78,8 +84,12 @@ impl Vim {
                     });
                 });
                 match mode {
-                    CaseTarget::Lowercase => editor.convert_to_lower_case(&Default::default(), window, cx),
-                    CaseTarget::Uppercase => editor.convert_to_upper_case(&Default::default(), window, cx),
+                    CaseTarget::Lowercase => {
+                        editor.convert_to_lower_case(&Default::default(), window, cx)
+                    }
+                    CaseTarget::Uppercase => {
+                        editor.convert_to_upper_case(&Default::default(), window, cx)
+                    }
                     CaseTarget::OppositeCase => {
                         editor.convert_to_opposite_case(&Default::default(), window, cx)
                     }
@@ -94,7 +104,12 @@ impl Vim {
         });
     }
 
-    pub fn change_case(&mut self, _: &ChangeCase, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn change_case(
+        &mut self,
+        _: &ChangeCase,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.manipulate_text(window, cx, |c| {
             if c.is_lowercase() {
                 c.to_uppercase().collect::<Vec<char>>()
@@ -104,11 +119,21 @@ impl Vim {
         })
     }
 
-    pub fn convert_to_upper_case(&mut self, _: &ConvertToUpperCase, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn convert_to_upper_case(
+        &mut self,
+        _: &ConvertToUpperCase,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.manipulate_text(window, cx, |c| c.to_uppercase().collect::<Vec<char>>())
     }
 
-    pub fn convert_to_lower_case(&mut self, _: &ConvertToLowerCase, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn convert_to_lower_case(
+        &mut self,
+        _: &ConvertToLowerCase,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.manipulate_text(window, cx, |c| c.to_lowercase().collect::<Vec<char>>())
     }
 

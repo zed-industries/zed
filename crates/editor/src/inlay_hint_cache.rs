@@ -19,7 +19,7 @@ use crate::{
 use anyhow::Context;
 use clock::Global;
 use futures::future;
-use gpui::{Window, AsyncWindowContext, Model, ModelContext, Task, };
+use gpui::{AsyncWindowContext, Model, ModelContext, Task, Window};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -286,7 +286,8 @@ impl InlayHintCache {
         multi_buffer: &Model<MultiBuffer>,
         new_hint_settings: InlayHintSettings,
         visible_hints: Vec<Inlay>,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> ControlFlow<Option<InlaySplice>> {
         self.invalidate_debounce = debounce_value(new_hint_settings.edit_debounce_ms);
         self.append_debounce = debounce_value(new_hint_settings.scroll_debounce_ms);
@@ -304,7 +305,8 @@ impl InlayHintCache {
                         multi_buffer,
                         &visible_hints,
                         &new_allowed_hint_kinds,
-                        window, cx,
+                        window,
+                        cx,
                     );
                     if new_splice.is_some() {
                         self.version += 1;
@@ -344,7 +346,8 @@ impl InlayHintCache {
         excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
         invalidate: InvalidationStrategy,
         ignore_debounce: bool,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> Option<InlaySplice> {
         if !self.enabled {
             return None;
@@ -386,7 +389,8 @@ impl InlayHintCache {
                         excerpts_to_query,
                         invalidate,
                         cache_version,
-                        window, cx,
+                        window,
+                        cx,
                     )
                 })
                 .ok();
@@ -407,7 +411,8 @@ impl InlayHintCache {
         multi_buffer: &Model<MultiBuffer>,
         visible_hints: &[Inlay],
         new_kinds: &HashSet<Option<InlayHintKind>>,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> Option<InlaySplice> {
         let old_kinds = &self.allowed_hint_kinds;
         if new_kinds == old_kinds {
@@ -579,7 +584,8 @@ impl InlayHintCache {
         buffer_id: BufferId,
         excerpt_id: ExcerptId,
         id: InlayId,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) {
         if let Some(excerpt_hints) = self.hints.get(&excerpt_id) {
             let mut guard = excerpt_hints.write();
@@ -640,7 +646,8 @@ fn spawn_new_update_tasks(
     excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
     invalidate: InvalidationStrategy,
     update_cache_version: usize,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) {
     for (excerpt_id, (excerpt_buffer, new_task_buffer_version, excerpt_visible_range)) in
         excerpts_to_query
@@ -797,7 +804,8 @@ fn new_update_task(
     query: ExcerptQuery,
     query_ranges: QueryRanges,
     excerpt_buffer: Model<Buffer>,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) -> Task<()> {
     cx.spawn_in(window, move |editor, mut cx| async move {
         let visible_range_update_results = future::join_all(
@@ -812,7 +820,8 @@ fn new_update_task(
                                 query,
                                 visible_range.clone(),
                                 query.invalidate.should_invalidate(),
-                                window, cx,
+                                window,
+                                cx,
                             )
                         })
                         .log_err()?;
@@ -825,22 +834,24 @@ fn new_update_task(
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
         ));
 
-        let query_range_failed =
-            |range: &Range<language::Anchor>, e: anyhow::Error, window: &mut Window, cx: &mut AppContext| {
-                log::error!("inlay hint update task for range failed: {e:#?}");
-                editor
-                    .update(cx, |editor, cx| {
-                        if let Some(task_ranges) = editor
-                            .inlay_hint_cache
-                            .update_tasks
-                            .get_mut(&query.excerpt_id)
-                        {
-                            let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
-                            task_ranges.invalidate_range(&buffer_snapshot, range);
-                        }
-                    })
-                    .ok()
-            };
+        let query_range_failed = |range: &Range<language::Anchor>,
+                                  e: anyhow::Error,
+                                  window: &mut Window,
+                                  cx: &mut AppContext| {
+            log::error!("inlay hint update task for range failed: {e:#?}");
+            editor
+                .update(cx, |editor, cx| {
+                    if let Some(task_ranges) = editor
+                        .inlay_hint_cache
+                        .update_tasks
+                        .get_mut(&query.excerpt_id)
+                    {
+                        let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
+                        task_ranges.invalidate_range(&buffer_snapshot, range);
+                    }
+                })
+                .ok()
+        };
 
         for (range, result) in visible_range_update_results {
             if let Err(e) = result {
@@ -862,7 +873,8 @@ fn new_update_task(
                                 query,
                                 invisible_range.clone(),
                                 false, // visible screen request already invalidated the entries
-                                window, cx,
+                                window,
+                                cx,
                             )
                         })
                         .log_err()?;
@@ -883,7 +895,8 @@ fn fetch_and_update_hints(
     query: ExcerptQuery,
     fetch_range: Range<language::Anchor>,
     invalidate: bool,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) -> Task<anyhow::Result<()>> {
     cx.spawn_in(window, |editor, mut cx| async move {
         let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
@@ -1129,7 +1142,8 @@ fn apply_hint_update(
     invalidate: bool,
     buffer_snapshot: BufferSnapshot,
     multi_buffer_snapshot: MultiBufferSnapshot,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) {
     let cached_excerpt_hints = editor
         .inlay_hint_cache
@@ -2658,8 +2672,9 @@ pub mod tests {
         });
 
         cx.executor().run_until_parked();
-        let editor = cx
-            .add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx));
+        let editor = cx.add_window(|cx| {
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
+        });
 
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
@@ -2964,8 +2979,9 @@ pub mod tests {
         assert!(!buffer_2_excerpts.is_empty());
 
         cx.executor().run_until_parked();
-        let editor = cx
-            .add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx));
+        let editor = cx.add_window(|cx| {
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
+        });
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);
@@ -3434,7 +3450,11 @@ pub mod tests {
         labels
     }
 
-    pub fn visible_hint_labels(editor: &Editor, window: &mut Window, cx: &mut ModelContext<Editor>) -> Vec<String> {
+    pub fn visible_hint_labels(
+        editor: &Editor,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
+    ) -> Vec<String> {
         let mut hints = editor
             .visible_inlay_hints(window, cx)
             .into_iter()

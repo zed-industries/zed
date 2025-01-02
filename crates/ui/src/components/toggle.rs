@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{Window, AppContext, div, prelude::*, ElementId, IntoElement, Styled, };
+use gpui::{div, prelude::*, AppContext, ElementId, IntoElement, Styled, Window};
 use std::sync::Arc;
 
 use crate::prelude::*;

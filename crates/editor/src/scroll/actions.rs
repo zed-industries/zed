@@ -4,10 +4,15 @@ use crate::{
     ScrollAnchor, ScrollCursorBottom, ScrollCursorCenter, ScrollCursorCenterTopBottom,
     ScrollCursorTop, SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT,
 };
-use gpui::{Window, ModelContext, AsyncWindowContext, Point, };
+use gpui::{AsyncWindowContext, ModelContext, Point, Window};
 
 impl Editor {
-    pub fn next_screen(&mut self, _: &NextScreen, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    pub fn next_screen(
+        &mut self,
+        _: &NextScreen,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
+    ) {
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
@@ -27,7 +32,8 @@ impl Editor {
         &mut self,
         scroll_position: Point<f32>,
         axis: Option<Axis>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.scroll_manager.update_ongoing_scroll(axis);
         self.set_scroll_position(scroll_position, window, cx);
@@ -36,7 +42,8 @@ impl Editor {
     pub fn scroll_cursor_center_top_bottom(
         &mut self,
         _: &ScrollCursorCenterTopBottom,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.snapshot(window, cx).display_snapshot;
         let visible_rows = if let Some(visible_rows) = self.visible_line_count() {
@@ -70,12 +77,14 @@ impl Editor {
                     .anchor_before(new_screen_top.to_offset(&snapshot, Bias::Left)),
                 offset: Default::default(),
             },
-            window, cx,
+            window,
+            cx,
         );
 
         self.next_scroll_position = self.next_scroll_position.next();
-        self._scroll_cursor_center_top_bottom_task =
-            cx.spawn_in(window, |editor, window: &mut Window, cx: &mut AppContext| async move {
+        self._scroll_cursor_center_top_bottom_task = cx.spawn_in(
+            window,
+            |editor, window: &mut Window, cx: &mut AppContext| async move {
                 cx.background_executor()
                     .timer(SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT)
                     .await;
@@ -84,10 +93,16 @@ impl Editor {
                         editor.next_scroll_position = NextScrollCursorCenterTopBottom::default();
                     })
                     .ok();
-            });
+            },
+        );
     }
 
-    pub fn scroll_cursor_top(&mut self, _: &ScrollCursorTop, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    pub fn scroll_cursor_top(
+        &mut self,
+        _: &ScrollCursorTop,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
+    ) {
         let snapshot = self.snapshot(window, cx).display_snapshot;
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
 
@@ -102,11 +117,17 @@ impl Editor {
                 anchor: new_anchor,
                 offset: Default::default(),
             },
-            window, cx,
+            window,
+            cx,
         )
     }
 
-    pub fn scroll_cursor_center(&mut self, _: &ScrollCursorCenter, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    pub fn scroll_cursor_center(
+        &mut self,
+        _: &ScrollCursorCenter,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
+    ) {
         let snapshot = self.snapshot(window, cx).display_snapshot;
         let visible_rows = if let Some(visible_rows) = self.visible_line_count() {
             visible_rows as u32
@@ -125,11 +146,17 @@ impl Editor {
                 anchor: new_anchor,
                 offset: Default::default(),
             },
-            window, cx,
+            window,
+            cx,
         )
     }
 
-    pub fn scroll_cursor_bottom(&mut self, _: &ScrollCursorBottom, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    pub fn scroll_cursor_bottom(
+        &mut self,
+        _: &ScrollCursorBottom,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
+    ) {
         let snapshot = self.snapshot(window, cx).display_snapshot;
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
         let visible_rows = if let Some(visible_rows) = self.visible_line_count() {
@@ -152,7 +179,8 @@ impl Editor {
                 anchor: new_anchor,
                 offset: Default::default(),
             },
-            window, cx,
+            window,
+            cx,
         )
     }
 }

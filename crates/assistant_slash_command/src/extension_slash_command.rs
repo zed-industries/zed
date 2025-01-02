@@ -4,7 +4,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use anyhow::Result;
 use async_trait::async_trait;
 use extension::{Extension, ExtensionHostProxy, ExtensionSlashCommandProxy, WorktreeDelegate};
-use gpui::{Window, AppContext, Task, WeakView, };
+use gpui::{AppContext, Task, WeakView, Window};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use workspace::Workspace;
@@ -98,7 +98,8 @@ impl SlashCommand for ExtensionSlashCommand {
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let command = self.command.clone();
         let arguments = arguments.to_owned();
@@ -129,7 +130,8 @@ impl SlashCommand for ExtensionSlashCommand {
         _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let command = self.command.clone();
         let arguments = arguments.to_owned();

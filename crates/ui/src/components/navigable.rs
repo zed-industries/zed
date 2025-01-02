@@ -51,7 +51,8 @@ impl Navigable {
 
     fn find_focused(
         selectable_children: &[NavigableEntry],
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Option<usize> {
         selectable_children
             .iter()

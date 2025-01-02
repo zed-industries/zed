@@ -1,5 +1,6 @@
-use gpui::{Window, ModelContext, 
-    div, prelude::*, px, size, App, AppContext, Bounds,  WindowBounds, WindowOptions,
+use gpui::{
+    div, prelude::*, px, size, App, AppContext, Bounds, ModelContext, Window, WindowBounds,
+    WindowOptions,
 };
 
 struct HelloWorld {}

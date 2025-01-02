@@ -5,10 +5,10 @@ use crate::{
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     Hover, RangeToAnchorExt,
 };
-use gpui::{Window, ModelContext, Model, 
+use gpui::{
     div, px, AnyElement, AsyncWindowContext, FontWeight, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, ScrollHandle, Size, Stateful, StatefulInteractiveElement,
-    StyleRefinement, Styled, Task, TextStyleRefinement,  
+    Model, ModelContext, MouseButton, ParentElement, Pixels, ScrollHandle, Size, Stateful,
+    StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement, Window,
 };
 use itertools::Itertools;
 use language::{Diagnostic, DiagnosticEntry, Language, LanguageRegistry};
@@ -37,7 +37,12 @@ pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut Model
 
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
 /// depending on whether a point to hover over is provided.
-pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, window: &mut Window, cx: &mut ModelContext<Editor>) {
+pub fn hover_at(
+    editor: &mut Editor,
+    anchor: Option<Anchor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
+) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if show_keyboard_hover(editor, window, cx) {
             return;
@@ -50,7 +55,11 @@ pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, window: &mut Window
     }
 }
 
-pub fn show_keyboard_hover(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>) -> bool {
+pub fn show_keyboard_hover(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
+) -> bool {
     let info_popovers = editor.hover_state.info_popovers.clone();
     for p in info_popovers {
         let keyboard_grace = p.keyboard_grace.borrow();
@@ -103,7 +112,12 @@ pub fn find_hovered_hint_part(
     None
 }
 
-pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, window: &mut Window, cx: &mut ModelContext<Editor>) {
+pub fn hover_at_inlay(
+    editor: &mut Editor,
+    inlay_hover: InlayHover,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
+) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if editor.pending_rename.is_some() {
             return;
@@ -197,7 +211,8 @@ fn show_hover(
     editor: &mut Editor,
     anchor: Anchor,
     ignore_timeout: bool,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) -> Option<()> {
     if editor.pending_rename.is_some() {
         return None;
@@ -257,7 +272,8 @@ fn show_hover(
                 total_delay
             };
 
-            let hover_request = cx.update(|window, cx| provider.hover(&buffer, buffer_position, cx))?;
+            let hover_request =
+                cx.update(|window, cx| provider.hover(&buffer, buffer_position, cx))?;
 
             if let Some(delay) = delay {
                 delay.await;
@@ -467,7 +483,8 @@ fn show_hover(
                     editor.highlight_background::<HoverState>(
                         &hover_highlights,
                         |theme| theme.element_hover, // todo update theme
-                        window, cx,
+                        window,
+                        cx,
                     );
                 }
 
@@ -526,7 +543,8 @@ async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> Option<Model<Markdown>> {
     let fallback_language_name = if let Some(ref l) = language {
         let l = Arc::clone(l);
@@ -565,7 +583,9 @@ async fn parse_blocks(
 
             let markdown_style = MarkdownStyle {
                 base_text_style,
-                code_block: StyleRefinement::default().my(rems(1.)).font_buffer(window, cx),
+                code_block: StyleRefinement::default()
+                    .my(rems(1.))
+                    .font_buffer(window, cx),
                 inline_code: TextStyleRefinement {
                     background_color: Some(cx.theme().colors().background),
                     font_family: Some(buffer_font_family),
@@ -602,7 +622,8 @@ async fn parse_blocks(
                 markdown_style.clone(),
                 Some(language_registry.clone()),
                 fallback_language_name,
-                window, cx,
+                window,
+                cx,
             )
         })
         .ok();
@@ -628,7 +649,8 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
@@ -705,7 +727,8 @@ impl InfoPopover {
     pub(crate) fn render(
         &mut self,
         max_size: Size<Pixels>,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut d = div()
@@ -737,7 +760,12 @@ impl InfoPopover {
         d.into_any_element()
     }
 
-    pub fn scroll(&self, amount: &ScrollAmount, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    pub fn scroll(
+        &self,
+        amount: &ScrollAmount,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
+    ) {
         let mut current = self.scroll_handle.offset();
         current.y -= amount.pixels(
             window.line_height(),
@@ -746,7 +774,11 @@ impl InfoPopover {
         cx.notify();
         self.scroll_handle.set_offset(current);
     }
-    fn render_vertical_scrollbar(&self, window: &mut Window, cx: &mut ModelContext<Editor>) -> Stateful<Div> {
+    fn render_vertical_scrollbar(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
+    ) -> Stateful<Div> {
         div()
             .occlude()
             .id("info-popover-vertical-scroll")
@@ -792,7 +824,12 @@ pub struct DiagnosticPopover {
 }
 
 impl DiagnosticPopover {
-    pub fn render(&self, max_size: Size<Pixels>, window: &mut Window, cx: &mut ModelContext<Editor>) -> AnyElement {
+    pub fn render(
+        &self,
+        max_size: Size<Pixels>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
+    ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut markdown_div = div().py_1().px_2();
         if let Some(markdown) = &self.parsed_content {
@@ -1615,7 +1652,8 @@ mod tests {
                 editor,
                 true,
                 false,
-                window, cx,
+                window,
+                cx,
             );
         });
 
@@ -1685,7 +1723,8 @@ mod tests {
                 editor,
                 true,
                 false,
-                window, cx,
+                window,
+                cx,
             );
         });
         cx.background_executor
@@ -1739,7 +1778,8 @@ mod tests {
                 editor,
                 true,
                 false,
-                window, cx,
+                window,
+                cx,
             );
         });
         cx.background_executor

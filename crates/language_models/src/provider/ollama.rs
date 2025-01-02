@@ -213,7 +213,9 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 
     fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
         let state = self.state.clone();
-        window.new_view(cx, |window, cx| ConfigurationView::new(state, window, cx)).into()
+        window
+            .new_view(cx, |window, cx| ConfigurationView::new(state, window, cx))
+            .into()
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -412,7 +414,11 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Model<State>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        state: gpui::Model<State>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let loading_models_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             |this, mut cx| async move {
@@ -498,7 +504,9 @@ impl Render for ConfigurationView {
                                                 .icon(IconName::ExternalLink)
                                                 .icon_size(IconSize::XSmall)
                                                 .icon_color(Color::Muted)
-                                                .on_click(move |_, window, cx| cx.open_url(OLLAMA_SITE))
+                                                .on_click(move |_, window, cx| {
+                                                    cx.open_url(OLLAMA_SITE)
+                                                })
                                                 .into_any_element(),
                                         )
                                     } else {
@@ -511,7 +519,9 @@ impl Render for ConfigurationView {
                                             .icon(IconName::ExternalLink)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
-                                            .on_click(move |_, window, cx| cx.open_url(OLLAMA_DOWNLOAD_URL))
+                                            .on_click(move |_, window, cx| {
+                                                cx.open_url(OLLAMA_DOWNLOAD_URL)
+                                            })
                                             .into_any_element(),
                                         )
                                     }
@@ -522,7 +532,9 @@ impl Render for ConfigurationView {
                                         .icon(IconName::ExternalLink)
                                         .icon_size(IconSize::XSmall)
                                         .icon_color(Color::Muted)
-                                        .on_click(move |_, window, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
+                                        .on_click(move |_, window, cx| {
+                                            cx.open_url(OLLAMA_LIBRARY_URL)
+                                        }),
                                 ),
                         )
                         .child(if is_authenticated {
@@ -544,7 +556,9 @@ impl Render for ConfigurationView {
                             Button::new("retry_ollama_models", "Connect")
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::ArrowCircle)
-                                .on_click(cx.listener(move |this, _, window, cx| this.retry_connection(window, cx)))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.retry_connection(window, cx)
+                                }))
                                 .into_any_element()
                         }),
                 )

@@ -1,5 +1,5 @@
 use client::telemetry;
-use gpui::{Window, AppContext, Task, };
+use gpui::{AppContext, Task, Window};
 use human_bytes::human_bytes;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use serde::Serialize;

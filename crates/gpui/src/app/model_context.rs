@@ -304,7 +304,6 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         &mut self,
         emitter: &Model<Emitter>,
         window: &Window,
-        cx: &mut AppContext,
         mut on_event: impl FnMut(&mut T, &Model<Emitter>, &Evt, &mut Window, &mut ModelContext<'_, T>)
             + 'static,
     ) -> Subscription
@@ -315,7 +314,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         let emitter = emitter.downgrade();
         let window_handle = window.handle;
         let subscriber = self.weak_model();
-        cx.new_subscription(
+        self.new_subscription(
             emitter.entity_id(),
             (
                 TypeId::of::<Evt>(),

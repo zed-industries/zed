@@ -19,7 +19,10 @@ impl ContextPill {
         }
     }
 
-    pub fn on_remove(mut self, on_remove: Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>) -> Self {
+    pub fn on_remove(
+        mut self,
+        on_remove: Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>,
+    ) -> Self {
         self.on_remove = Some(on_remove);
         self
     }

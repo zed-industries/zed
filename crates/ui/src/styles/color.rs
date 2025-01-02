@@ -1,4 +1,4 @@
-use gpui::{Window, AppContext, Hsla, };
+use gpui::{AppContext, Hsla, Window};
 use theme::ActiveTheme;
 
 /// Sets a color that has a consistent meaning across all themes.

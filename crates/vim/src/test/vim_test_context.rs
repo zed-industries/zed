@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Model, Context, SemanticVersion, UpdateGlobal,  VisualContext};
+use gpui::{Context, Model, SemanticVersion, UpdateGlobal, VisualContext};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
 
 use crate::{state::Operator, *};
@@ -119,7 +119,9 @@ impl VimTestContext {
     }
 
     pub fn mode(&mut self) -> Mode {
-        self.update_editor(|editor, window, cx| editor.addon::<VimAddon>().unwrap().view.read(cx).mode)
+        self.update_editor(|editor, window, cx| {
+            editor.addon::<VimAddon>().unwrap().view.read(cx).mode
+        })
     }
 
     pub fn active_operator(&mut self) -> Option<Operator> {
@@ -137,7 +139,8 @@ impl VimTestContext {
 
     pub fn set_state(&mut self, text: &str, mode: Mode) {
         self.cx.set_state(text);
-        let vim = self.update_editor(|editor, _window, _cx| editor.addon::<VimAddon>().cloned().unwrap());
+        let vim =
+            self.update_editor(|editor, _window, _cx| editor.addon::<VimAddon>().cloned().unwrap());
 
         self.update(|cx| {
             vim.view.update(cx, |vim, cx| {

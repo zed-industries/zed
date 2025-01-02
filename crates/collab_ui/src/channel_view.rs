@@ -10,10 +10,9 @@ use editor::{
     display_map::ToDisplayPoint, scroll::Autoscroll, CollaborationHub, DisplayPoint, Editor,
     EditorEvent,
 };
-use gpui::{Window, ModelContext, 
+use gpui::{
     actions, AnyView, AppContext, ClipboardItem, Entity as _, EventEmitter, FocusableView, Model,
-    Pixels, Point, Render, Subscription, Task,   VisualContext as _, WeakView,
-    
+    ModelContext, Pixels, Point, Render, Subscription, Task, VisualContext as _, WeakView, Window,
 };
 use project::Project;
 use rpc::proto::ChannelVisibility;
@@ -53,7 +52,8 @@ impl ChannelView {
         channel_id: ChannelId,
         link_position: Option<String>,
         workspace: Model<Workspace>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         let pane = workspace.read(cx).active_pane().clone();
         let channel_view = Self::open_in_pane(
@@ -61,7 +61,8 @@ impl ChannelView {
             link_position,
             pane.clone(),
             workspace.clone(),
-            window, cx,
+            window,
+            cx,
         );
         window.spawn(cx, |mut cx| async move {
             let channel_view = channel_view.await?;
@@ -85,7 +86,8 @@ impl ChannelView {
         link_position: Option<String>,
         pane: Model<Pane>,
         workspace: Model<Workspace>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         let channel_view = Self::load(channel_id, workspace, window, cx);
         window.spawn(cx, |mut cx| async move {
@@ -104,7 +106,12 @@ impl ChannelView {
                     {
                         if let Some(link_position) = link_position {
                             existing_view.update(cx, |channel_view, cx| {
-                                channel_view.focus_position_from_link(link_position, true, window, cx)
+                                channel_view.focus_position_from_link(
+                                    link_position,
+                                    true,
+                                    window,
+                                    cx,
+                                )
                             });
                         }
                         return existing_view;
@@ -115,9 +122,21 @@ impl ChannelView {
                 // replace that.
                 if let Some(existing_item) = existing_view {
                     if let Some(ix) = pane.index_for_item(&existing_item) {
-                        pane.close_item_by_id(existing_item.entity_id(), SaveIntent::Skip, window, cx)
-                            .detach();
-                        pane.add_item(Box::new(channel_view.clone()), true, true, Some(ix), window, cx);
+                        pane.close_item_by_id(
+                            existing_item.entity_id(),
+                            SaveIntent::Skip,
+                            window,
+                            cx,
+                        )
+                        .detach();
+                        pane.add_item(
+                            Box::new(channel_view.clone()),
+                            true,
+                            true,
+                            Some(ix),
+                            window,
+                            cx,
+                        );
                     }
                 }
 
@@ -135,7 +154,8 @@ impl ChannelView {
     pub fn load(
         channel_id: ChannelId,
         workspace: Model<Workspace>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         let weak_workspace = workspace.downgrade();
         let workspace = workspace.read(cx);
@@ -161,8 +181,14 @@ impl ChannelView {
             })?;
 
             cx.new_view(|cx| {
-                let mut this =
-                    Self::new(project, weak_workspace, channel_store, channel_buffer, window, cx);
+                let mut this = Self::new(
+                    project,
+                    weak_workspace,
+                    channel_store,
+                    channel_buffer,
+                    window,
+                    cx,
+                );
                 this.acknowledge_buffer_version(window, cx);
                 this
             })
@@ -174,7 +200,8 @@ impl ChannelView {
         workspace: WeakView<Workspace>,
         channel_store: Model<ChannelStore>,
         channel_buffer: Model<ChannelBuffer>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
         let this = cx.view().downgrade();
@@ -187,15 +214,19 @@ impl ChannelView {
                 let this = this.clone();
                 Some(ui::ContextMenu::build(window, cx, move |menu, _, _| {
                     menu.entry("Copy link to section", None, move |window, cx| {
-                        this.update(cx, |this, cx| this.copy_link_for_position(position, window, cx))
-                            .ok();
+                        this.update(cx, |this, cx| {
+                            this.copy_link_for_position(position, window, cx)
+                        })
+                        .ok();
                     })
                 }))
             });
             editor
         });
         let _editor_event_subscription =
-            cx.subscribe_in(&editor, window, |_, _, e: &EditorEvent, window, cx| cx.emit(e.clone()));
+            cx.subscribe_in(&editor, window, |_, _, e: &EditorEvent, window, cx| {
+                cx.emit(e.clone())
+            });
 
         cx.subscribe_in(&channel_buffer, window, Self::handle_channel_buffer_event)
             .detach();
@@ -216,10 +247,13 @@ impl ChannelView {
         &mut self,
         position: String,
         first_attempt: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let position = Channel::slug(&position).to_lowercase();
-        let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+        let snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
 
         if let Some(outline) = snapshot.buffer_snapshot.outline(None) {
             if let Some(item) = outline
@@ -241,7 +275,8 @@ impl ChannelView {
         }
         self._reparse_subscription = Some(cx.subscribe_in(
             &self.editor,
-            window, move |this, _, e: &EditorEvent, window, cx| {
+            window,
+            move |this, _, e: &EditorEvent, window, cx| {
                 match e {
                     EditorEvent::Reparsed(_) => {
                         this.focus_position_from_link(position.clone(), false, window, cx);
@@ -263,8 +298,15 @@ impl ChannelView {
         self.copy_link_for_position(position, window, cx)
     }
 
-    fn copy_link_for_position(&self, position: DisplayPoint, window: &mut Window, cx: &mut ModelContext<Self>) {
-        let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+    fn copy_link_for_position(
+        &self,
+        position: DisplayPoint,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
 
         let mut closest_heading = None;
 
@@ -292,7 +334,8 @@ impl ChannelView {
                         NotificationId::unique::<CopyLinkForPositionToast>(),
                         "Link copied to clipboard",
                     ),
-                    window, cx,
+                    window,
+                    cx,
                 );
             })
             .ok();
@@ -306,7 +349,8 @@ impl ChannelView {
         &mut self,
         _: Model<ChannelBuffer>,
         event: &ChannelBufferEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             ChannelBufferEvent::Disconnected => self.editor.update(cx, |editor, cx| {
@@ -338,7 +382,11 @@ impl ChannelView {
         }
     }
 
-    fn acknowledge_buffer_version(&mut self, window: &mut Window, cx: &mut ModelContext<ChannelView>) {
+    fn acknowledge_buffer_version(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<ChannelView>,
+    ) {
         self.channel_store.update(cx, |store, cx| {
             let channel_buffer = self.channel_buffer.read(cx);
             store.acknowledge_notes_version(
@@ -399,7 +447,12 @@ impl Item for ChannelView {
         Some(Icon::new(icon))
     }
 
-    fn tab_content(&self, params: TabContentParams, window: &mut Window, cx: &mut AppContext) -> gpui::AnyElement {
+    fn tab_content(
+        &self,
+        params: TabContentParams,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> gpui::AnyElement {
         let (channel_name, status) = if let Some(channel) = self.channel(cx) {
             let status = match (
                 self.channel_buffer.read(cx).buffer().read(cx).read_only(),
@@ -439,7 +492,8 @@ impl Item for ChannelView {
     fn clone_on_split(
         &self,
         _: Option<WorkspaceId>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
         Some(window.new_view(cx, |cx| {
             Self::new(
@@ -447,7 +501,8 @@ impl Item for ChannelView {
                 self.workspace.clone(),
                 self.channel_store.clone(),
                 self.channel_buffer.clone(),
-                window, cx,
+                window,
+                cx,
             )
         }))
     }
@@ -456,7 +511,12 @@ impl Item for ChannelView {
         false
     }
 
-    fn navigate(&mut self, data: Box<dyn Any>, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn navigate(
+        &mut self,
+        data: Box<dyn Any>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
@@ -465,9 +525,15 @@ impl Item for ChannelView {
         self.editor.update(window, cx, Item::deactivated)
     }
 
-    fn set_nav_history(&mut self, history: ItemNavHistory, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| Item::set_nav_history(editor, history, window, cx))
+    fn set_nav_history(
+        &mut self,
+        history: ItemNavHistory,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            Item::set_nav_history(editor, history, window, cx)
+        })
     }
 
     fn as_searchable(&self, _: &Model<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -492,7 +558,11 @@ impl FollowableItem for ChannelView {
         self.remote_id
     }
 
-    fn to_state_proto(&self, window: &mut Window, cx: &mut AppContext) -> Option<proto::view::Variant> {
+    fn to_state_proto(
+        &self,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<proto::view::Variant> {
         let channel_buffer = self.channel_buffer.read(cx);
         if !channel_buffer.is_connected() {
             return None;
@@ -516,7 +586,8 @@ impl FollowableItem for ChannelView {
         workspace: Model<workspace::Workspace>,
         remote_id: workspace::ViewId,
         state: &mut Option<proto::view::Variant>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Option<gpui::Task<anyhow::Result<Model<Self>>>> {
         let Some(proto::view::Variant::ChannelView(_)) = state else {
             return None;
@@ -545,7 +616,8 @@ impl FollowableItem for ChannelView {
                                 scroll_y: state.scroll_y,
                                 ..Default::default()
                             }),
-                            window, cx,
+                            window,
+                            cx,
                         )
                     }))
                 } else {
@@ -565,7 +637,8 @@ impl FollowableItem for ChannelView {
         &self,
         event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> bool {
         self.editor
             .read(cx)
@@ -576,14 +649,20 @@ impl FollowableItem for ChannelView {
         &mut self,
         project: &Model<Project>,
         message: proto::update_view::Variant,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> gpui::Task<anyhow::Result<()>> {
         self.editor.update(cx, |editor, cx| {
             editor.apply_update_proto(project, message, window, cx)
         })
     }
 
-    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_leader_peer_id(
+        &mut self,
+        leader_peer_id: Option<PeerId>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.editor.update(cx, |editor, cx| {
             editor.set_leader_peer_id(leader_peer_id, window, cx)
         })

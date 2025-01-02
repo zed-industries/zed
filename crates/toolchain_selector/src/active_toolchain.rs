@@ -1,7 +1,7 @@
 use editor::Editor;
-use gpui::{Window, ModelContext, Model, 
-    div, AsyncWindowContext, IntoElement, ParentElement, Render, Subscription, Task, 
-     WeakModel, WeakView,
+use gpui::{
+    div, AsyncWindowContext, IntoElement, Model, ModelContext, ParentElement, Render, Subscription,
+    Task, WeakModel, WeakView, Window,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
 use project::{Project, WorktreeId};
@@ -72,15 +72,24 @@ impl ActiveToolchain {
         })
     }
 
-    fn update_lister(&mut self, editor: Model<Editor>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_lister(
+        &mut self,
+        editor: Model<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
             if let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx)) {
-                let subscription = cx.subscribe_in(&buffer, window, |this, _, event: &BufferEvent, window, cx| {
-                    if matches!(event, BufferEvent::LanguageChanged) {
-                        this._update_toolchain_task = Self::spawn_tracker_task(window, cx);
-                    }
-                });
+                let subscription = cx.subscribe_in(
+                    &buffer,
+                    window,
+                    |this, _, event: &BufferEvent, window, cx| {
+                        if matches!(event, BufferEvent::LanguageChanged) {
+                            this._update_toolchain_task = Self::spawn_tracker_task(window, cx);
+                        }
+                    },
+                );
                 self.active_buffer = Some((worktree_id, buffer.downgrade(), subscription));
                 self._update_toolchain_task = Self::spawn_tracker_task(window, cx);
             }
@@ -93,7 +102,8 @@ impl ActiveToolchain {
         workspace: WeakView<Workspace>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Option<Toolchain>> {
         cx.spawn(move |mut cx| async move {
             let workspace_id = workspace
@@ -156,7 +166,9 @@ impl Render for ActiveToolchain {
                             });
                         }
                     }))
-                    .tooltip(move |window, cx| Tooltip::text(format!("Select {}", &term), window, cx)),
+                    .tooltip(move |window, cx| {
+                        Tooltip::text(format!("Select {}", &term), window, cx)
+                    }),
             )
         })
     }
@@ -166,7 +178,8 @@ impl StatusItemView for ActiveToolchain {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self.active_toolchain.take();

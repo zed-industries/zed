@@ -1,5 +1,5 @@
 use crate::ProjectDiagnosticsEditor;
-use gpui::{Window, ModelContext, Model, EventEmitter, ParentElement, Render,   WeakView};
+use gpui::{EventEmitter, Model, ModelContext, ParentElement, Render, WeakView, Window};
 use ui::prelude::*;
 use ui::{IconButton, IconButtonShape, IconName, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
@@ -79,7 +79,8 @@ impl ToolbarItemView for ToolbarControls {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        _window: &mut Window, _: &mut ModelContext<Self>,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
     ) -> ToolbarItemLocation {
         if let Some(pane_item) = active_pane_item.as_ref() {
             if let Some(editor) = pane_item.downcast::<ProjectDiagnosticsEditor>() {

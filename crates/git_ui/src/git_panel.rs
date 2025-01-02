@@ -10,7 +10,7 @@ use gpui::{
     actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
     CursorStyle, EventEmitter, FocusHandle, FocusableView, KeyContext,
     ListHorizontalSizingBehavior, ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent,
-    MouseButton, ScrollStrategy, Stateful, Task, UniformListScrollHandle,  WeakView,
+    MouseButton, ScrollStrategy, Stateful, Task, UniformListScrollHandle, WeakView,
 };
 use language::{Buffer, BufferRow, OffsetRangeExt};
 use menu::{SelectNext, SelectPrev};
@@ -147,12 +147,17 @@ impl WorktreeEntries {
 impl GitPanel {
     pub fn load(
         workspace: WeakView<Workspace>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         cx.spawn(|mut cx| async move { workspace.update(&mut cx, Self::new) })
     }
 
-    pub fn new(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelContext<Workspace>) -> Model<Self> {
+    pub fn new(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
+    ) -> Model<Self> {
         let fs = workspace.app_state().fs.clone();
         let weak_workspace = workspace.weak_handle();
         let project = workspace.project().clone();
@@ -281,7 +286,8 @@ impl GitPanel {
     fn handle_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.current_modifiers = event.modifiers;
         cx.notify();
@@ -409,13 +415,23 @@ impl GitPanel {
     }
 
     /// Commit all staged changes
-    fn commit_staged_changes(&mut self, _: &CommitStagedChanges, _window: &mut Window, _cx: &mut ModelContext<Self>) {
+    fn commit_staged_changes(
+        &mut self,
+        _: &CommitStagedChanges,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
+    ) {
         // TODO: Implement commit all staged
         println!("Commit staged changes triggered");
     }
 
     /// Commit all changes, regardless of whether they are staged or not
-    fn commit_all_changes(&mut self, _: &CommitAllChanges, _window: &mut Window, _cx: &mut ModelContext<Self>) {
+    fn commit_all_changes(
+        &mut self,
+        _: &CommitAllChanges,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
+    ) {
         // TODO: Implement commit all changes
         println!("Commit all changes triggered");
     }
@@ -445,7 +461,8 @@ impl GitPanel {
     fn for_each_visible_entry(
         &self,
         range: Range<usize>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
         mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut Window, &mut ModelContext<Self>),
     ) {
         let mut ix = 0;
@@ -528,7 +545,8 @@ impl GitPanel {
         &mut self,
         for_worktree: Option<WorktreeId>,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let project = self.project.read(cx);
         let mut old_entries_removed = false;
@@ -778,14 +796,22 @@ impl GitPanel {
             .style(ButtonStyle::Filled)
     }
 
-    pub fn render_divider(&self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    pub fn render_divider(
+        &self,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         h_flex()
             .items_center()
             .h(px(8.))
             .child(Divider::horizontal_dashed().color(DividerColor::Border))
     }
 
-    pub fn render_panel_header(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    pub fn render_panel_header(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
 
         let changes_string = format!("{} changes", self.entry_count());
@@ -799,7 +825,12 @@ impl GitPanel {
                 h_flex()
                     .gap_2()
                     .child(Checkbox::new("all-changes", true.into()).disabled(true))
-                    .child(div().text_buffer(window, cx).text_ui_sm(window, cx).child(changes_string)),
+                    .child(
+                        div()
+                            .text_buffer(window, cx)
+                            .text_ui_sm(window, cx)
+                            .child(changes_string),
+                    ),
             )
             .child(div().flex_grow())
             .child(
@@ -814,25 +845,32 @@ impl GitPanel {
                                     "Discard all changes",
                                     &DiscardAll,
                                     &focus_handle,
-                                    window, cx,
+                                    window,
+                                    cx,
                                 )
                             })
                             .icon_size(IconSize::Small)
                             .disabled(true),
                     )
                     .child(if self.all_staged() {
-                        self.panel_button("unstage-all", "Unstage All").on_click(
-                            cx.listener(move |_, _, window, cx| window.dispatch_action(Box::new(DiscardAll), cx)),
-                        )
+                        self.panel_button("unstage-all", "Unstage All")
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                window.dispatch_action(Box::new(DiscardAll), cx)
+                            }))
                     } else {
-                        self.panel_button("stage-all", "Stage All").on_click(
-                            cx.listener(move |_, _, window, cx| window.dispatch_action(Box::new(StageAll), cx)),
-                        )
+                        self.panel_button("stage-all", "Stage All")
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                window.dispatch_action(Box::new(StageAll), cx)
+                            }))
                     }),
             )
     }
 
-    pub fn render_commit_editor(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    pub fn render_commit_editor(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();
 
@@ -844,7 +882,8 @@ impl GitPanel {
                     "Commit all staged changes",
                     &CommitStagedChanges,
                     &focus_handle,
-                    window, cx,
+                    window,
+                    cx,
                 )
             })
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -859,7 +898,8 @@ impl GitPanel {
                     "Commit all changes, including unstaged changes",
                     &CommitAllChanges,
                     &focus_handle,
-                    window, cx,
+                    window,
+                    cx,
                 )
             })
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -890,7 +930,11 @@ impl GitPanel {
         )
     }
 
-    fn render_empty_state(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_empty_state(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         h_flex()
             .h_full()
             .flex_1()
@@ -906,7 +950,11 @@ impl GitPanel {
             )
     }
 
-    fn render_scrollbar(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<Stateful<Div>> {
+    fn render_scrollbar(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
         {
@@ -970,14 +1018,20 @@ impl GitPanel {
                 uniform_list(cx.view().clone(), "entries", item_count, {
                     move |git_panel, range, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
-                        git_panel.for_each_visible_entry(range, window, cx, |id, details, window, cx| {
-                            items.push(git_panel.render_entry(
-                                id,
-                                Some(details.index) == selected_entry,
-                                details,
-                                window, cx,
-                            ));
-                        });
+                        git_panel.for_each_visible_entry(
+                            range,
+                            window,
+                            cx,
+                            |id, details, window, cx| {
+                                items.push(git_panel.render_entry(
+                                    id,
+                                    Some(details.index) == selected_entry,
+                                    details,
+                                    window,
+                                    cx,
+                                ));
+                            },
+                        );
                         items
                     }
                 })
@@ -995,7 +1049,8 @@ impl GitPanel {
         id: ProjectEntryId,
         selected: bool,
         details: EntryDetails,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> impl IntoElement {
         let id = id.to_proto() as usize;
         let checkbox_id = ElementId::Name(format!("checkbox_{}", id).into());
@@ -1031,7 +1086,8 @@ impl GitPanel {
                                     details.hunks.clone(),
                                     change_focus,
                                     None,
-                                    window, cx,
+                                    window,
+                                    cx,
                                 );
                             })
                             .ok();
@@ -1044,7 +1100,8 @@ impl GitPanel {
         hunks: Rc<OnceCell<Vec<DiffHunk>>>,
         change_focus: bool,
         debounce: Option<Duration>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let workspace = self.workspace.clone();
         let Some(diff_editor) = self.git_diff_editor.clone() else {
@@ -1062,7 +1119,13 @@ impl GitPanel {
                         .find(|editor| &diff_editor == editor);
                     match git_diff_editor {
                         Some(existing_editor) => {
-                            workspace.activate_item(&existing_editor, true, change_focus, window, cx);
+                            workspace.activate_item(
+                                &existing_editor,
+                                true,
+                                change_focus,
+                                window,
+                                cx,
+                            );
                             existing_editor
                         }
                         None => {
@@ -1072,7 +1135,8 @@ impl GitPanel {
                                     true,
                                     change_focus,
                                     None,
-                                    window, cx,
+                                    window,
+                                    cx,
                                 )
                             });
                             diff_editor.clone()
@@ -1114,7 +1178,8 @@ impl GitPanel {
                                 .anchor_in_excerpt(excerpt_id, hunk_buffer_range.start)?;
                             editor.change_selections(
                                 Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
-                                window, cx,
+                                window,
+                                cx,
                                 |s| {
                                     s.select_ranges(Some(
                                         multi_buffer_hunk_start..multi_buffer_hunk_start,
@@ -1142,19 +1207,23 @@ impl Render for GitPanel {
             .track_focus(&self.focus_handle)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .when(!project.is_read_only(cx), |this| {
-                this.on_action(cx.listener(|this, &StageAll, window, cx| this.stage_all(&StageAll, window, cx)))
-                    .on_action(
-                        cx.listener(|this, &UnstageAll, window, cx| this.unstage_all(&UnstageAll, window, cx)),
-                    )
-                    .on_action(
-                        cx.listener(|this, &DiscardAll, window, cx| this.discard_all(&DiscardAll, window, cx)),
-                    )
-                    .on_action(cx.listener(|this, &CommitStagedChanges, window, cx| {
-                        this.commit_staged_changes(&CommitStagedChanges, window, cx)
-                    }))
-                    .on_action(cx.listener(|this, &CommitAllChanges, window, cx| {
-                        this.commit_all_changes(&CommitAllChanges, window, cx)
-                    }))
+                this.on_action(
+                    cx.listener(|this, &StageAll, window, cx| {
+                        this.stage_all(&StageAll, window, cx)
+                    }),
+                )
+                .on_action(cx.listener(|this, &UnstageAll, window, cx| {
+                    this.unstage_all(&UnstageAll, window, cx)
+                }))
+                .on_action(cx.listener(|this, &DiscardAll, window, cx| {
+                    this.discard_all(&DiscardAll, window, cx)
+                }))
+                .on_action(cx.listener(|this, &CommitStagedChanges, window, cx| {
+                    this.commit_staged_changes(&CommitStagedChanges, window, cx)
+                }))
+                .on_action(cx.listener(|this, &CommitAllChanges, window, cx| {
+                    this.commit_all_changes(&CommitAllChanges, window, cx)
+                }))
             })
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_prev))
@@ -1207,7 +1276,12 @@ impl Panel for GitPanel {
         matches!(position, DockPosition::Left | DockPosition::Right)
     }
 
-    fn set_position(&mut self, position: DockPosition, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_position(
+        &mut self,
+        position: DockPosition,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         settings::update_settings_file::<GitPanelSettings>(
             self.fs.clone(),
             cx,

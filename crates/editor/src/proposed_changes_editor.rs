@@ -1,7 +1,7 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
-use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription, Task, };
+use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use project::{buffer_store::BufferChangeSet, Project};
@@ -54,13 +54,15 @@ impl ProposedChangesEditor {
         title: impl Into<SharedString>,
         locations: Vec<ProposedChangeLocation<T>>,
         project: Option<Model<Project>>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
             editor: window.new_view(cx, |cx| {
-                let mut editor = Editor::for_multibuffer(multibuffer.clone(), project, true, window, cx);
+                let mut editor =
+                    Editor::for_multibuffer(multibuffer.clone(), project, true, window, cx);
                 editor.set_expand_all_diff_hunks();
                 editor.set_completion_provider(None);
                 editor.clear_code_action_providers();
@@ -145,7 +147,12 @@ impl ProposedChangesEditor {
         })
     }
 
-    pub fn set_title(&mut self, title: SharedString, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_title(
+        &mut self,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.title = title;
         cx.notify();
     }
@@ -153,7 +160,8 @@ impl ProposedChangesEditor {
     pub fn reset_locations<T: ToOffset>(
         &mut self,
         locations: Vec<ProposedChangeLocation<T>>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         // Undo all branch changes
         for entry in &self.buffer_entries {
@@ -244,7 +252,8 @@ impl ProposedChangesEditor {
         &mut self,
         buffer: Model<Buffer>,
         event: &BufferEvent,
-        _window: &mut Window, _cx: &mut ModelContext<Self>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
     ) {
         match event {
             BufferEvent::Operation { .. } => {
@@ -315,7 +324,12 @@ impl Item for ProposedChangesEditor {
         }
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.editor.update(cx, |editor, cx| {
             Item::added_to_workspace(editor, workspace, window, cx)
         });
@@ -325,7 +339,12 @@ impl Item for ProposedChangesEditor {
         self.editor.update(window, cx, Item::deactivated);
     }
 
-    fn navigate(&mut self, data: Box<dyn std::any::Any>, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn navigate(
+        &mut self,
+        data: Box<dyn std::any::Any>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         self.editor
             .update(cx, |editor, cx| Item::navigate(editor, data, window, cx))
     }
@@ -333,7 +352,8 @@ impl Item for ProposedChangesEditor {
     fn set_nav_history(
         &mut self,
         nav_history: workspace::ItemNavHistory,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
             Item::set_nav_history(editor, nav_history, window, cx)
@@ -348,10 +368,12 @@ impl Item for ProposedChangesEditor {
         &mut self,
         format: bool,
         project: Model<Project>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Task<gpui::Result<()>> {
-        self.editor
-            .update(cx, |editor, cx| Item::save(editor, format, project, window, cx))
+        self.editor.update(cx, |editor, cx| {
+            Item::save(editor, format, project, window, cx)
+        })
     }
 }
 
@@ -378,8 +400,9 @@ impl Render for ProposedChangesEditorToolbar {
         match &self.current_editor {
             Some(editor) => {
                 let focus_handle = editor.focus_handle(cx);
-                let keybinding = KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window, cx)
-                    .map(|binding| binding.into_any_element());
+                let keybinding =
+                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window, cx)
+                        .map(|binding| binding.into_any_element());
 
                 button_like.children(keybinding).on_click({
                     move |_event, cx| focus_handle.dispatch_action(&ApplyAllDiffHunks, window)
@@ -396,7 +419,8 @@ impl ToolbarItemView for ProposedChangesEditorToolbar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,
-        _window: &mut Window, _cx: &mut ModelContext<Self>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
     ) -> workspace::ToolbarItemLocation {
         self.current_editor =
             active_pane_item.and_then(|item| item.downcast::<ProposedChangesEditor>());

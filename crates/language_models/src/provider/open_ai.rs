@@ -2,9 +2,9 @@ use anyhow::{anyhow, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui::{Model, 
-    AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
-     WhiteSpace,
+use gpui::{
+    AnyView, AppContext, AsyncAppContext, FontStyle, Model, ModelContext, Subscription, Task,
+    TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -203,7 +203,10 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
-        window.new_view(cx, |window, cx| ConfigurationView::new(self.state.clone(), window, cx))
+        window
+            .new_view(cx, |window, cx| {
+                ConfigurationView::new(self.state.clone(), window, cx)
+            })
             .into()
     }
 
@@ -383,7 +386,11 @@ impl ConfigurationView {
     fn new(state: gpui::Model<State>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let api_key_editor = window.new_view(cx, |cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", window, cx);
+            editor.set_placeholder_text(
+                "sk-000000000000000000000000000000000000000000000000",
+                window,
+                cx,
+            );
             editor
         });
 
@@ -418,7 +425,12 @@ impl ConfigurationView {
         }
     }
 
-    fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn save_api_key(
+        &mut self,
+        _: &menu::Confirm,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let api_key = self.api_key_editor.read(cx).text(cx);
         if api_key.is_empty() {
             return;
@@ -450,7 +462,11 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_api_key_editor(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_api_key_editor(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: cx.theme().colors().text,

@@ -46,7 +46,9 @@ impl ComponentStory {
     pub fn story(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
         match self {
             Self::ApplicationMenu => window
-                .new_view(cx, |window, cx| title_bar::ApplicationMenuStory::new(window, cx))
+                .new_view(cx, |window, cx| {
+                    title_bar::ApplicationMenuStory::new(window, cx)
+                })
                 .into(),
             Self::AutoHeightEditor => AutoHeightEditorStory::new(window, cx).into(),
             Self::Avatar => window.new_view(cx, |_, _| ui::AvatarStory).into(),
@@ -55,7 +57,9 @@ impl ComponentStory {
                 .new_view(cx, |_, _| collab_ui::notifications::CollabNotificationStory)
                 .into(),
             Self::ContextMenu => window.new_view(cx, |_, _| ui::ContextMenuStory).into(),
-            Self::Cursor => window.new_view(cx, |_, _| crate::stories::CursorStory).into(),
+            Self::Cursor => window
+                .new_view(cx, |_, _| crate::stories::CursorStory)
+                .into(),
             Self::DefaultColors => DefaultColorsStory::view(window, cx).into(),
             Self::Disclosure => window.new_view(cx, |_, _| ui::DisclosureStory).into(),
             Self::Focus => FocusStory::view(window, cx).into(),
@@ -66,7 +70,9 @@ impl ComponentStory {
             Self::List => window.new_view(cx, |_, _| ui::ListStory).into(),
             Self::ListHeader => window.new_view(cx, |_, _| ui::ListHeaderStory).into(),
             Self::ListItem => window.new_view(cx, |_, _| ui::ListItemStory).into(),
-            Self::OverflowScroll => window.new_view(cx, |_, _| crate::stories::OverflowScrollStory).into(),
+            Self::OverflowScroll => window
+                .new_view(cx, |_, _| crate::stories::OverflowScrollStory)
+                .into(),
             Self::Picker => PickerStory::new(window, cx).into(),
             Self::Scroll => ScrollStory::view(window, cx).into(),
             Self::Tab => window.new_view(cx, |_, _| ui::TabStory).into(),
@@ -74,8 +80,12 @@ impl ComponentStory {
             Self::Text => TextStory::view(window, cx).into(),
             Self::ToggleButton => window.new_view(cx, |_, _| ui::ToggleButtonStory).into(),
             Self::ToolStrip => window.new_view(cx, |_, _| ui::ToolStripStory).into(),
-            Self::ViewportUnits => window.new_view(cx, |_, _| crate::stories::ViewportUnitsStory).into(),
-            Self::WithRemSize => window.new_view(cx, |_, _| crate::stories::WithRemSizeStory).into(),
+            Self::ViewportUnits => window
+                .new_view(cx, |_, _| crate::stories::ViewportUnitsStory)
+                .into(),
+            Self::WithRemSize => window
+                .new_view(cx, |_, _| crate::stories::WithRemSizeStory)
+                .into(),
             Self::Vector => window.new_view(cx, |_, _| ui::VectorStory).into(),
         }
     }

@@ -1,8 +1,8 @@
 use crate::{InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
-use gpui::{Window, ModelContext, 
+use gpui::{
     actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    HighlightStyle, Model, StyledText, TextStyle,  
+    HighlightStyle, Model, ModelContext, StyledText, TextStyle, Window,
 };
 use language::{language_settings, OffsetRangeExt};
 use settings::Settings;
@@ -49,9 +49,15 @@ struct ActiveCompletion {
 }
 
 impl RateCompletionModal {
-    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelContext<Workspace>) {
+    pub fn toggle(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
+    ) {
         if let Some(zeta) = Zeta::global(cx) {
-            workspace.toggle_modal(window, cx, |window, cx| RateCompletionModal::new(zeta, window, cx));
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RateCompletionModal::new(zeta, window, cx)
+            });
         }
     }
 
@@ -70,7 +76,12 @@ impl RateCompletionModal {
         cx.emit(DismissEvent);
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_next(
+        &mut self,
+        _: &menu::SelectNext,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.selected_index += 1;
         self.selected_index = usize::min(
             self.selected_index,
@@ -79,7 +90,12 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_prev(
+        &mut self,
+        _: &menu::SelectPrev,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.selected_index = self.selected_index.saturating_sub(1);
         cx.notify();
     }
@@ -101,7 +117,12 @@ impl RateCompletionModal {
         }
     }
 
-    fn select_prev_edit(&mut self, _: &PreviousEdit, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_prev_edit(
+        &mut self,
+        _: &PreviousEdit,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let zeta = self.zeta.read(cx);
         let completions_len = zeta.recent_completions_len();
 
@@ -123,12 +144,22 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.selected_index = 0;
         cx.notify();
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_last(
+        &mut self,
+        _: &menu::SelectLast,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.selected_index = self.zeta.read(cx).recent_completions_len() - 1;
         cx.notify();
     }
@@ -154,7 +185,12 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn thumbs_up_active(&mut self, _: &ThumbsUpActiveCompletion, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn thumbs_up_active(
+        &mut self,
+        _: &ThumbsUpActiveCompletion,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.zeta.update(cx, |zeta, cx| {
             if let Some(active) = &self.active_completion {
                 zeta.rate_completion(
@@ -177,7 +213,12 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn thumbs_down_active(&mut self, _: &ThumbsDownActiveCompletion, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn thumbs_down_active(
+        &mut self,
+        _: &ThumbsDownActiveCompletion,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if let Some(active) = &self.active_completion {
             if active.feedback_editor.read(cx).text(cx).is_empty() {
                 return;
@@ -204,12 +245,22 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn focus_completions(&mut self, _: &FocusCompletions, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_completions(
+        &mut self,
+        _: &FocusCompletions,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         cx.focus_self(window);
         cx.notify();
     }
 
-    fn preview_completion(&mut self, _: &PreviewCompletion, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn preview_completion(
+        &mut self,
+        _: &PreviewCompletion,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let completion = self
             .zeta
             .read(cx)
@@ -239,7 +290,8 @@ impl RateCompletionModal {
         &mut self,
         completion: Option<InlineCompletion>,
         focus: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         // Avoid resetting completion rating if it's already selected.
         if let Some(completion) = completion.as_ref() {
@@ -286,7 +338,11 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn render_active_completion(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
+    fn render_active_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<impl IntoElement> {
         let active_completion = self.active_completion.as_ref()?;
         let completion_id = active_completion.completion.id;
 

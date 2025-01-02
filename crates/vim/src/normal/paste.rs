@@ -1,7 +1,7 @@
 use std::cmp;
 
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{Window, ModelContext, impl_actions, };
+use gpui::{impl_actions, ModelContext, Window};
 use language::{Bias, SelectionGoal};
 use serde::Deserialize;
 

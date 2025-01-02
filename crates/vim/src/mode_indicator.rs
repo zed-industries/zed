@@ -1,4 +1,4 @@
-use gpui::{Window, ModelContext, Model, div, Element, Render, Subscription,   WeakView};
+use gpui::{div, Element, Model, ModelContext, Render, Subscription, WeakView, Window};
 use itertools::Itertools;
 use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
@@ -28,13 +28,17 @@ impl ModeIndicator {
             }
             let vim = cx.view().clone();
             handle.update(cx, |_, cx| {
-                cx.subscribe_in(&vim, window, |mode_indicator, vim, event, window, cx| match event {
-                    VimEvent::Focused => {
-                        mode_indicator.vim_subscription =
-                            Some(cx.observe_in(&vim, window, |_, _, window, cx| cx.notify()));
-                        mode_indicator.vim = Some(vim.downgrade());
-                    }
-                })
+                cx.subscribe_in(
+                    &vim,
+                    window,
+                    |mode_indicator, vim, event, window, cx| match event {
+                        VimEvent::Focused => {
+                            mode_indicator.vim_subscription =
+                                Some(cx.observe_in(&vim, window, |_, _, window, cx| cx.notify()));
+                            mode_indicator.vim = Some(vim.downgrade());
+                        }
+                    },
+                )
                 .detach()
             })
         })
@@ -60,7 +64,12 @@ impl ModeIndicator {
         self.vim.as_ref().and_then(|vim| vim.upgrade())
     }
 
-    fn current_operators_description(&self, vim: Model<Vim>, window: &mut Window, cx: &mut ModelContext<Self>) -> String {
+    fn current_operators_description(
+        &self,
+        vim: Model<Vim>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> String {
         let recording = Vim::globals(cx)
             .recording_register
             .map(|reg| format!("recording @{reg} "))
@@ -103,7 +112,8 @@ impl Render for ModeIndicator {
             vim_readable.mode.to_string()
         };
 
-        let current_operators_description = self.current_operators_description(vim.clone(), window, cx);
+        let current_operators_description =
+            self.current_operators_description(vim.clone(), window, cx);
         let pending = self
             .pending_keys
             .as_ref()
@@ -119,7 +129,8 @@ impl StatusItemView for ModeIndicator {
     fn set_active_pane_item(
         &mut self,
         _active_pane_item: Option<&dyn ItemHandle>,
-        _window: &mut Window, _cx: &mut ModelContext<Self>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
     ) {
     }
 }

@@ -4,10 +4,10 @@ mod multibuffer_hint;
 
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{Window, ModelContext, Model, 
+use gpui::{
     actions, svg, Action, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, Styled, Subscription, Task,   VisualContext, WeakView,
-    
+    Model, ModelContext, ParentElement, Render, Styled, Subscription, Task, VisualContext,
+    WeakView, Window,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -36,8 +36,9 @@ pub fn init(cx: &mut AppContext) {
             let welcome_page = WelcomePage::new(workspace, window, cx);
             workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx)
         });
-        workspace
-            .register_action(|_workspace, _: &ResetHints, window, cx| MultibufferHint::set_count(0, cx));
+        workspace.register_action(|_workspace, _: &ResetHints, window, cx| {
+            MultibufferHint::set_count(0, cx)
+        });
     })
     .detach();
 
@@ -48,17 +49,22 @@ pub fn show_welcome_view(
     app_state: Arc<AppState>,
     cx: &mut AppContext,
 ) -> Task<anyhow::Result<()>> {
-    open_new(Default::default(), app_state, cx, |workspace, window, cx| {
-        workspace.toggle_dock(DockPosition::Left, window, cx);
-        let welcome_page = WelcomePage::new(workspace, window, cx);
-        workspace.add_item_to_center(Box::new(welcome_page.clone()), window, cx);
-        window.focus_view(&welcome_page, cx);
-        cx.notify();
+    open_new(
+        Default::default(),
+        app_state,
+        cx,
+        |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+            let welcome_page = WelcomePage::new(workspace, window, cx);
+            workspace.add_item_to_center(Box::new(welcome_page.clone()), window, cx);
+            window.focus_view(&welcome_page, cx);
+            cx.notify();
 
-        db::write_and_log(cx, || {
-            KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
-        });
-    })
+            db::write_and_log(cx, || {
+                KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
+            });
+        },
+    )
 }
 
 pub struct WelcomePage {
@@ -341,7 +347,11 @@ impl Render for WelcomePage {
 }
 
 impl WelcomePage {
-    pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut ModelContext<Workspace>) -> Model<Self> {
+    pub fn new(
+        workspace: &Workspace,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
+    ) -> Model<Self> {
         let this = window.new_view(cx, |cx| {
             cx.subscribe_in(window, |this: &mut Self, _, _, _| {
                 this.telemetry
@@ -371,7 +381,8 @@ impl WelcomePage {
     fn update_settings<T: Settings>(
         &mut self,
         selection: &ToggleState,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
         callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -416,13 +427,15 @@ impl Item for WelcomePage {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
         Some(window.new_view(cx, |cx| WelcomePage {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             telemetry: self.telemetry.clone(),
-            _settings_subscription: cx.observe_global_in::<SettingsStore>(window, move |_, window, cx| cx.notify()),
+            _settings_subscription:
+                cx.observe_global_in::<SettingsStore>(window, move |_, window, cx| cx.notify()),
         }))
     }
 

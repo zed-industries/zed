@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Context as _;
-use gpui::{Window, ModelContext, AppContext, Model, Context,   VisualContext, };
+use gpui::{AppContext, Context, Model, ModelContext, VisualContext, Window};
 use language::Language;
 use multi_buffer::MultiBuffer;
 use project::lsp_ext_command::ExpandMacro;
@@ -21,7 +21,13 @@ fn is_rust_language(language: &Language) -> bool {
 pub fn apply_related_actions(editor: &Model<Editor>, window: &mut Window, cx: &mut AppContext) {
     if editor
         .update(cx, |e, cx| {
-            find_specific_language_server_in_selection(e, window, cx, is_rust_language, RUST_ANALYZER_NAME)
+            find_specific_language_server_in_selection(
+                e,
+                window,
+                cx,
+                is_rust_language,
+                RUST_ANALYZER_NAME,
+            )
         })
         .is_some()
     {
@@ -33,7 +39,8 @@ pub fn apply_related_actions(editor: &Model<Editor>, window: &mut Window, cx: &m
 pub fn expand_macro_recursively(
     editor: &mut Editor,
     _: &ExpandMacroRecursively,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) {
     if editor.selections.count() == 0 {
         return;
@@ -48,7 +55,8 @@ pub fn expand_macro_recursively(
     let Some((trigger_anchor, rust_language, server_to_query, buffer)) =
         find_specific_language_server_in_selection(
             editor,
-            window, cx,
+            window,
+            cx,
             is_rust_language,
             RUST_ANALYZER_NAME,
         )
@@ -86,19 +94,25 @@ pub fn expand_macro_recursively(
                 MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name)
             });
             workspace.add_item_to_active_pane(
-                Box::new(
-                    window.new_view(cx, |cx| Editor::for_multibuffer(multibuffer, Some(project), true, window, cx)),
-                ),
+                Box::new(window.new_view(cx, |cx| {
+                    Editor::for_multibuffer(multibuffer, Some(project), true, window, cx)
+                })),
                 None,
                 true,
-                window, cx,
+                window,
+                cx,
             );
         })
     })
     .detach_and_log_err(cx);
 }
 
-pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mut ModelContext<Editor>) {
+pub fn open_docs(
+    editor: &mut Editor,
+    _: &OpenDocs,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
+) {
     if editor.selections.count() == 0 {
         return;
     }
@@ -112,7 +126,8 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
     let Some((trigger_anchor, _rust_language, server_to_query, buffer)) =
         find_specific_language_server_in_selection(
             editor,
-            window, cx,
+            window,
+            cx,
             is_rust_language,
             RUST_ANALYZER_NAME,
         )

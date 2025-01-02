@@ -1,4 +1,4 @@
-use gpui::{Model, actions, Corner, Render, };
+use gpui::{actions, Corner, Model, Render};
 use story::Story;
 
 use crate::prelude::*;
@@ -6,14 +6,20 @@ use crate::{right_click_menu, ContextMenu, Label};
 
 actions!(context_menu, [PrintCurrentDate, PrintBestFood]);
 
-fn build_menu(window: &mut Window, cx: &mut AppContext, header: impl Into<SharedString>) -> Model<ContextMenu> {
+fn build_menu(
+    window: &mut Window,
+    cx: &mut AppContext,
+    header: impl Into<SharedString>,
+) -> Model<ContextMenu> {
     ContextMenu::build(window, cx, |menu, _, _| {
         menu.header(header)
             .separator()
             .action("Print current time", Box::new(PrintCurrentDate))
-            .entry("Print best food", Some(Box::new(PrintBestFood)), |window, cx| {
-                window.dispatch_action(Box::new(PrintBestFood), cx)
-            })
+            .entry(
+                "Print best food",
+                Some(Box::new(PrintBestFood)),
+                |window, cx| window.dispatch_action(Box::new(PrintBestFood), cx),
+            )
     })
 }
 

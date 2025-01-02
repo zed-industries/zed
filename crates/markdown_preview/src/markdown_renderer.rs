@@ -4,11 +4,11 @@ use crate::markdown_elements::{
     ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
-use gpui::{Window, AppContext, Model, 
-    div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
-    ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length,
-    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, 
-    WeakView, 
+use gpui::{
+    div, img, px, rems, AbsoluteLength, AnyElement, AppContext, ClipboardItem, DefiniteLength, Div,
+    Element, ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
+    Length, Model, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText,
+    TextStyle, WeakView, Window,
 };
 use settings::Settings;
 use std::{
@@ -17,11 +17,11 @@ use std::{
     vec,
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
-use ui::{Window, ModelContext, 
+use ui::{
     h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
     FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
-    LabelSize, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage, ToggleState,
-    Tooltip,  VisibleOnHover, VisualContext as _,
+    LabelSize, LinkPreview, ModelContext, StatefulInteractiveElement, StyledExt, StyledImage,
+    ToggleState, Tooltip, VisibleOnHover, VisualContext as _, Window,
 };
 use workspace::Workspace;
 
@@ -45,7 +45,11 @@ pub struct RenderContext {
 }
 
 impl RenderContext {
-    pub fn new(workspace: Option<WeakView<Workspace>>, window: &mut Window, cx: &mut AppContext) -> RenderContext {
+    pub fn new(
+        workspace: Option<WeakView<Workspace>>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> RenderContext {
         let theme = cx.theme().clone();
 
         let settings = ThemeSettings::get_global(cx);
@@ -109,7 +113,8 @@ impl RenderContext {
 pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
     workspace: Option<WeakView<Workspace>>,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> Vec<AnyElement> {
     let mut cx = RenderContext::new(workspace, window, cx);
     let mut elements = Vec::new();
@@ -471,7 +476,11 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             move |idx, cx| {
                                 for (ix, range) in link_ranges.iter().enumerate() {
                                     if range.contains(&idx) {
-                                        return Some(LinkPreview::new(&links[ix].to_string(), window, cx));
+                                        return Some(LinkPreview::new(
+                                            &links[ix].to_string(),
+                                            window,
+                                            cx,
+                                        ));
                                     }
                                 }
                                 None
@@ -520,7 +529,8 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             InteractiveMarkdownElementTooltip::new(
                                 Some(link.to_string()),
                                 "open image",
-                                window, cx,
+                                window,
+                                cx,
                             )
                             .into()
                         }
@@ -568,7 +578,8 @@ impl InteractiveMarkdownElementTooltip {
     pub fn new(
         tooltip_text: Option<String>,
         action_text: &str,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Model<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 

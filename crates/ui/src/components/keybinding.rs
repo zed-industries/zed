@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{Window, AppContext, relative, Action, FocusHandle, IntoElement, Keystroke, };
+use gpui::{relative, Action, AppContext, FocusHandle, IntoElement, Keystroke, Window};
 
 #[derive(Debug, IntoElement, Clone)]
 pub struct KeyBinding {
@@ -16,7 +16,11 @@ pub struct KeyBinding {
 }
 
 impl KeyBinding {
-    pub fn for_action(action: &dyn Action, window: &mut Window, cx: &mut AppContext) -> Option<Self> {
+    pub fn for_action(
+        action: &dyn Action,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<Self> {
         let key_binding = window.bindings_for_action(action).last().cloned()?;
         Some(Self::new(key_binding))
     }
@@ -26,9 +30,13 @@ impl KeyBinding {
     pub fn for_action_in(
         action: &dyn Action,
         focus: &FocusHandle,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Option<Self> {
-        let key_binding = window.bindings_for_action_in(action, focus).last().cloned()?;
+        let key_binding = window
+            .bindings_for_action_in(action, focus)
+            .last()
+            .cloned()?;
         Some(Self::new(key_binding))
     }
 
@@ -196,7 +204,11 @@ impl KeyIcon {
 }
 
 /// Returns a textual representation of the key binding for the given [`Action`].
-pub fn text_for_action(action: &dyn Action, window: &mut Window, cx: &mut AppContext) -> Option<String> {
+pub fn text_for_action(
+    action: &dyn Action,
+    window: &mut Window,
+    cx: &mut AppContext,
+) -> Option<String> {
     let key_binding = window.bindings_for_action(action).last().cloned()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }
@@ -206,9 +218,13 @@ pub fn text_for_action(action: &dyn Action, window: &mut Window, cx: &mut AppCon
 pub fn text_for_action_in(
     action: &dyn Action,
     focus: &FocusHandle,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> Option<String> {
-    let key_binding = window.bindings_for_action_in(action, focus).last().cloned()?;
+    let key_binding = window
+        .bindings_for_action_in(action, focus)
+        .last()
+        .cloned()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }
 

@@ -2,10 +2,10 @@ use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;
-use gpui::{Window, ModelContext, 
+use gpui::{
     actions, percentage, Animation, AnimationExt as _, AppContext, CursorStyle, EventEmitter,
-    InteractiveElement as _, Model, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement, Styled, Transformation,   VisualContext as _,
+    InteractiveElement as _, Model, ModelContext, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement, Styled, Transformation, VisualContext as _, Window,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId};
 use lsp::LanguageServerName;
@@ -46,14 +46,17 @@ struct PendingWork<'a> {
 struct Content {
     icon: Option<gpui::AnyElement>,
     message: String,
-    on_click: Option<Arc<dyn Fn(&mut ActivityIndicator, &mut Window, &mut ModelContext<ActivityIndicator>)>>,
+    on_click: Option<
+        Arc<dyn Fn(&mut ActivityIndicator, &mut Window, &mut ModelContext<ActivityIndicator>)>,
+    >,
 }
 
 impl ActivityIndicator {
     pub fn new(
         workspace: &mut Workspace,
         languages: Arc<LanguageRegistry>,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) -> Model<ActivityIndicator> {
         let project = workspace.project().clone();
         let auto_updater = AutoUpdater::get(cx);
@@ -70,10 +73,12 @@ impl ActivityIndicator {
                 anyhow::Ok(())
             })
             .detach();
-            cx.observe_in(&project, window, |_, _, window, cx| cx.notify()).detach();
+            cx.observe_in(&project, window, |_, _, window, cx| cx.notify())
+                .detach();
 
             if let Some(auto_updater) = auto_updater.as_ref() {
-                cx.observe_in(auto_updater, window, |_, _, window, cx| cx.notify()).detach();
+                cx.observe_in(auto_updater, window, |_, _, window, cx| cx.notify())
+                    .detach();
             }
 
             Self {
@@ -110,7 +115,8 @@ impl ActivityIndicator {
                             })),
                             None,
                             true,
-                            window, cx,
+                            window,
+                            cx,
                         );
                     })?;
 
@@ -123,7 +129,12 @@ impl ActivityIndicator {
         this
     }
 
-    fn show_error_message(&mut self, _: &ShowErrorMessage, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn show_error_message(
+        &mut self,
+        _: &ShowErrorMessage,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.statuses.retain(|status| {
             if let LanguageServerBinaryStatus::Failed { error } = &status.status {
                 cx.emit(Event::ShowError {
@@ -139,7 +150,12 @@ impl ActivityIndicator {
         cx.notify();
     }
 
-    fn dismiss_error_message(&mut self, _: &DismissErrorMessage, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn dismiss_error_message(
+        &mut self,
+        _: &DismissErrorMessage,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if let Some(updater) = &self.auto_updater {
             updater.update(cx, |updater, cx| {
                 updater.dismiss_error(cx);
@@ -183,7 +199,11 @@ impl ActivityIndicator {
         self.project.read(cx).shell_environment_errors(cx)
     }
 
-    fn content_to_render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<Content> {
+    fn content_to_render(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Content> {
         // Show if any direnv calls failed
         if let Some((&worktree_id, error)) = self.pending_environment_errors(cx).next() {
             return Some(Content {
@@ -442,7 +462,11 @@ impl ActivityIndicator {
         None
     }
 
-    fn toggle_language_server_work_context_menu(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_language_server_work_context_menu(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.context_menu_handle.toggle(window, cx);
     }
 }
@@ -480,7 +504,9 @@ impl Render for ActivityIndicator {
                                             ))
                                             .size(LabelSize::Small),
                                         )
-                                        .tooltip(move |cx| Tooltip::text(&content.message, window, cx))
+                                        .tooltip(move |cx| {
+                                            Tooltip::text(&content.message, window, cx)
+                                        })
                                 } else {
                                     button.child(Label::new(content.message).size(LabelSize::Small))
                                 }
@@ -554,5 +580,11 @@ impl Render for ActivityIndicator {
 }
 
 impl StatusItemView for ActivityIndicator {
-    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _window: &mut Window, _: &mut ModelContext<Self>) {}
+    fn set_active_pane_item(
+        &mut self,
+        _: Option<&dyn ItemHandle>,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
+    ) {
+    }
 }

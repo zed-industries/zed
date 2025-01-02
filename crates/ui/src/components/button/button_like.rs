@@ -146,7 +146,11 @@ pub(crate) struct ButtonLikeStyles {
     pub icon_color: Hsla,
 }
 
-fn element_bg_from_elevation(elevation: Option<ElevationIndex>, window: &mut Window, cx: &mut AppContext) -> Hsla {
+fn element_bg_from_elevation(
+    elevation: Option<ElevationIndex>,
+    window: &mut Window,
+    cx: &mut AppContext,
+) -> Hsla {
     match elevation {
         Some(ElevationIndex::Background) => cx.theme().colors().element_background,
         Some(ElevationIndex::ElevatedSurface) => cx.theme().colors().elevated_surface_background,
@@ -160,7 +164,8 @@ impl ButtonStyle {
     pub(crate) fn enabled(
         self,
         elevation: Option<ElevationIndex>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
@@ -188,7 +193,8 @@ impl ButtonStyle {
     pub(crate) fn hovered(
         self,
         elevation: Option<ElevationIndex>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => {
@@ -280,7 +286,8 @@ impl ButtonStyle {
     pub(crate) fn disabled(
         self,
         elevation: Option<ElevationIndex>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
@@ -415,7 +422,10 @@ impl SelectableButton for ButtonLike {
 }
 
 impl Clickable for ButtonLike {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static) -> Self {
+    fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -453,7 +463,10 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static) -> Self {
+    fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+    ) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }

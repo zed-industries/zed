@@ -2,12 +2,12 @@ pub mod parser;
 
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
-use gpui::{Model, 
+use gpui::{
     actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
-    Hitbox, Hsla, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Point, Render, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, 
+    Hitbox, Hsla, KeyContext, Length, Model, MouseDownEvent, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, Point, Render, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout,
+    TextRun, TextStyle, TextStyleRefinement,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -72,7 +72,8 @@ impl Markdown {
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
@@ -98,7 +99,8 @@ impl Markdown {
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
@@ -286,7 +288,12 @@ impl MarkdownElement {
         }
     }
 
-    fn load_language(&self, name: &str, window: &mut Window, cx: &mut AppContext) -> Option<Arc<Language>> {
+    fn load_language(
+        &self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<Arc<Language>> {
         let language_test = self.language_registry.as_ref()?.language_for_name(name);
 
         let language_name = match language_test.now_or_never() {
@@ -308,11 +315,12 @@ impl MarkdownElement {
             Some(language) => language,
             None => {
                 let markdown = self.markdown.downgrade();
-                window.spawn(cx, |mut cx| async move {
-                    language.await;
-                    markdown.update(&mut cx, |_, cx| cx.notify())
-                })
-                .detach_and_log_err(cx);
+                window
+                    .spawn(cx, |mut cx| async move {
+                        language.await;
+                        markdown.update(&mut cx, |_, cx| cx.notify())
+                    })
+                    .detach_and_log_err(cx);
                 None
             }
         }
@@ -322,7 +330,8 @@ impl MarkdownElement {
         &self,
         bounds: Bounds<Pixels>,
         rendered_text: &RenderedText,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         let selection = self.markdown.read(cx).selection;
         let selection_start = rendered_text.position_for_source_index(selection.start);
@@ -385,7 +394,8 @@ impl MarkdownElement {
         &self,
         hitbox: &Hitbox,
         rendered_text: &RenderedText,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         let is_hovering_link = hitbox.is_hovered(cx)
             && !self.markdown.read(cx).selection.pending
@@ -487,7 +497,12 @@ impl MarkdownElement {
         });
     }
 
-    fn autoscroll(&self, rendered_text: &RenderedText, window: &mut Window, cx: &mut AppContext) -> Option<()> {
+    fn autoscroll(
+        &self,
+        rendered_text: &RenderedText,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<()> {
         let autoscroll_index = self
             .markdown
             .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
@@ -511,8 +526,10 @@ impl MarkdownElement {
 
     fn on_mouse_event<T: MouseEvent>(
         &self,
-        window: &mut Window, cx: &mut AppContext,
-        mut f: impl 'static + FnMut(&mut Markdown, &T, DispatchPhase, &mut Window, &mut ModelContext<Markdown>),
+        window: &mut Window,
+        cx: &mut AppContext,
+        mut f: impl 'static
+            + FnMut(&mut Markdown, &T, DispatchPhase, &mut Window, &mut ModelContext<Markdown>),
     ) {
         window.on_mouse_event({
             let markdown = self.markdown.downgrade();
@@ -536,7 +553,8 @@ impl Element for MarkdownElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let mut builder = MarkdownElementBuilder::new(
             self.style.base_text_style.clone(),
@@ -738,7 +756,8 @@ impl Element for MarkdownElement {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Self::PrepaintState {
         let focus_handle = self.markdown.read(cx).focus_handle.clone();
         window.set_focus_handle(&focus_handle);
@@ -755,7 +774,8 @@ impl Element for MarkdownElement {
         bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         let mut context = KeyContext::default();
         context.add("Markdown");

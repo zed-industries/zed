@@ -3,12 +3,12 @@
 // it causes compile errors.
 #![cfg_attr(target_os = "macos", allow(unused_imports))]
 
-use gpui::{Window, ModelContext, Model, 
+use gpui::{
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
-    px, rgb, size, AsyncAppContext, Bounds, InteractiveElement, KeyBinding, Menu, MenuItem,
-    ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
-    StatefulInteractiveElement as _, Styled, Task,   VisualContext, WindowBounds,
+    px, rgb, size, AsyncAppContext, Bounds, InteractiveElement, KeyBinding, Menu, MenuItem, Model,
+    ModelContext, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
+    StatefulInteractiveElement as _, Styled, Task, VisualContext, Window, WindowBounds,
     WindowHandle, WindowOptions,
 };
 #[cfg(not(target_os = "windows"))]
@@ -143,8 +143,10 @@ impl LivekitWindow {
                     window.new_view(cx, |window, cx| {
                         let _events_task = cx.spawn_in(window, |this, mut cx| async move {
                             while let Some(event) = events.recv().await {
-                                this.update(&mut cx, |this: &mut LivekitWindow, cx| {
-                                    this.handle_room_event(event, window, cx)
+                                cx.update(|window, cx| {
+                                    this.update(cx, |this: &mut LivekitWindow, cx| {
+                                        this.handle_room_event(event, window, cx)
+                                    })
                                 })
                                 .ok();
                             }
@@ -167,7 +169,12 @@ impl LivekitWindow {
         .unwrap()
     }
 
-    fn handle_room_event(&mut self, event: RoomEvent, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_room_event(
+        &mut self,
+        event: RoomEvent,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         eprintln!("event: {event:?}");
 
         match event {
@@ -337,7 +344,8 @@ impl LivekitWindow {
     fn toggle_remote_audio_for_participant(
         &mut self,
         identity: &ParticipantIdentity,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         let participant = self.remote_participants.iter().find_map(|(id, state)| {
             if id == identity {
@@ -391,7 +399,9 @@ impl Render for LivekitWindow {
                         } else {
                             "Unshare screen"
                         })
-                        .on_click(cx.listener(|this, _, window, cx| this.toggle_screen_share(window, cx))),
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_screen_share(window, cx)),
+                        ),
                 ]),
             )
             .child(

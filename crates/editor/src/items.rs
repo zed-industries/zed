@@ -10,10 +10,10 @@ use collections::HashSet;
 use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::repository::GitFileStatus;
-use gpui::{Window, ModelContext, 
+use gpui::{
     point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
-    IntoElement, Model, ParentElement, Pixels, SharedString, Styled, Task,  
-    VisualContext, WeakView, 
+    IntoElement, Model, ModelContext, ParentElement, Pixels, SharedString, Styled, Task,
+    VisualContext, WeakView, Window,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
@@ -61,7 +61,8 @@ impl FollowableItem for Editor {
         workspace: Model<Workspace>,
         remote_id: ViewId,
         state: &mut Option<proto::view::Variant>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<Model<Self>>>> {
         let project = workspace.read(cx).project().to_owned();
         let Some(proto::view::Variant::Editor(_)) = state else {
@@ -125,8 +126,13 @@ impl FollowableItem for Editor {
                 });
 
                 window.new_view(cx, |window, cx| {
-                    let mut editor =
-                        Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx);
+                    let mut editor = Editor::for_multibuffer(
+                        multibuffer,
+                        Some(project.clone()),
+                        true,
+                        window,
+                        cx,
+                    );
                     editor.remote_id = Some(remote_id);
                     editor
                 })
@@ -151,7 +157,12 @@ impl FollowableItem for Editor {
         }))
     }
 
-    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_leader_peer_id(
+        &mut self,
+        leader_peer_id: Option<PeerId>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.leader_peer_id = leader_peer_id;
         if self.leader_peer_id.is_some() {
             self.buffer.update(cx, |buffer, cx| {
@@ -170,7 +181,11 @@ impl FollowableItem for Editor {
         cx.notify();
     }
 
-    fn to_state_proto(&self, window: &mut Window, cx: &mut AppContext) -> Option<proto::view::Variant> {
+    fn to_state_proto(
+        &self,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<proto::view::Variant> {
         let buffer = self.buffer.read(cx);
         if buffer
             .as_singleton()
@@ -240,7 +255,8 @@ impl FollowableItem for Editor {
         &self,
         event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> bool {
         let update =
             update.get_or_insert_with(|| proto::update_view::Variant::Editor(Default::default()));
@@ -304,7 +320,8 @@ impl FollowableItem for Editor {
         &mut self,
         project: &Model<Project>,
         message: update_view::Variant,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let update_view::Variant::Editor(message) = message;
         let project = project.clone();
@@ -332,7 +349,8 @@ async fn update_editor_from_message(
     this: WeakView<Editor>,
     project: Model<Project>,
     message: proto::update_view::Editor,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> Result<()> {
     // Open all of the buffers of which excerpts were added to the editor.
     let inserted_excerpt_buffer_ids = message
@@ -450,7 +468,8 @@ async fn update_editor_from_message(
                     anchor: scroll_top_anchor,
                     offset: point(message.scroll_x, message.scroll_y),
                 },
-                window, cx,
+                window,
+                cx,
             );
         }
     })?;
@@ -536,7 +555,12 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
 impl Item for Editor {
     type Event = EditorEvent;
 
-    fn navigate(&mut self, data: Box<dyn std::any::Any>, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn navigate(
+        &mut self,
+        data: Box<dyn std::any::Any>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         if let Ok(data) = data.downcast::<NavigationData>() {
             let newest_selection = self.selections.newest::<Point>(cx);
             let buffer = self.buffer.read(cx).read(cx);
@@ -609,7 +633,12 @@ impl Item for Editor {
             .map(Icon::from_path)
     }
 
-    fn tab_content(&self, params: TabContentParams, window: &mut Window, cx: &mut AppContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        params: TabContentParams,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> AnyElement {
         let label_color = if ItemSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
@@ -679,7 +708,8 @@ impl Item for Editor {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Model<Editor>>
     where
         Self: Sized,
@@ -687,11 +717,21 @@ impl Item for Editor {
         Some(window.new_view(cx, |cx| self.clone(window, cx)))
     }
 
-    fn set_nav_history(&mut self, history: ItemNavHistory, _window: &mut Window, _: &mut ModelContext<Self>) {
+    fn set_nav_history(
+        &mut self,
+        history: ItemNavHistory,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
+    ) {
         self.nav_history = Some(history);
     }
 
-    fn discarded(&self, _project: Model<Project>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn discarded(
+        &self,
+        _project: Model<Project>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         for buffer in self.buffer().clone().read(cx).all_buffers() {
             buffer.update(cx, |buffer, cx| buffer.discarded(cx))
         }
@@ -731,7 +771,8 @@ impl Item for Editor {
         &mut self,
         format: bool,
         project: Model<Project>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         self.report_editor_event("Editor Saved", None, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
@@ -746,7 +787,8 @@ impl Item for Editor {
                         project.clone(),
                         FormatTrigger::Save,
                         FormatTarget::Buffer,
-                        window, cx,
+                        window,
+                        cx,
                     )
                 })?
                 .await?;
@@ -793,7 +835,8 @@ impl Item for Editor {
         &mut self,
         project: Model<Project>,
         path: ProjectPath,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = self
             .buffer()
@@ -810,7 +853,12 @@ impl Item for Editor {
         project.update(cx, |project, cx| project.save_buffer_as(buffer, path, cx))
     }
 
-    fn reload(&mut self, project: Model<Project>, window: &mut Window, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn reload(
+        &mut self,
+        project: Model<Project>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
         let buffers = self.buffer.read(cx).all_buffers();
         let reload_buffers =
@@ -893,7 +941,12 @@ impl Item for Editor {
         Some(breadcrumbs)
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Self>) {
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
+    ) {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
     }
 
@@ -944,7 +997,8 @@ impl SerializableItem for Editor {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         window.spawn(cx, |_| DB.delete_unloaded_items(workspace_id, alive_items))
     }
@@ -954,7 +1008,8 @@ impl SerializableItem for Editor {
         workspace: WeakView<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: ItemId,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         let serialized_editor = match DB
             .get_serialized_editor(item_id, workspace_id)
@@ -1075,9 +1130,15 @@ impl SerializableItem for Editor {
 
                             cx.update(|window, cx| {
                                 window.new_view(cx, |window, cx| {
-                                    let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+                                    let mut editor =
+                                        Editor::for_buffer(buffer, Some(project), window, cx);
 
-                                    editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
+                                    editor.read_scroll_position_from_db(
+                                        item_id,
+                                        workspace_id,
+                                        window,
+                                        cx,
+                                    );
                                     editor
                                 })
                             })
@@ -1110,7 +1171,8 @@ impl SerializableItem for Editor {
         workspace: &mut Workspace,
         item_id: ItemId,
         closing: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let mut serialize_dirty_buffers = self.serialize_dirty_buffers;
 
@@ -1190,7 +1252,8 @@ impl ProjectItem for Editor {
     fn for_project_item(
         project: Model<Project>,
         buffer: Model<Buffer>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::for_buffer(buffer, Some(project), window, cx)
     }
@@ -1219,7 +1282,12 @@ impl SearchableItem for Editor {
         }
     }
 
-    fn update_matches(&mut self, matches: &[Range<Anchor>], window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_matches(
+        &mut self,
+        matches: &[Range<Anchor>],
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let existing_range = self
             .background_highlights
             .get(&TypeId::of::<BufferSearchHighlights>())
@@ -1228,7 +1296,8 @@ impl SearchableItem for Editor {
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.search_match_background,
-            window, cx,
+            window,
+            cx,
         );
         if updated {
             cx.emit(SearchEvent::MatchesInvalidated);
@@ -1239,7 +1308,12 @@ impl SearchableItem for Editor {
         self.has_background_highlights::<SearchWithinRange>()
     }
 
-    fn toggle_filtered_search_ranges(&mut self, enabled: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_filtered_search_ranges(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if self.has_filtered_search_ranges() {
             self.previous_search_ranges = self
                 .clear_background_highlights::<SearchWithinRange>(window, cx)
@@ -1293,7 +1367,8 @@ impl SearchableItem for Editor {
         &mut self,
         index: usize,
         matches: &[Range<Anchor>],
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.unfold_ranges(&[matches[index].clone()], false, true, window, cx);
         let range = self.range_for_match(&matches[index]);
@@ -1302,7 +1377,12 @@ impl SearchableItem for Editor {
         })
     }
 
-    fn select_matches(&mut self, matches: &[Self::Match], window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_matches(
+        &mut self,
+        matches: &[Self::Match],
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.unfold_ranges(matches, false, false, window, cx);
         let mut ranges = Vec::new();
         for m in matches {
@@ -1314,7 +1394,8 @@ impl SearchableItem for Editor {
         &mut self,
         identifier: &Self::Match,
         query: &SearchQuery,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let text = self.buffer.read(cx);
         let text = text.snapshot(cx);
@@ -1336,7 +1417,8 @@ impl SearchableItem for Editor {
         &mut self,
         matches: &mut dyn Iterator<Item = &Self::Match>,
         query: &SearchQuery,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let text = self.buffer.read(cx);
         let text = text.snapshot(cx);
@@ -1367,7 +1449,8 @@ impl SearchableItem for Editor {
         current_index: usize,
         direction: Direction,
         count: usize,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> usize {
         let buffer = self.buffer().read(cx).snapshot(cx);
         let current_index_position = if self.selections.disjoint_anchors().len() == 1 {
@@ -1413,7 +1496,8 @@ impl SearchableItem for Editor {
     fn find_matches(
         &mut self,
         query: Arc<project::search::SearchQuery>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
         let buffer = self.buffer().read(cx).snapshot(cx);
         let search_within_ranges = self
@@ -1486,7 +1570,8 @@ impl SearchableItem for Editor {
     fn active_match_index(
         &mut self,
         matches: &[Range<Anchor>],
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<usize> {
         active_match_index(
             matches,
@@ -1495,7 +1580,12 @@ impl SearchableItem for Editor {
         )
     }
 
-    fn search_bar_visibility_changed(&mut self, _visible: bool, _window: &mut Window, _cx: &mut ModelContext<Self>) {
+    fn search_bar_visibility_changed(
+        &mut self,
+        _visible: bool,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
+    ) {
         self.expect_bounds_change = self.last_bounds;
     }
 }
@@ -1652,7 +1742,8 @@ mod tests {
                         workspace.weak_handle(),
                         workspace_id,
                         item_id,
-                        window, cx,
+                        window,
+                        cx,
                     )
                 })
             })
@@ -1684,7 +1775,8 @@ mod tests {
         // Test case 1: Deserialize with path and contents
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
-            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) =
+                cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
@@ -1720,7 +1812,8 @@ mod tests {
         // Test case 2: Deserialize with only path
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
-            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) =
+                cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -1755,7 +1848,8 @@ mod tests {
             // Add Rust to the language, so that we can restore the language of the buffer
             project.update(cx, |project, _| project.languages().add(rust_language()));
 
-            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) =
+                cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -1790,7 +1884,8 @@ mod tests {
         // Test case 4: Deserialize with path, content, and old mtime
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
-            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) =
+                cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 

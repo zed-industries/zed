@@ -4,10 +4,10 @@ use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, R
 use project::project_settings::ProjectSettings;
 use remote::SshConnectionOptions;
 use settings::Settings;
-use ui::{Window, ModelContext, 
+use ui::{
     div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder,
     Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
-    ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, 
+    ModalFooter, ModalHeader, ModelContext, ParentElement, Section, Styled, StyledExt, Window,
 };
 use workspace::{notifications::DetachAndPromptErr, ModalView, OpenOptions, Workspace};
 
@@ -32,7 +32,11 @@ impl FocusableView for DisconnectedOverlay {
     }
 }
 impl ModalView for DisconnectedOverlay {
-    fn on_before_dismiss(&mut self, _window: &mut Window, _: &mut ModelContext<Self>) -> workspace::DismissDecision {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
+    ) -> workspace::DismissDecision {
         return workspace::DismissDecision::Dismiss(self.finished);
     }
     fn fade_out_background(&self) -> bool {
@@ -41,34 +45,48 @@ impl ModalView for DisconnectedOverlay {
 }
 
 impl DisconnectedOverlay {
-    pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelContext<Workspace>) {
-        cx.subscribe_in(workspace.project(), window, |workspace, project, event, window, cx| {
-            if !matches!(
-                event,
-                project::Event::DisconnectedFromHost | project::Event::DisconnectedFromSshRemote
-            ) {
-                return;
-            }
-            let handle = cx.view().downgrade();
+    pub fn register(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
+    ) {
+        cx.subscribe_in(
+            workspace.project(),
+            window,
+            |workspace, project, event, window, cx| {
+                if !matches!(
+                    event,
+                    project::Event::DisconnectedFromHost
+                        | project::Event::DisconnectedFromSshRemote
+                ) {
+                    return;
+                }
+                let handle = cx.view().downgrade();
 
-            let ssh_connection_options = project.read(cx).ssh_connection_options(cx);
-            let host = if let Some(ssh_connection_options) = ssh_connection_options {
-                Host::SshRemoteProject(ssh_connection_options)
-            } else {
-                Host::RemoteProject
-            };
+                let ssh_connection_options = project.read(cx).ssh_connection_options(cx);
+                let host = if let Some(ssh_connection_options) = ssh_connection_options {
+                    Host::SshRemoteProject(ssh_connection_options)
+                } else {
+                    Host::RemoteProject
+                };
 
-            workspace.toggle_modal(window, cx, |window, cx| DisconnectedOverlay {
-                finished: false,
-                workspace: handle,
-                host,
-                focus_handle: cx.focus_handle(),
-            });
-        })
+                workspace.toggle_modal(window, cx, |window, cx| DisconnectedOverlay {
+                    finished: false,
+                    workspace: handle,
+                    host,
+                    focus_handle: cx.focus_handle(),
+                });
+            },
+        )
         .detach();
     }
 
-    fn handle_reconnect(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_reconnect(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.finished = true;
         cx.emit(DismissEvent);
 
@@ -83,7 +101,8 @@ impl DisconnectedOverlay {
     fn reconnect_to_ssh_remote(
         &self,
         connection_options: SshConnectionOptions,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;

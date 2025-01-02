@@ -4,7 +4,7 @@ use crate::{
     Vim,
 };
 use editor::{display_map::ToDisplayPoint, Bias, Editor, ToPoint};
-use gpui::{Window, ModelContext, actions, };
+use gpui::{actions, ModelContext, Window};
 use language::Point;
 use std::ops::Range;
 use std::sync::Arc;
@@ -28,7 +28,12 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
 }
 
 impl Vim {
-    pub(crate) fn multi_replace(&mut self, text: Arc<str>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn multi_replace(
+        &mut self,
+        text: Arc<str>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, window, cx);
@@ -68,7 +73,12 @@ impl Vim {
         });
     }
 
-    fn undo_replace(&mut self, maybe_times: Option<usize>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn undo_replace(
+        &mut self,
+        maybe_times: Option<usize>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, window, cx);

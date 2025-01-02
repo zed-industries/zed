@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
-use gpui::{Window, actions, AppContext, Task, };
+use gpui::{actions, AppContext, Task, Window};
 use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
 use theme::ActiveTheme;
@@ -92,7 +92,11 @@ fn render_color_ribbon(color: Hsla) -> impl Element {
 }
 
 impl TitleBar {
-    pub(crate) fn render_collaborator_list(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    pub(crate) fn render_collaborator_list(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let room = ActiveCall::global(cx).read(cx).room().cloned();
         let current_user = self.user_store.read(cx).current_user();
         let client = self.client.clone();
@@ -123,7 +127,8 @@ impl TitleBar {
                         room,
                         project_id,
                         &current_user,
-                        window, cx,
+                        window,
+                        cx,
                     );
 
                     this.children(current_user_face_pile.map(|face_pile| {
@@ -154,7 +159,8 @@ impl TitleBar {
                             room,
                             project_id,
                             &current_user,
-                            window, cx,
+                            window,
+                            cx,
                         )?;
 
                         Some(
@@ -199,7 +205,8 @@ impl TitleBar {
         room: &Room,
         project_id: Option<u64>,
         current_user: &Arc<User>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Div> {
         if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
             return None;
@@ -238,7 +245,8 @@ impl TitleBar {
                                                 move |cx| {
                                                     Tooltip::text(
                                                         format!("{} is muted", github_login),
-                                                        window, cx,
+                                                        window,
+                                                        cx,
                                                     )
                                                 }
                                             }),
@@ -277,7 +285,11 @@ impl TitleBar {
         )
     }
 
-    pub(crate) fn render_call_controls(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Vec<AnyElement> {
+    pub(crate) fn render_call_controls(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Vec<AnyElement> {
         let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() else {
             return Vec::new();
         };
@@ -317,7 +329,8 @@ impl TitleBar {
                         } else {
                             "Share project with call participants"
                         },
-                        window, cx,
+                        window,
+                        cx,
                     )
                 })
                 .style(ButtonStyle::Subtle)
@@ -369,7 +382,8 @@ impl TitleBar {
                                 "Unmute Microphone",
                                 None,
                                 "Audio will be unmuted",
-                                window, cx,
+                                window,
+                                cx,
                             )
                         } else {
                             Tooltip::text("Unmute Microphone", window, cx)
@@ -406,7 +420,13 @@ impl TitleBar {
                         let label = "Unmute Audio";
 
                         if !muted_by_user {
-                            Tooltip::with_meta(label, None, "Microphone will be unmuted", window, cx)
+                            Tooltip::with_meta(
+                                label,
+                                None,
+                                "Microphone will be unmuted",
+                                window,
+                                cx,
+                            )
                         } else {
                             Tooltip::text(label, window, cx)
                         }
@@ -439,10 +459,13 @@ impl TitleBar {
                             } else {
                                 "Share Screen"
                             },
-                            window, cx,
+                            window,
+                            cx,
                         )
                     })
-                    .on_click(move |_, window, cx| toggle_screen_sharing(&Default::default(), window, cx))
+                    .on_click(move |_, window, cx| {
+                        toggle_screen_sharing(&Default::default(), window, cx)
+                    })
                     .into_any_element(),
             );
         }

@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use gpui::{w, ModelContext, AppContext, Model, View,  };
+use gpui::{w, AppContext, Model, ModelContext, View};
 use language::Language;
 use url::Url;
 
@@ -16,7 +16,8 @@ fn is_c_language(language: &Language) -> bool {
 pub fn switch_source_header(
     editor: &mut Editor,
     _: &SwitchSourceHeader,
-    window: &mut Window, cx: &mut ModelContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) {
     let Some(project) = &editor.project else {
         return;
@@ -25,9 +26,13 @@ pub fn switch_source_header(
         return;
     };
 
-    let Some((_, _, server_to_query, buffer)) =
-        find_specific_language_server_in_selection(editor, window, cx, is_c_language, CLANGD_SERVER_NAME)
-    else {
+    let Some((_, _, server_to_query, buffer)) = find_specific_language_server_in_selection(
+        editor,
+        window,
+        cx,
+        is_c_language,
+        CLANGD_SERVER_NAME,
+    ) else {
         return;
     };
 

@@ -1,11 +1,11 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::anyhow;
-use gpui::{Window, ModelContext, 
+use gpui::{
     black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
     AppContext, Asset, AssetLogger, AssetSource, Bounds, Hsla, ImageAssetLoader, ImageCacheError,
-    ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString, 
-    WindowBounds,  WindowOptions, LOADING_DELAY,
+    ImgResourceLoader, Length, ModelContext, Pixels, RenderImage, Resource, SharedString, Window,
+    WindowBounds, WindowOptions, LOADING_DELAY,
 };
 
 struct Assets {}

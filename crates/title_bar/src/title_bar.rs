@@ -12,10 +12,10 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
-use gpui::{Window, ModelContext, 
+use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
-    Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription,   VisualContext, WeakView,
+    Interactivity, IntoElement, Model, ModelContext, MouseButton, ParentElement, Render, Stateful,
+    StatefulInteractiveElement, Styled, Subscription, VisualContext, WeakView, Window,
 };
 use project::{Project, RepositoryEntry};
 use rpc::proto;
@@ -148,7 +148,9 @@ impl Render for TitleBar {
                                             .children(self.render_project_branch(window, cx))
                                     })
                             })
-                            .on_mouse_down(MouseButton::Left, |_, window, cx| cx.stop_propagation()),
+                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                cx.stop_propagation()
+                            }),
                     )
                     .child(self.render_collaborator_list(window, cx))
                     .child(
@@ -170,44 +172,47 @@ impl Render for TitleBar {
                             }),
                     ),
             )
-            .when(!window.is_fullscreen(), |title_bar| match self.platform_style {
-                PlatformStyle::Mac => title_bar,
-                PlatformStyle::Linux => {
-                    if matches!(decorations, Decorations::Client { .. }) {
-                        title_bar
-                            .child(platform_linux::LinuxWindowControls::new(close_action))
-                            .when(supported_controls.window_menu, |titlebar| {
-                                titlebar.on_mouse_down(gpui::MouseButton::Right, move |ev, window, cx| {
-                                    window.show_window_menu(ev.position)
+            .when(!window.is_fullscreen(), |title_bar| {
+                match self.platform_style {
+                    PlatformStyle::Mac => title_bar,
+                    PlatformStyle::Linux => {
+                        if matches!(decorations, Decorations::Client { .. }) {
+                            title_bar
+                                .child(platform_linux::LinuxWindowControls::new(close_action))
+                                .when(supported_controls.window_menu, |titlebar| {
+                                    titlebar.on_mouse_down(
+                                        gpui::MouseButton::Right,
+                                        move |ev, window, cx| window.show_window_menu(ev.position),
+                                    )
                                 })
-                            })
-                            .on_mouse_move(cx.listener(move |this, _ev, window, cx| {
-                                if this.should_move {
+                                .on_mouse_move(cx.listener(move |this, _ev, window, cx| {
+                                    if this.should_move {
+                                        this.should_move = false;
+                                        window.start_window_move();
+                                    }
+                                }))
+                                .on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
                                     this.should_move = false;
-                                    window.start_window_move();
-                                }
-                            }))
-                            .on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
-                                this.should_move = false;
-                            }))
-                            .on_mouse_up(
-                                gpui::MouseButton::Left,
-                                cx.listener(move |this, _ev, _window, _cx| {
-                                    this.should_move = false;
-                                }),
-                            )
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(move |this, _ev, _window, _cx| {
-                                    this.should_move = true;
-                                }),
-                            )
-                    } else {
-                        title_bar
+                                }))
+                                .on_mouse_up(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |this, _ev, _window, _cx| {
+                                        this.should_move = false;
+                                    }),
+                                )
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |this, _ev, _window, _cx| {
+                                        this.should_move = true;
+                                    }),
+                                )
+                        } else {
+                            title_bar
+                        }
                     }
-                }
-                PlatformStyle::Windows => {
-                    title_bar.child(platform_windows::WindowsWindowControls::new(height))
+                    PlatformStyle::Windows => {
+                        title_bar.child(platform_windows::WindowsWindowControls::new(height))
+                    }
                 }
             })
     }
@@ -217,7 +222,8 @@ impl TitleBar {
     pub fn new(
         id: impl Into<ElementId>,
         workspace: &Workspace,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
@@ -239,13 +245,15 @@ impl TitleBar {
         };
 
         let mut subscriptions = Vec::new();
-        subscriptions.push(
-            cx.observe_in(&workspace.weak_handle().upgrade().unwrap(), window, |_, _, window, cx| {
-                cx.notify()
-            }),
-        );
+        subscriptions.push(cx.observe_in(
+            &workspace.weak_handle().upgrade().unwrap(),
+            window,
+            |_, _, window, cx| cx.notify(),
+        ));
         subscriptions.push(cx.observe_in(&project, window, |_, _, window, cx| cx.notify()));
-        subscriptions.push(cx.observe_in(&active_call, window, |this, _, window, cx| this.active_call_changed(window, cx)));
+        subscriptions.push(cx.observe_in(&active_call, window, |this, _, window, cx| {
+            this.active_call_changed(window, cx)
+        }));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe_in(&user_store, window, |_, _, window, cx| cx.notify()));
 
@@ -280,7 +288,11 @@ impl TitleBar {
         self
     }
 
-    fn render_ssh_project_host(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
+    fn render_ssh_project_host(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<AnyElement> {
         let options = self.project.read(cx).ssh_connection_options(cx)?;
         let host: SharedString = options.connection_string().into();
 
@@ -339,7 +351,13 @@ impl TitleBar {
                         ),
                 )
                 .tooltip(move |window, cx| {
-                    Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), window, cx)
+                    Tooltip::with_meta(
+                        "Remote Project",
+                        Some(&OpenRemote),
+                        meta.clone(),
+                        window,
+                        cx,
+                    )
                 })
                 .on_click(|_, window, cx| {
                     window.dispatch_action(OpenRemote.boxed_clone(), cx);
@@ -348,7 +366,11 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_host(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
+    pub fn render_project_host(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<AnyElement> {
         if self.project.read(cx).is_via_ssh() {
             return self.render_ssh_project_host(window, cx);
         }
@@ -382,7 +404,8 @@ impl TitleBar {
                             "{} is sharing this project. Click to follow.",
                             host_user.github_login.clone()
                         ),
-                        window, cx,
+                        window,
+                        cx,
                     )
                 })
                 .on_click({
@@ -399,7 +422,11 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_name(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    pub fn render_project_name(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let name = {
             let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -425,7 +452,8 @@ impl TitleBar {
                     &zed_actions::OpenRecent {
                         create_new_window: false,
                     },
-                    window, cx,
+                    window,
+                    cx,
                 )
             })
             .on_click(cx.listener(move |_, _, window, cx| {
@@ -434,11 +462,16 @@ impl TitleBar {
                         create_new_window: false,
                     }
                     .boxed_clone(),
-                cx);
+                    cx,
+                );
             }))
     }
 
-    pub fn render_project_branch(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_branch(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -463,7 +496,8 @@ impl TitleBar {
                         "Recent Branches",
                         Some(&zed_actions::branches::OpenRecent),
                         "Local branches only",
-                        window, cx,
+                        window,
+                        cx,
                     )
                 })
                 .on_click(move |_, window, cx| {
@@ -495,7 +529,12 @@ impl TitleBar {
         cx.notify();
     }
 
-    fn share_project(&mut self, _: &ShareProject, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn share_project(
+        &mut self,
+        _: &ShareProject,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -503,7 +542,12 @@ impl TitleBar {
             .detach_and_log_err(cx);
     }
 
-    fn unshare_project(&mut self, _: &UnshareProject, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn unshare_project(
+        &mut self,
+        _: &UnshareProject,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -514,7 +558,8 @@ impl TitleBar {
     fn render_connection_status(
         &self,
         status: &client::Status,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<AnyElement> {
         match status {
             client::Status::ConnectionError
@@ -559,23 +604,32 @@ impl TitleBar {
         }
     }
 
-    pub fn render_sign_in_button(&mut self, _window: &mut Window, _: &mut ModelContext<Self>) -> Button {
+    pub fn render_sign_in_button(
+        &mut self,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
+    ) -> Button {
         let client = self.client.clone();
         Button::new("sign_in", "Sign in")
             .label_size(LabelSize::Small)
             .on_click(move |_, window, cx| {
                 let client = client.clone();
-                window.spawn(cx, move |mut cx| async move {
-                    client
-                        .authenticate_and_connect(true, &cx)
-                        .await
-                        .notify_async_err(&mut cx);
-                })
-                .detach();
+                window
+                    .spawn(cx, move |mut cx| async move {
+                        client
+                            .authenticate_and_connect(true, &cx)
+                            .await
+                            .notify_async_err(&mut cx);
+                    })
+                    .detach();
             })
     }
 
-    pub fn render_user_menu_button(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl Element {
+    pub fn render_user_menu_button(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
             let plan = user_store.current_plan();

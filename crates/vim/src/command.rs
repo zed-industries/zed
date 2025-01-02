@@ -13,7 +13,7 @@ use editor::{
     display_map::ToDisplayPoint,
     Bias, Editor, ToPoint,
 };
-use gpui::{Window, ModelContext, actions, impl_actions, Action, AppContext, Global,  };
+use gpui::{actions, impl_actions, Action, AppContext, Global, ModelContext, Window};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -112,7 +112,8 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
             command_palette::CommandPalette::toggle(
                 workspace,
                 &format!(".,.+{}", count.saturating_sub(1)),
-                window, cx,
+                window,
+                cx,
             );
         })
     });
@@ -135,28 +136,39 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
             }
             Some(Ok(result)) => result,
         };
-        vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), window, cx);
+        vim.move_cursor(
+            Motion::StartOfDocument,
+            Some(buffer_row.0 as usize + 1),
+            window,
+            cx,
+        );
     });
 
-    Vim::action(editor, window, cx, |vim, action: &YankCommand, window, cx| {
-        vim.update_editor(window, cx, |vim, editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            if let Ok(range) = action.range.buffer_range(vim, editor, window, cx) {
-                let end = if range.end < snapshot.buffer_snapshot.max_row() {
-                    Point::new(range.end.0 + 1, 0)
-                } else {
-                    snapshot.buffer_snapshot.max_point()
-                };
-                vim.copy_ranges(
-                    editor,
-                    true,
-                    true,
-                    vec![Point::new(range.start.0, 0)..end],
-                    window, cx,
-                )
-            }
-        });
-    });
+    Vim::action(
+        editor,
+        window,
+        cx,
+        |vim, action: &YankCommand, window, cx| {
+            vim.update_editor(window, cx, |vim, editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                if let Ok(range) = action.range.buffer_range(vim, editor, window, cx) {
+                    let end = if range.end < snapshot.buffer_snapshot.max_row() {
+                        Point::new(range.end.0 + 1, 0)
+                    } else {
+                        snapshot.buffer_snapshot.max_point()
+                    };
+                    vim.copy_ranges(
+                        editor,
+                        true,
+                        true,
+                        vec![Point::new(range.start.0, 0)..end],
+                        window,
+                        cx,
+                    )
+                }
+            });
+        },
+    );
 
     Vim::action(editor, window, cx, |_, action: &WithCount, window, cx| {
         for _ in 0..action.count {
@@ -211,9 +223,12 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
         });
     });
 
-    Vim::action(editor, window, cx, |vim, action: &OnMatchingLines, window, cx| {
-        action.run(vim, window, cx)
-    })
+    Vim::action(
+        editor,
+        window,
+        cx,
+        |vim, action: &OnMatchingLines, window, cx| action.run(vim, window, cx),
+    )
 }
 
 #[derive(Default)]
@@ -433,7 +448,8 @@ impl Position {
         &self,
         vim: &Vim,
         editor: &mut Editor,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Result<MultiBufferRow> {
         let snapshot = editor.snapshot(window, cx);
         let target = match self {
@@ -479,7 +495,8 @@ impl CommandRange {
         &self,
         vim: &Vim,
         editor: &mut Editor,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Result<Range<MultiBufferRow>> {
         let start = self.start.buffer_row(vim, editor, window, cx)?;
         let end = if let Some(end) = self.end.as_ref() {
@@ -989,7 +1006,8 @@ impl OnMatchingLines {
                             let _ = search_bar.search(
                                 &last_pattern,
                                 Some(SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE),
-                                window, cx,
+                                window,
+                                cx,
                             );
                         }
                     });
@@ -1266,7 +1284,8 @@ mod test {
         workspace: &mut Workspace,
         expected_path: &str,
         expected_text: &str,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) {
         let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
 
@@ -1312,11 +1331,18 @@ mod test {
         // We now have two items
         cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.workspace(|workspace, window, cx| {
-            assert_active_item(workspace, "/root/dir/file2.rs", "This is file2.rs", window, cx);
+            assert_active_item(
+                workspace,
+                "/root/dir/file2.rs",
+                "This is file2.rs",
+                window,
+                cx,
+            );
         });
 
         // Update editor to point to `file2.rs`
-        cx.editor = cx.workspace(|workspace, window, cx| workspace.active_item_as::<Editor>(cx).unwrap());
+        cx.editor =
+            cx.workspace(|workspace, window, cx| workspace.active_item_as::<Editor>(cx).unwrap());
 
         // Put the path to the third file into the currently open buffer,
         // but remove its suffix, because we want that lookup to happen automatically.

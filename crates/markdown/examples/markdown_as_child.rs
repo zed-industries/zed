@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{Model, rgb, App, KeyBinding, Length, StyleRefinement,  WindowOptions};
+use gpui::{rgb, App, KeyBinding, Length, Model, StyleRefinement, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
@@ -87,7 +87,14 @@ pub fn main() {
                     heading: Default::default(),
                 };
                 let markdown = window.new_view(cx, |cx| {
-                    Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, window, cx)
+                    Markdown::new(
+                        MARKDOWN_EXAMPLE.into(),
+                        markdown_style,
+                        None,
+                        None,
+                        window,
+                        cx,
+                    )
                 });
 
                 HelloWorld { markdown }

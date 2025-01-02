@@ -18,7 +18,8 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         // Some motions ignore failure when switching to normal mode
         let mut motion_succeeded = matches!(
@@ -88,7 +89,13 @@ impl Vim {
         }
     }
 
-    pub fn change_object(&mut self, object: Object, around: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn change_object(
+        &mut self,
+        object: Object,
+        around: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let mut objects_found = false;
         self.update_editor(window, cx, |vim, editor, window, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now

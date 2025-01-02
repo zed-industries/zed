@@ -1,4 +1,4 @@
-use gpui::{Model, prelude::*, Render, };
+use gpui::{prelude::*, Model, Render};
 use story::Story;
 use strum::IntoEnumIterator;
 use ui::prelude::*;

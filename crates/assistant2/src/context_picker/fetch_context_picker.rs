@@ -4,11 +4,13 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{Model, AppContext, DismissEvent, FocusHandle, FocusableView, Task,  WeakModel, WeakView};
+use gpui::{
+    AppContext, DismissEvent, FocusHandle, FocusableView, Model, Task, WeakModel, WeakView,
+};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use picker::{Picker, PickerDelegate};
-use ui::{Window, ModelContext, prelude::*, ListItem, };
+use ui::{prelude::*, ListItem, ModelContext, Window};
 use workspace::Workspace;
 
 use crate::context::ContextKind;
@@ -25,7 +27,8 @@ impl FetchContextPicker {
         workspace: WeakView<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate = FetchContextPickerDelegate::new(
             context_picker,
@@ -174,19 +177,35 @@ impl PickerDelegate for FetchContextPickerDelegate {
         0
     }
 
-    fn set_selected_index(&mut self, _ix: usize, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {}
+    fn set_selected_index(
+        &mut self,
+        _ix: usize,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) {
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
         "Enter a URL…".into()
     }
 
-    fn update_matches(&mut self, query: String, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         self.url = query;
 
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -230,7 +249,8 @@ impl PickerDelegate for FetchContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         Some(
             ListItem::new(ix)

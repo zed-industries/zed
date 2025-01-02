@@ -7,9 +7,9 @@ use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
-use gpui::{Window, ModelContext, 
-    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton,
-    Pixels, Point, StyleRefinement,  
+use gpui::{
+    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, ModelContext,
+    MouseButton, Pixels, Point, StyleRefinement, Window,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -130,7 +130,8 @@ impl PaneGroup {
         active_pane: &Model<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) -> impl IntoElement {
         self.root.render(
             project,
@@ -140,7 +141,8 @@ impl PaneGroup {
             active_pane,
             zoomed,
             app_state,
-            window, cx,
+            window,
+            cx,
         )
     }
 
@@ -158,7 +160,8 @@ impl PaneGroup {
         &mut self,
         active_pane: &Model<Pane>,
         direction: SplitDirection,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Option<&Model<Pane>> {
         let bounding_box = self.bounding_box_for_pane(active_pane)?;
         let cursor = active_pane.read(cx).pixel_position_of_cursor(cx);
@@ -235,7 +238,8 @@ impl Member {
         active_pane: &Model<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) -> impl IntoElement {
         match self {
             Member::Pane(pane) => {
@@ -373,7 +377,8 @@ impl Member {
                     active_pane,
                     zoomed,
                     app_state,
-                    window, cx,
+                    window,
+                    cx,
                 )
                 .into_any(),
         }
@@ -683,7 +688,8 @@ impl PaneAxis {
         active_pane: &Model<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) -> gpui::AnyElement {
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;
@@ -708,7 +714,8 @@ impl PaneAxis {
                     active_pane,
                     zoomed,
                     app_state,
-                    window, cx,
+                    window,
+                    cx,
                 )
                 .into_any_element()
         }))
@@ -812,10 +819,10 @@ mod element {
     use std::mem;
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
-    use gpui::{Window, AppContext, 
-        px, relative, size, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WeakView, 
+    use gpui::{
+        px, relative, size, Along, AnyElement, AppContext, Axis, Bounds, Element, GlobalElementId,
+        IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+        Size, Style, WeakView, Window,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -891,7 +898,8 @@ mod element {
             child_start: Point<Pixels>,
             container_size: Size<Pixels>,
             workspace: WeakView<Workspace>,
-            window: &mut Window, cx: &mut AppContext,
+            window: &mut Window,
+            cx: &mut AppContext,
         ) {
             let min_size = match axis {
                 Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
@@ -975,7 +983,8 @@ mod element {
         fn layout_handle(
             axis: Axis,
             pane_bounds: Bounds<Pixels>,
-            window: &mut Window, cx: &mut AppContext,
+            window: &mut Window,
+            cx: &mut AppContext,
         ) -> PaneAxisHandleLayout {
             let handle_bounds = Bounds {
                 origin: pane_bounds.origin.apply_along(axis, |origin| {
@@ -1018,7 +1027,8 @@ mod element {
         fn request_layout(
             &mut self,
             _global_id: Option<&GlobalElementId>,
-            window: &mut Window, cx: &mut AppContext,
+            window: &mut Window,
+            cx: &mut AppContext,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let style = Style {
                 flex_grow: 1.,
@@ -1035,7 +1045,8 @@ mod element {
             global_id: Option<&GlobalElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
-            window: &mut Window, cx: &mut AppContext,
+            window: &mut Window,
+            cx: &mut AppContext,
         ) -> PaneAxisLayout {
             let dragged_handle = window.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
                 global_id.unwrap(),
@@ -1105,8 +1116,12 @@ mod element {
 
             for (ix, child_layout) in layout.children.iter_mut().enumerate() {
                 if active_pane_magnification.is_none() && ix < len - 1 {
-                    child_layout.handle =
-                        Some(Self::layout_handle(self.axis, child_layout.bounds, window, cx));
+                    child_layout.handle = Some(Self::layout_handle(
+                        self.axis,
+                        child_layout.bounds,
+                        window,
+                        cx,
+                    ));
                 }
             }
 
@@ -1119,7 +1134,8 @@ mod element {
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
-            window: &mut Window, cx: &mut AppContext,
+            window: &mut Window,
+            cx: &mut AppContext,
         ) {
             for child in &mut layout.children {
                 child.element.paint(cx);
@@ -1222,7 +1238,8 @@ mod element {
                                     child_bounds.origin,
                                     bounds.size,
                                     workspace.clone(),
-                                    window, cx,
+                                    window,
+                                    cx,
                                 )
                             }
                         }

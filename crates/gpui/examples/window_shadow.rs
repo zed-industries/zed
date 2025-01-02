@@ -1,7 +1,8 @@
-use gpui::{Window, ModelContext, 
+use gpui::{
     black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black, white, App,
-    AppContext, Bounds, CursorStyle, Decorations, Hsla, MouseButton, Pixels, Point, ResizeEdge,
-    Size,  WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowOptions,
+    AppContext, Bounds, CursorStyle, Decorations, Hsla, ModelContext, MouseButton, Pixels, Point,
+    ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowOptions,
 };
 
 struct WindowShadow {}
@@ -157,9 +158,12 @@ impl Render for WindowShadow {
                                         .map(|div| match decorations {
                                             Decorations::Server => div,
                                             Decorations::Client { .. } => div
-                                                .on_mouse_down(MouseButton::Left, |_e, window, window, cx| {
-                                                    window.start_window_move();
-                                                })
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    |_e, window, window, cx| {
+                                                        window.start_window_move();
+                                                    },
+                                                )
                                                 .on_click(|e, window, window, cx| {
                                                     if e.down.button == MouseButton::Right {
                                                         window.show_window_menu(e.up.position);

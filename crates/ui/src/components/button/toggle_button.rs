@@ -79,7 +79,10 @@ impl Disableable for ToggleButton {
 }
 
 impl Clickable for ToggleButton {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static) -> Self {
+    fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static,
+    ) -> Self {
         self.base = self.base.on_click(handler);
         self
     }
@@ -105,7 +108,10 @@ impl ButtonCommon for ToggleButton {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static) -> Self {
+    fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+    ) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }

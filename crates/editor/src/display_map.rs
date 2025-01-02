@@ -68,7 +68,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::LineIndent;
-use ui::{Window, AppContext, px, SharedString, };
+use ui::{px, AppContext, SharedString, Window};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 

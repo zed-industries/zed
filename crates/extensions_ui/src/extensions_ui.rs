@@ -12,10 +12,10 @@ use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{Window, ModelContext, Model, 
+use gpui::{
     actions, uniform_list, Action, AppContext, ClipboardItem, EventEmitter, Flatten, FocusableView,
-    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle,   VisualContext, WeakView, 
+    InteractiveElement, KeyContext, Model, ModelContext, ParentElement, Render, Styled, Task,
+    TextStyle, UniformListScrollHandle, VisualContext, WeakView, Window,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -50,7 +50,13 @@ pub fn init(cx: &mut AppContext) {
                     workspace.activate_item(&existing, true, true, window, cx);
                 } else {
                     let extensions_page = ExtensionsPage::new(workspace, window, cx);
-                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, true, window, cx)
+                    workspace.add_item_to_active_pane(
+                        Box::new(extensions_page),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    )
                 }
             })
             .register_action(move |workspace, _: &InstallDevExtension, window, cx| {
@@ -62,7 +68,8 @@ pub fn init(cx: &mut AppContext) {
                         multiple: false,
                     },
                     DirectoryLister::Local(workspace.app_state().fs.clone()),
-                    window, cx,
+                    window,
+                    cx,
                 );
 
                 let workspace_handle = cx.view().downgrade();
@@ -75,7 +82,11 @@ pub fn init(cx: &mut AppContext) {
                                 Err(err) => {
                                     workspace_handle
                                         .update(&mut cx, |workspace, cx| {
-                                            workspace.show_portal_error(err.to_string(), window, cx);
+                                            workspace.show_portal_error(
+                                                err.to_string(),
+                                                window,
+                                                cx,
+                                            );
                                         })
                                         .ok();
                                     return None;
@@ -194,19 +205,33 @@ pub struct ExtensionsPage {
 }
 
 impl ExtensionsPage {
-    pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut ModelContext<Workspace>) -> Model<Self> {
+    pub fn new(
+        workspace: &Workspace,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
+    ) -> Model<Self> {
         window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
             let store = ExtensionStore::global(cx);
             let workspace_handle = workspace.weak_handle();
             let subscriptions = [
                 cx.observe_in(&store, window, |_, _, window, cx| cx.notify()),
-                cx.subscribe_in(&store, window, move |this, _, event, window, cx| match event {
-                    extension_host::Event::ExtensionsUpdated => this.fetch_extensions_debounced(window, cx),
-                    extension_host::Event::ExtensionInstalled(extension_id) => {
-                        this.on_extension_installed(workspace_handle.clone(), extension_id, window, cx)
-                    }
-                    _ => {}
-                }),
+                cx.subscribe_in(
+                    &store,
+                    window,
+                    move |this, _, event, window, cx| match event {
+                        extension_host::Event::ExtensionsUpdated => {
+                            this.fetch_extensions_debounced(window, cx)
+                        }
+                        extension_host::Event::ExtensionInstalled(extension_id) => this
+                            .on_extension_installed(
+                                workspace_handle.clone(),
+                                extension_id,
+                                window,
+                                cx,
+                            ),
+                        _ => {}
+                    },
+                ),
             ];
 
             let query_editor = window.new_view(cx, |cx| {
@@ -214,7 +239,8 @@ impl ExtensionsPage {
                 input.set_placeholder_text("Search extensions...", window, cx);
                 input
             });
-            cx.subscribe_in(&query_editor, window, Self::on_query_change).detach();
+            cx.subscribe_in(&query_editor, window, Self::on_query_change)
+                .detach();
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
@@ -239,7 +265,8 @@ impl ExtensionsPage {
         &mut self,
         workspace: WeakView<Workspace>,
         extension_id: &str,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let extension_store = ExtensionStore::global(cx).read(cx);
         let themes = extension_store
@@ -254,14 +281,19 @@ impl ExtensionsPage {
                             themes_filter: Some(themes),
                         }
                         .boxed_clone(),
-                    cx);
+                        cx,
+                    );
                 })
                 .ok();
         }
     }
 
     /// Returns whether a dev extension currently exists for the extension with the given ID.
-    fn dev_extension_exists(extension_id: &str, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn dev_extension_exists(
+        extension_id: &str,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         let extension_store = ExtensionStore::global(cx).read(cx);
 
         extension_store
@@ -269,7 +301,11 @@ impl ExtensionsPage {
             .any(|dev_extension| dev_extension.id.as_ref() == extension_id)
     }
 
-    fn extension_status(extension_id: &str, window: &mut Window, cx: &mut ModelContext<Self>) -> ExtensionStatus {
+    fn extension_status(
+        extension_id: &str,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> ExtensionStatus {
         let extension_store = ExtensionStore::global(cx).read(cx);
 
         match extension_store.outstanding_operations().get(extension_id) {
@@ -306,7 +342,12 @@ impl ExtensionsPage {
         cx.notify();
     }
 
-    fn fetch_extensions(&mut self, search: Option<String>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn fetch_extensions(
+        &mut self,
+        search: Option<String>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.is_fetching_extensions = true;
         cx.notify();
 
@@ -361,7 +402,8 @@ impl ExtensionsPage {
     fn render_extensions(
         &mut self,
         range: Range<usize>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Vec<ExtensionCard> {
         let dev_extension_entries_len = if self.filter.include_dev_extensions() {
             self.dev_extension_entries.len()
@@ -386,7 +428,8 @@ impl ExtensionsPage {
     fn render_dev_extension(
         &self,
         extension: &ExtensionManifest,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> ExtensionCard {
         let status = Self::extension_status(&extension.id, window, cx);
 
@@ -484,7 +527,9 @@ impl ExtensionsPage {
                                 cx.open_url(&repository_url);
                             }
                         }))
-                        .tooltip(move |window, cx| Tooltip::text(repository_url.clone(), window, cx))
+                        .tooltip(move |window, cx| {
+                            Tooltip::text(repository_url.clone(), window, cx)
+                        })
                     })),
             )
     }
@@ -492,7 +537,8 @@ impl ExtensionsPage {
     fn render_remote_extension(
         &self,
         extension: &ExtensionMetadata,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> ExtensionCard {
         let this = cx.view().clone();
         let status = Self::extension_status(&extension.id, window, cx);
@@ -592,7 +638,9 @@ impl ExtensionsPage {
                                         cx.open_url(&repository_url);
                                     }
                                 }))
-                                .tooltip(move |window, cx| Tooltip::text(repository_url.clone(), window, cx)),
+                                .tooltip(move |window, cx| {
+                                    Tooltip::text(repository_url.clone(), window, cx)
+                                }),
                             )
                             .child(
                                 PopoverMenu::new(SharedString::from(format!(
@@ -612,7 +660,8 @@ impl ExtensionsPage {
                                     Some(Self::render_remote_extension_context_menu(
                                         &this,
                                         extension_id.clone(),
-                                        window, cx,
+                                        window,
+                                        cx,
                                     ))
                                 }),
                             ),
@@ -623,7 +672,8 @@ impl ExtensionsPage {
     fn render_remote_extension_context_menu(
         this: &Model<Self>,
         extension_id: Arc<str>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Model<ContextMenu> {
         let context_menu = ContextMenu::build(window, cx, |context_menu, window, cx| {
             context_menu
@@ -632,7 +682,9 @@ impl ExtensionsPage {
                     None,
                     window.handler_for(this, {
                         let extension_id = extension_id.clone();
-                        move |this, cx| this.show_extension_version_list(extension_id.clone(), window, cx)
+                        move |this, cx| {
+                            this.show_extension_version_list(extension_id.clone(), window, cx)
+                        }
                     }),
                 )
                 .entry("Copy Extension ID", None, {
@@ -646,7 +698,12 @@ impl ExtensionsPage {
         context_menu
     }
 
-    fn show_extension_version_list(&mut self, extension_id: Arc<str>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn show_extension_version_list(
+        &mut self,
+        extension_id: Arc<str>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -685,7 +742,8 @@ impl ExtensionsPage {
         extension: &ExtensionMetadata,
         status: &ExtensionStatus,
         has_dev_extension: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> (Button, Option<Button>) {
         let is_compatible =
             extension_host::is_version_compatible(ReleaseChannel::global(cx), extension);
@@ -802,7 +860,12 @@ impl ExtensionsPage {
         )
     }
 
-    fn render_text_input(&self, editor: &Model<Editor>, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_text_input(
+        &self,
+        editor: &Model<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if editor.read(cx).read_only(cx) {
@@ -834,7 +897,8 @@ impl ExtensionsPage {
         &mut self,
         _: Model<Editor>,
         event: &editor::EditorEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
@@ -843,7 +907,11 @@ impl ExtensionsPage {
         }
     }
 
-    fn fetch_extensions_debounced(&mut self, window: &mut Window, cx: &mut ModelContext<ExtensionsPage>) {
+    fn fetch_extensions_debounced(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<ExtensionsPage>,
+    ) {
         self.extension_fetch_task = Some(cx.spawn_in(window, |this, mut cx| async move {
             let search = this
                 .update(&mut cx, |this, cx| this.search_query(window, cx))
@@ -878,7 +946,11 @@ impl ExtensionsPage {
         }
     }
 
-    fn render_empty_state(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_empty_state(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let has_search = self.search_query(window, cx).is_some();
 
         let message = if self.is_fetching_extensions {
@@ -915,7 +987,8 @@ impl ExtensionsPage {
     fn update_settings<T: Settings>(
         &mut self,
         selection: &ToggleState,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
         callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -957,7 +1030,11 @@ impl ExtensionsPage {
         }
     }
 
-    fn render_feature_upsells(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_feature_upsells(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let upsells_count = self.upsells.len();
 
         v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
@@ -984,7 +1061,8 @@ impl ExtensionsPage {
                             telemetry::event!("Vim Mode Toggled", source = "Feature Upsell");
                             this.update_settings::<VimModeSetting>(
                                 selection,
-                                window, cx,
+                                window,
+                                cx,
                                 |setting, value| *setting = Some(value),
                             );
                         }),
@@ -1073,7 +1151,11 @@ impl Render for ExtensionsPage {
                                                 this.filter_extension_entries(window, cx);
                                             }))
                                             .tooltip(move |window, cx| {
-                                                Tooltip::text("Show installed extensions", window, cx)
+                                                Tooltip::text(
+                                                    "Show installed extensions",
+                                                    window,
+                                                    cx,
+                                                )
                                             })
                                             .middle(),
                                     )
@@ -1089,7 +1171,11 @@ impl Render for ExtensionsPage {
                                                 this.filter_extension_entries(window, cx);
                                             }))
                                             .tooltip(move |window, cx| {
-                                                Tooltip::text("Show not installed extensions", window, cx)
+                                                Tooltip::text(
+                                                    "Show not installed extensions",
+                                                    window,
+                                                    cx,
+                                                )
                                             })
                                             .last(),
                                     ),
@@ -1145,7 +1231,8 @@ impl Item for ExtensionsPage {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _window: &mut Window, _: &mut ModelContext<Self>,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
         None
     }

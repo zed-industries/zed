@@ -27,7 +27,8 @@ impl RenderOnce for LinuxWindowControls {
             .child(WindowControl::new(
                 "minimize",
                 WindowControlType::Minimize,
-                window, cx,
+                window,
+                cx,
             ))
             .child(WindowControl::new(
                 "maximize-or-restore",
@@ -36,13 +37,15 @@ impl RenderOnce for LinuxWindowControls {
                 } else {
                     WindowControlType::Maximize
                 },
-                window, cx,
+                window,
+                cx,
             ))
             .child(WindowControl::new_close(
                 "close",
                 WindowControlType::Close,
                 self.close_window_action,
-                window, cx,
+                window,
+                cx,
             ))
     }
 }

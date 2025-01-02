@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use editor::{Editor, EditorEvent};
-use gpui::{Model, prelude::*, AppContext, FocusHandle, FocusableView, };
+use gpui::{prelude::*, AppContext, FocusHandle, FocusableView, Model};
 use ui::prelude::*;
 
 /// The head of a [`Picker`](crate::Picker).
@@ -16,8 +16,10 @@ pub(crate) enum Head {
 impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
-        edit_handler: impl FnMut(&mut V, Model<Editor>, &EditorEvent, &mut Window, &mut ModelContext<V>) + 'static,
-        window: &mut Window, cx: &mut ModelContext<V>,
+        edit_handler: impl FnMut(&mut V, Model<Editor>, &EditorEvent, &mut Window, &mut ModelContext<V>)
+            + 'static,
+        window: &mut Window,
+        cx: &mut ModelContext<V>,
     ) -> Self {
         let editor = window.new_view(cx, |cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -30,10 +32,12 @@ impl Head {
 
     pub fn empty<V: 'static>(
         blur_handler: impl FnMut(&mut V, &mut Window, &mut ModelContext<V>) + 'static,
-        window: &mut Window, cx: &mut ModelContext<V>,
+        window: &mut Window,
+        cx: &mut ModelContext<V>,
     ) -> Self {
         let head = window.new_view(EmptyHead::new, cx);
-        cx.on_blur(&head.focus_handle(cx), window, blur_handler).detach();
+        cx.on_blur(&head.focus_handle(cx), window, blur_handler)
+            .detach();
         Self::Empty(head)
     }
 }

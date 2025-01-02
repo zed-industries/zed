@@ -13,7 +13,7 @@ use editor::{
 
 use itertools::Itertools;
 
-use gpui::{Window, ModelContext, actions, impl_actions, };
+use gpui::{actions, impl_actions, ModelContext, Window};
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
@@ -78,12 +78,15 @@ actions!(
 pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
     Vim::action(
         editor,
-        window, cx,
+        window,
+        cx,
         |vim, &Word { ignore_punctuation }: &Word, window, cx| {
             vim.object(Object::Word { ignore_punctuation }, window, cx)
         },
     );
-    Vim::action(editor, window, cx, |vim, _: &Tag, window, cx| vim.object(Object::Tag, window, cx));
+    Vim::action(editor, window, cx, |vim, _: &Tag, window, cx| {
+        vim.object(Object::Tag, window, cx)
+    });
     Vim::action(editor, window, cx, |vim, _: &Sentence, window, cx| {
         vim.object(Object::Sentence, window, cx)
     });
@@ -131,7 +134,8 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
     });
     Vim::action(
         editor,
-        window, cx,
+        window,
+        cx,
         |vim, &IndentObj { include_below }: &IndentObj, window, cx| {
             vim.object(Object::IndentObj { include_below }, window, cx)
         },
@@ -142,7 +146,9 @@ impl Vim {
     fn object(&mut self, object: Object, window: &mut Window, cx: &mut ModelContext<Self>) {
         match self.mode {
             Mode::Normal => self.normal_object(object, window, cx),
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => self.visual_object(object, window, cx),
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                self.visual_object(object, window, cx)
+            }
             Mode::Insert | Mode::Replace | Mode::HelixNormal => {
                 // Shouldn't execute a text object in insert mode. Ignoring
             }

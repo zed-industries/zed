@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{w, ModelContext, Model, View,  VisualTestContext};
+use gpui::{w, Model, ModelContext, View, VisualTestContext};
 use indoc::indoc;
 use language::{
     point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,

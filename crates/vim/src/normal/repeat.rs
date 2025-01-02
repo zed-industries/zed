@@ -8,7 +8,7 @@ use crate::{
     Vim,
 };
 use editor::Editor;
-use gpui::{Window, ModelContext, AppContext, actions, Action,  };
+use gpui::{actions, Action, AppContext, ModelContext, Window};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -51,7 +51,9 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
         vim.switch_mode(Mode::Normal, false, window, cx)
     });
 
-    Vim::action(editor, window, cx, |vim, _: &Repeat, window, cx| vim.repeat(false, window, cx));
+    Vim::action(editor, window, cx, |vim, _: &Repeat, window, cx| {
+        vim.repeat(false, window, cx)
+    });
 
     Vim::action(editor, window, cx, |vim, _: &ToggleRecord, window, cx| {
         let globals = Vim::globals(cx);
@@ -62,12 +64,17 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
         }
     });
 
-    Vim::action(editor, window, cx, |vim, _: &ReplayLastRecording, window, cx| {
-        let Some(register) = Vim::globals(cx).last_recorded_register else {
-            return;
-        };
-        vim.replay_register(register, window, cx)
-    });
+    Vim::action(
+        editor,
+        window,
+        cx,
+        |vim, _: &ReplayLastRecording, window, cx| {
+            let Some(register) = Vim::globals(cx).last_recorded_register else {
+                return;
+            };
+            vim.replay_register(register, window, cx)
+        },
+    );
 }
 
 pub struct ReplayerState {
@@ -88,7 +95,12 @@ impl Replayer {
         })))
     }
 
-    pub fn replay(&mut self, actions: Vec<ReplayableAction>, window: &mut Window, cx: &mut AppContext) {
+    pub fn replay(
+        &mut self,
+        actions: Vec<ReplayableAction>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
         let mut lock = self.0.borrow_mut();
         let range = lock.ix..lock.ix;
         lock.actions.splice(range, actions);
@@ -122,14 +134,17 @@ impl Replayer {
             ReplayableAction::Action(action) => {
                 if should_replay(&*action) {
                     window.dispatch_action(action.boxed_clone(), cx);
-                    window.defer(cx, move |window, cx| Vim::globals(cx).observe_action(action.boxed_clone()));
+                    window.defer(cx, move |window, cx| {
+                        Vim::globals(cx).observe_action(action.boxed_clone())
+                    });
                 }
             }
             ReplayableAction::Insertion {
                 text,
                 utf16_range_to_replace,
             } => {
-                window.window_handle()
+                window
+                    .window_handle()
                     .update(cx, |handle, window, cx| {
                         let Ok(workspace) = handle.downcast::<Workspace>() else {
                             return;
@@ -142,7 +157,12 @@ impl Replayer {
                             return;
                         };
                         editor.update(cx, |editor, cx| {
-                            editor.replay_insert_event(&text, utf16_range_to_replace.clone(), window, cx)
+                            editor.replay_insert_event(
+                                &text,
+                                utf16_range_to_replace.clone(),
+                                window,
+                                cx,
+                            )
                         })
                     })
                     .log_err();
@@ -153,7 +173,12 @@ impl Replayer {
 }
 
 impl Vim {
-    pub(crate) fn record_register(&mut self, register: char, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn record_register(
+        &mut self,
+        register: char,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let globals = Vim::globals(cx);
         globals.recording_register = Some(register);
         globals.recordings.remove(&register);
@@ -161,7 +186,12 @@ impl Vim {
         self.clear_operator(window, cx)
     }
 
-    pub(crate) fn replay_register(&mut self, mut register: char, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn replay_register(
+        &mut self,
+        mut register: char,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let mut count = Vim::take_count(cx).unwrap_or(1);
         self.clear_operator(window, cx);
 
@@ -187,7 +217,12 @@ impl Vim {
         replayer.replay(repeated_actions, window, cx);
     }
 
-    pub(crate) fn repeat(&mut self, from_insert_mode: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn repeat(
+        &mut self,
+        from_insert_mode: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = Vim::take_count(cx);
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
@@ -246,14 +281,16 @@ impl Vim {
                         display_lines: false,
                     },
                     Some(rows as usize),
-                    window, cx,
+                    window,
+                    cx,
                 );
                 self.visual_motion(
                     Motion::StartOfLine {
                         display_lines: false,
                     },
                     None,
-                    window, cx,
+                    window,
+                    cx,
                 );
                 if cols > 1 {
                     self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx)
@@ -265,7 +302,8 @@ impl Vim {
                         display_lines: false,
                     },
                     Some(rows as usize),
-                    window, cx,
+                    window,
+                    cx,
                 );
                 if cols > 1 {
                     self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx);
@@ -277,7 +315,8 @@ impl Vim {
                         display_lines: false,
                     },
                     Some(rows as usize),
-                    window, cx,
+                    window,
+                    cx,
                 );
             }
             RecordedSelection::None => {}

@@ -5,8 +5,8 @@ use client::ExtensionMetadata;
 use extension_host::{ExtensionSettings, ExtensionStore};
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
-use gpui::{Model, 
-    prelude::*, AppContext, DismissEvent, EventEmitter, FocusableView, Task,  WeakView,
+use gpui::{
+    prelude::*, AppContext, DismissEvent, EventEmitter, FocusableView, Model, Task, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
@@ -37,7 +37,11 @@ impl Render for ExtensionVersionSelector {
 }
 
 impl ExtensionVersionSelector {
-    pub fn new(delegate: ExtensionVersionSelectorDelegate, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        delegate: ExtensionVersionSelectorDelegate,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
@@ -102,11 +106,21 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix;
     }
 
-    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let background_executor = cx.background_executor().clone();
         let candidates = self
             .extension_versions
@@ -152,7 +166,12 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         if self.matches.is_empty() {
             self.dismissed(window, cx);
             return;
@@ -191,7 +210,8 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let version_match = &self.matches[ix];
         let extension_version = &self.extension_versions[version_match.candidate_id];

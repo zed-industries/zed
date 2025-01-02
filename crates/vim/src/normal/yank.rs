@@ -20,7 +20,8 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window, cx);
@@ -46,7 +47,13 @@ impl Vim {
         self.exit_temporary_normal(window, cx);
     }
 
-    pub fn yank_object(&mut self, object: Object, around: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn yank_object(
+        &mut self,
+        object: Object,
+        around: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, window, cx);
@@ -74,7 +81,8 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) {
         self.copy_ranges(
             editor,
@@ -86,7 +94,8 @@ impl Vim {
                 .iter()
                 .map(|s| s.range())
                 .collect(),
-            window, cx,
+            window,
+            cx,
         )
     }
 
@@ -94,7 +103,8 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) {
         self.copy_ranges(
             editor,
@@ -106,7 +116,8 @@ impl Vim {
                 .iter()
                 .map(|s| s.range())
                 .collect(),
-            window, cx,
+            window,
+            cx,
         )
     }
 
@@ -116,7 +127,8 @@ impl Vim {
         linewise: bool,
         is_yank: bool,
         selections: Vec<Range<Point>>,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) {
         let buffer = editor.buffer().read(cx).snapshot(cx);
         let mut text = String::new();
@@ -192,7 +204,8 @@ impl Vim {
                 selected_register,
                 is_yank,
                 linewise,
-                window, cx,
+                window,
+                cx,
             )
         });
 
@@ -204,7 +217,8 @@ impl Vim {
         editor.highlight_background::<HighlightOnYank>(
             &ranges_to_highlight,
             |colors| colors.editor_document_highlight_read_background,
-            window, cx,
+            window,
+            cx,
         );
         cx.spawn_in(window, |this, mut cx| async move {
             cx.background_executor()

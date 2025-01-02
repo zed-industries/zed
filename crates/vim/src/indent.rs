@@ -76,7 +76,8 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         dir: IndentDirection,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.stop_recording(window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -110,7 +111,8 @@ impl Vim {
         object: Object,
         around: bool,
         dir: IndentDirection,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.stop_recording(window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {

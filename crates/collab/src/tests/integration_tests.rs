@@ -6332,7 +6332,9 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Going back should show item 1 as preview
     workspace
-        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), window, cx))
+        .update(cx, |workspace, cx| {
+            workspace.go_back(pane.downgrade(), window, cx)
+        })
         .await
         .unwrap();
 
@@ -6354,7 +6356,8 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         pane.close_item_by_id(
             pane.active_item().unwrap().item_id(),
             workspace::SaveIntent::Skip,
-            window, cx,
+            window,
+            cx,
         )
     })
     .await
@@ -6371,7 +6374,9 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Going back should show item 1 as preview
     workspace
-        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), window, cx))
+        .update(cx, |workspace, cx| {
+            workspace.go_back(pane.downgrade(), window, cx)
+        })
         .await
         .unwrap();
 

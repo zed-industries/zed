@@ -484,7 +484,9 @@ mod tests {
             vec![],
         );
 
-        cx.update_editor(|editor, window, cx| editor.next_inline_completion(&Default::default(), window, cx));
+        cx.update_editor(|editor, window, cx| {
+            editor.next_inline_completion(&Default::default(), window, cx)
+        });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_inline_completion());
@@ -669,7 +671,9 @@ mod tests {
             }],
             vec![],
         );
-        cx.update_editor(|editor, window, cx| editor.next_inline_completion(&Default::default(), window, cx));
+        cx.update_editor(|editor, window, cx| {
+            editor.next_inline_completion(&Default::default(), window, cx)
+        });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_inline_completion());
@@ -728,8 +732,11 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
-        editor.update(cx, |editor, window, cx| editor.focus(window, cx)).unwrap();
+        let editor =
+            cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
+        editor
+            .update(cx, |editor, window, cx| editor.focus(window, cx))
+            .unwrap();
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
@@ -854,7 +861,9 @@ mod tests {
             }],
             vec![],
         );
-        cx.update_editor(|editor, window, cx| editor.next_inline_completion(&Default::default(), window, cx));
+        cx.update_editor(|editor, window, cx| {
+            editor.next_inline_completion(&Default::default(), window, cx)
+        });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(!editor.context_menu_visible());
@@ -973,8 +982,11 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
-        editor.update(cx, |editor, window, cx| editor.focus(window, cx)).unwrap();
+        let editor =
+            cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
+        editor
+            .update(cx, |editor, window, cx| editor.focus(window, cx))
+            .unwrap();
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, window, cx| {

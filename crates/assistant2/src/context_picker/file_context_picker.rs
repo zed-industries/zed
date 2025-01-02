@@ -5,7 +5,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{Model, AppContext, DismissEvent, FocusHandle, FocusableView, Task,  WeakModel, WeakView};
+use gpui::{
+    AppContext, DismissEvent, FocusHandle, FocusableView, Model, Task, WeakModel, WeakView,
+};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, WorktreeId};
 use ui::{prelude::*, ListItem};
@@ -26,7 +28,8 @@ impl FileContextPicker {
         workspace: WeakView<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate = FileContextPickerDelegate::new(
             context_picker,
@@ -83,7 +86,8 @@ impl FileContextPickerDelegate {
         query: String,
         cancellation_flag: Arc<AtomicBool>,
         workspace: &Model<Workspace>,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
             let workspace = workspace.read(cx);
@@ -165,7 +169,12 @@ impl PickerDelegate for FileContextPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix;
     }
 
@@ -173,7 +182,12 @@ impl PickerDelegate for FileContextPickerDelegate {
         "Search files…".into()
     }
 
-    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(());
         };
@@ -191,7 +205,12 @@ impl PickerDelegate for FileContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         let Some(mat) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -264,7 +283,8 @@ impl PickerDelegate for FileContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
 

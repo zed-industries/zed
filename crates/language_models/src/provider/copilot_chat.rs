@@ -127,7 +127,9 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
 
     fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
         let state = self.state.clone();
-        window.new_view(cx, |window, cx| ConfigurationView::new(state, window, cx)).into()
+        window
+            .new_view(cx, |window, cx| ConfigurationView::new(state, window, cx))
+            .into()
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
@@ -378,7 +380,9 @@ impl Render for ConfigurationView {
                                         .icon_size(IconSize::Medium)
                                         .style(ui::ButtonStyle::Filled)
                                         .full_width()
-                                        .on_click(|_, window, cx| copilot::initiate_sign_in(window, cx)),
+                                        .on_click(|_, window, cx| {
+                                            copilot::initiate_sign_in(window, cx)
+                                        }),
                                 )
                                 .child(
                                     div().flex().w_full().items_center().child(

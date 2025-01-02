@@ -1,6 +1,6 @@
-use gpui::{Window, ModelContext, 
+use gpui::{
     canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, App, AppContext,
-    Bounds, ColorSpace, Half, Render,  WindowOptions,
+    Bounds, ColorSpace, Half, ModelContext, Render, Window, WindowOptions,
 };
 
 struct GradientViewer {

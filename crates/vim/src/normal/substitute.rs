@@ -1,5 +1,5 @@
 use editor::{movement, Editor};
-use gpui::{Window, ModelContext, actions, };
+use gpui::{actions, ModelContext, Window};
 use language::Point;
 
 use crate::{motion::Motion, Mode, Vim};
@@ -28,7 +28,8 @@ impl Vim {
         &mut self,
         count: Option<usize>,
         line_mode: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {

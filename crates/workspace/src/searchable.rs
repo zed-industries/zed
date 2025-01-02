@@ -1,9 +1,9 @@
 use std::{any::Any, sync::Arc};
 
 use any_vec::AnyVec;
-use gpui::{Window, ModelContext, Model, 
-    AnyView, AnyWeakView, AppContext, EventEmitter, Subscription, Task,  
-    WeakView, 
+use gpui::{
+    AnyView, AnyWeakView, AppContext, EventEmitter, Model, ModelContext, Subscription, Task,
+    WeakView, Window,
 };
 use project::search::SearchQuery;
 
@@ -57,28 +57,63 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         }
     }
 
-    fn search_bar_visibility_changed(&mut self, _visible: bool, _window: &mut Window, _cx: &mut ModelContext<Self>) {}
+    fn search_bar_visibility_changed(
+        &mut self,
+        _visible: bool,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
+    ) {
+    }
 
     fn has_filtered_search_ranges(&mut self) -> bool {
         Self::supported_options().selection
     }
 
-    fn toggle_filtered_search_ranges(&mut self, _enabled: bool, _window: &mut Window, _cx: &mut ModelContext<Self>) {}
+    fn toggle_filtered_search_ranges(
+        &mut self,
+        _enabled: bool,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
+    ) {
+    }
 
     fn get_matches(&self, _window: &mut Window, _: &mut AppContext) -> Vec<Self::Match> {
         Vec::new()
     }
     fn clear_matches(&mut self, window: &mut Window, cx: &mut ModelContext<Self>);
-    fn update_matches(&mut self, matches: &[Self::Match], window: &mut Window, cx: &mut ModelContext<Self>);
+    fn update_matches(
+        &mut self,
+        matches: &[Self::Match],
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    );
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> String;
-    fn activate_match(&mut self, index: usize, matches: &[Self::Match], window: &mut Window, cx: &mut ModelContext<Self>);
-    fn select_matches(&mut self, matches: &[Self::Match], window: &mut Window, cx: &mut ModelContext<Self>);
-    fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _window: &mut Window, _: &mut ModelContext<Self>);
+    fn activate_match(
+        &mut self,
+        index: usize,
+        matches: &[Self::Match],
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    );
+    fn select_matches(
+        &mut self,
+        matches: &[Self::Match],
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    );
+    fn replace(
+        &mut self,
+        _: &Self::Match,
+        _: &SearchQuery,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
+    );
     fn replace_all(
         &mut self,
         matches: &mut dyn Iterator<Item = &Self::Match>,
         query: &SearchQuery,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         for item in matches {
             self.replace(item, query, cx);
@@ -90,7 +125,8 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         current_index: usize,
         direction: Direction,
         count: usize,
-        _window: &mut Window, _: &mut ModelContext<Self>,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
     ) -> usize {
         match direction {
             Direction::Prev => {
@@ -107,12 +143,14 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     fn find_matches(
         &mut self,
         query: Arc<SearchQuery>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Vec<Self::Match>>;
     fn active_match_index(
         &mut self,
         matches: &[Self::Match],
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<usize>;
 }
 
@@ -122,25 +160,34 @@ pub trait SearchableItemHandle: ItemHandle {
     fn supported_options(&self) -> SearchOptions;
     fn subscribe_to_search_events(
         &self,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
         handler: Box<dyn Fn(&SearchEvent, &mut Window, &mut AppContext) + Send>,
     ) -> Subscription;
     fn clear_matches(&self, window: &mut Window, cx: &mut AppContext);
     fn update_matches(&self, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut AppContext);
     fn query_suggestion(&self, window: &mut Window, cx: &mut AppContext) -> String;
-    fn activate_match(&self, index: usize, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut AppContext);
+    fn activate_match(
+        &self,
+        index: usize,
+        matches: &AnyVec<dyn Send>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    );
     fn select_matches(&self, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut AppContext);
     fn replace(
         &self,
         _: any_vec::element::ElementRef<'_, dyn Send>,
         _: &SearchQuery,
-        _window: &mut Window, _: &mut AppContext,
+        _window: &mut Window,
+        _: &mut AppContext,
     );
     fn replace_all(
         &self,
         matches: &mut dyn Iterator<Item = any_vec::element::ElementRef<'_, dyn Send>>,
         query: &SearchQuery,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     );
     fn match_index_for_direction(
         &self,
@@ -148,21 +195,34 @@ pub trait SearchableItemHandle: ItemHandle {
         current_index: usize,
         direction: Direction,
         count: usize,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> usize;
     fn find_matches(
         &self,
         query: Arc<SearchQuery>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<AnyVec<dyn Send>>;
     fn active_match_index(
         &self,
         matches: &AnyVec<dyn Send>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Option<usize>;
-    fn search_bar_visibility_changed(&self, visible: bool, window: &mut Window, cx: &mut AppContext);
+    fn search_bar_visibility_changed(
+        &self,
+        visible: bool,
+        window: &mut Window,
+        cx: &mut AppContext,
+    );
 
-    fn toggle_filtered_search_ranges(&mut self, enabled: bool, window: &mut Window, cx: &mut AppContext);
+    fn toggle_filtered_search_ranges(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut AppContext,
+    );
 }
 
 impl<T: SearchableItem> SearchableItemHandle for Model<T> {
@@ -180,10 +240,13 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
 
     fn subscribe_to_search_events(
         &self,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
         handler: Box<dyn Fn(&SearchEvent, &mut Window, &mut AppContext) + Send>,
     ) -> Subscription {
-        window.subscribe(self,cx,  move |_, event: &SearchEvent, window, cx| handler(event, cx))
+        window.subscribe(self, cx, move |_, event: &SearchEvent, window, cx| {
+            handler(event, cx)
+        })
     }
 
     fn clear_matches(&self, window: &mut Window, cx: &mut AppContext) {
@@ -196,7 +259,13 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
     fn query_suggestion(&self, window: &mut Window, cx: &mut AppContext) -> String {
         self.update(cx, |this, cx| this.query_suggestion(cx))
     }
-    fn activate_match(&self, index: usize, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut AppContext) {
+    fn activate_match(
+        &self,
+        index: usize,
+        matches: &AnyVec<dyn Send>,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
             this.activate_match(index, matches.as_slice(), cx)
@@ -214,17 +283,26 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         current_index: usize,
         direction: Direction,
         count: usize,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> usize {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
-            this.match_index_for_direction(matches.as_slice(), current_index, direction, count, window, cx)
+            this.match_index_for_direction(
+                matches.as_slice(),
+                current_index,
+                direction,
+                count,
+                window,
+                cx,
+            )
         })
     }
     fn find_matches(
         &self,
         query: Arc<SearchQuery>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<AnyVec<dyn Send>> {
         let matches = self.update(cx, |this, cx| this.find_matches(query, cx));
         window.spawn(cx, |_| async {
@@ -242,7 +320,8 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
     fn active_match_index(
         &self,
         matches: &AnyVec<dyn Send>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Option<usize> {
         let matches = matches.downcast_ref()?;
         self.update(cx, |this, cx| {
@@ -254,7 +333,8 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         &self,
         mat: any_vec::element::ElementRef<'_, dyn Send>,
         query: &SearchQuery,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         let mat = mat.downcast_ref().unwrap();
         self.update(cx, |this, cx| this.replace(mat, query, cx))
@@ -264,20 +344,36 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         &self,
         matches: &mut dyn Iterator<Item = any_vec::element::ElementRef<'_, dyn Send>>,
         query: &SearchQuery,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         self.update(cx, |this, cx| {
-            this.replace_all(&mut matches.map(|m| m.downcast_ref().unwrap()), query, window, cx);
+            this.replace_all(
+                &mut matches.map(|m| m.downcast_ref().unwrap()),
+                query,
+                window,
+                cx,
+            );
         })
     }
 
-    fn search_bar_visibility_changed(&self, visible: bool, window: &mut Window, cx: &mut AppContext) {
+    fn search_bar_visibility_changed(
+        &self,
+        visible: bool,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
         self.update(cx, |this, cx| {
             this.search_bar_visibility_changed(visible, window, cx)
         });
     }
 
-    fn toggle_filtered_search_ranges(&mut self, enabled: bool, window: &mut Window, cx: &mut AppContext) {
+    fn toggle_filtered_search_ranges(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) {
         self.update(cx, |this, cx| {
             this.toggle_filtered_search_ranges(enabled, window, cx)
         });

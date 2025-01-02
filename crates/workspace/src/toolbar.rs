@@ -1,7 +1,7 @@
 use crate::ItemHandle;
-use gpui::{Window, ModelContext, AppContext, Model, 
-    AnyView, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled,  
-    
+use gpui::{
+    AnyView, AppContext, Entity, EntityId, EventEmitter, Model, ModelContext, ParentElement as _,
+    Render, Styled, Window,
 };
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
@@ -14,10 +14,17 @@ pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> ToolbarItemLocation;
 
-    fn pane_focus_update(&mut self, _pane_focused: bool, _window: &mut Window, _cx: &mut ModelContext<Self>) {}
+    fn pane_focus_update(
+        &mut self,
+        _pane_focused: bool,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
+    ) {
+    }
 }
 
 trait ToolbarItemViewHandle: Send {
@@ -26,7 +33,8 @@ trait ToolbarItemViewHandle: Send {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> ToolbarItemLocation;
     fn focus_changed(&mut self, pane_focused: bool, window: &mut Window, cx: &mut AppContext);
 }
@@ -157,7 +165,12 @@ impl Toolbar {
         }
     }
 
-    pub fn set_can_navigate(&mut self, can_navigate: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_can_navigate(
+        &mut self,
+        can_navigate: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.can_navigate = can_navigate;
         cx.notify();
     }
@@ -188,7 +201,12 @@ impl Toolbar {
         cx.notify();
     }
 
-    pub fn set_active_item(&mut self, item: Option<&dyn ItemHandle>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_active_item(
+        &mut self,
+        item: Option<&dyn ItemHandle>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.active_item = item.map(|item| item.boxed_clone());
         self.hidden = self
             .active_item
@@ -205,7 +223,12 @@ impl Toolbar {
         }
     }
 
-    pub fn focus_changed(&mut self, focused: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn focus_changed(
+        &mut self,
+        focused: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         for (toolbar_item, _) in self.items.iter_mut() {
             toolbar_item.focus_changed(focused, cx);
         }
@@ -234,7 +257,8 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for Model<T> {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> ToolbarItemLocation {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)

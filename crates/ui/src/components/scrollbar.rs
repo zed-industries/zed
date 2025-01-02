@@ -2,11 +2,11 @@
 use std::{cell::Cell, ops::Range, rc::Rc};
 
 use crate::{prelude::*, px, relative, IntoElement};
-use gpui::{Window, AppContext, Model, 
-    point, quad, Along, Axis as ScrollbarAxis, Bounds, ContentMask, Corners, Edges, Element,
-    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent, Size, Style,
-    UniformListScrollHandle,  
+use gpui::{
+    point, quad, Along, AppContext, Axis as ScrollbarAxis, Bounds, ContentMask, Corners, Edges,
+    Element, ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, Model,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
+    Size, Style, UniformListScrollHandle, Window,
 };
 
 pub struct Scrollbar {
@@ -189,7 +189,8 @@ impl Element for Scrollbar {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.flex_grow = 1.;
@@ -211,7 +212,8 @@ impl Element for Scrollbar {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Self::PrepaintState {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.insert_hitbox(bounds, false)
@@ -224,7 +226,8 @@ impl Element for Scrollbar {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let colors = cx.theme().colors();
@@ -333,8 +336,9 @@ impl Element for Scrollbar {
                 move |event: &ScrollWheelEvent, phase, cx| {
                     if phase.bubble() && bounds.contains(&event.position) {
                         let current_offset = scroll.offset();
-                        scroll
-                            .set_offset(current_offset + event.delta.pixel_delta(window.line_height()));
+                        scroll.set_offset(
+                            current_offset + event.delta.pixel_delta(window.line_height()),
+                        );
                     }
                 }
             });

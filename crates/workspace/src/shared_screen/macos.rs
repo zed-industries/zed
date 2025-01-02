@@ -6,10 +6,9 @@ use anyhow::Result;
 use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
-use gpui::{Window, ModelContext, Model, 
-    div, surface, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, SharedString, Styled, Task,   VisualContext,
-    
+use gpui::{
+    div, surface, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement, Model,
+    ModelContext, ParentElement, Render, SharedString, Styled, Task, VisualContext, Window,
 };
 use std::sync::{Arc, Weak};
 use ui::{prelude::*, Icon, IconName};
@@ -33,7 +32,8 @@ impl SharedScreen {
         track: Arc<RemoteVideoTrack>,
         peer_id: PeerId,
         user: Arc<User>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         cx.focus_handle();
         let mut frames = track.frames();
@@ -105,17 +105,25 @@ impl Item for SharedScreen {
         None
     }
 
-    fn set_nav_history(&mut self, history: ItemNavHistory, _window: &mut Window, _: &mut ModelContext<Self>) {
+    fn set_nav_history(
+        &mut self,
+        history: ItemNavHistory,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
+    ) {
         self.nav_history = Some(history);
     }
 
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
         let track = self.track.upgrade()?;
-        Some(window.new_view(cx, |cx| Self::new(track, self.peer_id, self.user.clone(), window, cx)))
+        Some(window.new_view(cx, |cx| {
+            Self::new(track, self.peer_id, self.user.clone(), window, cx)
+        }))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {

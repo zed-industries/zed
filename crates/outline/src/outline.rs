@@ -6,10 +6,10 @@ use std::{
 
 use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
 use fuzzy::StringMatch;
-use gpui::{Window, ModelContext, Model, 
+use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
-    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle,  
-    VisualContext, WeakView, 
+    Model, ModelContext, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle,
+    VisualContext, WeakView, Window,
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
@@ -36,7 +36,8 @@ pub fn init(cx: &mut AppContext) {
 pub fn toggle(
     editor: Model<Editor>,
     _: &zed_actions::outline::ToggleOutline,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) {
     let outline = editor
         .read(cx)
@@ -47,7 +48,9 @@ pub fn toggle(
 
     if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
         workspace.update(cx, |workspace, cx| {
-            workspace.toggle_modal(window, cx, |window, cx| OutlineView::new(outline, editor, window, cx));
+            workspace.toggle_modal(window, cx, |window, cx| {
+                OutlineView::new(outline, editor, window, cx)
+            });
         })
     }
 }
@@ -64,9 +67,14 @@ impl FocusableView for OutlineView {
 
 impl EventEmitter<DismissEvent> for OutlineView {}
 impl ModalView for OutlineView {
-    fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> DismissDecision {
-        self.picker
-            .update(cx, |picker, cx| picker.delegate.restore_active_editor(window, cx));
+    fn on_before_dismiss(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> DismissDecision {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.restore_active_editor(window, cx)
+        });
         DismissDecision::Dismiss(true)
     }
 }
@@ -94,11 +102,13 @@ impl OutlineView {
     fn new(
         outline: Outline<Anchor>,
         editor: Model<Editor>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> OutlineView {
         let delegate = OutlineViewDelegate::new(cx.view().downgrade(), outline, editor, window, cx);
-        let picker =
-            window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx).max_height(Some(vh(0.75, window, cx))));
+        let picker = window.new_view(cx, |cx| {
+            Picker::uniform_list(delegate, window, cx).max_height(Some(vh(0.75, window, cx)))
+        });
         OutlineView { picker }
     }
 }
@@ -120,14 +130,17 @@ impl OutlineViewDelegate {
         outline_view: WeakView<OutlineView>,
         outline: Outline<Anchor>,
         editor: Model<Editor>,
-        window: &mut Window, cx: &mut ModelContext<OutlineView>,
+        window: &mut Window,
+        cx: &mut ModelContext<OutlineView>,
     ) -> Self {
         Self {
             outline_view,
             last_query: Default::default(),
             matches: Default::default(),
             selected_match_index: 0,
-            prev_scroll_position: Some(editor.update(cx, |editor, cx| editor.scroll_position(window, cx))),
+            prev_scroll_position: Some(
+                editor.update(cx, |editor, cx| editor.scroll_position(window, cx)),
+            ),
             active_editor: editor,
             outline,
         }
@@ -146,7 +159,8 @@ impl OutlineViewDelegate {
         &mut self,
         ix: usize,
         navigate: bool,
-        window: &mut Window, cx: &mut ModelContext<Picker<OutlineViewDelegate>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<OutlineViewDelegate>>,
     ) {
         self.selected_match_index = ix;
 
@@ -160,7 +174,8 @@ impl OutlineViewDelegate {
                     outline_item.range.start..outline_item.range.end,
                     cx.theme().colors().editor_highlighted_line_background,
                     true,
-                    window, cx,
+                    window,
+                    cx,
                 );
                 active_editor.request_autoscroll(Autoscroll::center(), window, cx);
             });
@@ -183,14 +198,20 @@ impl PickerDelegate for OutlineViewDelegate {
         self.selected_match_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<OutlineViewDelegate>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<OutlineViewDelegate>>,
+    ) {
         self.set_selected_index(ix, true, window, cx);
     }
 
     fn update_matches(
         &mut self,
         query: String,
-        window: &mut Window, cx: &mut ModelContext<Picker<OutlineViewDelegate>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<OutlineViewDelegate>>,
     ) -> Task<()> {
         let selected_index;
         if query.is_empty() {
@@ -252,7 +273,12 @@ impl PickerDelegate for OutlineViewDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut ModelContext<Picker<OutlineViewDelegate>>) {
+    fn confirm(
+        &mut self,
+        _: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<OutlineViewDelegate>>,
+    ) {
         self.prev_scroll_position.take();
 
         self.active_editor.update(cx, |active_editor, cx| {
@@ -271,7 +297,11 @@ impl PickerDelegate for OutlineViewDelegate {
         self.dismissed(window, cx);
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<OutlineViewDelegate>>) {
+    fn dismissed(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<OutlineViewDelegate>>,
+    ) {
         self.outline_view
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -282,7 +312,8 @@ impl PickerDelegate for OutlineViewDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = self.matches.get(ix)?;
         let outline_item = self.outline.items.get(mat.candidate_id)?;
@@ -370,7 +401,8 @@ mod tests {
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()

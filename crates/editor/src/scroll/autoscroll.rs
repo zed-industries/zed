@@ -1,7 +1,7 @@
 use crate::{
     display_map::ToDisplayPoint, DisplayRow, Editor, EditorMode, LineWithInvisibles, RowExt,
 };
-use gpui::{Window, ModelContext, px, Bounds, Pixels, };
+use gpui::{px, Bounds, ModelContext, Pixels, Window};
 use language::Point;
 use std::{cmp, f32};
 
@@ -70,7 +70,8 @@ impl Editor {
         bounds: Bounds<Pixels>,
         line_height: Pixels,
         max_scroll_top: f32,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> bool {
         let viewport_height = bounds.size.height;
         let visible_lines = viewport_height / line_height;
@@ -224,7 +225,8 @@ impl Editor {
         scroll_width: Pixels,
         max_glyph_width: Pixels,
         layouts: &[LineWithInvisibles],
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
@@ -281,7 +283,12 @@ impl Editor {
         }
     }
 
-    pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn request_autoscroll(
+        &mut self,
+        autoscroll: Autoscroll,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.scroll_manager.autoscroll_request = Some((autoscroll, true));
         cx.notify();
     }
@@ -289,7 +296,8 @@ impl Editor {
     pub(crate) fn request_autoscroll_remotely(
         &mut self,
         autoscroll: Autoscroll,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.scroll_manager.autoscroll_request = Some((autoscroll, false));
         cx.notify();

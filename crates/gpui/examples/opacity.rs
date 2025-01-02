@@ -1,9 +1,10 @@
 use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::Result;
-use gpui::{Window, ModelContext, 
+use gpui::{
     div, hsla, img, point, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds,
-    BoxShadow, ClickEvent, SharedString, Task, Timer,  WindowBounds, WindowOptions,
+    BoxShadow, ClickEvent, ModelContext, SharedString, Task, Timer, Window, WindowBounds,
+    WindowOptions,
 };
 
 struct Assets {

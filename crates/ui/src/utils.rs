@@ -1,6 +1,6 @@
 //! UI-related utilities
 
-use gpui::WindowContext;
+use gpui::{AppContext, Window};
 use theme::ActiveTheme;
 
 mod color_contrast;

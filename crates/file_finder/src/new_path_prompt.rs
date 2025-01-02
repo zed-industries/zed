@@ -11,7 +11,7 @@ use std::{
     },
 };
 use ui::{highlight_ranges, prelude::*, LabelLike, ListItemSpacing};
-use ui::{Window, ModelContext, ListItem, };
+use ui::{ListItem, ModelContext, Window};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -24,7 +24,12 @@ struct Match {
 }
 
 impl Match {
-    fn entry<'a>(&'a self, project: &'a Project, window: &mut Window, cx: &mut AppContext) -> Option<&'a Entry> {
+    fn entry<'a>(
+        &'a self,
+        project: &'a Project,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<&'a Entry> {
         if let Some(suffix) = &self.suffix {
             let (worktree, path) = if let Some(path_match) = &self.path_match {
                 (
@@ -68,7 +73,12 @@ impl Match {
         }
     }
 
-    fn project_path(&self, project: &Project, window: &mut Window, cx: &mut AppContext) -> Option<ProjectPath> {
+    fn project_path(
+        &self,
+        project: &Project,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<ProjectPath> {
         let worktree_id = if let Some(path_match) = &self.path_match {
             WorktreeId::from_usize(path_match.worktree_id)
         } else if let Some(worktree) = project.visible_worktrees(cx).find(|worktree| {
@@ -91,7 +101,12 @@ impl Match {
         })
     }
 
-    fn existing_prefix(&self, project: &Project, window: &mut Window, cx: &mut AppContext) -> Option<PathBuf> {
+    fn existing_prefix(
+        &self,
+        project: &Project,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<PathBuf> {
         let worktree = project.worktrees(cx).next()?.read(cx);
         let mut prefix = PathBuf::new();
         let parts = self.suffix.as_ref()?.split('/');
@@ -105,7 +120,12 @@ impl Match {
         None
     }
 
-    fn styled_text(&self, project: &Project, window: &mut Window, cx: &mut AppContext) -> StyledText {
+    fn styled_text(
+        &self,
+        project: &Project,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> StyledText {
         let mut text = "./".to_string();
         let mut highlights = Vec::new();
         let mut offset = text.as_bytes().len();
@@ -207,7 +227,11 @@ pub struct NewPathDelegate {
 }
 
 impl NewPathPrompt {
-    pub(crate) fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>) {
+    pub(crate) fn register(
+        workspace: &mut Workspace,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Workspace>,
+    ) {
         workspace.set_prompt_for_new_path(Box::new(|workspace, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
             Self::prompt_for_new_path(workspace, tx, window, cx);
@@ -218,7 +242,8 @@ impl NewPathPrompt {
     fn prompt_for_new_path(
         workspace: &mut Workspace,
         tx: oneshot::Sender<Option<ProjectPath>>,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) {
         let project = workspace.project().clone();
         workspace.toggle_modal(window, cx, |window, cx| {
@@ -248,7 +273,12 @@ impl PickerDelegate for NewPathDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<picker::Picker<Self>>,
+    ) {
         self.selected_index = ix;
         cx.notify();
     }
@@ -256,7 +286,8 @@ impl PickerDelegate for NewPathDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<picker::Picker<Self>>,
     ) -> gpui::Task<()> {
         let query = query
             .trim()
@@ -329,12 +360,17 @@ impl PickerDelegate for NewPathDelegate {
     fn confirm_completion(
         &mut self,
         _: String,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<String> {
         self.confirm_update_query(window, cx)
     }
 
-    fn confirm_update_query(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Option<String> {
+    fn confirm_update_query(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Option<String> {
         let m = self.matches.get(self.selected_index)?;
         if m.is_dir(self.project.read(cx), window, cx) {
             let path = m.relative_path();
@@ -345,7 +381,12 @@ impl PickerDelegate for NewPathDelegate {
         }
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<picker::Picker<Self>>,
+    ) {
         let Some(m) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -370,7 +411,9 @@ impl PickerDelegate for NewPathDelegate {
                         if answer != Some(0) {
                             return;
                         }
-                        if let Some(path) = m.project_path(picker.delegate.project.read(cx), window, cx) {
+                        if let Some(path) =
+                            m.project_path(picker.delegate.project.read(cx), window, cx)
+                        {
                             if let Some(tx) = picker.delegate.tx.take() {
                                 tx.send(Some(path)).ok();
                             }
@@ -406,7 +449,8 @@ impl PickerDelegate for NewPathDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let m = self.matches.get(ix)?;
 
@@ -435,7 +479,8 @@ impl NewPathDelegate {
         prefix: String,
         suffix: Option<String>,
         matches: Vec<PathMatch>,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) {
         cx.notify();
         if query.is_empty() {

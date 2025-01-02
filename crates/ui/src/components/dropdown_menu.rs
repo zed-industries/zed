@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{Model, ClickEvent, Corner, CursorStyle, MouseButton, };
+use gpui::{ClickEvent, Corner, CursorStyle, Model, MouseButton};
 
 use crate::{prelude::*, ContextMenu, PopoverMenu};
 
@@ -93,7 +93,10 @@ impl Toggleable for DropdownMenuTrigger {
 }
 
 impl Clickable for DropdownMenuTrigger {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static) -> Self {
+    fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }

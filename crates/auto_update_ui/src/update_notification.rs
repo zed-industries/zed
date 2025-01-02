@@ -1,6 +1,6 @@
-use gpui::{Window, ModelContext, 
-    div, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
-    SemanticVersion, StatefulInteractiveElement, Styled,  WeakView,
+use gpui::{
+    div, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ModelContext, ParentElement,
+    Render, SemanticVersion, StatefulInteractiveElement, Styled, WeakView, Window,
 };
 use menu::Cancel;
 use release_channel::ReleaseChannel;
@@ -37,7 +37,9 @@ impl Render for UpdateNotification {
                             .id("cancel")
                             .child(Icon::new(IconName::Close))
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, window, cx| this.dismiss(&menu::Cancel, window, cx))),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dismiss(&menu::Cancel, window, cx)
+                            })),
                     ),
             )
             .child(

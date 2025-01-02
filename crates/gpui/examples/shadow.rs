@@ -1,6 +1,6 @@
-use gpui::{Window, ModelContext, 
+use gpui::{
     div, hsla, point, prelude::*, px, relative, rgb, size, App, AppContext, Bounds, BoxShadow, Div,
-    SharedString,  WindowBounds, WindowOptions,
+    ModelContext, SharedString, Window, WindowBounds, WindowOptions,
 };
 
 use smallvec::smallvec;

@@ -5,7 +5,11 @@ use crate::{Editor, RangeToAnchorExt};
 
 enum MatchingBracketHighlight {}
 
-pub fn refresh_matching_bracket_highlights(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>) {
+pub fn refresh_matching_bracket_highlights(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
+) {
     editor.clear_background_highlights::<MatchingBracketHighlight>(window, cx);
 
     let newest_selection = editor.selections.newest::<usize>(cx);
@@ -33,7 +37,8 @@ pub fn refresh_matching_bracket_highlights(editor: &mut Editor, window: &mut Win
                 closing_range.to_anchors(&snapshot.buffer_snapshot),
             ],
             |theme| theme.editor_document_highlight_bracket_background,
-            window, cx,
+            window,
+            cx,
         )
     }
 }

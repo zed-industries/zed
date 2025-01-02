@@ -1,7 +1,7 @@
 use editor::Editor;
-use gpui::{Window, ModelContext, 
-    Element, EventEmitter, FocusableView, IntoElement, ParentElement, Render, StyledText,
-    Subscription, 
+use gpui::{
+    Element, EventEmitter, FocusableView, IntoElement, ModelContext, ParentElement, Render,
+    StyledText, Subscription, Window,
 };
 use itertools::Itertools;
 use std::cmp;
@@ -117,13 +117,15 @@ impl Render for Breadcrumbs {
                                 "Show Symbol Outline",
                                 &zed_actions::outline::ToggleOutline,
                                 &focus_handle,
-                                window, cx,
+                                window,
+                                cx,
                             )
                         } else {
                             Tooltip::for_action(
                                 "Show Symbol Outline",
                                 &zed_actions::outline::ToggleOutline,
-                                window, cx,
+                                window,
+                                cx,
                             )
                         }
                     }),
@@ -140,7 +142,8 @@ impl ToolbarItemView for Breadcrumbs {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = None;
@@ -170,7 +173,12 @@ impl ToolbarItemView for Breadcrumbs {
         item.breadcrumb_location(cx)
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, _window: &mut Window, _: &mut ModelContext<Self>) {
+    fn pane_focus_update(
+        &mut self,
+        pane_focused: bool,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
+    ) {
         self.pane_focused = pane_focused;
     }
 }

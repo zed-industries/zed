@@ -1,4 +1,4 @@
-use gpui::{Model, OwnedMenu, OwnedMenuItem, };
+use gpui::{Model, OwnedMenu, OwnedMenuItem};
 use smallvec::SmallVec;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
@@ -60,7 +60,11 @@ impl ApplicationMenu {
         cleaned
     }
 
-    fn build_menu_from_items(entry: MenuEntry, window: &mut Window, cx: &mut AppContext) -> Model<ContextMenu> {
+    fn build_menu_from_items(
+        entry: MenuEntry,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Model<ContextMenu> {
         ContextMenu::build(window, cx, |menu, window, cx| {
             let menu = menu.when_some(window.focused(cx), |menu, focused| menu.context(focused));
             let sanitized_items = Self::sanitize_menu_items(entry.menu.items);
@@ -99,7 +103,9 @@ impl ApplicationMenu {
             .occlude()
             .child(
                 PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
-                    .menu(move |window, cx| Self::build_menu_from_items(entry.clone(), window, cx).into())
+                    .menu(move |window, cx| {
+                        Self::build_menu_from_items(entry.clone(), window, cx).into()
+                    })
                     .trigger(
                         IconButton::new(
                             SharedString::from(format!("{}-menu-trigger", menu_name)),
@@ -108,7 +114,9 @@ impl ApplicationMenu {
                         .style(ButtonStyle::Subtle)
                         .icon_size(IconSize::Small)
                         .when(!handle.is_deployed(), |this| {
-                            this.tooltip(|window, cx| Tooltip::text("Open Application Menu", window, cx))
+                            this.tooltip(|window, cx| {
+                                Tooltip::text("Open Application Menu", window, cx)
+                            })
                         }),
                     )
                     .with_handle(handle),
@@ -132,7 +140,9 @@ impl ApplicationMenu {
             .occlude()
             .child(
                 PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
-                    .menu(move |window, cx| Self::build_menu_from_items(entry.clone(), window, cx).into())
+                    .menu(move |window, cx| {
+                        Self::build_menu_from_items(entry.clone(), window, cx).into()
+                    })
                     .trigger(
                         Button::new(
                             SharedString::from(format!("{}-menu-trigger", menu_name)),

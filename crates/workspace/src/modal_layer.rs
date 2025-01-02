@@ -1,4 +1,4 @@
-use gpui::{Model, AnyView, DismissEvent, FocusHandle, ManagedView, Subscription, };
+use gpui::{AnyView, DismissEvent, FocusHandle, ManagedView, Model, Subscription};
 use ui::prelude::*;
 
 pub enum DismissDecision {
@@ -7,7 +7,11 @@ pub enum DismissDecision {
 }
 
 pub trait ModalView: ManagedView {
-    fn on_before_dismiss(&mut self, _window: &mut Window, _: &mut ModelContext<Self>) -> DismissDecision {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
+    ) -> DismissDecision {
         DismissDecision::Dismiss(true)
     }
 
@@ -62,8 +66,12 @@ impl ModalLayer {
         }
     }
 
-    pub fn toggle_modal<V, B>(&mut self, window: &mut Window, cx: &mut ModelContext<Self>, build_view: B)
-    where
+    pub fn toggle_modal<V, B>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+        build_view: B,
+    ) where
         V: ModalView,
         B: FnOnce(&mut Window, &mut ModelContext<V>) -> V,
     {
@@ -78,17 +86,25 @@ impl ModalLayer {
         self.show_modal(new_modal, window, cx);
     }
 
-    fn show_modal<V>(&mut self, new_modal: Model<V>, window: &mut Window, cx: &mut ModelContext<Self>)
-    where
+    fn show_modal<V>(
+        &mut self,
+        new_modal: Model<V>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) where
         V: ModalView,
     {
         let focus_handle = cx.focus_handle();
         self.active_modal = Some(ActiveModal {
             modal: Box::new(new_modal.clone()),
             _subscriptions: [
-                cx.subscribe_in(&new_modal, window, |this, _, _: &DismissEvent, window, cx| {
-                    this.hide_modal(window, cx);
-                }),
+                cx.subscribe_in(
+                    &new_modal,
+                    window,
+                    |this, _, _: &DismissEvent, window, cx| {
+                        this.hide_modal(window, cx);
+                    },
+                ),
                 cx.on_focus_out(&focus_handle, window, |this, _event, window, cx| {
                     if this.dismiss_on_focus_lost {
                         this.hide_modal(window, cx);

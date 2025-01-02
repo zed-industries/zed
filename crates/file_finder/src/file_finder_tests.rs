@@ -383,7 +383,8 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
                 ProjectPanelOrdMatch(matches[1].clone()),
                 ProjectPanelOrdMatch(matches[3].clone()),
             ],
-            window, cx,
+            window,
+            cx,
         );
 
         // Simulate another cancellation.
@@ -397,7 +398,8 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
                 ProjectPanelOrdMatch(matches[2].clone()),
                 ProjectPanelOrdMatch(matches[3].clone()),
             ],
-            window, cx,
+            window,
+            cx,
         );
 
         assert_eq!(
@@ -450,7 +452,9 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
 
     picker
         .update(cx, |picker, cx| {
-            picker.delegate.spawn_search(test_path_position("hi"), window, cx)
+            picker
+                .delegate
+                .spawn_search(test_path_position("hi"), window, cx)
         })
         .await;
     picker.update(cx, |picker, _| assert_eq!(picker.delegate.matches.len(), 7));
@@ -478,7 +482,9 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
     // is included in the matching, because the worktree is a single file.
     picker
         .update(cx, |picker, cx| {
-            picker.delegate.spawn_search(test_path_position("thf"), window, cx)
+            picker
+                .delegate
+                .spawn_search(test_path_position("thf"), window, cx)
         })
         .await;
     cx.read(|cx| {
@@ -499,7 +505,8 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
     // not match anything.
     picker
         .update(cx, |f, cx| {
-            f.delegate.spawn_search(test_path_position("thf/"), window, cx)
+            f.delegate
+                .spawn_search(test_path_position("thf/"), window, cx)
         })
         .await;
     picker.update(cx, |f, _| assert_eq!(f.delegate.matches.len(), 0));
@@ -548,7 +555,8 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let finder = open_file_picker(&workspace, cx);
     finder
         .update(cx, |f, cx| {
-            f.delegate.spawn_search(test_path_position("a.txt"), window, cx)
+            f.delegate
+                .spawn_search(test_path_position("a.txt"), window, cx)
         })
         .await;
 
@@ -581,7 +589,8 @@ async fn test_search_worktree_without_files(cx: &mut TestAppContext) {
 
     picker
         .update(cx, |f, cx| {
-            f.delegate.spawn_search(test_path_position("dir"), window, cx)
+            f.delegate
+                .spawn_search(test_path_position("dir"), window, cx)
         })
         .await;
     cx.read(|cx| {
@@ -782,7 +791,12 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
     });
     workspace
         .update(cx, |workspace, cx| {
-            workspace.open_abs_path(PathBuf::from("/external-src/test/third.rs"), false, window, cx)
+            workspace.open_abs_path(
+                PathBuf::from("/external-src/test/third.rs"),
+                false,
+                window,
+                cx,
+            )
         })
         .detach();
     cx.background_executor.run_until_parked();
@@ -937,7 +951,9 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
     let first_query = "f";
     finder
         .update(cx, |finder, cx| {
-            finder.delegate.update_matches(first_query.to_string(), window, cx)
+            finder
+                .delegate
+                .update_matches(first_query.to_string(), window, cx)
         })
         .await;
     finder.update(cx, |picker, _| {
@@ -959,7 +975,9 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
     let finder = active_file_picker(&workspace, cx);
     finder
         .update(cx, |finder, cx| {
-            finder.delegate.update_matches(second_query.to_string(), window, cx)
+            finder
+                .delegate
+                .update_matches(second_query.to_string(), window, cx)
         })
         .await;
     finder.update(cx, |picker, _| {
@@ -1033,7 +1051,9 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
     let query = "qw";
     finder
         .update(cx, |finder, cx| {
-            finder.delegate.update_matches(query.to_string(), window, cx)
+            finder
+                .delegate
+                .update_matches(query.to_string(), window, cx)
         })
         .await;
     finder.update(cx, |finder, _| {
@@ -1122,7 +1142,9 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
     // all files match, main.rs is still on top, but the second item is selected
     picker
         .update(cx, |finder, cx| {
-            finder.delegate.update_matches(".rs".to_string(), window, cx)
+            finder
+                .delegate
+                .update_matches(".rs".to_string(), window, cx)
         })
         .await;
     picker.update(cx, |finder, _| {
@@ -1214,7 +1236,9 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
     // all files match, main.rs is still on top, but the second item is selected
     picker
         .update(cx, |finder, cx| {
-            finder.delegate.update_matches(".rs".to_string(), window, cx)
+            finder
+                .delegate
+                .update_matches(".rs".to_string(), window, cx)
         })
         .await;
     picker.update(cx, |finder, _| {

@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use clap::Parser;
 use dialoguer::FuzzySelect;
-use gpui::{Window, ModelContext, 
-    div, px, size, AnyView, AppContext, Bounds, Render,  VisualContext, WindowBounds,
-    WindowOptions,
+use gpui::{
+    div, px, size, AnyView, AppContext, Bounds, ModelContext, Render, VisualContext, Window,
+    WindowBounds, WindowOptions,
 };
 use log::LevelFilter;
 use project::Project;
@@ -98,7 +98,9 @@ fn main() {
             move |window, cx| {
                 theme::setup_ui_font(window, cx);
 
-                window.new_view(cx, |window, cx| StoryWrapper::new(selector.story(window, cx)))
+                window.new_view(cx, |window, cx| {
+                    StoryWrapper::new(selector.story(window, cx))
+                })
             },
         );
 

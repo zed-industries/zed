@@ -364,10 +364,11 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
-        window.new_view(cx, |_window, _cx| ConfigurationView {
-            state: self.state.clone(),
-        })
-        .into()
+        window
+            .new_view(cx, |_window, _cx| ConfigurationView {
+                state: self.state.clone(),
+            })
+            .into()
     }
 
     fn must_accept_terms(&self, cx: &AppContext) -> bool {
@@ -849,7 +850,11 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_accept_terms(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
+    fn render_accept_terms(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<AnyElement> {
         if self.state.read(cx).has_accepted_terms_of_service(cx) {
             return None;
         }
@@ -909,7 +914,9 @@ impl Render for ConfigurationView {
                 h_flex().child(
                     Button::new("manage_settings", "Manage Subscription")
                         .style(ButtonStyle::Tinted(TintColor::Accent))
-                        .on_click(cx.listener(|_, _, window, cx| cx.open_url(&zed_urls::account_url(cx)))),
+                        .on_click(
+                            cx.listener(|_, _, window, cx| cx.open_url(&zed_urls::account_url(cx))),
+                        ),
                 ),
             )
         } else if cx.has_flag::<ZedPro>() {
@@ -925,9 +932,9 @@ impl Render for ConfigurationView {
                         Button::new("upgrade", "Upgrade")
                             .style(ButtonStyle::Subtle)
                             .color(Color::Accent)
-                            .on_click(
-                                cx.listener(|_, _, window, cx| cx.open_url(&zed_urls::account_url(cx))),
-                            ),
+                            .on_click(cx.listener(|_, _, window, cx| {
+                                cx.open_url(&zed_urls::account_url(cx))
+                            })),
                     ),
             )
         } else {
@@ -952,7 +959,9 @@ impl Render for ConfigurationView {
                         .icon_color(Color::Muted)
                         .icon(IconName::Github)
                         .icon_position(IconPosition::Start)
-                        .on_click(cx.listener(move |this, _, window, cx| this.authenticate(window, cx))),
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| this.authenticate(window, cx)),
+                        ),
                 )
         }
     }

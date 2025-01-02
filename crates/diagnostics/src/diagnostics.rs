@@ -15,11 +15,11 @@ use editor::{
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
 use feature_flags::FeatureFlagAppExt;
-use gpui::{Window, ModelContext, 
+use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement,
-    Render, SharedString, Styled, StyledText, Subscription, Task,   VisualContext,
-    WeakView, 
+    FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ModelContext,
+    ParentElement, Render, SharedString, Styled, StyledText, Subscription, Task, VisualContext,
+    WeakView, Window,
 };
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
@@ -127,7 +127,8 @@ impl ProjectDiagnosticsEditor {
         include_warnings: bool,
         project_handle: Model<Project>,
         workspace: WeakView<Workspace>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let project_event_subscription =
             cx.subscribe_in(&project_handle, window, |this, project, event, window, cx| match event {
@@ -158,30 +159,43 @@ impl ProjectDiagnosticsEditor {
             });
 
         let focus_handle = cx.focus_handle();
-        cx.on_focus_in(&focus_handle, window, |this, window, cx| this.focus_in(window, cx))
-            .detach();
-        cx.on_focus_out(&focus_handle, window, |this, _event, window, cx| this.focus_out(window, cx))
-            .detach();
+        cx.on_focus_in(&focus_handle, window, |this, window, cx| {
+            this.focus_in(window, cx)
+        })
+        .detach();
+        cx.on_focus_out(&focus_handle, window, |this, _event, window, cx| {
+            this.focus_out(window, cx)
+        })
+        .detach();
 
         let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
         let editor = window.new_view(cx, |cx| {
-            let mut editor =
-                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), true, window, cx);
+            let mut editor = Editor::for_multibuffer(
+                excerpts.clone(),
+                Some(project_handle.clone()),
+                true,
+                window,
+                cx,
+            );
             editor.set_vertical_scroll_margin(5, window, cx);
             editor
         });
-        cx.subscribe_in(&editor, window, |this, _editor, event: &EditorEvent, window, cx| {
-            cx.emit(event.clone());
-            match event {
-                EditorEvent::Focused => {
-                    if this.path_states.is_empty() {
-                        window.focus(&this.focus_handle);
+        cx.subscribe_in(
+            &editor,
+            window,
+            |this, _editor, event: &EditorEvent, window, cx| {
+                cx.emit(event.clone());
+                match event {
+                    EditorEvent::Focused => {
+                        if this.path_states.is_empty() {
+                            window.focus(&this.focus_handle);
+                        }
                     }
+                    EditorEvent::Blurred => this.update_stale_excerpts(window, cx),
+                    _ => {}
                 }
-                EditorEvent::Blurred => this.update_stale_excerpts(window, cx),
-                _ => {}
-            }
-        })
+            },
+        )
         .detach();
         cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
             this.include_warnings = cx.global::<IncludeWarnings>().0;
@@ -247,18 +261,25 @@ impl ProjectDiagnosticsEditor {
         project_handle: Model<Project>,
         include_warnings: bool,
         workspace: WeakView<Workspace>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::new_with_context(
             editor::DEFAULT_MULTIBUFFER_CONTEXT,
             include_warnings,
             project_handle,
             workspace,
-            window, cx,
+            window,
+            cx,
         )
     }
 
-    fn deploy(workspace: &mut Workspace, _: &Deploy, window: &mut Window, cx: &mut ModelContext<Workspace>) {
+    fn deploy(
+        workspace: &mut Workspace,
+        _: &Deploy,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
+    ) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             workspace.activate_item(&existing, true, true, window, cx);
         } else {
@@ -274,14 +295,20 @@ impl ProjectDiagnosticsEditor {
                     workspace.project().clone(),
                     include_warnings,
                     workspace_handle,
-                    window, cx,
+                    window,
+                    cx,
                 )
             });
             workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, window, cx);
         }
     }
 
-    fn toggle_warnings(&mut self, _: &ToggleWarnings, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_warnings(
+        &mut self,
+        _: &ToggleWarnings,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.include_warnings = !self.include_warnings;
         cx.set_global(IncludeWarnings(self.include_warnings));
         self.update_all_excerpts(window, cx);
@@ -295,7 +322,8 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn focus_out(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window) {
+        if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window)
+        {
             self.update_stale_excerpts(window, cx);
         }
     }
@@ -325,7 +353,8 @@ impl ProjectDiagnosticsEditor {
         path_to_update: ProjectPath,
         server_to_update: Option<LanguageServerId>,
         buffer: Model<Buffer>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let was_empty = self.path_states.is_empty();
         let snapshot = buffer.read(cx).snapshot();
@@ -550,7 +579,8 @@ impl ProjectDiagnosticsEditor {
                     })
                 }),
                 Some(Autoscroll::fit()),
-                window, cx,
+                window,
+                cx,
             );
 
             let mut block_ids = block_ids.into_iter();
@@ -668,10 +698,16 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.editor.update(cx, |editor, cx| editor.deactivated(window, cx));
+        self.editor
+            .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn navigate(&mut self, data: Box<dyn Any>, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn navigate(
+        &mut self,
+        data: Box<dyn Any>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
@@ -680,7 +716,12 @@ impl Item for ProjectDiagnosticsEditor {
         Some("Project Diagnostics".into())
     }
 
-    fn tab_content(&self, params: TabContentParams, _window: &mut Window, _: &mut AppContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        params: TabContentParams,
+        _window: &mut Window,
+        _: &mut AppContext,
+    ) -> AnyElement {
         h_flex()
             .gap_1()
             .when(
@@ -735,7 +776,12 @@ impl Item for ProjectDiagnosticsEditor {
         false
     }
 
-    fn set_nav_history(&mut self, nav_history: ItemNavHistory, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_nav_history(
+        &mut self,
+        nav_history: ItemNavHistory,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.editor.update(cx, |editor, _| {
             editor.set_nav_history(Some(nav_history));
         });
@@ -744,7 +790,8 @@ impl Item for ProjectDiagnosticsEditor {
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>>
     where
         Self: Sized,
@@ -754,7 +801,8 @@ impl Item for ProjectDiagnosticsEditor {
                 self.project.clone(),
                 self.include_warnings,
                 self.workspace.clone(),
-                window, cx,
+                window,
+                cx,
             )
         }))
     }
@@ -779,7 +827,8 @@ impl Item for ProjectDiagnosticsEditor {
         &mut self,
         format: bool,
         project: Model<Project>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         self.editor.save(format, project, window, cx)
     }
@@ -788,12 +837,18 @@ impl Item for ProjectDiagnosticsEditor {
         &mut self,
         _: Model<Project>,
         _: ProjectPath,
-        _window: &mut Window, _: &mut ModelContext<Self>,
+        _window: &mut Window,
+        _: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         unreachable!()
     }
 
-    fn reload(&mut self, project: Model<Project>, window: &mut Window, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn reload(
+        &mut self,
+        project: Model<Project>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         self.editor.reload(project, window, cx)
     }
 
@@ -824,9 +879,15 @@ impl Item for ProjectDiagnosticsEditor {
         self.editor.breadcrumbs(theme, cx)
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.added_to_workspace(workspace, window, cx));
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.added_to_workspace(workspace, window, cx)
+        });
     }
 }
 
@@ -864,17 +925,19 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                         h_flex()
                             .gap_3()
                             .map(|stack| {
-                                stack.child(svg().size(window.text_style().font_size).flex_none().map(
-                                    |icon| {
-                                        if diagnostic.severity == DiagnosticSeverity::ERROR {
-                                            icon.path(IconName::XCircle.path())
-                                                .text_color(Color::Error.color(window, cx))
-                                        } else {
-                                            icon.path(IconName::Warning.path())
-                                                .text_color(Color::Warning.color(window, cx))
-                                        }
-                                    },
-                                ))
+                                stack.child(
+                                    svg().size(window.text_style().font_size).flex_none().map(
+                                        |icon| {
+                                            if diagnostic.severity == DiagnosticSeverity::ERROR {
+                                                icon.path(IconName::XCircle.path())
+                                                    .text_color(Color::Error.color(window, cx))
+                                            } else {
+                                                icon.path(IconName::Warning.path())
+                                                    .text_color(Color::Warning.color(window, cx))
+                                            }
+                                        },
+                                    ),
+                                )
                             })
                             .child(
                                 h_flex()

@@ -2,9 +2,10 @@ pub mod cursor_position;
 
 use cursor_position::LineIndicatorFormat;
 use editor::{scroll::Autoscroll, Editor};
-use gpui::{Window, ModelContext, Model, 
+use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Render, SharedString, Styled, Subscription,   VisualContext,
+    FocusableView, Model, ModelContext, Render, SharedString, Styled, Subscription, VisualContext,
+    Window,
 };
 use settings::Settings;
 use text::{Bias, Point};
@@ -49,13 +50,19 @@ impl GoToLine {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    workspace.toggle_modal(window, cx, move |window, cx| GoToLine::new(editor, window, cx));
+                    workspace.toggle_modal(window, cx, move |window, cx| {
+                        GoToLine::new(editor, window, cx)
+                    });
                 })
             })
             .detach();
     }
 
-    pub fn new(active_editor: Model<Editor>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        active_editor: Model<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let cursor =
             active_editor.update(cx, |editor, cx| editor.selections.last::<Point>(cx).head());
 
@@ -64,14 +71,19 @@ impl GoToLine {
 
         let line_editor = window.new_view(cx, |cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"), window, cx);
+            editor.set_placeholder_text(
+                format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"),
+                window,
+                cx,
+            );
             editor
         });
         let line_editor_change = cx.subscribe_in(&line_editor, window, Self::on_line_editor_event);
 
         let editor = active_editor.read(cx);
         let last_line = editor.buffer().read(cx).snapshot(cx).max_point().row;
-        let scroll_position = active_editor.update(cx, |editor, cx| editor.scroll_position(window, cx));
+        let scroll_position =
+            active_editor.update(cx, |editor, cx| editor.scroll_position(window, cx));
 
         let current_text = format!("{} of {} (column {})", line, last_line + 1, column);
 
@@ -103,7 +115,8 @@ impl GoToLine {
         &mut self,
         _: Model<Editor>,
         event: &editor::EditorEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             editor::EditorEvent::Blurred => cx.emit(DismissEvent),
@@ -125,7 +138,8 @@ impl GoToLine {
                     start..end,
                     cx.theme().colors().editor_highlighted_line_background,
                     true,
-                    window, cx,
+                    window,
+                    cx,
                 );
                 active_editor.request_autoscroll(Autoscroll::center(), window, cx);
             });
@@ -141,7 +155,11 @@ impl GoToLine {
         ))
     }
 
-    fn line_column_from_query(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> (Option<u32>, Option<u32>) {
+    fn line_column_from_query(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> (Option<u32>, Option<u32>) {
         let input = self.line_editor.read(cx).text(cx);
         let mut components = input
             .splitn(2, FILE_ROW_COLUMN_DELIMITER)
@@ -250,7 +268,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -344,7 +363,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
         workspace.update(cx, |workspace, cx| {
             let cursor_position = window.new_view(cx, |_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {

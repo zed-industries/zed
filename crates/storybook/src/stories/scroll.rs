@@ -1,4 +1,4 @@
-use gpui::{Window, AppContext, Model, div, prelude::*, px, Render, SharedString, Styled,  };
+use gpui::{div, prelude::*, px, AppContext, Model, Render, SharedString, Styled, Window};
 use ui::prelude::*;
 use ui::Tooltip;
 
@@ -36,7 +36,9 @@ impl Render for ScrollStory {
                         };
                         div()
                             .id(id)
-                            .tooltip(move |cx| Tooltip::text(format!("{}, {}", row, column), window, cx))
+                            .tooltip(move |cx| {
+                                Tooltip::text(format!("{}, {}", row, column), window, cx)
+                            })
                             .bg(bg)
                             .size(px(100_f32))
                             .when(row >= 5 && column >= 5, |d| {

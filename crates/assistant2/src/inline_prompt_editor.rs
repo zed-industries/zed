@@ -15,10 +15,10 @@ use editor::{
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
-use gpui::{Window, ModelContext, 
+use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Model, Subscription, TextStyle,  
-    WeakModel, WeakView, 
+    FocusHandle, FocusableView, FontWeight, Model, ModelContext, Subscription, TextStyle,
+    WeakModel, WeakView, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use language_model_selector::LanguageModelSelector;
@@ -146,7 +146,11 @@ impl<T: 'static> Render for PromptEditor<T> {
                                                         )
                                                         .position(point(px(0.), px(24.)))
                                                         .anchor(gpui::Corner::TopLeft)
-                                                        .child(self.render_rate_limit_notice(window, cx)),
+                                                        .child(
+                                                            self.render_rate_limit_notice(
+                                                                window, cx,
+                                                            ),
+                                                        ),
                                                 )
                                             })),
                                     )
@@ -206,14 +210,18 @@ impl<T: 'static> PromptEditor<T> {
 
     fn subscribe_to_editor(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.editor_subscriptions.clear();
-        self.editor_subscriptions
-            .push(cx.subscribe_in(&self.editor, window, Self::handle_prompt_editor_events));
+        self.editor_subscriptions.push(cx.subscribe_in(
+            &self.editor,
+            window,
+            Self::handle_prompt_editor_events,
+        ));
     }
 
     pub fn set_show_cursor_when_unfocused(
         &mut self,
         show_cursor_when_unfocused: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
             editor.set_show_cursor_when_unfocused(show_cursor_when_unfocused, window, cx)
@@ -225,7 +233,11 @@ impl<T: 'static> PromptEditor<T> {
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
         self.editor = window.new_view(cx, |cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
-            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, window, cx);
+            editor.set_soft_wrap_mode(
+                language::language_settings::SoftWrap::EditorWidth,
+                window,
+                cx,
+            );
             editor.set_placeholder_text(Self::placeholder_text(&self.mode, window, cx), window, cx);
             editor.set_placeholder_text("Add a prompt…", window, cx);
             editor.set_text(prompt, window, cx);
@@ -237,7 +249,11 @@ impl<T: 'static> PromptEditor<T> {
         self.subscribe_to_editor(window, cx);
     }
 
-    pub fn placeholder_text(mode: &PromptEditorMode, window: &mut Window, cx: &mut AppContext) -> String {
+    pub fn placeholder_text(
+        mode: &PromptEditorMode,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> String {
         let action = match mode {
             PromptEditorMode::Buffer { codegen, .. } => {
                 if codegen.read(cx).is_insertion {
@@ -260,7 +276,12 @@ impl<T: 'static> PromptEditor<T> {
         self.editor.read(cx).text(cx)
     }
 
-    fn toggle_rate_limit_notice(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_rate_limit_notice(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.show_rate_limit_notice = !self.show_rate_limit_notice;
         if self.show_rate_limit_notice {
             window.focus_view(&self.editor, cx);
@@ -272,7 +293,8 @@ impl<T: 'static> PromptEditor<T> {
         &mut self,
         _: Model<Editor>,
         event: &EditorEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             EditorEvent::Edited { .. } => {
@@ -312,15 +334,30 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
-    fn toggle_context_picker(&mut self, _: &ToggleContextPicker, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_context_picker(
+        &mut self,
+        _: &ToggleContextPicker,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.context_picker_menu_handle.toggle(window, cx);
     }
 
-    fn toggle_model_selector(&mut self, _: &ToggleModelSelector, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_model_selector(
+        &mut self,
+        _: &ToggleModelSelector,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.model_selector_menu_handle.toggle(window, cx);
     }
 
-    fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(
+        &mut self,
+        _: &editor::actions::Cancel,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
                 cx.emit(PromptEditorEvent::CancelRequested);
@@ -485,7 +522,12 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
-    fn cycle_prev(&mut self, _: &CyclePreviousInlineAssist, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cycle_prev(
+        &mut self,
+        _: &CyclePreviousInlineAssist,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
                 codegen.update(cx, |codegen, cx| codegen.cycle_prev(cx));
@@ -496,7 +538,12 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
-    fn cycle_next(&mut self, _: &CycleNextInlineAssist, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cycle_next(
+        &mut self,
+        _: &CycleNextInlineAssist,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
                 codegen.update(cx, |codegen, cx| codegen.cycle_next(cx));
@@ -516,7 +563,12 @@ impl<T: 'static> PromptEditor<T> {
             .into_any_element()
     }
 
-    fn render_cycle_controls(&self, codegen: &BufferCodegen, window: &mut Window, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_cycle_controls(
+        &self,
+        codegen: &BufferCodegen,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> AnyElement {
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
         let model_registry = LanguageModelRegistry::read_global(cx);
@@ -557,20 +609,21 @@ impl<T: 'static> PromptEditor<T> {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |cx| {
-                            window.new_view(cx, |window, cx| {
-                                let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
-                                    KeyBinding::for_action_in(
-                                        &CyclePreviousInlineAssist,
-                                        &focus_handle,
-                                        window, cx,
-                                    ),
-                                );
-                                if !disabled && current_index != 0 {
-                                    tooltip = tooltip.meta(prev_model_name.clone());
-                                }
-                                tooltip
-                            })
-                            .into()
+                            window
+                                .new_view(cx, |window, cx| {
+                                    let mut tooltip = Tooltip::new("Previous Alternative")
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &CyclePreviousInlineAssist,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        ));
+                                    if !disabled && current_index != 0 {
+                                        tooltip = tooltip.meta(prev_model_name.clone());
+                                    }
+                                    tooltip
+                                })
+                                .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -598,30 +651,36 @@ impl<T: 'static> PromptEditor<T> {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |cx| {
-                            window.new_view(cx, |window, cx| {
-                                let mut tooltip = Tooltip::new("Next Alternative").key_binding(
-                                    KeyBinding::for_action_in(
-                                        &CycleNextInlineAssist,
-                                        &focus_handle,
-                                        window, cx,
-                                    ),
-                                );
-                                if !disabled && current_index != total_models - 1 {
-                                    tooltip = tooltip.meta(next_model_name.clone());
-                                }
-                                tooltip
-                            })
-                            .into()
+                            window
+                                .new_view(cx, |window, cx| {
+                                    let mut tooltip = Tooltip::new("Next Alternative").key_binding(
+                                        KeyBinding::for_action_in(
+                                            &CycleNextInlineAssist,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        ),
+                                    );
+                                    if !disabled && current_index != total_models - 1 {
+                                        tooltip = tooltip.meta(next_model_name.clone());
+                                    }
+                                    tooltip
+                                })
+                                .into()
                         }
                     })
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.cycle_next(&CycleNextInlineAssist, window, cx)),
-                    ),
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.cycle_next(&CycleNextInlineAssist, window, cx)
+                    })),
             )
             .into_any_element()
     }
 
-    fn render_rate_limit_notice(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_rate_limit_notice(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         Popover::new().child(
             v_flex()
                 .occlude()
@@ -665,9 +724,10 @@ impl<T: 'static> PromptEditor<T> {
                                 )
                                 .child(Button::new("more-info", "More Info").on_click(
                                     |_event, window, cx| {
-                                        window.dispatch_action(Box::new(
-                                            zed_actions::OpenAccountSettings,
-                                        ), cx)
+                                        window.dispatch_action(
+                                            Box::new(zed_actions::OpenAccountSettings),
+                                            cx,
+                                        )
                                     },
                                 )),
                         ),
@@ -754,7 +814,8 @@ impl PromptEditor<BufferCodegen> {
         context_store: Model<ContextStore>,
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
-        window: &mut Window, cx: &mut ModelContext<PromptEditor<BufferCodegen>>,
+        window: &mut Window,
+        cx: &mut ModelContext<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
         let codegen_subscription = cx.observe_in(&codegen, window, Self::handle_codegen_changed);
         let mode = PromptEditorMode::Buffer {
@@ -771,9 +832,14 @@ impl PromptEditor<BufferCodegen> {
                 prompt_buffer,
                 None,
                 false,
-                window, cx,
+                window,
+                cx,
             );
-            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, window, cx);
+            editor.set_soft_wrap_mode(
+                language::language_settings::SoftWrap::EditorWidth,
+                window,
+                cx,
+            );
             // Since the prompt editors for all inline assistants are linked,
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
@@ -793,7 +859,8 @@ impl PromptEditor<BufferCodegen> {
                     thread_store.clone(),
                     prompt_editor.focus_handle(cx),
                     context_picker_menu_handle.clone(),
-                    window, cx,
+                    window,
+                    cx,
                 )
             }),
             context_picker_menu_handle,
@@ -819,7 +886,8 @@ impl PromptEditor<BufferCodegen> {
     fn handle_codegen_changed(
         &mut self,
         _: Model<BufferCodegen>,
-        window: &mut Window, cx: &mut ModelContext<PromptEditor<BufferCodegen>>,
+        window: &mut Window,
+        cx: &mut ModelContext<PromptEditor<BufferCodegen>>,
     ) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle => {
@@ -897,7 +965,8 @@ impl PromptEditor<TerminalCodegen> {
         context_store: Model<ContextStore>,
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let codegen_subscription = cx.observe_in(&codegen, window, Self::handle_codegen_changed);
         let mode = PromptEditorMode::Terminal {
@@ -914,9 +983,14 @@ impl PromptEditor<TerminalCodegen> {
                 prompt_buffer,
                 None,
                 false,
-                window, cx,
+                window,
+                cx,
             );
-            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, window, cx);
+            editor.set_soft_wrap_mode(
+                language::language_settings::SoftWrap::EditorWidth,
+                window,
+                cx,
+            );
             editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), window, cx);
             editor
         });
@@ -932,7 +1006,8 @@ impl PromptEditor<TerminalCodegen> {
                     thread_store.clone(),
                     prompt_editor.focus_handle(cx),
                     context_picker_menu_handle.clone(),
-                    window, cx,
+                    window,
+                    cx,
                 )
             }),
             context_picker_menu_handle,
@@ -979,7 +1054,12 @@ impl PromptEditor<TerminalCodegen> {
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: Model<TerminalCodegen>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_codegen_changed(
+        &mut self,
+        _: Model<TerminalCodegen>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         match &self.codegen().read(cx).status {
             CodegenStatus::Idle => {
                 self.editor

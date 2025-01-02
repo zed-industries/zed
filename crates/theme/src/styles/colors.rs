@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{Window, AppContext, Hsla, SharedString, WindowBackgroundAppearance, };
+use gpui::{AppContext, Hsla, SharedString, Window, WindowBackgroundAppearance};
 use refineable::Refineable;
 use std::sync::Arc;
 use strum::{AsRefStr, EnumIter, IntoEnumIterator};

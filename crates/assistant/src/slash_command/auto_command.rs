@@ -5,7 +5,7 @@ use assistant_slash_command::{
 };
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
-use gpui::{Window, AppContext, AsyncAppContext, AsyncWindowContext, Task, WeakView, };
+use gpui::{AppContext, AsyncAppContext, AsyncWindowContext, Task, WeakView, Window};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -54,7 +54,8 @@ impl SlashCommand for AutoCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         // There's no autocomplete for a prompt, since it's arbitrary text.
         // However, we can use this opportunity to kick off a drain of the backlog.
@@ -98,7 +99,8 @@ impl SlashCommand for AutoCommand {
         _context_buffer: language::BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));

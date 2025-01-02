@@ -4,7 +4,7 @@ use crate::{
     LanguageModelProviderState, LanguageModelRequest,
 };
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{Window, AnyView, AppContext, AsyncAppContext, Model, Task, };
+use gpui::{AnyView, AppContext, AsyncAppContext, Model, Task, Window};
 use http_client::Result;
 use parking_lot::Mutex;
 use serde::Serialize;

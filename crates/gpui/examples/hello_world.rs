@@ -1,5 +1,5 @@
-use gpui::{Window, ModelContext, 
-    div, prelude::*, px, rgb, size, App, AppContext, Bounds, SharedString, 
+use gpui::{
+    div, prelude::*, px, rgb, size, App, AppContext, Bounds, ModelContext, SharedString, Window,
     WindowBounds, WindowOptions,
 };
 
