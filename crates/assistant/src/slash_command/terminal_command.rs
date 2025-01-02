@@ -121,7 +121,7 @@ fn resolve_active_terminal(
         return Some(terminal_view);
     }
 
-    let terminal_panel = workspace.read(cx).panel::<TerminalPanel>(window, cx)?;
+    let terminal_panel = workspace.read(cx).panel::<TerminalPanel>(cx)?;
     terminal_panel.read(cx).pane().and_then(|pane| {
         pane.read(cx)
             .active_item()

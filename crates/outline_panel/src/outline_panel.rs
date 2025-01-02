@@ -3797,7 +3797,7 @@ impl OutlinePanel {
                     SearchKind::Buffer,
                     buffer_search_matches,
                     buffer_search
-                        .map(|buffer_search| buffer_search.read(cx).query(window, cx))
+                        .map(|buffer_search| buffer_search.read(cx).query(cx))
                         .unwrap_or_default(),
                 )
             };
@@ -5758,7 +5758,7 @@ mod tests {
         workspace
             .update(cx, |workspace, window, cx| {
                 workspace
-                    .panel::<OutlinePanel>(window, cx)
+                    .panel::<OutlinePanel>(cx)
                     .expect("no outline panel")
             })
             .unwrap()

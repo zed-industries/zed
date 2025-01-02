@@ -9,7 +9,7 @@ use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
     FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
     MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, VisualContext,
-    WeakModel, WeakModel,
+    WeakModel,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -77,7 +77,7 @@ pub fn init(cx: &mut AppContext) {
 
     register_serializable_item::<TerminalView>(cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+    cx.observe_new_views(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
@@ -89,7 +89,8 @@ pub struct BlockProperties {
 }
 
 pub struct BlockContext<'a, 'b> {
-    pub context: &'b mut WindowContext<'a>,
+    pub window: &'a mut Window,
+    pub context: &'b mut AppContext,
     pub dimensions: TerminalSize,
 }
 
@@ -219,7 +220,7 @@ impl TerminalView {
         let assistant_enabled = self
             .workspace
             .upgrade()
-            .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(window, cx))
+            .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
             .map_or(false, |terminal_panel| {
                 terminal_panel.read(cx).assistant_enabled()
             });
@@ -257,7 +258,7 @@ impl TerminalView {
         self.context_menu = Some((context_menu, position, subscription));
     }
 
-    fn settings_changed(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn settings_changed(&mut self, cx: &mut ModelContext<Self>) {
         let settings = TerminalSettings::get_global(cx);
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
@@ -510,8 +511,10 @@ impl TerminalView {
             let epoch = self.next_blink_epoch();
             cx.spawn_in(window, |this, mut cx| async move {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
-                this.update(&mut cx, |this, cx| this.blink_cursors(epoch, window, cx))
-                    .ok();
+                this.update_in(&mut cx, |this, window, cx| {
+                    this.blink_cursors(epoch, window, cx)
+                })
+                .ok();
             })
             .detach();
         }
@@ -524,7 +527,7 @@ impl TerminalView {
         let epoch = self.next_blink_epoch();
         cx.spawn_in(window, |this, mut cx| async move {
             Timer::after(CURSOR_BLINK_INTERVAL).await;
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.resume_cursor_blinking(epoch, window, cx)
             })
             .ok();
@@ -772,7 +775,7 @@ fn subscribe_for_terminal_events(
                     let path_like_target = path_like_target.clone();
                     cx.spawn_in(window, |terminal_view, mut cx| async move {
                         let valid_files_to_open = terminal_view
-                            .update(&mut cx, |_, cx| {
+                            .update_in(&mut cx, |_, window, cx| {
                                 possible_open_targets(
                                     fs,
                                     &task_workspace,
@@ -788,7 +791,7 @@ fn subscribe_for_terminal_events(
                             .map(|(p, _)| p.path.clone())
                             .collect();
                         let opened_items = task_workspace
-                            .update(&mut cx, |workspace, cx| {
+                            .update_in(&mut cx, |workspace, window, cx| {
                                 workspace.open_paths(
                                     paths_to_open,
                                     OpenVisible::OnlyDirectories,
@@ -813,7 +816,7 @@ fn subscribe_for_terminal_events(
                                     if let Some(active_editor) = opened_item.downcast::<Editor>() {
                                         active_editor
                                             .downgrade()
-                                            .update(&mut cx, |editor, cx| {
+                                            .update_in(&mut cx, |editor, window, cx| {
                                                 let snapshot =
                                                     editor.snapshot(window, cx).display_snapshot;
                                                 let point = snapshot.buffer_snapshot.clip_point(
@@ -1096,8 +1099,8 @@ impl Item for TerminalView {
     fn tab_content(
         &self,
         params: TabContentParams,
-        window: &mut Window,
-        cx: &mut AppContext,
+        _window: &Window,
+        cx: &AppContext,
     ) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
@@ -1181,7 +1184,7 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
-        let window = window.window_handle();
+        let window_handle = window.window_handle();
         let terminal = self
             .project
             .update(cx, |project, cx| {
@@ -1193,14 +1196,14 @@ impl Item for TerminalView {
                 project.create_terminal_with_venv(
                     TerminalKind::Shell(working_directory),
                     python_venv_directory,
-                    window,
+                    window_handle,
                     cx,
                 )
             })
             .ok()?
             .log_err()?;
 
-        Some(window.new_view(cx, |cx| {
+        Some(window.new_view(cx, |window, cx| {
             TerminalView::new(
                 terminal,
                 self.workspace.clone(),
@@ -1320,10 +1323,10 @@ impl SerializableItem for TerminalView {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<anyhow::Result<Model<Self>>> {
-        let window = window.window_handle();
+        let window_handle = window.window_handle();
         window.spawn(cx, |mut cx| async move {
             let cwd = cx
-                .update(|window, cx| {
+                .update(|_window, cx| {
                     let from_db = TERMINAL_DB
                         .get_working_directory(item_id, workspace_id)
                         .log_err()
@@ -1344,7 +1347,7 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(&mut cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(cwd), window, cx)
+                    project.create_terminal(TerminalKind::Shell(cwd), window_handle, cx)
                 })?
                 .await?;
             cx.update(|window, cx| {
@@ -1377,7 +1380,7 @@ impl SearchableItem for TerminalView {
     }
 
     /// Clear stored matches
-    fn clear_matches(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn clear_matches(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) {
         self.terminal().update(cx, |term, _| term.matches.clear())
     }
 
@@ -1385,7 +1388,7 @@ impl SearchableItem for TerminalView {
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.terminal()
@@ -1393,7 +1396,7 @@ impl SearchableItem for TerminalView {
     }
 
     /// Returns the selection content to pre-load into this search
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> String {
+    fn query_suggestion(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> String {
         self.terminal()
             .read(cx)
             .last_content
@@ -1407,7 +1410,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         index: usize,
         _: &[Self::Match],
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.terminal()
@@ -1661,7 +1664,7 @@ mod tests {
 
         let project = Project::test(params.fs.clone(), [], cx).await;
         let workspace = cx
-            .add_window(|cx| Workspace::test_new(project.clone(), window, cx))
+            .add_window(|window, cx| Workspace::test_new(project.clone(), window, cx))
             .root_view(cx)
             .unwrap();
 

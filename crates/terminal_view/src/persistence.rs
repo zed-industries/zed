@@ -6,7 +6,7 @@ use gpui::{AsyncWindowContext, Axis, Model, Task, WeakModel};
 use project::{terminals::TerminalKind, Project};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use ui::{AppContext, ModelContext, Pixels, VisualContext as _, Window};
+use ui::{AppContext, ModelContext, Pixels, Window};
 use util::ResultExt as _;
 
 use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
@@ -101,8 +101,8 @@ pub(crate) fn deserialize_terminal_panel(
     cx: &mut AppContext,
 ) -> Task<anyhow::Result<Model<TerminalPanel>>> {
     window.spawn(cx, move |mut cx| async move {
-        let terminal_panel = workspace.update(&mut cx, |workspace, cx| {
-            window.new_view(cx, |cx| {
+        let terminal_panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            window.new_view(cx, |window, cx| {
                 let mut panel = TerminalPanel::new(workspace, window, cx);
                 panel.height = serialized_panel.height.map(|h| h.round());
                 panel.width = serialized_panel.width.map(|w| w.round());
@@ -120,7 +120,7 @@ pub(crate) fn deserialize_terminal_panel(
                 )
                 .await;
                 let active_item = serialized_panel.active_item_id;
-                terminal_panel.update(&mut cx, |terminal_panel, cx| {
+                terminal_panel.update_in(&mut cx, |terminal_panel, window, cx| {
                     terminal_panel.active_pane.update(cx, |pane, cx| {
                         populate_pane_items(pane, items, active_item, window, cx);
                     });
@@ -175,8 +175,7 @@ async fn deserialize_pane_group(
     panel: Model<TerminalPanel>,
     workspace_id: WorkspaceId,
     serialized: &SerializedPaneGroup,
-    window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut AsyncWindowContext,
 ) -> Option<(Member, Option<Model<Pane>>)> {
     match serialized {
         SerializedPaneGroup::Group {
@@ -193,7 +192,6 @@ async fn deserialize_pane_group(
                     panel.clone(),
                     workspace_id,
                     child,
-                    window,
                     cx,
                 )
                 .await
@@ -223,13 +221,12 @@ async fn deserialize_pane_group(
                 project.clone(),
                 workspace.clone(),
                 serialized_pane.children.as_slice(),
-                window,
                 cx,
             )
             .await;
 
             let pane = panel
-                .update(cx, |terminal_panel, cx| {
+                .update_in(cx, |terminal_panel, window, cx| {
                     new_terminal_pane(
                         workspace.clone(),
                         project.clone(),
@@ -242,7 +239,7 @@ async fn deserialize_pane_group(
             let active_item = serialized_pane.active_item;
 
             let terminal = pane
-                .update(cx, |pane, cx| {
+                .update_in(cx, |pane, window, cx| {
                     populate_pane_items(pane, new_items, active_item, window, cx);
                     // Avoid blank panes in splits
                     if pane.items_len() == 0 {
@@ -265,8 +262,8 @@ async fn deserialize_pane_group(
                 .flatten()?;
             if let Some(terminal) = terminal {
                 let terminal = terminal.await.ok()?;
-                pane.update(cx, |pane, cx| {
-                    let terminal_view = Box::new(window.new_view(cx, |cx| {
+                pane.update_in(cx, |pane, window, cx| {
+                    let terminal_view = Box::new(window.new_view(cx, |window, cx| {
                         TerminalView::new(
                             terminal,
                             workspace.clone(),
@@ -290,25 +287,23 @@ async fn deserialize_terminal_views(
     project: Model<Project>,
     workspace: WeakModel<Workspace>,
     item_ids: &[u64],
-    window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut AsyncWindowContext,
 ) -> Vec<Model<TerminalView>> {
     let mut items = Vec::with_capacity(item_ids.len());
     let mut deserialized_items = item_ids
         .iter()
         .map(|item_id| {
-            window
-                .update(|_, window, cx| {
-                    TerminalView::deserialize(
-                        project.clone(),
-                        workspace.clone(),
-                        workspace_id,
-                        *item_id,
-                        window,
-                        cx,
-                    )
-                })
-                .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
+            cx.update(|window, cx| {
+                TerminalView::deserialize(
+                    project.clone(),
+                    workspace.clone(),
+                    workspace_id,
+                    *item_id,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
         })
         .collect::<FuturesUnordered<_>>();
     while let Some(item) = deserialized_items.next().await {

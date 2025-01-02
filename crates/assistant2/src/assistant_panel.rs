@@ -31,13 +31,13 @@ pub fn init(cx: &mut AppContext) {
                     workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
                 })
                 .register_action(|workspace, _: &NewThread, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(window, cx) {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         panel.update(cx, |panel, cx| panel.new_thread(window, cx));
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                     }
                 })
                 .register_action(|workspace, _: &OpenHistory, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(window, cx) {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
                     }

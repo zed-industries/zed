@@ -120,8 +120,7 @@ impl InlineAssistant {
                 let Some(workspace) = workspace.upgrade() else {
                     return;
                 };
-                let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(window, cx)
-                else {
+                let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                     return;
                 };
                 let enabled = AssistantSettings::get_global(cx).enabled;
@@ -171,7 +170,7 @@ impl InlineAssistant {
             editor.update(cx, |editor, cx| {
                 let thread_store = workspace
                     .read(cx)
-                    .panel::<AssistantPanel>(window, cx)
+                    .panel::<AssistantPanel>(cx)
                     .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
 
                 editor.push_code_action_provider(
@@ -210,7 +209,7 @@ impl InlineAssistant {
         };
 
         let thread_store = workspace
-            .panel::<AssistantPanel>(window, cx)
+            .panel::<AssistantPanel>(cx)
             .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
 
         let handle_assist =
@@ -240,7 +239,7 @@ impl InlineAssistant {
             };
 
         if is_authenticated() {
-            handle_assist(cx);
+            handle_assist(window, cx);
         } else {
             cx.spawn_in(window, |_workspace, mut cx| async move {
                 let Some(task) = cx.update(|window, cx| {
@@ -275,7 +274,7 @@ impl InlineAssistant {
             .detach_and_log_err(cx);
 
             if is_authenticated() {
-                handle_assist(cx);
+                handle_assist(window, cx);
             }
         }
     }
@@ -1421,7 +1420,7 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<InlineAssistTarget> {
-        if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(window, cx) {
+        if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) {
             if terminal_panel
                 .read(cx)
                 .focus_handle(cx)
@@ -1491,18 +1490,18 @@ impl EditorInlineAssists {
                     let editor = editor.downgrade();
                     |_, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
-                            this.handle_editor_release(editor, cx);
+                            this.handle_editor_release(editor, window, cx);
                         })
                     }
                 }),
                 cx.observe(editor, move |editor, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_editor_change(editor, cx)
+                        this.handle_editor_change(editor, window, cx)
                     })
                 }),
                 cx.subscribe(editor, move |editor, event, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_editor_event(editor, event, cx)
+                        this.handle_editor_event(editor, event, window, cx)
                     })
                 }),
                 editor.update(cx, |editor, cx| {
@@ -1511,7 +1510,7 @@ impl EditorInlineAssists {
                         move |_: &editor::actions::Newline, cx: &mut WindowContext| {
                             InlineAssistant::update_global(cx, |this, cx| {
                                 if let Some(editor) = editor_handle.upgrade() {
-                                    this.handle_editor_newline(editor, cx)
+                                    this.handle_editor_newline(editor, window, cx)
                                 }
                             })
                         },
@@ -1523,7 +1522,7 @@ impl EditorInlineAssists {
                         move |_: &editor::actions::Cancel, cx: &mut WindowContext| {
                             InlineAssistant::update_global(cx, |this, cx| {
                                 if let Some(editor) = editor_handle.upgrade() {
-                                    this.handle_editor_cancel(editor, cx)
+                                    this.handle_editor_cancel(editor, window, cx)
                                 }
                             })
                         },
@@ -1613,17 +1612,17 @@ impl InlineAssist {
             _subscriptions: vec![
                 cx.on_focus_in(&prompt_editor_focus_handle, move |window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_focus_in(assist_id, cx)
+                        this.handle_prompt_editor_focus_in(assist_id, window, cx)
                     })
                 }),
                 cx.on_focus_out(&prompt_editor_focus_handle, move |_, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_focus_out(assist_id, cx)
+                        this.handle_prompt_editor_focus_out(assist_id, window, cx)
                     })
                 }),
                 cx.subscribe(prompt_editor, |prompt_editor, event, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_event(prompt_editor, event, cx)
+                        this.handle_prompt_editor_event(prompt_editor, event, window, cx)
                     })
                 }),
                 cx.observe(&codegen, {
@@ -1637,14 +1636,14 @@ impl InlineAssist {
                                     editor_assists.highlight_updates.send(()).ok();
                                 }
 
-                                this.update_editor_blocks(&editor, assist_id, cx);
+                                this.update_editor_blocks(&editor, assist_id, window, cx);
                             })
                         }
                     }
                 }),
                 cx.subscribe(&codegen, move |codegen, event, cx| {
                     InlineAssistant::update_global(cx, |this, cx| match event {
-                        CodegenEvent::Undone => this.finish_assist(assist_id, false, cx),
+                        CodegenEvent::Undone => this.finish_assist(assist_id, false, window, cx),
                         CodegenEvent::Finished => {
                             let assist = if let Some(assist) = this.assists.get(&assist_id) {
                                 assist
@@ -1664,14 +1663,14 @@ impl InlineAssist {
                                                     assist_id.0,
                                                 );
 
-                                            workspace.show_toast(Toast::new(id, error), cx);
+                                            workspace.show_toast(Toast::new(id, error), window, cx);
                                         })
                                     }
                                 }
                             }
 
                             if assist.decorations.is_none() {
-                                this.finish_assist(assist_id, false, cx);
+                                this.finish_assist(assist_id, false, window, cx);
                             }
                         }
                     })

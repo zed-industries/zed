@@ -2566,7 +2566,7 @@ impl Workspace {
         }
     }
 
-    pub fn panel<T: Panel>(&self, window: &mut Window, cx: &mut AppContext) -> Option<Model<T>> {
+    pub fn panel<T: Panel>(&self, cx: &AppContext) -> Option<Model<T>> {
         [&self.left_dock, &self.bottom_dock, &self.right_dock]
             .iter()
             .find_map(|dock| dock.read(cx).panel::<T>())

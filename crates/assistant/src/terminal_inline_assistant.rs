@@ -271,7 +271,7 @@ impl TerminalInlineAssistant {
         let context_request = if assist.include_context {
             assist.workspace.as_ref().and_then(|workspace| {
                 let workspace = workspace.upgrade()?.read(cx);
-                let assistant_panel = workspace.panel::<AssistantPanel>(window, cx)?;
+                let assistant_panel = workspace.panel::<AssistantPanel>(cx)?;
                 Some(
                     assistant_panel
                         .read(cx)
