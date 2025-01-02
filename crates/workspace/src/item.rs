@@ -1482,7 +1482,7 @@ pub mod test {
         where
             Self: Sized,
         {
-            Some(window.new_view(cx, |cx| Self {
+            Some(window.new_view(cx, |window, cx| Self {
                 state: self.state.clone(),
                 label: self.label.clone(),
                 save_count: self.save_count,

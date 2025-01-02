@@ -121,7 +121,7 @@ impl Item for SharedScreen {
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
         let track = self.track.upgrade()?;
-        Some(window.new_view(cx, |cx| {
+        Some(window.new_view(cx, |window, cx| {
             Self::new(track, self.peer_id, self.user.clone(), window, cx)
         }))
     }

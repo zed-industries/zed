@@ -32,7 +32,7 @@ use futures::{
 };
 use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
-    transparent_black, Action, AnyView, AnyWeakModel, AppContext, AsyncAppContext,
+    transparent_black, Action, AnyView, AnyWeakModel, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
     EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke,
     ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
@@ -417,7 +417,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
                 project_item.read_with(&cx, project::ProjectItem::entry_id)?;
             let build_workspace_item =
                 Box::new(|window: &mut Window, cx: &mut ModelContext<Pane>| {
-                    Box::new(window.new_view(cx, |cx| {
+                    Box::new(window.new_view(cx, |window, cx| {
                         I::for_project_item(project, project_item, window, cx)
                     })) as Box<dyn ItemHandle>
                 }) as Box<_>;
@@ -769,7 +769,7 @@ type PromptForOpenPath = Box<
 pub struct Workspace {
     weak_self: WeakModel<Self>,
     workspace_actions: Vec<Box<dyn Fn(Div, &mut Window, &mut ModelContext<Self>) -> Div>>,
-    zoomed: Option<AnyWeakModel>,
+    zoomed: Option<AnyWeakView>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
     left_dock: Model<Dock>,
@@ -932,7 +932,7 @@ impl Workspace {
         let weak_handle = cx.view().downgrade();
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
-        let center_pane = window.new_view(cx, |cx| {
+        let center_pane = window.new_view(cx, |window, cx| {
             let mut center_pane = Pane::new(
                 weak_handle.clone(),
                 project.clone(),
@@ -942,7 +942,7 @@ impl Workspace {
                 window,
                 cx,
             );
-            center_pane.set_can_split(Some(Arc::new(|_, _, _| true)));
+            center_pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             center_pane
         });
         cx.subscribe_in(&center_pane, window, Self::handle_pane_event)
@@ -989,13 +989,16 @@ impl Workspace {
         let left_dock = Dock::new(DockPosition::Left, window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, window, cx);
         let right_dock = Dock::new(DockPosition::Right, window, cx);
-        let left_dock_buttons =
-            window.new_view(cx, |cx| PanelButtons::new(left_dock.clone(), window, cx));
-        let bottom_dock_buttons =
-            window.new_view(cx, |cx| PanelButtons::new(bottom_dock.clone(), window, cx));
-        let right_dock_buttons =
-            window.new_view(cx, |cx| PanelButtons::new(right_dock.clone(), window, cx));
-        let status_bar = window.new_view(cx, |cx| {
+        let left_dock_buttons = window.new_view(cx, |window, cx| {
+            PanelButtons::new(left_dock.clone(), window, cx)
+        });
+        let bottom_dock_buttons = window.new_view(cx, |window, cx| {
+            PanelButtons::new(bottom_dock.clone(), window, cx)
+        });
+        let right_dock_buttons = window.new_view(cx, |window, cx| {
+            PanelButtons::new(right_dock.clone(), window, cx)
+        });
+        let status_bar = window.new_view(cx, |window, cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
             status_bar.add_left_item(left_dock_buttons, window, cx);
             status_bar.add_right_item(right_dock_buttons, window, cx);
@@ -2607,7 +2610,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Model<Pane> {
-        let pane = window.new_view(cx, |cx| {
+        let pane = window.new_view(cx, |window, cx| {
             let mut pane = Pane::new(
                 self.weak_handle(),
                 self.project.clone(),
@@ -2617,7 +2620,7 @@ impl Workspace {
                 window,
                 cx,
             );
-            pane.set_can_split(Some(Arc::new(|_, _, _| true)));
+            pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             pane
         });
         cx.subscribe_in(&pane, window, Self::handle_pane_event)
@@ -2941,7 +2944,7 @@ impl Workspace {
             return item;
         }
 
-        let item = window.new_view(cx, |cx| {
+        let item = window.new_view(cx, |window, cx| {
             T::for_project_item(self.project().clone(), project_item, window, cx)
         });
         let item_id = item.item_id();
@@ -7296,7 +7299,9 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let panel = workspace.update(cx, |workspace, cx| {
-            let panel = window.new_view(cx, |cx| TestPanel::new(DockPosition::Right, window, cx));
+            let panel = window.new_view(cx, |window, cx| {
+                TestPanel::new(DockPosition::Right, window, cx)
+            });
             workspace.add_panel(panel.clone(), window, cx);
 
             workspace
@@ -7741,10 +7746,14 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let (panel_1, panel_2) = workspace.update_in(cx, |workspace, cx| {
-            let panel_1 = window.new_view(cx, |cx| TestPanel::new(DockPosition::Left, window, cx));
+            let panel_1 = window.new_view(cx, |window, cx| {
+                TestPanel::new(DockPosition::Left, window, cx)
+            });
             workspace.add_panel(panel_1.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Left, window, cx);
-            let panel_2 = window.new_view(cx, |cx| TestPanel::new(DockPosition::Right, window, cx));
+            let panel_2 = window.new_view(cx, |window, cx| {
+                TestPanel::new(DockPosition::Right, window, cx)
+            });
             workspace.add_panel(panel_2.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
 

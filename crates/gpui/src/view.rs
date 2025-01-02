@@ -226,6 +226,16 @@ pub struct AnyView {
     cached_style: Option<StyleRefinement>,
 }
 
+impl<V: Render> From<Model<V>> for AnyView {
+    fn from(value: Model<V>) -> Self {
+        AnyView {
+            model: value.into_any(),
+            render: any_view::render::<V>,
+            cached_style: None,
+        }
+    }
+}
+
 impl AnyView {
     /// Indicate that this view should be cached when using it as an element.
     /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [ViewContext::notify] has not been called since it was rendered.
@@ -264,16 +274,6 @@ impl AnyView {
     /// Gets the entity id of this handle.
     pub fn entity_id(&self) -> EntityId {
         self.model.entity_id()
-    }
-}
-
-impl<V: Render> From<Model<V>> for AnyView {
-    fn from(value: Model<V>) -> Self {
-        AnyView {
-            model: value.into_any(),
-            render: any_view::render::<V>,
-            cached_style: None,
-        }
     }
 }
 

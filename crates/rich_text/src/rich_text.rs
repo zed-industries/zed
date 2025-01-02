@@ -165,7 +165,7 @@ impl RichText {
                 for range in &custom_tooltip_ranges {
                     if range.contains(&idx) {
                         if let Some(f) = &custom_tooltip_fn {
-                            return f(idx, range.clone(), cx);
+                            return f(idx, range.clone(), window, cx);
                         }
                     }
                 }
