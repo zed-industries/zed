@@ -56,7 +56,7 @@ impl EditorTestContext {
             })
             .await
             .unwrap();
-        let editor = cx.add_window(|cx| {
+        let editor = cx.add_window(|window, cx| {
             let editor = build_editor_with_project(
                 project,
                 MultiBuffer::build_from_buffer(buffer, cx),
@@ -118,7 +118,7 @@ impl EditorTestContext {
             multibuffer
         });
 
-        let editor = cx.add_window(|cx| {
+        let editor = cx.add_window(|window, cx| {
             let editor = build_editor(buffer, window, cx);
             editor.focus(window, cx);
             editor
@@ -146,7 +146,8 @@ impl EditorTestContext {
     where
         F: FnOnce(&Editor, &Window, &mut ModelContext<Editor>) -> T,
     {
-        self.editor.update(&mut self.cx, |this, cx| read(this, cx))
+        self.editor
+            .update_in(&mut self.cx, |this, window, cx| read(this, window, cx))
     }
 
     #[track_caller]
@@ -154,7 +155,7 @@ impl EditorTestContext {
     where
         F: FnOnce(&mut Editor, &mut Window, &mut ModelContext<Editor>) -> T,
     {
-        self.editor.update(&mut self.cx, update)
+        self.editor.update_in(&mut self.cx, update)
     }
 
     pub fn multibuffer<F, T>(&mut self, read: F) -> T
@@ -242,9 +243,9 @@ impl EditorTestContext {
 
     pub fn display_point(&mut self, marked_text: &str) -> DisplayPoint {
         let ranges = self.ranges(marked_text);
-        let snapshot = self
-            .editor
-            .update(&mut self.cx, |editor, cx| editor.snapshot(window, cx));
+        let snapshot = self.editor.update_in(&mut self.cx, |editor, window, cx| {
+            editor.snapshot(window, cx)
+        });
         ranges[0].start.to_display_point(&snapshot)
     }
 
@@ -307,7 +308,7 @@ impl EditorTestContext {
             marked_text.escape_debug()
         ));
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
-        self.editor.update(&mut self.cx, |editor, cx| {
+        self.editor.update_in(&mut self.cx, |editor, window, cx| {
             editor.set_text(unmarked_text, window, cx);
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select_ranges(selection_ranges)
@@ -323,7 +324,7 @@ impl EditorTestContext {
             marked_text.escape_debug()
         ));
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
-        self.editor.update(&mut self.cx, |editor, cx| {
+        self.editor.update_in(&mut self.cx, |editor, window, cx| {
             assert_eq!(editor.text(cx), unmarked_text);
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select_ranges(selection_ranges)
@@ -361,7 +362,7 @@ impl EditorTestContext {
 
         // Read the actual diff from the editor's row highlights and block
         // decorations.
-        let actual_diff = self.editor.update(&mut self.cx, |editor, cx| {
+        let actual_diff = self.editor.update_in(&mut self.cx, |editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             let insertions = editor
                 .highlighted_rows::<DiffRowHighlight>()

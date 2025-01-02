@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{Model, ModelContext, View, VisualTestContext};
+use gpui::{Model, ModelContext, VisualTestContext, Window};
 use indoc::indoc;
 use language::{
     point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
@@ -124,7 +124,7 @@ impl EditorLspTestContext {
             )
             .await;
 
-        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let workspace = window.root_view(cx).unwrap();
 
@@ -139,16 +139,16 @@ impl EditorLspTestContext {
             .await;
         let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let item = workspace
-            .update(&mut cx, |workspace, cx| {
+            .update_in(&mut cx, |workspace, window, cx| {
                 workspace.open_path(file, None, true, window, cx)
             })
             .await
             .expect("Could not open test file");
-        let editor = cx.update(|cx| {
+        let editor = cx.update(|window, cx| {
             item.act_as::<Editor>(cx)
                 .expect("Opened test file wasn't an editor")
         });
-        editor.update(&mut cx, |editor, cx| editor.focus(window, cx));
+        editor.update_in(&mut cx, |editor, window, cx| editor.focus(window, cx));
 
         let lsp = fake_servers.next().await.unwrap();
         Self {
@@ -309,7 +309,7 @@ impl EditorLspTestContext {
     where
         F: FnOnce(&mut Workspace, &mut Window, &mut ModelContext<Workspace>) -> T,
     {
-        self.workspace.update(&mut self.cx.cx, update)
+        self.workspace.update_in(&mut self.cx.cx, update)
     }
 
     pub fn handle_request<T, F, Fut>(
