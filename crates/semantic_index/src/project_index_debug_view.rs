@@ -126,7 +126,7 @@ impl ProjectIndexDebugView {
                         chunks.len(),
                         gpui::ListAlignment::Top,
                         px(100.),
-                        move |ix, cx| {
+                        move |ix, window, cx| {
                             if let Some(view) = view.upgrade() {
                                 view.update(cx, |view, cx| view.render_chunk(ix, window, cx))
                             } else {
@@ -158,7 +158,7 @@ impl ProjectIndexDebugView {
         let chunk = &state.chunks[ix];
 
         div()
-            .text_ui(window, cx)
+            .text_ui(cx)
             .w_full()
             .font(buffer_font)
             .child(
@@ -280,11 +280,11 @@ impl Render for ProjectIndexDebugView {
 
             canvas(
                 move |bounds, window, cx| {
-                    list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
+                    list.prepaint_as_root(bounds.origin, bounds.size.into(), window, cx);
                     list
                 },
                 |_, mut list, window, cx| {
-                    list.paint(cx);
+                    list.paint(window, cx);
                 },
             )
             .size_full()
