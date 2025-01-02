@@ -116,7 +116,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         cx: &mut ModelContext<Self>,
     ) {
         for item in matches {
-            self.replace(item, query, cx);
+            self.replace(item, query, window, cx);
         }
     }
     fn match_index_for_direction(
@@ -245,7 +245,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         handler: Box<dyn Fn(&SearchEvent, &mut Window, &mut AppContext) + Send>,
     ) -> Subscription {
         window.subscribe(self, cx, move |_, event: &SearchEvent, window, cx| {
-            handler(event, cx)
+            handler(event, window, cx)
         })
     }
 
