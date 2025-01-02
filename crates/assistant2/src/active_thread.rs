@@ -22,7 +22,7 @@ pub struct ActiveThread {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
-    thread: Model<Thread>,
+    pub(crate) thread: Model<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
