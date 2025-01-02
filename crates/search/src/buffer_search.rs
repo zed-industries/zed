@@ -516,6 +516,7 @@ impl ToolbarItemView for BufferSearchBar {
 
             self.active_searchable_item_subscription =
                 Some(searchable_item_handle.subscribe_to_search_events(
+                    window,
                     cx,
                     Box::new(move |search_event, cx| {
                         if let Some(this) = this.upgrade() {
@@ -646,14 +647,14 @@ impl BufferSearchBar {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
             {
-                searchable_item.clear_matches(cx);
+                searchable_item.clear_matches(window, cx);
             }
         }
         if let Some(active_editor) = self.active_searchable_item.as_mut() {
             self.selection_search_enabled = false;
             self.replace_enabled = false;
-            active_editor.search_bar_visibility_changed(false, cx);
-            active_editor.toggle_filtered_search_ranges(false, cx);
+            active_editor.search_bar_visibility_changed(false, window, cx);
+            active_editor.toggle_filtered_search_ranges(false, window, cx);
             let handle = active_editor.focus_handle(cx);
             self.focus(&handle, window, cx);
         }
@@ -720,7 +721,7 @@ impl BufferSearchBar {
         }
 
         self.dismissed = false;
-        handle.search_bar_visibility_changed(true, cx);
+        handle.search_bar_visibility_changed(true, window, cx);
         cx.notify();
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(
@@ -757,7 +758,7 @@ impl BufferSearchBar {
                     .searchable_items_with_matches
                     .get(&active_searchable_item.downgrade())
                 {
-                    active_searchable_item.activate_match(match_ix, matches, cx)
+                    active_searchable_item.activate_match(match_ix, matches, window, cx)
                 }
             }
         }
@@ -782,7 +783,7 @@ impl BufferSearchBar {
     ) -> Option<String> {
         self.active_searchable_item
             .as_ref()
-            .map(|searchable_item| searchable_item.query_suggestion(cx))
+            .map(|searchable_item| searchable_item.query_suggestion(window, cx))
             .filter(|suggestion| !suggestion.is_empty())
     }
 
@@ -920,7 +921,7 @@ impl BufferSearchBar {
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
                 {
-                    searchable_item.select_matches(matches, cx);
+                    searchable_item.select_matches(matches, window, cx);
                     self.focus_editor(&FocusEditor, window, cx);
                 }
             }
@@ -950,10 +951,10 @@ impl BufferSearchBar {
                         return;
                     }
                     let new_match_index = searchable_item
-                        .match_index_for_direction(matches, index, direction, count, cx);
+                        .match_index_for_direction(matches, index, direction, count, window, cx);
 
-                    searchable_item.update_matches(matches, cx);
-                    searchable_item.activate_match(new_match_index, matches, cx);
+                    searchable_item.update_matches(matches, window, cx);
+                    searchable_item.activate_match(new_match_index, matches, window, cx);
                 }
             }
         }
@@ -969,8 +970,8 @@ impl BufferSearchBar {
                     return;
                 }
                 let new_match_index = matches.len() - 1;
-                searchable_item.update_matches(matches, cx);
-                searchable_item.activate_match(new_match_index, matches, cx);
+                searchable_item.update_matches(matches, window, cx);
+                searchable_item.activate_match(new_match_index, matches, window, cx);
             }
         }
     }
@@ -1064,7 +1065,7 @@ impl BufferSearchBar {
     ) {
         if let Some(active_item) = self.active_searchable_item.as_mut() {
             self.selection_search_enabled = !self.selection_search_enabled;
-            active_item.toggle_filtered_search_ranges(self.selection_search_enabled, cx);
+            active_item.toggle_filtered_search_ranges(self.selection_search_enabled, window, cx);
             drop(self.update_matches(false, window, cx));
             cx.notify();
         }
@@ -1079,7 +1080,7 @@ impl BufferSearchBar {
             self.active_match_index = None;
             self.searchable_items_with_matches
                 .remove(&active_searchable_item.downgrade());
-            active_searchable_item.clear_matches(cx);
+            active_searchable_item.clear_matches(window, cx);
         }
     }
 
@@ -1096,7 +1097,7 @@ impl BufferSearchBar {
                 if Some(&searchable_item) == self.active_searchable_item.as_ref() {
                     active_item_matches = Some((searchable_item.downgrade(), matches));
                 } else {
-                    searchable_item.clear_matches(cx);
+                    searchable_item.clear_matches(window, cx);
                 }
             }
         }
@@ -1170,7 +1171,7 @@ impl BufferSearchBar {
                 self.active_search = Some(query.clone());
                 let query_text = query.as_str().to_string();
 
-                let matches = active_searchable_item.find_matches(query, cx);
+                let matches = active_searchable_item.find_matches(query, window, cx);
 
                 let active_searchable_item = active_searchable_item.downgrade();
                 self.pending_search = Some(cx.spawn_in(window, |this, mut cx| async move {
@@ -1192,9 +1193,9 @@ impl BufferSearchBar {
                                     .get(&active_searchable_item.downgrade())
                                     .unwrap();
                                 if matches.is_empty() {
-                                    active_searchable_item.clear_matches(cx);
+                                    active_searchable_item.clear_matches(window, cx);
                                 } else {
-                                    active_searchable_item.update_matches(matches, cx);
+                                    active_searchable_item.update_matches(matches, window, cx);
                                 }
                                 let _ = done_tx.send(());
                             }
@@ -1216,7 +1217,7 @@ impl BufferSearchBar {
                 let matches = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())?;
-                searchable_item.active_match_index(matches, cx)
+                searchable_item.active_match_index(matches, window, cx)
             });
         if new_index != self.active_match_index {
             self.active_match_index = new_index;
@@ -1333,7 +1334,7 @@ impl BufferSearchBar {
                                 .as_ref()
                                 .clone()
                                 .with_replacement(self.replacement(window, cx));
-                            searchable_item.replace(matches.at(active_index), &query, cx);
+                            searchable_item.replace(matches.at(active_index), &query, window, cx);
                             self.select_next_match(&SelectNextMatch, window, cx);
                         }
                         should_propagate = false;
@@ -1364,7 +1365,7 @@ impl BufferSearchBar {
                             .as_ref()
                             .clone()
                             .with_replacement(self.replacement(window, cx));
-                        searchable_item.replace_all(&mut matches.iter(), &query, cx);
+                        searchable_item.replace_all(&mut matches.iter(), &query, window, cx);
                     }
                 }
             }
@@ -1418,7 +1419,7 @@ mod tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            editor::init(window, cx);
+            editor::init(cx);
 
             language::init(cx);
             Project::init_settings(cx);
@@ -1836,7 +1837,7 @@ mod tests {
             .await
             .unwrap();
         let initial_selections = window
-            .update(window, cxndow, cx, |_, window, cx| {
+            .update(window, cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
                     window.focus(&handle);

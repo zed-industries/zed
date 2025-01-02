@@ -333,7 +333,7 @@ impl Element for Scrollbar {
             });
             window.on_mouse_event({
                 let scroll = scroll.clone();
-                move |event: &ScrollWheelEvent, phase, cx| {
+                move |event: &ScrollWheelEvent, phase, window, cx| {
                     if phase.bubble() && bounds.contains(&event.position) {
                         let current_offset = scroll.offset();
                         scroll.set_offset(

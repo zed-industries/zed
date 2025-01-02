@@ -60,15 +60,9 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
         cx,
         |vim, _: &ToggleVisualBlock, window, cx| vim.toggle_mode(Mode::VisualBlock, window, cx),
     );
-    Vim::action(editor, window, cxndow, cx, Vim::other_end);
-    Vim::action(editor, window, cxndow, cx, Vim::visual_insert_end_of_line);
-    Vim::action(
-        editor,
-        window,
-        cxndow,
-        cx,
-        Vim::visual_insert_first_non_white_space,
-    );
+    Vim::action(editor, window, cx, Vim::other_end);
+    Vim::action(editor, window, cx, Vim::visual_insert_end_of_line);
+    Vim::action(editor, window, cx, Vim::visual_insert_first_non_white_space);
     Vim::action(editor, window, cx, |vim, _: &VisualDelete, window, cx| {
         vim.record_current_action(window, cx);
         vim.visual_delete(false, window, cx);
@@ -86,8 +80,8 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
         vim.visual_yank(window, cx)
     });
 
-    Vim::action(editor, window, cxndow, cx, Vim::select_next);
-    Vim::action(editor, window, cxndow, cx, Vim::select_previous);
+    Vim::action(editor, window, cx, Vim::select_next);
+    Vim::action(editor, window, cx, Vim::select_previous);
     Vim::action(
         editor,
         window,

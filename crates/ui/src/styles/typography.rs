@@ -27,7 +27,7 @@ pub trait StyledTypography: Styled + Sized {
 
     /// Sets the text size using a [`UiTextSize`].
     fn text_ui_size(self, size: TextSize, window: &mut Window, cx: &mut AppContext) -> Self {
-        self.text_size(size.rems(window, cx))
+        self.text_size(size.rems(cx))
     }
 
     /// The large size for UI text.
@@ -38,7 +38,7 @@ pub trait StyledTypography: Styled + Sized {
     ///
     /// Use `text_ui` for regular-sized text.
     fn text_ui_lg(self, window: &mut Window, cx: &mut AppContext) -> Self {
-        self.text_size(TextSize::Large.rems(window, cx))
+        self.text_size(TextSize::Large.rems(cx))
     }
 
     /// The default size for UI text.
@@ -49,7 +49,7 @@ pub trait StyledTypography: Styled + Sized {
     ///
     /// Use `text_ui_sm` for smaller text.
     fn text_ui(self, window: &mut Window, cx: &mut AppContext) -> Self {
-        self.text_size(TextSize::default().rems(window, cx))
+        self.text_size(TextSize::default().rems(cx))
     }
 
     /// The small size for UI text.
@@ -60,7 +60,7 @@ pub trait StyledTypography: Styled + Sized {
     ///
     /// Use `text_ui` for regular-sized text.
     fn text_ui_sm(self, window: &mut Window, cx: &mut AppContext) -> Self {
-        self.text_size(TextSize::Small.rems(window, cx))
+        self.text_size(TextSize::Small.rems(cx))
     }
 
     /// The extra small size for UI text.
@@ -71,7 +71,7 @@ pub trait StyledTypography: Styled + Sized {
     ///
     /// Use `text_ui` for regular-sized text.
     fn text_ui_xs(self, window: &mut Window, cx: &mut AppContext) -> Self {
-        self.text_size(TextSize::XSmall.rems(window, cx))
+        self.text_size(TextSize::XSmall.rems(cx))
     }
 
     /// The font size for buffer text.
@@ -131,7 +131,7 @@ pub enum TextSize {
 
 impl TextSize {
     /// Returns the text size in rems.
-    pub fn rems(self, window: &mut Window, cx: &mut AppContext) -> Rems {
+    pub fn rems(self, cx: &mut AppContext) -> Rems {
         let theme_settings = ThemeSettings::get_global(cx);
 
         match self {

@@ -146,7 +146,7 @@ pub fn tooltip_container<V>(
             .text_color(cx.theme().colors().text)
             .py_1()
             .px_2()
-            .map(|el| f(el, cx)),
+            .map(|el| f(el, window, cx)),
     )
 }
 

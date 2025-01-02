@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
-use gpui::{Model, prelude::*, AppContext, Hsla, Task, TextStyleRefinement, };
+use gpui::{prelude::*, AppContext, Hsla, Model, Task, TextStyleRefinement};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use nbformat::v4::{CellId, CellMetadata, CellType};
@@ -62,7 +62,10 @@ impl CellControl {
 }
 
 impl Clickable for CellControl {
-    fn on_click(self, handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static) -> Self {
+    fn on_click(
+        self,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static,
+    ) -> Self {
         let button = self.button.on_click(handler);
         Self { button }
     }
@@ -80,12 +83,17 @@ pub enum Cell {
     Raw(Model<RawCell>),
 }
 
-fn convert_outputs(outputs: &Vec<nbformat::v4::Output>, window: &mut Window, cx: &mut AppContext) -> Vec<Output> {
+fn convert_outputs(
+    outputs: &Vec<nbformat::v4::Output>,
+    window: &mut Window,
+    cx: &mut AppContext,
+) -> Vec<Output> {
     outputs
         .into_iter()
         .map(|output| match output {
             nbformat::v4::Output::Stream { text, .. } => Output::Stream {
-                content: window.new_view(cx, |window, cx| TerminalOutput::from(&text.0, window, cx)),
+                content: window
+                    .new_view(cx, |window, cx| TerminalOutput::from(&text.0, window, cx)),
             },
             nbformat::v4::Output::DisplayData(display_data) => {
                 Output::new(&display_data.data, None, window, cx)
@@ -96,7 +104,9 @@ fn convert_outputs(outputs: &Vec<nbformat::v4::Output>, window: &mut Window, cx:
             nbformat::v4::Output::Error(error) => Output::ErrorOutput(ErrorView {
                 ename: error.ename.clone(),
                 evalue: error.evalue.clone(),
-                traceback: window.new_view(cx, |window, cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
+                traceback: window.new_view(cx, |window, cx| {
+                    TerminalOutput::from(&error.traceback.join("\n"), window, cx)
+                }),
             }),
         })
         .collect()
@@ -107,7 +117,8 @@ impl Cell {
         cell: &nbformat::v4::Cell,
         languages: &Arc<LanguageRegistry>,
         notebook_language: Shared<Task<Option<Arc<Language>>>>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Self {
         match cell {
             nbformat::v4::Cell::Markdown {
@@ -170,7 +181,8 @@ impl Cell {
                         multi_buffer,
                         None,
                         false,
-                        window, cx,
+                        window,
+                        cx,
                     );
 
                     let theme = ThemeSettings::get_global(cx);
@@ -253,7 +265,8 @@ pub trait RenderableCell: Render {
     fn cell_position_spacer(
         &self,
         is_first: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<impl IntoElement> {
         let cell_position = self.cell_position();
 
@@ -398,7 +411,7 @@ impl Render for MarkdownCell {
                             .flex_1()
                             .p_3()
                             .font_ui(window, cx)
-                            .text_size(TextSize::Default.rems(window, cx))
+                            .text_size(TextSize::Default.rems(cx))
                             //
                             .children(parsed.children.iter().map(|child| {
                                 div().relative().child(div().relative().child(
@@ -444,7 +457,11 @@ impl CodeCell {
         }
     }
 
-    pub fn gutter_output(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    pub fn gutter_output(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let is_selected = self.selected();
 
         div()
@@ -720,7 +737,7 @@ impl Render for RawCell {
                             .flex_1()
                             .p_3()
                             .font_ui(window, cx)
-                            .text_size(TextSize::Default.rems(window, cx))
+                            .text_size(TextSize::Default.rems(cx))
                             .child(self.source.clone()),
                     ),
             )

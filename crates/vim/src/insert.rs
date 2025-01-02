@@ -6,8 +6,8 @@ use language::SelectionGoal;
 actions!(vim, [NormalBefore, TemporaryNormal]);
 
 pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cxndow, cx, Vim::normal_before);
-    Vim::action(editor, window, cxndow, cx, Vim::temporary_normal);
+    Vim::action(editor, window, cx, Vim::normal_before);
+    Vim::action(editor, window, cx, Vim::temporary_normal);
 }
 
 impl Vim {

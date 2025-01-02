@@ -529,7 +529,7 @@ pub fn show_link_definition(
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
+                    if let Some((url_range, url)) = find_url(&buffer, buffer_position, window, cx) {
                         this.update(&mut cx, |_, _| {
                             let range = maybe!({
                                 let start =
@@ -540,8 +540,11 @@ pub fn show_link_definition(
                             (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
-                    } else if let Some((filename_range, filename)) =
-                        find_file(&buffer, project.clone(), buffer_position, &mut cx).await
+                    } else if let Some((filename_range, filename)) = cx
+                        .update(|window, cx| {
+                            find_file(&buffer, project.clone(), buffer_position, window, cx)
+                        })
+                        .await
                     {
                         let range = maybe!({
                             let start =
@@ -1355,7 +1358,7 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             let expected_layers = vec![hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor));
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_layers, visible_hint_labels(editor, window, cx));
         });
 
         let inlay_range = cx
@@ -1615,7 +1618,7 @@ mod tests {
         // No highlight
         cx.update_editor(|editor, window, cx| {
             assert!(editor
-                .snapshot(cx)
+                .snapshot(window, cx)
                 .text_highlight_ranges::<HoveredLinkState>()
                 .unwrap_or_default()
                 .1
@@ -1745,7 +1748,7 @@ mod tests {
         // No highlight
         cx.update_editor(|editor, window, cx| {
             assert!(editor
-                .snapshot(cx)
+                .snapshot(window, cx)
                 .text_highlight_ranges::<HoveredLinkState>()
                 .unwrap_or_default()
                 .1

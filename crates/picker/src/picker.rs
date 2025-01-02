@@ -234,7 +234,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let head = Head::empty(Self::on_empty_head_blur, window, cxndow, cx);
+        let head = Head::empty(Self::on_empty_head_blur, window, cx);
 
         Self::new(delegate, ContainerKind::UniformList, head, window, cx)
     }

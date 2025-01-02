@@ -98,8 +98,8 @@ impl ActiveThread {
 
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
-        let ui_font_size = TextSize::Default.rems(window, cx);
-        let buffer_font_size = TextSize::Small.rems(window, cx);
+        let ui_font_size = TextSize::Default.rems(cx);
+        let buffer_font_size = TextSize::Small.rems(cx);
         let mut text_style = window.text_style();
 
         text_style.refine(&TextStyleRefinement {

@@ -417,9 +417,9 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
                 project_item.read_with(&cx, project::ProjectItem::entry_id)?;
             let build_workspace_item =
                 Box::new(|window: &mut Window, cx: &mut ModelContext<Pane>| {
-                    Box::new(
-                        window.new_view(cx, |cx| I::for_project_item(project, project_item, cx)),
-                    ) as Box<dyn ItemHandle>
+                    Box::new(window.new_view(cx, |cx| {
+                        I::for_project_item(project, project_item, window, cx)
+                    })) as Box<dyn ItemHandle>
                 }) as Box<_>;
             Ok((project_entry_id, build_workspace_item))
         }))
@@ -563,11 +563,13 @@ pub fn register_serializable_item<I: SerializableItem>(cx: &mut AppContext) {
     let registry = cx.default_global::<SerializableItemRegistry>();
     let descriptor = SerializableItemDescriptor {
         deserialize: |project, workspace, workspace_id, item_id, cx| {
-            let task = I::deserialize(project, workspace, workspace_id, item_id, cx);
+            let task = I::deserialize(project, workspace, workspace_id, item_id, window, cx);
             cx.foreground_executor()
                 .spawn(async { Ok(Box::new(task.await?) as Box<_>) })
         },
-        cleanup: |workspace_id, loaded_items, cx| I::cleanup(workspace_id, loaded_items, cx),
+        cleanup: |workspace_id, loaded_items, cx| {
+            I::cleanup(workspace_id, loaded_items, window, cx)
+        },
         view_to_serializable_item: |view| Box::new(view.downcast::<I>().unwrap()),
     };
     registry
@@ -1019,8 +1021,8 @@ impl Workspace {
         });
 
         let subscriptions = vec![
-            cx.observe_window_activation(Self::on_window_activation_changed),
-            cx.observe_window_bounds(move |this, cx| {
+            cx.observe_window_activation(window, Self::on_window_activation_changed),
+            cx.observe_window_bounds(window, move |this, cx| {
                 if this.bounds_save_task_queued.is_some() {
                     return;
                 }
@@ -1049,22 +1051,22 @@ impl Workspace {
                 }));
                 cx.notify();
             }),
-            cx.observe_window_appearance(|_, cx| {
+            cx.observe_window_appearance(window, |_, cx| {
                 let window_appearance = cx.appearance();
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
                 ThemeSettings::reload_current_theme(cx);
             }),
-            cx.observe(&left_dock, |this, _, cx| {
+            cx.observe(&left_dock, |this, _, window, cx| {
                 this.serialize_workspace(cx);
                 cx.notify();
             }),
-            cx.observe(&bottom_dock, |this, _, cx| {
+            cx.observe(&bottom_dock, |this, _, window, cx| {
                 this.serialize_workspace(cx);
                 cx.notify();
             }),
-            cx.observe(&right_dock, |this, _, cx| {
+            cx.observe(&right_dock, |this, _, window, cx| {
                 this.serialize_workspace(cx);
                 cx.notify();
             }),
@@ -1507,7 +1509,7 @@ impl Workspace {
                                         navigated |= Some(item.item_id()) != prev_active_item_id;
                                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
                                         if let Some(data) = entry.data {
-                                            navigated |= item.navigate(data, cx);
+                                            navigated |= item.navigate(data, window, cx);
                                         }
                                     })?;
                                 }
@@ -1920,7 +1922,7 @@ impl Workspace {
                             // (Note that the tests always do this implicitly, so you must manually test with something like:
                             //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
                             // )
-                            window.draw();
+                            window.draw(cx);
                         }
                     })?;
                 }
@@ -1965,7 +1967,7 @@ impl Workspace {
                         for (pane, item) in dirty_items {
                             if let Some(task) = item
                                 .to_serializable_item_handle(cx)
-                                .and_then(|handle| handle.serialize(workspace, true, cx))
+                                .and_then(|handle| handle.serialize(workspace, true, window, cx))
                             {
                                 serialize_tasks.push(task);
                             } else {
@@ -2017,6 +2019,7 @@ impl Workspace {
                             ix,
                             &*item,
                             save_intent,
+                            window,
                             &mut cx,
                         )
                         .await?
@@ -2580,7 +2583,7 @@ impl Workspace {
             dock.update(cx, |dock, cx| {
                 if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
-                        if panel.is_zoomed(cx) {
+                        if panel.is_zoomed(window, cx) {
                             focus_center |= panel.focus_handle(cx).contains_focused(window, cx);
                             dock.set_open(false, window, cx);
                         }
@@ -2674,7 +2677,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        if let Some(text) = item.telemetry_event_text(cx) {
+        if let Some(text) = item.telemetry_event_text(window, cx) {
             self.client()
                 .telemetry()
                 .report_app_event(format!("{}: open", text));
@@ -2874,7 +2877,7 @@ impl Workspace {
         let Some(open_project_item) = project_item_builders
             .iter()
             .rev()
-            .find_map(|open_project_item| open_project_item(&project, &path, cx))
+            .find_map(|open_project_item| open_project_item(&project, &path, window, cx))
         else {
             return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
         };
@@ -2939,7 +2942,7 @@ impl Workspace {
         }
 
         let item = window.new_view(cx, |cx| {
-            T::for_project_item(self.project().clone(), project_item, cx)
+            T::for_project_item(self.project().clone(), project_item, window, cx)
         });
         let item_id = item.item_id();
         let mut destination_index = None;
@@ -3279,7 +3282,7 @@ impl Workspace {
     ) {
         match event {
             pane::Event::AddItem { item } => {
-                item.added_to_pane(self, pane, cx);
+                item.added_to_pane(self, pane, window, cx);
                 cx.emit(Event::ItemAdded {
                     item: item.boxed_clone(),
                 });
@@ -3393,16 +3396,17 @@ impl Workspace {
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Pane>> {
         let item = pane.read(cx).active_item()?;
-        let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
-            let new_pane = self.add_pane(window, cx);
-            new_pane.update(cx, |pane, cx| {
-                pane.add_item(clone, true, true, None, window, cx)
-            });
-            self.center.split(&pane, &new_pane, direction).unwrap();
-            Some(new_pane)
-        } else {
-            None
-        };
+        let maybe_pane_handle =
+            if let Some(clone) = item.clone_on_split(self.database_id(), window, cx) {
+                let new_pane = self.add_pane(window, cx);
+                new_pane.update(cx, |pane, cx| {
+                    pane.add_item(clone, true, true, None, window, cx)
+                });
+                self.center.split(&pane, &new_pane, direction).unwrap();
+                Some(new_pane)
+            } else {
+                None
+            };
         cx.notify();
         maybe_pane_handle
     }
@@ -3518,7 +3522,7 @@ impl Workspace {
                 if let Some(pane) = dock
                     .read(cx)
                     .active_panel()
-                    .and_then(|panel| panel.pane(cx))
+                    .and_then(|panel| panel.pane(window, cx))
                 {
                     return pane;
                 }
@@ -3554,7 +3558,7 @@ impl Workspace {
         self.follower_states.retain(|leader_id, state| {
             if *leader_id == peer_id {
                 for item in state.items_by_leader_view_id.values() {
-                    item.view.set_leader_peer_id(None, cx);
+                    item.view.set_leader_peer_id(None, window, cx);
                 }
                 false
             } else {
@@ -3609,7 +3613,7 @@ impl Workspace {
                 Ok::<_, anyhow::Error>(())
             })??;
             if let Some(view) = response.active_view {
-                Self::add_view_from_leader(this.clone(), leader_id, &view, &mut cx).await?;
+                Self::add_view_from_leader(this.clone(), leader_id, &view, window, &mut cx).await?;
             }
             this.update(&mut cx, |this, cx| {
                 this.leader_updated(leader_id, window, cx)
@@ -3709,7 +3713,7 @@ impl Workspace {
         cx.notify();
         let state = self.follower_states.remove(&leader_id)?;
         for (_, item) in state.items_by_leader_view_id {
-            item.view.set_leader_peer_id(None, cx);
+            item.view.set_leader_peer_id(None, window, cx);
         }
 
         let project_id = self.project.read(cx).remote_id();
@@ -3837,10 +3841,10 @@ impl Workspace {
             .and_then(|pane| self.leader_for_pane(&pane));
 
         let item_handle = item.to_followable_item_handle(cx)?;
-        let id = item_handle.remote_id(&self.app_state.client, cx)?;
-        let variant = item_handle.to_state_proto(cx)?;
+        let id = item_handle.remote_id(&self.app_state.client, window, cx)?;
+        let variant = item_handle.to_state_proto(window, cx)?;
 
-        if item_handle.is_project_item(cx)
+        if item_handle.is_project_item(window, cx)
             && (follower_project_id.is_none()
                 || follower_project_id != self.project.read(cx).remote_id())
         {
@@ -4069,11 +4073,11 @@ impl Workspace {
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         let id = item
-                            .remote_id(&self.app_state.client, cx)
+                            .remote_id(&self.app_state.client, window, cx)
                             .map(|id| id.to_proto());
 
                         if let Some(id) = id.clone() {
-                            if let Some(variant) = item.to_state_proto(cx) {
+                            if let Some(variant) = item.to_state_proto(window, cx) {
                                 let view = Some(proto::View {
                                     id: Some(id.clone()),
                                     leader_id,
@@ -4081,7 +4085,7 @@ impl Workspace {
                                     panel_id: panel_id.map(|id| id as i32),
                                 });
 
-                                is_project_item = item.is_project_item(cx);
+                                is_project_item = item.is_project_item(window, cx);
                                 update = proto::UpdateActiveView {
                                     view,
                                     // TODO: Remove after version 0.145.x stabilizes.
@@ -4117,7 +4121,7 @@ impl Workspace {
         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
             if dock.focus_handle(cx).contains_focused(window, cx) {
                 if let Some(panel) = dock.read(cx).active_panel() {
-                    if let Some(pane) = panel.pane(cx) {
+                    if let Some(pane) = panel.pane(window, cx) {
                         if let Some(item) = pane.read(cx).active_item() {
                             active_item = Some(item);
                             panel_id = panel.remote_id();
@@ -4198,7 +4202,7 @@ impl Workspace {
         let mut item_to_activate = None;
         if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
             if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-                if leader_in_this_project || !item.view.is_project_item(cx) {
+                if leader_in_this_project || !item.view.is_project_item(window, cx) {
                     item_to_activate = Some((item.location, item.view.boxed_clone()));
                 }
             }
@@ -4215,7 +4219,7 @@ impl Workspace {
         if let Some(panel_id) = panel_id {
             pane = self
                 .activate_panel_for_proto_id(panel_id, window, cx)?
-                .pane(cx)?;
+                .pane(window, cx)?;
             let state = self.follower_states.get_mut(&leader_id)?;
             state.dock_pane = Some(pane.clone());
         } else {
@@ -4295,7 +4299,7 @@ impl Workspace {
             for pane in &self.panes {
                 pane.update(cx, |pane, cx| {
                     if let Some(item) = pane.active_item() {
-                        item.workspace_deactivated(cx);
+                        item.workspace_deactivated(window, cx);
                     }
                     for item in pane.items() {
                         if matches!(
@@ -4481,7 +4485,7 @@ impl Workspace {
                 .map(|panel| panel.persistent_name().to_string());
             let left_dock_zoom = left_dock
                 .active_panel()
-                .map(|panel| panel.is_zoomed(cx))
+                .map(|panel| panel.is_zoomed(window, cx))
                 .unwrap_or(false);
 
             let right_dock = this.right_dock.read(cx);
@@ -4491,7 +4495,7 @@ impl Workspace {
                 .map(|panel| panel.persistent_name().to_string());
             let right_dock_zoom = right_dock
                 .active_panel()
-                .map(|panel| panel.is_zoomed(cx))
+                .map(|panel| panel.is_zoomed(window, cx))
                 .unwrap_or(false);
 
             let bottom_dock = this.bottom_dock.read(cx);
@@ -4501,7 +4505,7 @@ impl Workspace {
                 .map(|panel| panel.persistent_name().to_string());
             let bottom_dock_zoom = bottom_dock
                 .active_panel()
-                .map(|panel| panel.is_zoomed(cx))
+                .map(|panel| panel.is_zoomed(window, cx))
                 .unwrap_or(false);
 
             DockStructure {
@@ -4578,9 +4582,9 @@ impl Workspace {
             // We use into_iter() here so that the references to the items are moved into
             // the tasks and not kept alive while we're sleeping.
             for (_, item) in unique_items.into_iter() {
-                if let Ok(Some(task)) =
-                    this.update(cx, |workspace, cx| item.serialize(workspace, false, cx))
-                {
+                if let Ok(Some(task)) = this.update(cx, |workspace, cx| {
+                    item.serialize(workspace, false, window, cx)
+                }) {
                     cx.background_executor()
                         .spawn(async move { task.await.log_err() })
                         .detach();
@@ -4621,6 +4625,7 @@ impl Workspace {
                     &project,
                     serialized_workspace.id,
                     workspace.clone(),
+                    window,
                     &mut cx,
                 )
                 .await
@@ -4923,7 +4928,7 @@ impl Workspace {
         }
 
         let leader_border = dock.read(cx).active_panel().and_then(|panel| {
-            let pane = panel.pane(cx)?;
+            let pane = panel.pane(window, cx)?;
             let follower_states = &self.follower_states;
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
@@ -7307,7 +7312,7 @@ mod tests {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(window, cxndow, cx, |workspace, cx| {
+        workspace.update(window, cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(cx));
             assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7318,7 +7323,7 @@ mod tests {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(window, cxndow, cx, |workspace, cx| {
+        workspace.update(window, cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(cx));
             assert!(!panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7329,7 +7334,7 @@ mod tests {
             workspace.toggle_dock(DockPosition::Right, window, cx);
         });
 
-        workspace.update(window, cxndow, cx, |workspace, cx| {
+        workspace.update(window, cx, |workspace, cx| {
             assert!(!workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(cx));
             assert!(!panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7340,7 +7345,7 @@ mod tests {
             workspace.toggle_dock(DockPosition::Right, window, cx);
         });
 
-        workspace.update(window, cxndow, cx, |workspace, cx| {
+        workspace.update(window, cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(cx));
             assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7352,7 +7357,7 @@ mod tests {
             panel.set_zoomed(true, window, cx)
         });
 
-        workspace.update(window, cxndow, cx, |workspace, cx| {
+        workspace.update(window, cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
             assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7363,7 +7368,7 @@ mod tests {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(window, cxndow, cx, |workspace, cx| {
+        workspace.update(window, cx, |workspace, cx| {
             assert!(!workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
             assert!(!panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7374,7 +7379,7 @@ mod tests {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update(window, cxndow, cx, |workspace, cx| {
+        workspace.update(window, cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
             assert!(panel.read(cx).focus_handle(cx).contains_focused(cx));
@@ -7385,7 +7390,7 @@ mod tests {
             workspace.toggle_dock(DockPosition::Right, window, cx)
         });
 
-        workspace.update(window, cxndow, cx, |workspace, cx| {
+        workspace.update(window, cx, |workspace, cx| {
             assert!(!workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
             assert!(workspace.zoomed.is_none());
@@ -7397,7 +7402,7 @@ mod tests {
             workspace.toggle_dock(DockPosition::Right, window, cx)
         });
 
-        workspace.update(window, cxndow, cx, |workspace, cx| {
+        workspace.update(window, cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
             assert!(workspace.zoomed.is_some());
@@ -7727,7 +7732,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
 
-        let (panel_1, panel_2) = workspace.update(window, cxndow, cx, |workspace, cx| {
+        let (panel_1, panel_2) = workspace.update(window, cx, |workspace, cx| {
             let panel_1 = window.new_view(cx, |cx| TestPanel::new(DockPosition::Left, window, cx));
             workspace.add_panel(panel_1.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Left, window, cx);
@@ -7822,7 +7827,7 @@ mod tests {
             panel_1.set_position(DockPosition::Bottom, window, cx);
         });
 
-        workspace.update(window, cxndow, cx, |workspace, cx| {
+        workspace.update(window, cx, |workspace, cx| {
             // Since panel_1 was visible on the left, we close the left dock.
             assert!(!workspace.left_dock().read(cx).is_open());
             // The bottom dock is sized based on the panel's default size,
@@ -7892,10 +7897,10 @@ mod tests {
             move |cx: &mut VisualTestContext| {
                 workspace.update(cx, |workspace, cx| {
                     if let Some(_) = workspace.active_modal::<TestModal>(cx) {
-                        workspace.toggle_modal(window, cxndow, cx, TestModal::new);
-                        workspace.toggle_modal(window, cxndow, cx, TestModal::new);
+                        workspace.toggle_modal(window, cx, TestModal::new);
+                        workspace.toggle_modal(window, cx, TestModal::new);
                     } else {
-                        workspace.toggle_modal(window, cxndow, cx, TestModal::new);
+                        workspace.toggle_modal(window, cx, TestModal::new);
                     }
                 })
             }
@@ -8583,8 +8588,8 @@ mod tests {
             init_test(cx);
 
             cx.update(|cx| {
-                register_project_item::<TestPngItemView>(window, cx);
-                register_project_item::<TestIpynbItemView>(window, cx);
+                register_project_item::<TestPngItemView>(cx);
+                register_project_item::<TestIpynbItemView>(cx);
             });
 
             let fs = FakeFs::new(cx.executor());
@@ -8647,8 +8652,8 @@ mod tests {
             init_test(cx);
 
             cx.update(|cx| {
-                register_project_item::<TestPngItemView>(window, cx);
-                register_project_item::<TestAlternatePngItemView>(window, cx);
+                register_project_item::<TestPngItemView>(cx);
+                register_project_item::<TestAlternatePngItemView>(cx);
             });
 
             let fs = FakeFs::new(cx.executor());

@@ -716,7 +716,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                     DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0)
                 ])
             });
-            assert!(pop_history(&mut editor, cx).is_none());
+            assert!(pop_history(&mut editor, window, cx).is_none());
 
             // Move the cursor a large distance.
             // The history can jump back to the previous position.
@@ -732,7 +732,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0)]
             );
-            assert!(pop_history(&mut editor, cx).is_none());
+            assert!(pop_history(&mut editor, window, cx).is_none());
 
             // Move the cursor a small distance via the mouse.
             // Nothing is added to the navigation history.
@@ -742,7 +742,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 0)]
             );
-            assert!(pop_history(&mut editor, cx).is_none());
+            assert!(pop_history(&mut editor, window, cx).is_none());
 
             // Move the cursor a large distance via the mouse.
             // The history can jump back to the previous position.
@@ -759,7 +759,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 0)]
             );
-            assert!(pop_history(&mut editor, cx).is_none());
+            assert!(pop_history(&mut editor, window, cx).is_none());
 
             // Set scroll position to check later
             editor.set_scroll_position(gpui::Point::<f32>::new(5.5, 5.5), window, cx);
@@ -796,7 +796,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 &[editor.max_point(cx)..editor.max_point(cx)]
             );
             assert_eq!(
-                editor.scroll_position(cx),
+                editor.scroll_position(window, cx),
                 gpui::Point::new(0., editor.max_point(cx).row().as_f32())
             );
 
@@ -2083,33 +2083,33 @@ async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, window, cx| {
         assert_eq!(
-            editor.snapshot(cx).scroll_position(),
+            editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 0.)
         );
         editor.scroll_screen(&ScrollAmount::Page(1.), window, cx);
         assert_eq!(
-            editor.snapshot(cx).scroll_position(),
+            editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
         );
         editor.scroll_screen(&ScrollAmount::Page(1.), window, cx);
         assert_eq!(
-            editor.snapshot(cx).scroll_position(),
+            editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 6.)
         );
         editor.scroll_screen(&ScrollAmount::Page(-1.), window, cx);
         assert_eq!(
-            editor.snapshot(cx).scroll_position(),
+            editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
         );
 
         editor.scroll_screen(&ScrollAmount::Page(-0.5), window, cx);
         assert_eq!(
-            editor.snapshot(cx).scroll_position(),
+            editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 1.)
         );
         editor.scroll_screen(&ScrollAmount::Page(0.5), window, cx);
         assert_eq!(
-            editor.snapshot(cx).scroll_position(),
+            editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
         );
     });
@@ -2146,7 +2146,7 @@ async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
     );
     cx.update_editor(|editor, window, cx| {
         assert_eq!(
-            editor.snapshot(cx).scroll_position(),
+            editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 0.0)
         );
     });
@@ -2164,7 +2164,7 @@ async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
     });
     cx.update_editor(|editor, window, cx| {
         assert_eq!(
-            editor.snapshot(cx).scroll_position(),
+            editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.0)
         );
     });
@@ -2175,7 +2175,7 @@ async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
     });
     cx.update_editor(|editor, window, cx| {
         assert_eq!(
-            editor.snapshot(cx).scroll_position(),
+            editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 4.0)
         );
     });
@@ -2192,7 +2192,7 @@ async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
     });
     cx.update_editor(|editor, window, cx| {
         assert_eq!(
-            editor.snapshot(cx).scroll_position(),
+            editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 1.0)
         );
     });
@@ -6863,7 +6863,7 @@ async fn test_snippet_placeholder_choices(cx: &mut gpui::TestAppContext) {
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, window, cx));
 
-    _ = editor.update(window, cx, |editor, cx| {
+    _ = editor.update(cx, |editor, cx| {
         let snippet = Snippet::parse("type ${1|,i32,u32|} = $2").unwrap();
 
         editor
@@ -6910,7 +6910,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, window, cx));
 
-    editor.update(window, cxndow, cxndow, cxndow, cxndow, cx, |editor, cx| {
+    editor.update(cx, |editor, cx| {
         let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
 
         editor
@@ -6952,7 +6952,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
             "},
         );
 
-        assert!(editor.move_to_next_snippet_tabstop(cx));
+        assert!(editor.move_to_next_snippet_tabstop(window, cx));
         assert(
             editor,
             window,
@@ -6976,7 +6976,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
             "},
         );
 
-        assert!(editor.move_to_next_snippet_tabstop(cx));
+        assert!(editor.move_to_next_snippet_tabstop(window, cx));
         assert(
             editor,
             window,
@@ -6987,7 +6987,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
                 a.f(one, «two», three) b
             "},
         );
-        assert!(editor.move_to_next_snippet_tabstop(cx));
+        assert!(editor.move_to_next_snippet_tabstop(window, cx));
         assert(
             editor,
             window,
@@ -10084,7 +10084,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     // Start following the editor when it has no excerpts.
     let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(window, cx));
     let follower_1 = cx
-        .update_window(*workspace.deref(), |_, cx| {
+        .update_window(*workspace.deref(), |_, window, cx| {
             Editor::from_state_proto(
                 workspace.root_view(cx).unwrap(),
                 ViewId {
@@ -10184,7 +10184,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     // Start following separately after it already has excerpts.
     let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(window, cx));
     let follower_2 = cx
-        .update_window(*workspace.deref(), |_, cx| {
+        .update_window(*workspace.deref(), |_, window, cx| {
             Editor::from_state_proto(
                 workspace.root_view(cx).unwrap().clone(),
                 ViewId {
@@ -15270,7 +15270,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         language::init(cx);
         Project::init_settings(cx);
         workspace::init_settings(cx);
-        crate::init(window, cx);
+        crate::init(cx);
     });
 
     update_test_language_settings(cx, f);

@@ -108,7 +108,7 @@ pub type RenderFoldPlaceholder = Arc<
         + Sync
         + Fn(
             ElementId,
-            Arc<dyn Fn(&mut Window, &mut AppContextAppContext)>,
+            Arc<dyn Fn(&mut Window, &mut AppContext)>,
             &mut Window,
             &mut AppContext,
         ) -> AnyElement,

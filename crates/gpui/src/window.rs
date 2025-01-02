@@ -310,9 +310,9 @@ impl<V: FocusableView> FocusableView for Model<V> {
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> {}
+pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> + Render {}
 
-impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
+impl<M: FocusableView + EventEmitter<DismissEvent> + Render> ManagedView for M {}
 
 /// Emitted by implementers of [`ManagedView`] to indicate the view should be dismissed, such as when a view is presented as a modal.
 pub struct DismissEvent;
@@ -356,8 +356,8 @@ pub struct Hitbox {
 
 impl Hitbox {
     /// Checks if the hitbox is currently hovered.
-    pub fn is_hovered(&self, cx: &Window) -> bool {
-        self.id.is_hovered(cx)
+    pub fn is_hovered(&self, window: &Window) -> bool {
+        self.id.is_hovered(window)
     }
 }
 

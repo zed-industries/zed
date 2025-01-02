@@ -12,7 +12,7 @@ impl Render for UniformListExample {
                 cx.view().clone(),
                 "entries",
                 50,
-                |_this, range, _window, _window, _cx| {
+                |_this, range, _window, _cx| {
                     let mut items = Vec::new();
                     for ix in range {
                         let item = ix + 1;
@@ -22,7 +22,7 @@ impl Render for UniformListExample {
                                 .id(ix)
                                 .px_2()
                                 .cursor_pointer()
-                                .on_click(move |_event, _window, _window, _cx| {
+                                .on_click(move |_event, _window, _cx| {
                                     println!("clicked Item {item:?}");
                                 })
                                 .child(format!("Item {item}")),
@@ -44,7 +44,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, window, cx| window.new_view(cx, |_window, _cx| UniformListExample {}),
+            |window, cx| window.new_view(cx, |_window, _cx| UniformListExample {}),
         )
         .unwrap();
     });

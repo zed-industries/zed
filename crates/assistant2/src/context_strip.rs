@@ -88,7 +88,7 @@ impl Render for ContextStrip {
                             .ml_1p5()
                             .gap_2()
                             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                            .text_size(TextSize::Small.rems(window, cx))
+                            .text_size(TextSize::Small.rems(cx))
                             .text_color(cx.theme().colors().text_muted)
                             .child("Add Context")
                             .children(

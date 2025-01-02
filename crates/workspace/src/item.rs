@@ -412,7 +412,7 @@ where
         cx: &mut AppContext,
     ) -> Option<Task<Result<()>>> {
         self.update(cx, |this, cx| {
-            this.serialize(workspace, cx.entity_id().as_u64(), closing, cx)
+            this.serialize(workspace, cx.entity_id().as_u64(), closing, window, cx)
         })
     }
 
@@ -430,7 +430,7 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut AppContext,
         handler: Box<dyn Fn(ItemEvent, &mut Window, &mut AppContext)>,
     ) -> gpui::Subscription;
-    fn focus_handle(&self, window: &mut Window, cx: &mut AppContext) -> FocusHandle;
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(
@@ -555,7 +555,7 @@ impl<T: Item> ItemHandle for Model<T> {
         })
     }
 
-    fn focus_handle(&self, window: &mut Window, cx: &mut AppContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.focus_handle(cx)
     }
 
@@ -714,7 +714,7 @@ impl<T: Item> ItemHandle for Model<T> {
 
             let mut send_follower_updates = None;
             if let Some(item) = self.to_followable_item_handle(cx) {
-                let is_project_item = item.is_project_item(cx);
+                let is_project_item = item.is_project_item(window, cx);
                 let item = item.downgrade();
 
                 send_follower_updates = Some(cx.spawn_in(window, {
@@ -732,7 +732,7 @@ impl<T: Item> ItemHandle for Model<T> {
                                     proto::update_followers::Variant::UpdateView(
                                         proto::UpdateView {
                                             id: item
-                                                .remote_id(workspace.client(), cx)
+                                                .remote_id(workspace.client(), window, cx)
                                                 .map(|id| id.to_proto()),
                                             variant: pending_update.borrow_mut().take(),
                                             leader_id,
@@ -752,7 +752,12 @@ impl<T: Item> ItemHandle for Model<T> {
             let mut event_subscription = Some(cx.subscribe_in(
                 self,
                 window,
-                move |workspace, item: Model<T>, event, window, cx| {
+                move |workspace,
+                      item: Model<T>,
+                      event,
+                      // todo!: Remove type annotations
+                      window: &mut Window,
+                      cx: &mut AppContext| {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item
                         .get(&item.item_id())
@@ -776,6 +781,7 @@ impl<T: Item> ItemHandle for Model<T> {
                             item.add_event_to_update_proto(
                                 event,
                                 &mut pending_update.borrow_mut(),
+                                window,
                                 cx,
                             );
                             pending_update_tx.unbounded_send(leader_id).ok();
@@ -1147,7 +1153,9 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        self.update(cx, |this, cx| this.set_leader_peer_id(leader_peer_id, cx))
+        self.update(cx, |this, cx| {
+            this.set_leader_peer_id(leader_peer_id, window, cx)
+        })
     }
 
     fn to_state_proto(
@@ -1155,7 +1163,7 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<proto::view::Variant> {
-        self.read(cx).to_state_proto(cx)
+        self.read(cx).to_state_proto(window, cx)
     }
 
     fn add_event_to_update_proto(
@@ -1166,7 +1174,8 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
         cx: &mut AppContext,
     ) -> bool {
         if let Some(event) = event.downcast_ref() {
-            self.read(cx).add_event_to_update_proto(event, update, cx)
+            self.read(cx)
+                .add_event_to_update_proto(event, update, window, cx)
         } else {
             false
         }
@@ -1183,11 +1192,13 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
-        self.update(cx, |this, cx| this.apply_update_proto(project, message, cx))
+        self.update(cx, |this, cx| {
+            this.apply_update_proto(project, message, window, cx)
+        })
     }
 
     fn is_project_item(&self, window: &mut Window, cx: &mut AppContext) -> bool {
-        self.read(cx).is_project_item(cx)
+        self.read(cx).is_project_item(window, cx)
     }
 
     fn dedup(
@@ -1197,7 +1208,7 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
         cx: &mut AppContext,
     ) -> Option<Dedup> {
         let existing = existing.to_any().downcast::<T>().ok()?;
-        self.read(cx).dedup(existing.read(cx), cx)
+        self.read(cx).dedup(existing.read(cx), window, cx)
     }
 }
 

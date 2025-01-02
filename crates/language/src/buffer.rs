@@ -527,7 +527,8 @@ pub struct ChunkRenderer {
 }
 
 pub struct ChunkRendererContext<'a, 'b> {
-    pub context: &'a mut WindowContext<'b>,
+    window: &'a mut Window,
+    pub context: &'b mut AppContext,
     pub max_width: Pixels,
 }
 
@@ -540,7 +541,7 @@ impl fmt::Debug for ChunkRenderer {
 }
 
 impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
-    type Target = WindowContext<'b>;
+    type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
         self.context

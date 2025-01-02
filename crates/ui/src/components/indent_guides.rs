@@ -55,7 +55,7 @@ pub fn indent_guides<V: Render>(
         + 'static,
 ) -> IndentGuides {
     let compute_indents_fn = Box::new(move |range, window: &mut Window, cx: &mut AppContext| {
-        view.update(cx, |this, cx| compute_indents_fn(this, range, cx))
+        view.update(cx, |this, cx| compute_indents_fn(this, range, window, cx))
     });
     IndentGuides {
         colors,
@@ -89,7 +89,7 @@ impl IndentGuides {
             + 'static,
     ) -> Self {
         let render_fn = move |params, window: &mut Window, cx: &mut AppContext| {
-            view.update(cx, |this, cx| render_fn(this, params, cx))
+            view.update(cx, |this, cx| render_fn(this, params, window, cx))
         };
         self.render_fn = Some(Box::new(render_fn));
         self
@@ -155,7 +155,7 @@ mod uniform_list {
             if includes_trailing_indent {
                 visible_range.end += 1;
             }
-            let visible_entries = &(self.compute_indents_fn)(visible_range.clone(), cx);
+            let visible_entries = &(self.compute_indents_fn)(visible_range.clone(), window, cx);
             let indent_guides = compute_indent_guides(
                 &visible_entries,
                 visible_range.start,
@@ -167,7 +167,7 @@ mod uniform_list {
                     indent_size: self.indent_size,
                     item_height,
                 };
-                custom_render(params, cx)
+                custom_render(params, window, cx)
             } else {
                 indent_guides
                     .into_iter()
@@ -288,11 +288,11 @@ mod uniform_list {
                         let hitboxes = hitboxes.clone();
                         let indent_guides = self.indent_guides.clone();
                         let on_hovered_indent_guide_click = on_hovered_indent_guide_click.clone();
-                        move |event: &MouseDownEvent, phase, cx| {
+                        move |event: &MouseDownEvent, phase, window, cx| {
                             if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
                                 let mut active_hitbox_ix = None;
                                 for (i, hitbox) in hitboxes.iter().enumerate() {
-                                    if hitbox.is_hovered(cx) {
+                                    if hitbox.is_hovered(window) {
                                         active_hitbox_ix = Some(i);
                                         break;
                                     }
@@ -303,7 +303,7 @@ mod uniform_list {
                                 };
 
                                 let active_indent_guide = &indent_guides[active_hitbox_ix].layout;
-                                on_hovered_indent_guide_click(active_indent_guide, cx);
+                                on_hovered_indent_guide_click(active_indent_guide, window, cx);
 
                                 cx.stop_propagation();
                                 window.prevent_default();
@@ -314,7 +314,7 @@ mod uniform_list {
                     for (i, hitbox) in hitboxes.iter().enumerate() {
                         window.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
                         let indent_guide = &self.indent_guides[i];
-                        let fill_color = if hitbox.is_hovered(cx) {
+                        let fill_color = if hitbox.is_hovered(window) {
                             hovered_hitbox_id = Some(hitbox.id);
                             self.colors.hover
                         } else if indent_guide.is_active {
@@ -329,10 +329,10 @@ mod uniform_list {
                     window.on_mouse_event({
                         let prev_hovered_hitbox_id = hovered_hitbox_id;
                         let hitboxes = hitboxes.clone();
-                        move |_: &MouseMoveEvent, phase, cx| {
+                        move |_: &MouseMoveEvent, phase, window, cx| {
                             let mut hovered_hitbox_id = None;
                             for hitbox in hitboxes.as_ref() {
-                                if hitbox.is_hovered(cx) {
+                                if hitbox.is_hovered(window) {
                                     hovered_hitbox_id = Some(hitbox.id);
                                     break;
                                 }

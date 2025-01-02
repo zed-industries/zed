@@ -17,7 +17,7 @@ struct Literal(String, char);
 impl_actions!(vim, [Literal]);
 
 pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cxndow, cx, Vim::literal)
+    Vim::action(editor, window, cx, Vim::literal)
 }
 
 static DEFAULT_DIGRAPHS_MAP: LazyLock<HashMap<String, Arc<str>>> = LazyLock::new(|| {

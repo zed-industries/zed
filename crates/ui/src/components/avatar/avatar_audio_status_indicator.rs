@@ -68,7 +68,7 @@ impl RenderOnce for AvatarAudioStatusIndicator {
                         .color(Color::Error),
                     )
                     .when_some(self.tooltip, |this, tooltip| {
-                        this.tooltip(move |cx| tooltip(cx))
+                        this.tooltip(move |window, cx| tooltip(window, cx))
                     }),
             )
     }

@@ -1103,7 +1103,7 @@ mod element {
                 };
 
                 bounding_boxes.push(Some(child_bounds));
-                child.layout_as_root(child_size.into(), cx);
+                child.layout_as_root(child_size.into(), window, cx);
                 child.prepaint_at(origin, cx);
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
@@ -1138,7 +1138,7 @@ mod element {
             cx: &mut AppContext,
         ) {
             for child in &mut layout.children {
-                child.element.paint(cx);
+                child.element.paint(window, cx);
             }
 
             let overlay_opacity = WorkspaceSettings::get(None, cx)
@@ -1206,7 +1206,7 @@ mod element {
                         let workspace = self.workspace.clone();
                         let handle_hitbox = handle.hitbox.clone();
                         move |e: &MouseDownEvent, phase, cx| {
-                            if phase.bubble() && handle_hitbox.is_hovered(cx) {
+                            if phase.bubble() && handle_hitbox.is_hovered(window) {
                                 dragged_handle.replace(Some(ix));
                                 if e.click_count >= 2 {
                                     let mut borrow = flexes.lock();

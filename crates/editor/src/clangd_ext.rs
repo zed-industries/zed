@@ -75,8 +75,8 @@ pub fn switch_source_header(
         })?;
 
         workspace
-            .update(&mut cx, |workspace, view_cx| {
-                workspace.open_abs_path(path, false, view_cx)
+            .update(&mut cx, |workspace, cx| {
+                workspace.open_abs_path(path, false, window, cx)
             })
             .with_context(|| {
                 format!(
@@ -94,6 +94,6 @@ pub fn apply_related_actions(editor: &Model<Editor>, window: &mut Window, cx: &m
         find_specific_language_server_in_selection(e, window, cx, is_c_language, CLANGD_SERVER_NAME)
             .is_some()
     }) {
-        register_action(editor, window, cxndow, cx, switch_source_header);
+        register_action(editor, window, cx, switch_source_header);
     }
 }

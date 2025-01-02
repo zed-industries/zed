@@ -397,7 +397,7 @@ impl MarkdownElement {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
-        let is_hovering_link = hitbox.is_hovered(cx)
+        let is_hovering_link = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
             && rendered_text
                 .link_for_position(window.mouse_position())
@@ -413,7 +413,7 @@ impl MarkdownElement {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
             move |markdown, event: &MouseDownEvent, phase, cx| {
-                if hitbox.is_hovered(cx) {
+                if hitbox.is_hovered(window) {
                     if phase.bubble() {
                         if let Some(link) = rendered_text.link_for_position(event.position) {
                             markdown.pressed_link = Some(link.clone());
@@ -466,7 +466,7 @@ impl MarkdownElement {
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
-                    let is_hovering_link = hitbox.is_hovered(cx)
+                    let is_hovering_link = hitbox.is_hovered(window)
                         && rendered_text.link_for_position(event.position).is_some();
                     if is_hovering_link != was_hovering_link {
                         cx.notify();
@@ -760,10 +760,10 @@ impl Element for MarkdownElement {
         cx: &mut AppContext,
     ) -> Self::PrepaintState {
         let focus_handle = self.markdown.read(cx).focus_handle.clone();
-        window.set_focus_handle(&focus_handle);
+        window.set_focus_handle(&focus_handle, cx);
 
         let hitbox = window.insert_hitbox(bounds, false);
-        rendered_markdown.element.prepaint(cx);
+        rendered_markdown.element.prepaint(window, cx);
         self.autoscroll(&rendered_markdown.text, window, cx);
         hitbox
     }
@@ -792,7 +792,7 @@ impl Element for MarkdownElement {
         });
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
-        rendered_markdown.element.paint(cx);
+        rendered_markdown.element.paint(window, cx);
         self.paint_selection(bounds, &rendered_markdown.text, window, cx);
     }
 }

@@ -83,12 +83,7 @@ pub struct PopoverMenu<M: ManagedView> {
         Box<
             dyn FnOnce(
                     Rc<RefCell<Option<Model<M>>>>,
-                    Option<
-                        Rc<
-                            dyn Fn(&mut Window, &mut AppContextAppContext) -> Option<Model<M>>
-                                + 'static,
-                        >,
-                    >,
+                    Option<Rc<dyn Fn(&mut Window, &mut AppContext) -> Option<Model<M>> + 'static>>,
                 ) -> AnyElement
                 + 'static,
         >,
@@ -278,7 +273,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                         .with_priority(1)
                         .into_any();
 
-                    menu_layout_id = Some(element.request_layout(cx));
+                    menu_layout_id = Some(element.request_layout(window, cx));
                     element
                 });
 
@@ -297,7 +292,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
 
                 let child_layout_id = child_element
                     .as_mut()
-                    .map(|child_element| child_element.request_layout(cx));
+                    .map(|child_element| child_element.request_layout(window, cx));
 
                 let mut style = Style::default();
                 if self.full_width {
@@ -335,11 +330,11 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         cx: &mut AppContext,
     ) -> Option<HitboxId> {
         if let Some(child) = request_layout.child_element.as_mut() {
-            child.prepaint(cx);
+            child.prepaint(window, cx);
         }
 
         if let Some(menu) = request_layout.menu_element.as_mut() {
-            menu.prepaint(cx);
+            menu.prepaint(window, cx);
         }
 
         request_layout.child_layout_id.map(|layout_id| {
@@ -364,18 +359,18 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         cx: &mut AppContext,
     ) {
         if let Some(mut child) = request_layout.child_element.take() {
-            child.paint(cx);
+            child.paint(window, cx);
         }
 
         if let Some(mut menu) = request_layout.menu_element.take() {
-            menu.paint(cx);
+            menu.paint(window, cx);
 
             if let Some(child_hitbox) = *child_hitbox {
                 let menu_handle = request_layout.menu_handle.clone();
                 // Mouse-downing outside the menu dismisses it, so we don't
                 // want a click on the toggle to re-open it.
                 window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
-                    if phase == DispatchPhase::Bubble && child_hitbox.is_hovered(cx) {
+                    if phase == DispatchPhase::Bubble && child_hitbox.is_hovered(window) {
                         if let Some(menu) = menu_handle.borrow().as_ref() {
                             menu.update(cx, |_, cx| {
                                 cx.emit(DismissEvent);

@@ -250,14 +250,16 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
     }
 
     fn clear_matches(&self, window: &mut Window, cx: &mut AppContext) {
-        self.update(cx, |this, cx| this.clear_matches(cx));
+        self.update(cx, |this, cx| this.clear_matches(window, cx));
     }
     fn update_matches(&self, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut AppContext) {
         let matches = matches.downcast_ref().unwrap();
-        self.update(cx, |this, cx| this.update_matches(matches.as_slice(), cx));
+        self.update(cx, |this, cx| {
+            this.update_matches(matches.as_slice(), window, cx)
+        });
     }
     fn query_suggestion(&self, window: &mut Window, cx: &mut AppContext) -> String {
-        self.update(cx, |this, cx| this.query_suggestion(cx))
+        self.update(cx, |this, cx| this.query_suggestion(window, cx))
     }
     fn activate_match(
         &self,
@@ -268,13 +270,15 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
     ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
-            this.activate_match(index, matches.as_slice(), cx)
+            this.activate_match(index, matches.as_slice(), window, cx)
         });
     }
 
     fn select_matches(&self, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut AppContext) {
         let matches = matches.downcast_ref().unwrap();
-        self.update(cx, |this, cx| this.select_matches(matches.as_slice(), cx));
+        self.update(cx, |this, cx| {
+            this.select_matches(matches.as_slice(), window, cx)
+        });
     }
 
     fn match_index_for_direction(
@@ -304,7 +308,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<AnyVec<dyn Send>> {
-        let matches = self.update(cx, |this, cx| this.find_matches(query, cx));
+        let matches = self.update(cx, |this, cx| this.find_matches(query, window, cx));
         window.spawn(cx, |_| async {
             let matches = matches.await;
             let mut any_matches = AnyVec::with_capacity::<T::Match>(matches.len());
@@ -325,7 +329,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
     ) -> Option<usize> {
         let matches = matches.downcast_ref()?;
         self.update(cx, |this, cx| {
-            this.active_match_index(matches.as_slice(), cx)
+            this.active_match_index(matches.as_slice(), window, cx)
         })
     }
 
@@ -337,7 +341,7 @@ impl<T: SearchableItem> SearchableItemHandle for Model<T> {
         cx: &mut AppContext,
     ) {
         let mat = mat.downcast_ref().unwrap();
-        self.update(cx, |this, cx| this.replace(mat, query, cx))
+        self.update(cx, |this, cx| this.replace(mat, query, window, cx))
     }
 
     fn replace_all(

@@ -62,7 +62,7 @@ pub enum Color {
 
 impl Color {
     /// Returns the Color's HSLA value.
-    pub fn color(&self, window: &mut Window, cx: &mut AppContext) -> Hsla {
+    pub fn color(&self, cx: &AppContext) -> Hsla {
         match self {
             Color::Default => cx.theme().colors().text,
             Color::Muted => cx.theme().colors().text_muted,

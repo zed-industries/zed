@@ -6,7 +6,7 @@ use gpui::{
     anchored, deferred, div, px, AnyElement, AppContext, Bounds, Corner, DismissEvent,
     DispatchPhase, Element, ElementId, GlobalElementId, Hitbox, InteractiveElement, IntoElement,
     LayoutId, ManagedView, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    VisualContext, Window,
+    Render, VisualContext, Window,
 };
 
 pub struct RightClickMenu<M: ManagedView> {
@@ -229,7 +229,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                     if phase == DispatchPhase::Bubble
                         && event.button == MouseButton::Right
-                        && hitbox_id.is_hovered(cx)
+                        && hitbox_id.is_hovered(window)
                     {
                         cx.stop_propagation();
                         window.prevent_default();

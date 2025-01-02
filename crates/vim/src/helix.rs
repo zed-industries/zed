@@ -8,8 +8,8 @@ use crate::{motion::Motion, state::Mode, Vim};
 actions!(vim, [HelixNormalAfter, HelixDelete]);
 
 pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cxndow, cx, Vim::helix_normal_after);
-    Vim::action(editor, window, cxndow, cx, Vim::helix_delete);
+    Vim::action(editor, window, cx, Vim::helix_normal_after);
+    Vim::action(editor, window, cx, Vim::helix_delete);
 }
 
 impl Vim {

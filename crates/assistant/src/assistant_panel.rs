@@ -535,15 +535,15 @@ impl AssistantPanel {
                 &LanguageModelRegistry::global(cx),
                 |this, _, event: &language_model::Event, cx| match event {
                     language_model::Event::ActiveModelChanged => {
-                        this.completion_provider_changed(cx);
+                        this.completion_provider_changed(window, cx);
                     }
                     language_model::Event::ProviderStateChanged => {
-                        this.ensure_authenticated(cx);
+                        this.ensure_authenticated(window, cx);
                         cx.notify()
                     }
                     language_model::Event::AddedProvider(_)
                     | language_model::Event::RemovedProvider(_) => {
-                        this.ensure_authenticated(cx);
+                        this.ensure_authenticated(window, cx);
                     }
                 },
             ),
@@ -623,7 +623,7 @@ impl AssistantPanel {
             pane::Event::AddItem { item } => {
                 self.workspace
                     .update(cx, |workspace, cx| {
-                        item.added_to_pane(workspace, self.pane.clone(), cx)
+                        item.added_to_pane(workspace, self.pane.clone(), window, cx)
                     })
                     .ok();
                 true
@@ -1970,6 +1970,7 @@ impl ContextEditor {
                 snapshot,
                 workspace,
                 self.lsp_adapter_delegate.clone(),
+                window,
                 cx,
             );
             self.context.update(cx, |context, cx| {
@@ -2213,7 +2214,7 @@ impl ContextEditor {
 
                 for tool_use in pending_tool_uses {
                     if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                        let task = tool.run(tool_use.input, self.workspace.clone(), cx);
+                        let task = tool.run(tool_use.input, self.workspace.clone(), window, cx);
 
                         self.context.update(cx, |context, cx| {
                             context.insert_tool_output(tool_use.id.clone(), task, cx);
@@ -2803,7 +2804,7 @@ impl ContextEditor {
             .items_center()
             .gap_1()
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-            .text_size(TextSize::XSmall.rems(window, cx))
+            .text_size(TextSize::XSmall.rems(cx))
             .text_color(colors.text_muted)
             .child("Press")
             .child(
@@ -3143,9 +3144,9 @@ impl ContextEditor {
         cx: &mut ModelContext<Workspace>,
     ) {
         let result = maybe!({
-            let panel = workspace.panel::<AssistantPanel>(cx)?;
+            let panel = workspace.panel::<AssistantPanel>(window, cx)?;
             let context_editor_view = panel.read(cx).active_context_editor(cx)?;
-            Self::get_selection_or_code_block(&context_editor_view, cx)
+            Self::get_selection_or_code_block(&context_editor_view, window, cx)
         });
         let Some((text, is_code_block)) = result else {
             return;
@@ -3847,7 +3848,7 @@ impl ContextEditor {
                             .on_click({
                                 let focus_handle = self.focus_handle(cx).clone();
                                 move |_event, cx| {
-                                    focus_handle.dispatch_action(&ShowConfiguration, window);
+                                    focus_handle.dispatch_action(&ShowConfiguration, window, cx);
                                 }
                             }),
                     )
@@ -3919,7 +3920,7 @@ impl ContextEditor {
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, window, cx| {
-                focus_handle.dispatch_action(&Assist, window);
+                focus_handle.dispatch_action(&Assist, window, cx);
             })
     }
 
@@ -3978,7 +3979,7 @@ impl ContextEditor {
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, window, cx| {
-                focus_handle.dispatch_action(&Edit, window);
+                focus_handle.dispatch_action(&Edit, window, cx);
             })
     }
 
@@ -4516,7 +4517,8 @@ impl Item for ContextEditor {
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.editor.update(window, cx, Item::deactivated)
+        self.editor
+            .update(cx, |editor, cx| Item::deactivated(editor, window, cx))
     }
 
     fn act_as_type<'a>(
@@ -4998,7 +5000,8 @@ impl ContextHistory {
 
         let _subscriptions = vec![
             cx.observe(&context_store, |this, _, cx| {
-                this.picker.update(cx, |picker, cx| picker.refresh(cx));
+                this.picker
+                    .update(cx, |picker, cx| picker.refresh(window, cx));
             }),
             cx.subscribe(&picker, Self::handle_picker_event),
         ];
@@ -5118,7 +5121,7 @@ impl ConfigurationView {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let configuration_view = provider.configuration_view(cx);
+        let configuration_view = provider.configuration_view(window, cx);
         self.configuration_views
             .insert(provider.id(), configuration_view);
     }
@@ -5226,11 +5229,11 @@ impl Render for ConfigurationView {
         // because we couldn't the element to take up the size of the parent.
         canvas(
             move |bounds, window, cx| {
-                element.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
+                element.prepaint_as_root(bounds.origin, bounds.size.into(), window, cx);
                 element
             },
             |_, mut element, window, cx| {
-                element.paint(cx);
+                element.paint(window, cx);
             },
         )
         .flex_1()
@@ -5281,7 +5284,7 @@ fn fold_toggle(
 ) -> impl Fn(
     MultiBufferRow,
     bool,
-    Arc<dyn Fn(bool, &mut Window, &mut AppContextAppContext) + Send + Sync>,
+    Arc<dyn Fn(bool, &mut Window, &mut AppContext) + Send + Sync>,
     &mut Window,
     &mut AppContext,
 ) -> AnyElement {

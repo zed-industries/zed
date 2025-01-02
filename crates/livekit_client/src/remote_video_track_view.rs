@@ -61,7 +61,7 @@ impl RemoteVideoTrackView {
     }
 
     pub fn clone(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Model<Self> {
-        window.new_view(cx, |cx| Self::new(self.track.clone(), window, cx))
+        window.new_view(cx, |window, cx| Self::new(self.track.clone(), window, cx))
     }
 }
 

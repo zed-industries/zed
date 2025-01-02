@@ -124,7 +124,9 @@ impl RenderOnce for Checkbox {
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
-                    this.on_click(move |_, window, cx| on_click(&self.toggle_state.inverse(), cx))
+                    this.on_click(move |_, window, cx| {
+                        on_click(&self.toggle_state.inverse(), window, cx)
+                    })
                 },
             )
     }
@@ -161,15 +163,15 @@ impl RenderOnce for CheckboxWithLabel {
             .gap(DynamicSpacing::Base08.rems(cx))
             .child(Checkbox::new(self.id.clone(), self.checked).on_click({
                 let on_click = self.on_click.clone();
-                move |checked, cx| {
-                    (on_click)(checked, cx);
+                move |checked, window, cx| {
+                    (on_click)(checked, window, cx);
                 }
             }))
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
                     .on_click(move |_event, window, cx| {
-                        (self.on_click)(&self.checked.inverse(), cx);
+                        (self.on_click)(&self.checked.inverse(), window, cx);
                     })
                     .child(self.label),
             )
@@ -276,7 +278,9 @@ impl RenderOnce for Switch {
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
-                    this.on_click(move |_, window, cx| on_click(&self.toggle_state.inverse(), cx))
+                    this.on_click(move |_, window, cx| {
+                        on_click(&self.toggle_state.inverse(), window, cx)
+                    })
                 },
             )
     }
@@ -313,15 +317,15 @@ impl RenderOnce for SwitchWithLabel {
             .gap(DynamicSpacing::Base08.rems(cx))
             .child(Switch::new(self.id.clone(), self.checked).on_click({
                 let on_click = self.on_click.clone();
-                move |checked, cx| {
-                    (on_click)(checked, cx);
+                move |checked, window, cx| {
+                    (on_click)(checked, window, cx);
                 }
             }))
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
                     .on_click(move |_event, window, cx| {
-                        (self.on_click)(&self.checked.inverse(), cx);
+                        (self.on_click)(&self.checked.inverse(), window, cx);
                     })
                     .child(self.label),
             )
@@ -391,11 +395,13 @@ impl ComponentPreview for Switch {
                 vec![
                     single_example(
                         "Off",
-                        Switch::new("switch_off", ToggleState::Unselected).on_click(|_, _cx| {}),
+                        Switch::new("switch_off", ToggleState::Unselected)
+                            .on_click(|_, window, _cx| {}),
                     ),
                     single_example(
                         "On",
-                        Switch::new("switch_on", ToggleState::Selected).on_click(|_, _cx| {}),
+                        Switch::new("switch_on", ToggleState::Selected)
+                            .on_click(|_, window, _cx| {}),
                     ),
                 ],
             ),
@@ -429,7 +435,7 @@ impl ComponentPreview for CheckboxWithLabel {
                     "checkbox_with_label_unselected",
                     Label::new("Always save on quit"),
                     ToggleState::Unselected,
-                    |_, _| {},
+                    |_, _, _| {},
                 ),
             ),
             single_example(
@@ -438,7 +444,7 @@ impl ComponentPreview for CheckboxWithLabel {
                     "checkbox_with_label_indeterminate",
                     Label::new("Always save on quit"),
                     ToggleState::Indeterminate,
-                    |_, _| {},
+                    |_, _, _| {},
                 ),
             ),
             single_example(
@@ -447,7 +453,7 @@ impl ComponentPreview for CheckboxWithLabel {
                     "checkbox_with_label_selected",
                     Label::new("Always save on quit"),
                     ToggleState::Selected,
-                    |_, _| {},
+                    |_, _, _| {},
                 ),
             ),
         ])]
@@ -467,7 +473,7 @@ impl ComponentPreview for SwitchWithLabel {
                     "switch_with_label_unselected",
                     Label::new("Always save on quit"),
                     ToggleState::Unselected,
-                    |_, _| {},
+                    |_, _, _| {},
                 ),
             ),
             single_example(
@@ -476,7 +482,7 @@ impl ComponentPreview for SwitchWithLabel {
                     "switch_with_label_selected",
                     Label::new("Always save on quit"),
                     ToggleState::Selected,
-                    |_, _| {},
+                    |_, _, _| {},
                 ),
             ),
         ])]

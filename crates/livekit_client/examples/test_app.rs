@@ -217,7 +217,9 @@ impl LivekitWindow {
                     RemoteTrack::Video(track) => {
                         output.screen_share_output_view = Some((
                             track.clone(),
-                            window.new_view(cx, |cx| RemoteVideoTrackView::new(track, window, cx)),
+                            window.new_view(cx, |window, cx| {
+                                RemoteVideoTrackView::new(track, window, cx)
+                            }),
                         ));
                     }
                 }
@@ -437,7 +439,7 @@ impl Render for LivekitWindow {
                                         })
                                         .on_click(cx.listener({
                                             let identity = identity.clone();
-                                            move |this, _, cx| {
+                                            move |this, _, window, cx| {
                                                 this.toggle_remote_audio_for_participant(
                                                     &identity, window, cx,
                                                 );

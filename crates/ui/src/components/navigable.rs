@@ -65,7 +65,7 @@ impl RenderOnce for Navigable {
             .on_action({
                 let children = self.selectable_children.clone();
 
-                move |_: &menu::SelectNext, cx| {
+                move |_: &menu::SelectNext, window, cx| {
                     let target = Self::find_focused(&children, window, cx)
                         .and_then(|index| {
                             index.checked_add(1).filter(|index| *index < children.len())
@@ -74,21 +74,21 @@ impl RenderOnce for Navigable {
                     if let Some(entry) = children.get(target) {
                         entry.focus_handle.focus(window);
                         if let Some(anchor) = &entry.scroll_anchor {
-                            anchor.scroll_to(cx);
+                            anchor.scroll_to(window, cx);
                         }
                     }
                 }
             })
             .on_action({
                 let children = self.selectable_children;
-                move |_: &menu::SelectPrev, cx| {
+                move |_: &menu::SelectPrev, window, cx| {
                     let target = Self::find_focused(&children, window, cx)
                         .and_then(|index| index.checked_sub(1))
                         .or(children.len().checked_sub(1));
                     if let Some(entry) = target.and_then(|target| children.get(target)) {
                         entry.focus_handle.focus(window);
                         if let Some(anchor) = &entry.scroll_anchor {
-                            anchor.scroll_to(cx);
+                            anchor.scroll_to(window, cx);
                         }
                     }
                 }

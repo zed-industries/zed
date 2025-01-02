@@ -117,7 +117,7 @@ type RenderToggleFn = Arc<
         + Fn(
             MultiBufferRow,
             bool,
-            Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut AppContextAppContext)>,
+            Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut AppContext)>,
             &mut Window,
             &mut AppContext,
         ) -> AnyElement,
@@ -186,7 +186,7 @@ impl<T> Crease<T> {
             + Fn(
                 MultiBufferRow,
                 bool,
-                Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut AppContextAppContext)>,
+                Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut AppContext)>,
                 &mut Window,
                 &mut AppContext,
             ) -> ToggleElement

@@ -61,19 +61,19 @@ actions!(
 );
 
 pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cxndow, cx, Vim::insert_after);
-    Vim::action(editor, window, cxndow, cx, Vim::insert_before);
-    Vim::action(editor, window, cxndow, cx, Vim::insert_first_non_whitespace);
-    Vim::action(editor, window, cxndow, cx, Vim::insert_end_of_line);
-    Vim::action(editor, window, cxndow, cx, Vim::insert_line_above);
-    Vim::action(editor, window, cxndow, cx, Vim::insert_line_below);
-    Vim::action(editor, window, cxndow, cx, Vim::insert_at_previous);
-    Vim::action(editor, window, cxndow, cx, Vim::change_case);
-    Vim::action(editor, window, cxndow, cx, Vim::convert_to_upper_case);
-    Vim::action(editor, window, cxndow, cx, Vim::convert_to_lower_case);
-    Vim::action(editor, window, cxndow, cx, Vim::yank_line);
-    Vim::action(editor, window, cxndow, cx, Vim::toggle_comments);
-    Vim::action(editor, window, cxndow, cx, Vim::paste);
+    Vim::action(editor, window, cx, Vim::insert_after);
+    Vim::action(editor, window, cx, Vim::insert_before);
+    Vim::action(editor, window, cx, Vim::insert_first_non_whitespace);
+    Vim::action(editor, window, cx, Vim::insert_end_of_line);
+    Vim::action(editor, window, cx, Vim::insert_line_above);
+    Vim::action(editor, window, cx, Vim::insert_line_below);
+    Vim::action(editor, window, cx, Vim::insert_at_previous);
+    Vim::action(editor, window, cx, Vim::change_case);
+    Vim::action(editor, window, cx, Vim::convert_to_upper_case);
+    Vim::action(editor, window, cx, Vim::convert_to_lower_case);
+    Vim::action(editor, window, cx, Vim::yank_line);
+    Vim::action(editor, window, cx, Vim::toggle_comments);
+    Vim::action(editor, window, cx, Vim::paste);
 
     Vim::action(editor, window, cx, |vim, _: &DeleteLeft, window, cx| {
         vim.record_current_action(window, cx);

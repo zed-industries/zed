@@ -105,22 +105,22 @@ impl FeatureFlag for AutoCommand {
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {
-    fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
+    fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
         F: Fn(bool, &mut V, &mut Window, &mut ModelContext<V>) + Send + Sync + 'static;
 }
 
-impl<V> FeatureFlagViewExt<V> for ViewContext<'_, V>
+impl<V> FeatureFlagViewExt<V> for ModelContext<'_, V>
 where
     V: 'static,
 {
-    fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
+    fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
         F: Fn(bool, &mut V, &mut Window, &mut ModelContext<V>) + 'static,
     {
         self.observe_global_in::<FeatureFlags>(window, move |v, window, cx| {
             let feature_flags = cx.global::<FeatureFlags>();
-            callback(feature_flags.has_flag::<T>(), v, cx);
+            callback(feature_flags.has_flag::<T>(), v, window, cx);
         })
     }
 }

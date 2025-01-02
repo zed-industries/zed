@@ -72,14 +72,14 @@ impl_actions!(
 );
 
 pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cxndow, cx, Vim::move_to_next);
-    Vim::action(editor, window, cxndow, cx, Vim::move_to_prev);
-    Vim::action(editor, window, cxndow, cx, Vim::move_to_next_match);
-    Vim::action(editor, window, cxndow, cx, Vim::move_to_prev_match);
-    Vim::action(editor, window, cxndow, cx, Vim::search);
-    Vim::action(editor, window, cxndow, cx, Vim::search_deploy);
-    Vim::action(editor, window, cxndow, cx, Vim::find_command);
-    Vim::action(editor, window, cxndow, cx, Vim::replace_command);
+    Vim::action(editor, window, cx, Vim::move_to_next);
+    Vim::action(editor, window, cx, Vim::move_to_prev);
+    Vim::action(editor, window, cx, Vim::move_to_next_match);
+    Vim::action(editor, window, cx, Vim::move_to_prev_match);
+    Vim::action(editor, window, cx, Vim::search);
+    Vim::action(editor, window, cx, Vim::search_deploy);
+    Vim::action(editor, window, cx, Vim::find_command);
+    Vim::action(editor, window, cx, Vim::replace_command);
 }
 
 impl Vim {
@@ -694,7 +694,7 @@ mod test {
         });
 
         cx.update_view(search_bar, |bar, window, cx| {
-            assert_eq!(bar.query(cx), "cc");
+            assert_eq!(bar.query(window, cx), "cc");
         });
 
         cx.run_until_parked();

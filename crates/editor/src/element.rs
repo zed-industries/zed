@@ -171,112 +171,70 @@ impl EditorElement {
 
         crate::rust_analyzer_ext::apply_related_actions(view, window, cx);
         crate::clangd_ext::apply_related_actions(view, window, cx);
-        register_action(view, window, cxndow, cx, Editor::open_context_menu);
-        register_action(view, window, cxndow, cx, Editor::move_left);
-        register_action(view, window, cxndow, cx, Editor::move_right);
-        register_action(view, window, cxndow, cx, Editor::move_down);
-        register_action(view, window, cxndow, cx, Editor::move_down_by_lines);
-        register_action(view, window, cxndow, cx, Editor::select_down_by_lines);
-        register_action(view, window, cxndow, cx, Editor::move_up);
-        register_action(view, window, cxndow, cx, Editor::move_up_by_lines);
-        register_action(view, window, cxndow, cx, Editor::select_up_by_lines);
-        register_action(view, window, cxndow, cx, Editor::select_page_down);
-        register_action(view, window, cxndow, cx, Editor::select_page_up);
-        register_action(view, window, cxndow, cx, Editor::cancel);
-        register_action(view, window, cxndow, cx, Editor::newline);
-        register_action(view, window, cxndow, cx, Editor::newline_above);
-        register_action(view, window, cxndow, cx, Editor::newline_below);
-        register_action(view, window, cxndow, cx, Editor::backspace);
-        register_action(view, window, cxndow, cx, Editor::delete);
-        register_action(view, window, cxndow, cx, Editor::tab);
-        register_action(view, window, cxndow, cx, Editor::tab_prev);
-        register_action(view, window, cxndow, cx, Editor::indent);
-        register_action(view, window, cxndow, cx, Editor::outdent);
-        register_action(view, window, cxndow, cx, Editor::autoindent);
-        register_action(view, window, cxndow, cx, Editor::delete_line);
-        register_action(view, window, cxndow, cx, Editor::join_lines);
-        register_action(view, window, cxndow, cx, Editor::sort_lines_case_sensitive);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::sort_lines_case_insensitive,
-        );
-        register_action(view, window, cxndow, cx, Editor::reverse_lines);
-        register_action(view, window, cxndow, cx, Editor::shuffle_lines);
-        register_action(view, window, cxndow, cx, Editor::convert_to_upper_case);
-        register_action(view, window, cxndow, cx, Editor::convert_to_lower_case);
-        register_action(view, window, cxndow, cx, Editor::convert_to_title_case);
-        register_action(view, window, cxndow, cx, Editor::convert_to_snake_case);
-        register_action(view, window, cxndow, cx, Editor::convert_to_kebab_case);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::convert_to_upper_camel_case,
-        );
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::convert_to_lower_camel_case,
-        );
-        register_action(view, window, cxndow, cx, Editor::convert_to_opposite_case);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::delete_to_previous_word_start,
-        );
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::delete_to_previous_subword_start,
-        );
-        register_action(view, window, cxndow, cx, Editor::delete_to_next_word_end);
-        register_action(view, window, cxndow, cx, Editor::delete_to_next_subword_end);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::delete_to_beginning_of_line,
-        );
-        register_action(view, window, cxndow, cx, Editor::delete_to_end_of_line);
-        register_action(view, window, cxndow, cx, Editor::cut_to_end_of_line);
-        register_action(view, window, cxndow, cx, Editor::duplicate_line_up);
-        register_action(view, window, cxndow, cx, Editor::duplicate_line_down);
-        register_action(view, window, cxndow, cx, Editor::duplicate_selection);
-        register_action(view, window, cxndow, cx, Editor::move_line_up);
-        register_action(view, window, cxndow, cx, Editor::move_line_down);
-        register_action(view, window, cxndow, cx, Editor::transpose);
-        register_action(view, window, cxndow, cx, Editor::rewrap);
-        register_action(view, window, cxndow, cx, Editor::cut);
-        register_action(view, window, cxndow, cx, Editor::kill_ring_cut);
-        register_action(view, window, cxndow, cx, Editor::kill_ring_yank);
-        register_action(view, window, cxndow, cx, Editor::copy);
-        register_action(view, window, cxndow, cx, Editor::paste);
-        register_action(view, window, cxndow, cx, Editor::undo);
-        register_action(view, window, cxndow, cx, Editor::redo);
-        register_action(view, window, cxndow, cx, Editor::move_page_up);
-        register_action(view, window, cxndow, cx, Editor::move_page_down);
-        register_action(view, window, cxndow, cx, Editor::next_screen);
-        register_action(view, window, cxndow, cx, Editor::scroll_cursor_top);
-        register_action(view, window, cxndow, cx, Editor::scroll_cursor_center);
-        register_action(view, window, cxndow, cx, Editor::scroll_cursor_bottom);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::scroll_cursor_center_top_bottom,
-        );
+        register_action(view, window, cx, Editor::open_context_menu);
+        register_action(view, window, cx, Editor::move_left);
+        register_action(view, window, cx, Editor::move_right);
+        register_action(view, window, cx, Editor::move_down);
+        register_action(view, window, cx, Editor::move_down_by_lines);
+        register_action(view, window, cx, Editor::select_down_by_lines);
+        register_action(view, window, cx, Editor::move_up);
+        register_action(view, window, cx, Editor::move_up_by_lines);
+        register_action(view, window, cx, Editor::select_up_by_lines);
+        register_action(view, window, cx, Editor::select_page_down);
+        register_action(view, window, cx, Editor::select_page_up);
+        register_action(view, window, cx, Editor::cancel);
+        register_action(view, window, cx, Editor::newline);
+        register_action(view, window, cx, Editor::newline_above);
+        register_action(view, window, cx, Editor::newline_below);
+        register_action(view, window, cx, Editor::backspace);
+        register_action(view, window, cx, Editor::delete);
+        register_action(view, window, cx, Editor::tab);
+        register_action(view, window, cx, Editor::tab_prev);
+        register_action(view, window, cx, Editor::indent);
+        register_action(view, window, cx, Editor::outdent);
+        register_action(view, window, cx, Editor::autoindent);
+        register_action(view, window, cx, Editor::delete_line);
+        register_action(view, window, cx, Editor::join_lines);
+        register_action(view, window, cx, Editor::sort_lines_case_sensitive);
+        register_action(view, window, cx, Editor::sort_lines_case_insensitive);
+        register_action(view, window, cx, Editor::reverse_lines);
+        register_action(view, window, cx, Editor::shuffle_lines);
+        register_action(view, window, cx, Editor::convert_to_upper_case);
+        register_action(view, window, cx, Editor::convert_to_lower_case);
+        register_action(view, window, cx, Editor::convert_to_title_case);
+        register_action(view, window, cx, Editor::convert_to_snake_case);
+        register_action(view, window, cx, Editor::convert_to_kebab_case);
+        register_action(view, window, cx, Editor::convert_to_upper_camel_case);
+        register_action(view, window, cx, Editor::convert_to_lower_camel_case);
+        register_action(view, window, cx, Editor::convert_to_opposite_case);
+        register_action(view, window, cx, Editor::delete_to_previous_word_start);
+        register_action(view, window, cx, Editor::delete_to_previous_subword_start);
+        register_action(view, window, cx, Editor::delete_to_next_word_end);
+        register_action(view, window, cx, Editor::delete_to_next_subword_end);
+        register_action(view, window, cx, Editor::delete_to_beginning_of_line);
+        register_action(view, window, cx, Editor::delete_to_end_of_line);
+        register_action(view, window, cx, Editor::cut_to_end_of_line);
+        register_action(view, window, cx, Editor::duplicate_line_up);
+        register_action(view, window, cx, Editor::duplicate_line_down);
+        register_action(view, window, cx, Editor::duplicate_selection);
+        register_action(view, window, cx, Editor::move_line_up);
+        register_action(view, window, cx, Editor::move_line_down);
+        register_action(view, window, cx, Editor::transpose);
+        register_action(view, window, cx, Editor::rewrap);
+        register_action(view, window, cx, Editor::cut);
+        register_action(view, window, cx, Editor::kill_ring_cut);
+        register_action(view, window, cx, Editor::kill_ring_yank);
+        register_action(view, window, cx, Editor::copy);
+        register_action(view, window, cx, Editor::paste);
+        register_action(view, window, cx, Editor::undo);
+        register_action(view, window, cx, Editor::redo);
+        register_action(view, window, cx, Editor::move_page_up);
+        register_action(view, window, cx, Editor::move_page_down);
+        register_action(view, window, cx, Editor::next_screen);
+        register_action(view, window, cx, Editor::scroll_cursor_top);
+        register_action(view, window, cx, Editor::scroll_cursor_center);
+        register_action(view, window, cx, Editor::scroll_cursor_bottom);
+        register_action(view, window, cx, Editor::scroll_cursor_center_top_bottom);
         register_action(view, window, cx, |editor, _: &LineDown, window, cx| {
             editor.scroll_screen(&ScrollAmount::Line(1.), window, cx)
         });
@@ -306,96 +264,60 @@ impl EditorElement {
         register_action(view, window, cx, |editor, _: &PageUp, window, cx| {
             editor.scroll_screen(&ScrollAmount::Page(-1.), window, cx)
         });
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::move_to_previous_word_start,
-        );
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::move_to_previous_subword_start,
-        );
-        register_action(view, window, cxndow, cx, Editor::move_to_next_word_end);
-        register_action(view, window, cxndow, cx, Editor::move_to_next_subword_end);
-        register_action(view, window, cxndow, cx, Editor::move_to_beginning_of_line);
-        register_action(view, window, cxndow, cx, Editor::move_to_end_of_line);
-        register_action(view, window, cxndow, cx, Editor::move_to_start_of_paragraph);
-        register_action(view, window, cxndow, cx, Editor::move_to_end_of_paragraph);
-        register_action(view, window, cxndow, cx, Editor::move_to_beginning);
-        register_action(view, window, cxndow, cx, Editor::move_to_end);
-        register_action(view, window, cxndow, cx, Editor::select_up);
-        register_action(view, window, cxndow, cx, Editor::select_down);
-        register_action(view, window, cxndow, cx, Editor::select_left);
-        register_action(view, window, cxndow, cx, Editor::select_right);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::select_to_previous_word_start,
-        );
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::select_to_previous_subword_start,
-        );
-        register_action(view, window, cxndow, cx, Editor::select_to_next_word_end);
-        register_action(view, window, cxndow, cx, Editor::select_to_next_subword_end);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::select_to_beginning_of_line,
-        );
-        register_action(view, window, cxndow, cx, Editor::select_to_end_of_line);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::select_to_start_of_paragraph,
-        );
-        register_action(view, window, cxndow, cx, Editor::select_to_end_of_paragraph);
-        register_action(view, window, cxndow, cx, Editor::select_to_beginning);
-        register_action(view, window, cxndow, cx, Editor::select_to_end);
-        register_action(view, window, cxndow, cx, Editor::select_all);
+        register_action(view, window, cx, Editor::move_to_previous_word_start);
+        register_action(view, window, cx, Editor::move_to_previous_subword_start);
+        register_action(view, window, cx, Editor::move_to_next_word_end);
+        register_action(view, window, cx, Editor::move_to_next_subword_end);
+        register_action(view, window, cx, Editor::move_to_beginning_of_line);
+        register_action(view, window, cx, Editor::move_to_end_of_line);
+        register_action(view, window, cx, Editor::move_to_start_of_paragraph);
+        register_action(view, window, cx, Editor::move_to_end_of_paragraph);
+        register_action(view, window, cx, Editor::move_to_beginning);
+        register_action(view, window, cx, Editor::move_to_end);
+        register_action(view, window, cx, Editor::select_up);
+        register_action(view, window, cx, Editor::select_down);
+        register_action(view, window, cx, Editor::select_left);
+        register_action(view, window, cx, Editor::select_right);
+        register_action(view, window, cx, Editor::select_to_previous_word_start);
+        register_action(view, window, cx, Editor::select_to_previous_subword_start);
+        register_action(view, window, cx, Editor::select_to_next_word_end);
+        register_action(view, window, cx, Editor::select_to_next_subword_end);
+        register_action(view, window, cx, Editor::select_to_beginning_of_line);
+        register_action(view, window, cx, Editor::select_to_end_of_line);
+        register_action(view, window, cx, Editor::select_to_start_of_paragraph);
+        register_action(view, window, cx, Editor::select_to_end_of_paragraph);
+        register_action(view, window, cx, Editor::select_to_beginning);
+        register_action(view, window, cx, Editor::select_to_end);
+        register_action(view, window, cx, Editor::select_all);
         register_action(view, window, cx, |editor, action, window, cx| {
             editor.select_all_matches(action, window, cx).log_err();
         });
-        register_action(view, window, cxndow, cx, Editor::select_line);
-        register_action(view, window, cxndow, cx, Editor::split_selection_into_lines);
-        register_action(view, window, cxndow, cx, Editor::add_selection_above);
-        register_action(view, window, cxndow, cx, Editor::add_selection_below);
+        register_action(view, window, cx, Editor::select_line);
+        register_action(view, window, cx, Editor::split_selection_into_lines);
+        register_action(view, window, cx, Editor::add_selection_above);
+        register_action(view, window, cx, Editor::add_selection_below);
         register_action(view, window, cx, |editor, action, window, cx| {
             editor.select_next(action, window, cx).log_err();
         });
         register_action(view, window, cx, |editor, action, window, cx| {
             editor.select_previous(action, window, cx).log_err();
         });
-        register_action(view, window, cxndow, cx, Editor::toggle_comments);
-        register_action(view, window, cxndow, cx, Editor::select_larger_syntax_node);
-        register_action(view, window, cxndow, cx, Editor::select_smaller_syntax_node);
-        register_action(view, window, cxndow, cx, Editor::select_enclosing_symbol);
-        register_action(view, window, cxndow, cx, Editor::move_to_enclosing_bracket);
-        register_action(view, window, cxndow, cx, Editor::undo_selection);
-        register_action(view, window, cxndow, cx, Editor::redo_selection);
+        register_action(view, window, cx, Editor::toggle_comments);
+        register_action(view, window, cx, Editor::select_larger_syntax_node);
+        register_action(view, window, cx, Editor::select_smaller_syntax_node);
+        register_action(view, window, cx, Editor::select_enclosing_symbol);
+        register_action(view, window, cx, Editor::move_to_enclosing_bracket);
+        register_action(view, window, cx, Editor::undo_selection);
+        register_action(view, window, cx, Editor::redo_selection);
         if !view.read(cx).is_singleton(cx) {
-            register_action(view, window, cxndow, cx, Editor::expand_excerpts);
-            register_action(view, window, cxndow, cx, Editor::expand_excerpts_up);
-            register_action(view, window, cxndow, cx, Editor::expand_excerpts_down);
+            register_action(view, window, cx, Editor::expand_excerpts);
+            register_action(view, window, cx, Editor::expand_excerpts_up);
+            register_action(view, window, cx, Editor::expand_excerpts_down);
         }
-        register_action(view, window, cxndow, cx, Editor::go_to_diagnostic);
-        register_action(view, window, cxndow, cx, Editor::go_to_prev_diagnostic);
-        register_action(view, window, cxndow, cx, Editor::go_to_next_hunk);
-        register_action(view, window, cxndow, cx, Editor::go_to_prev_hunk);
+        register_action(view, window, cx, Editor::go_to_diagnostic);
+        register_action(view, window, cx, Editor::go_to_prev_diagnostic);
+        register_action(view, window, cx, Editor::go_to_next_hunk);
+        register_action(view, window, cx, Editor::go_to_prev_hunk);
         register_action(view, window, cx, |editor, a, window, cx| {
             editor
                 .go_to_definition(a, window, cx)
@@ -436,57 +358,45 @@ impl EditorElement {
                 .go_to_type_definition_split(a, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(view, window, cxndow, cx, Editor::open_url);
-        register_action(view, window, cxndow, cx, Editor::open_file);
-        register_action(view, window, cxndow, cx, Editor::fold);
-        register_action(view, window, cxndow, cx, Editor::fold_at_level);
-        register_action(view, window, cxndow, cx, Editor::fold_all);
-        register_action(view, window, cxndow, cx, Editor::fold_function_bodies);
-        register_action(view, window, cxndow, cx, Editor::fold_at);
-        register_action(view, window, cxndow, cx, Editor::fold_recursive);
-        register_action(view, window, cxndow, cx, Editor::toggle_fold);
-        register_action(view, window, cxndow, cx, Editor::toggle_fold_recursive);
-        register_action(view, window, cxndow, cx, Editor::unfold_lines);
-        register_action(view, window, cxndow, cx, Editor::unfold_recursive);
-        register_action(view, window, cxndow, cx, Editor::unfold_all);
-        register_action(view, window, cxndow, cx, Editor::unfold_at);
-        register_action(view, window, cxndow, cx, Editor::fold_selected_ranges);
-        register_action(view, window, cxndow, cx, Editor::show_completions);
-        register_action(view, window, cxndow, cx, Editor::toggle_code_actions);
-        register_action(view, window, cxndow, cx, Editor::open_excerpts);
-        register_action(view, window, cxndow, cx, Editor::open_excerpts_in_split);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::open_proposed_changes_editor,
-        );
-        register_action(view, window, cxndow, cx, Editor::toggle_soft_wrap);
-        register_action(view, window, cxndow, cx, Editor::toggle_tab_bar);
-        register_action(view, window, cxndow, cx, Editor::toggle_line_numbers);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::toggle_relative_line_numbers,
-        );
-        register_action(view, window, cxndow, cx, Editor::toggle_indent_guides);
-        register_action(view, window, cxndow, cx, Editor::toggle_inlay_hints);
-        register_action(view, window, cxndow, cx, Editor::toggle_inline_completions);
-        register_action(view, window, cxndow, cx, hover_popover::hover);
-        register_action(view, window, cxndow, cx, Editor::reveal_in_finder);
-        register_action(view, window, cxndow, cx, Editor::copy_path);
-        register_action(view, window, cxndow, cx, Editor::copy_relative_path);
-        register_action(view, window, cxndow, cx, Editor::copy_highlight_json);
-        register_action(view, window, cxndow, cx, Editor::copy_permalink_to_line);
-        register_action(view, window, cxndow, cx, Editor::open_permalink_to_line);
-        register_action(view, window, cxndow, cx, Editor::copy_file_location);
-        register_action(view, window, cxndow, cx, Editor::toggle_git_blame);
-        register_action(view, window, cxndow, cx, Editor::toggle_git_blame_inline);
-        register_action(view, window, cxndow, cx, Editor::toggle_hunk_diff);
-        register_action(view, window, cxndow, cx, Editor::expand_all_hunk_diffs);
+        register_action(view, window, cx, Editor::open_url);
+        register_action(view, window, cx, Editor::open_file);
+        register_action(view, window, cx, Editor::fold);
+        register_action(view, window, cx, Editor::fold_at_level);
+        register_action(view, window, cx, Editor::fold_all);
+        register_action(view, window, cx, Editor::fold_function_bodies);
+        register_action(view, window, cx, Editor::fold_at);
+        register_action(view, window, cx, Editor::fold_recursive);
+        register_action(view, window, cx, Editor::toggle_fold);
+        register_action(view, window, cx, Editor::toggle_fold_recursive);
+        register_action(view, window, cx, Editor::unfold_lines);
+        register_action(view, window, cx, Editor::unfold_recursive);
+        register_action(view, window, cx, Editor::unfold_all);
+        register_action(view, window, cx, Editor::unfold_at);
+        register_action(view, window, cx, Editor::fold_selected_ranges);
+        register_action(view, window, cx, Editor::show_completions);
+        register_action(view, window, cx, Editor::toggle_code_actions);
+        register_action(view, window, cx, Editor::open_excerpts);
+        register_action(view, window, cx, Editor::open_excerpts_in_split);
+        register_action(view, window, cx, Editor::open_proposed_changes_editor);
+        register_action(view, window, cx, Editor::toggle_soft_wrap);
+        register_action(view, window, cx, Editor::toggle_tab_bar);
+        register_action(view, window, cx, Editor::toggle_line_numbers);
+        register_action(view, window, cx, Editor::toggle_relative_line_numbers);
+        register_action(view, window, cx, Editor::toggle_indent_guides);
+        register_action(view, window, cx, Editor::toggle_inlay_hints);
+        register_action(view, window, cx, Editor::toggle_inline_completions);
+        register_action(view, window, cx, hover_popover::hover);
+        register_action(view, window, cx, Editor::reveal_in_finder);
+        register_action(view, window, cx, Editor::copy_path);
+        register_action(view, window, cx, Editor::copy_relative_path);
+        register_action(view, window, cx, Editor::copy_highlight_json);
+        register_action(view, window, cx, Editor::copy_permalink_to_line);
+        register_action(view, window, cx, Editor::open_permalink_to_line);
+        register_action(view, window, cx, Editor::copy_file_location);
+        register_action(view, window, cx, Editor::toggle_git_blame);
+        register_action(view, window, cx, Editor::toggle_git_blame_inline);
+        register_action(view, window, cx, Editor::toggle_hunk_diff);
+        register_action(view, window, cx, Editor::expand_all_hunk_diffs);
         register_action(view, window, cx, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
                 task.detach_and_log_err(cx);
@@ -501,15 +411,9 @@ impl EditorElement {
                 cx.propagate();
             }
         });
-        register_action(view, window, cxndow, cx, Editor::restart_language_server);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::cancel_language_server_work,
-        );
-        register_action(view, window, cxndow, cx, Editor::show_character_palette);
+        register_action(view, window, cx, Editor::restart_language_server);
+        register_action(view, window, cx, Editor::cancel_language_server_work);
+        register_action(view, window, cx, Editor::show_character_palette);
         register_action(view, window, cx, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion(action, window, cx) {
                 task.detach_and_log_err(cx);
@@ -552,52 +456,28 @@ impl EditorElement {
                 cx.propagate();
             }
         });
-        register_action(view, window, cxndow, cx, Editor::show_signature_help);
-        register_action(view, window, cxndow, cx, Editor::next_inline_completion);
-        register_action(view, window, cxndow, cx, Editor::previous_inline_completion);
-        register_action(view, window, cxndow, cx, Editor::show_inline_completion);
-        register_action(view, window, cxndow, cx, Editor::context_menu_first);
-        register_action(view, window, cxndow, cx, Editor::context_menu_prev);
-        register_action(view, window, cxndow, cx, Editor::context_menu_next);
-        register_action(view, window, cxndow, cx, Editor::context_menu_last);
-        register_action(view, window, cxndow, cx, Editor::display_cursor_names);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::unique_lines_case_insensitive,
-        );
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::unique_lines_case_sensitive,
-        );
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::accept_partial_inline_completion,
-        );
-        register_action(view, window, cxndow, cx, Editor::accept_inline_completion);
-        register_action(view, window, cxndow, cx, Editor::revert_file);
-        register_action(view, window, cxndow, cx, Editor::revert_selected_hunks);
-        register_action(view, window, cxndow, cx, Editor::apply_all_diff_hunks);
-        register_action(view, window, cxndow, cx, Editor::apply_selected_diff_hunks);
-        register_action(
-            view,
-            window,
-            cxndow,
-            cx,
-            Editor::open_active_item_in_terminal,
-        );
-        register_action(view, window, cxndow, cx, Editor::reload_file);
-        register_action(view, window, cxndow, cx, Editor::spawn_nearest_task);
-        register_action(view, window, cxndow, cx, Editor::insert_uuid_v4);
-        register_action(view, window, cxndow, cx, Editor::insert_uuid_v7);
+        register_action(view, window, cx, Editor::show_signature_help);
+        register_action(view, window, cx, Editor::next_inline_completion);
+        register_action(view, window, cx, Editor::previous_inline_completion);
+        register_action(view, window, cx, Editor::show_inline_completion);
+        register_action(view, window, cx, Editor::context_menu_first);
+        register_action(view, window, cx, Editor::context_menu_prev);
+        register_action(view, window, cx, Editor::context_menu_next);
+        register_action(view, window, cx, Editor::context_menu_last);
+        register_action(view, window, cx, Editor::display_cursor_names);
+        register_action(view, window, cx, Editor::unique_lines_case_insensitive);
+        register_action(view, window, cx, Editor::unique_lines_case_sensitive);
+        register_action(view, window, cx, Editor::accept_partial_inline_completion);
+        register_action(view, window, cx, Editor::accept_inline_completion);
+        register_action(view, window, cx, Editor::revert_file);
+        register_action(view, window, cx, Editor::revert_selected_hunks);
+        register_action(view, window, cx, Editor::apply_all_diff_hunks);
+        register_action(view, window, cx, Editor::apply_selected_diff_hunks);
+        register_action(view, window, cx, Editor::open_active_item_in_terminal);
+        register_action(view, window, cx, Editor::reload_file);
+        register_action(view, window, cx, Editor::spawn_nearest_task);
+        register_action(view, window, cx, Editor::insert_uuid_v4);
+        register_action(view, window, cx, Editor::insert_uuid_v7);
     }
 
     fn register_key_listeners(
@@ -633,7 +513,7 @@ impl EditorElement {
         cx: &mut ModelContext<Editor>,
     ) {
         let mouse_position = window.mouse_position();
-        if !text_hitbox.is_hovered(cx) {
+        if !text_hitbox.is_hovered(window) {
             return;
         }
 
@@ -669,9 +549,9 @@ impl EditorElement {
             editor.toggle_hovered_hunk(&hovered_hunk, window, cx);
             cx.notify();
             return;
-        } else if gutter_hitbox.is_hovered(cx) {
+        } else if gutter_hitbox.is_hovered(window) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
-        } else if !text_hitbox.is_hovered(cx) {
+        } else if !text_hitbox.is_hovered(window) {
             return;
         }
 
@@ -767,7 +647,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) {
-        if !text_hitbox.is_hovered(cx) {
+        if !text_hitbox.is_hovered(window) {
             return;
         }
         let point_for_position =
@@ -790,7 +670,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) {
-        if !text_hitbox.is_hovered(cx) || window.default_prevented() {
+        if !text_hitbox.is_hovered(window) || window.default_prevented() {
             return;
         }
 
@@ -830,7 +710,7 @@ impl EditorElement {
             MultiCursorModifier::CmdOrCtrl => event.modifiers.alt,
         };
 
-        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(cx) {
+        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(window) {
             let point = position_map.point_for_position(text_hitbox.bounds, event.position);
             editor.handle_click_hovered_link(point, event.modifiers, window, cx);
 
@@ -840,7 +720,7 @@ impl EditorElement {
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
         {
-            if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
+            if !text_hitbox.is_hovered(window) || editor.read_only(cx) {
                 return;
             }
 
@@ -936,11 +816,11 @@ impl EditorElement {
         cx: &mut ModelContext<Editor>,
     ) {
         let modifiers = event.modifiers;
-        let gutter_hovered = gutter_hitbox.is_hovered(cx);
+        let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, window, cx);
 
         // Don't trigger hover popover if mouse is hovering over context menu
-        if text_hitbox.is_hovered(cx) {
+        if text_hitbox.is_hovered(window) {
             let point_for_position =
                 position_map.point_for_position(text_hitbox.bounds, event.position);
 
@@ -3524,7 +3404,7 @@ impl EditorElement {
                 let tab_kbd = h_flex()
                     .px_0p5()
                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                    .text_size(TextSize::XSmall.rems(window, cx))
+                    .text_size(TextSize::XSmall.rems(cx))
                     .text_color(cx.theme().colors().text.opacity(0.8))
                     .child("tab");
 
@@ -4195,7 +4075,7 @@ impl EditorElement {
             let Some(hitbox) = hitbox else {
                 continue;
             };
-            let color = if !is_singleton && hitbox.is_hovered(cx) {
+            let color = if !is_singleton && hitbox.is_hovered(window) {
                 cx.theme().colors().editor_active_line_number
             } else {
                 cx.theme().colors().editor_line_number
@@ -4681,7 +4561,7 @@ impl EditorElement {
                                 cx,
                             );
 
-                            if hitbox.is_hovered(cx) {
+                            if hitbox.is_hovered(window) {
                                 editor.scroll_manager.show_scrollbar(window, cx);
                             }
                         }
@@ -4719,7 +4599,7 @@ impl EditorElement {
                     let editor = self.editor.clone();
 
                     move |event: &MouseDownEvent, phase, cx| {
-                        if phase == DispatchPhase::Capture || !hitbox.is_hovered(cx) {
+                        if phase == DispatchPhase::Capture || !hitbox.is_hovered(window) {
                             return;
                         }
 
@@ -4838,7 +4718,7 @@ impl EditorElement {
                                 cx,
                             );
 
-                            if hitbox.is_hovered(cx) {
+                            if hitbox.is_hovered(window) {
                                 editor.scroll_manager.show_scrollbar(window, cx);
                             }
                         }
@@ -4876,7 +4756,7 @@ impl EditorElement {
                     let editor = self.editor.clone();
 
                     move |event: &MouseDownEvent, phase, cx| {
-                        if phase == DispatchPhase::Capture || !hitbox.is_hovered(cx) {
+                        if phase == DispatchPhase::Capture || !hitbox.is_hovered(window) {
                             return;
                         }
 
@@ -5210,7 +5090,7 @@ impl EditorElement {
             let scroll_sensitivity = EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
 
             move |event: &ScrollWheelEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     delta = delta.coalesce(event.delta);
                     editor.update(cx, |editor, cx| {
                         let position_map: &PositionMap = &position_map;
@@ -7228,7 +7108,7 @@ impl Element for EditorElement {
                 } => {
                     if hunk_hitbox
                         .as_ref()
-                        .map(|hitbox| hitbox.is_hovered(cx))
+                        .map(|hitbox| hitbox.is_hovered(window))
                         .unwrap_or(false)
                     {
                         Some(HoveredHunk {

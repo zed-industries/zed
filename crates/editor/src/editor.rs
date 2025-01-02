@@ -1385,7 +1385,7 @@ impl Editor {
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global::<SettingsStore>(Self::settings_changed),
                 observe_buffer_font_size_adjustment(window, cx, |_, cx| cx.notify()),
-                cx.observe_window_activation(|editor, cx| {
+                cx.observe_window_activation(window, |editor, cx| {
                     let active = cx.is_window_active();
                     editor.blink_manager.update(cx, |blink_manager, cx| {
                         if active {
@@ -3410,6 +3410,7 @@ impl Editor {
                 position.text_anchor,
                 text,
                 trigger_in_words,
+                window,
                 cx,
             )
         } else {
@@ -3869,7 +3870,8 @@ impl Editor {
             }),
             trigger_kind,
         };
-        let completions = provider.completions(&buffer, buffer_position, completion_context, cx);
+        let completions =
+            provider.completions(&buffer, buffer_position, completion_context, window, cx);
         let sort_completions = provider.sort_completions();
 
         let id = post_inc(&mut self.next_completion_id);
@@ -4357,7 +4359,7 @@ impl Editor {
                 provider,
             } => {
                 let apply_code_action =
-                    provider.apply_code_action(buffer, action, excerpt_id, true, cx);
+                    provider.apply_code_action(buffer, action, excerpt_id, true, window, cx);
                 let workspace = workspace.downgrade();
                 Some(cx.spawn_in(window, |editor, cx| async move {
                     let project_transaction = apply_code_action.await?;
@@ -4384,11 +4386,8 @@ impl Editor {
         cx: &mut AppContext,
     ) -> Result<()> {
         let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
-        cx.update(|window, cx| {
-            entries.sort_unstable_by_key(|(buffer, _)| {
-                buffer.read(cx).file().map(|f| f.path().clone())
-            });
-        })?;
+        entries
+            .sort_unstable_by_key(|(buffer, _)| buffer.read(cx).file().map(|f| f.path().clone()));
 
         // If the project transaction's edits are all contained within this editor, then
         // avoid opening a new editor to display them.
@@ -4500,7 +4499,7 @@ impl Editor {
                 let tasks = this
                     .code_action_providers
                     .iter()
-                    .map(|provider| provider.code_actions(&start_buffer, start..end, cx))
+                    .map(|provider| provider.code_actions(&start_buffer, start..end, window, cx))
                     .collect::<Vec<_>>();
                 (providers, tasks)
             })?;
@@ -9487,13 +9486,15 @@ impl Editor {
                         }
                     })
                     .await;
-            let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
 
-            this.update(&mut cx, |this, _| {
-                this.clear_tasks();
-                for (key, value) in rows {
-                    this.insert_tasks(key, value);
-                }
+            cx.update(|window, cx| {
+                let rows = Self::runnable_rows(project, display_snapshot, new_rows, window, cx);
+                this.update(&mut cx, |this, _| {
+                    this.clear_tasks();
+                    for (key, value) in rows {
+                        this.insert_tasks(key, value);
+                    }
+                })
             })
             .ok();
         })
@@ -9515,7 +9516,7 @@ impl Editor {
         runnable_ranges
             .into_iter()
             .filter_map(|mut runnable| {
-                let tasks = cx
+                let tasks = window
                     .update(|window, cx| {
                         Self::templates_with_tags(&project, &mut runnable.runnable, window, cx)
                     })
@@ -10153,9 +10154,9 @@ impl Editor {
 
         let url_finder = cx.spawn_in(window, |editor, mut cx| async move {
             let url = if let Some(end_pos) = end_position {
-                find_url_from_range(&buffer, start_position..end_pos, cx.clone())
+                find_url_from_range(&buffer, start_position..end_pos, window, cx)
             } else {
-                find_url(&buffer, start_position, cx.clone()).map(|(_, url)| url)
+                find_url(&buffer, start_position, window, cx).map(|(_, url)| url)
             };
 
             if let Some(url) = url {
@@ -10186,7 +10187,9 @@ impl Editor {
         let project = self.project.clone();
 
         cx.spawn_in(window, |_, mut cx| async move {
-            let result = find_file(&buffer, project, buffer_position, &mut cx).await;
+            let result = cx
+                .update(|window, cx| find_file(&buffer, project, buffer_position, window, cx))
+                .await;
 
             if let Some((_, path)) = result {
                 workspace
@@ -10830,7 +10833,8 @@ impl Editor {
                 workspace,
                 project_transaction,
                 format!("Rename: {} → {}", old_name, new_name),
-                cx.clone(),
+                window,
+                cx,
             )
             .await?;
 
@@ -15299,7 +15303,7 @@ impl Render for Editor {
         };
 
         EditorElement::new(
-            cx.view(),
+            &cx.model(),
             EditorStyle {
                 background,
                 local_player: cx.theme().players().local(),

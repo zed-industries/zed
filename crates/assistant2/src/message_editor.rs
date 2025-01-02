@@ -219,7 +219,7 @@ impl FocusableView for MessageEditor {
 
 impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
-        let font_size = TextSize::Default.rems(window, cx);
+        let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
         let focus_handle = self.editor.focus_handle(cx);
         let inline_context_picker = self.inline_context_picker.clone();
