@@ -777,7 +777,7 @@ impl Item for Editor {
             .collect::<HashSet<_>>();
         cx.spawn_in(window, |this, mut cx| async move {
             if format {
-                this.update(&mut cx, |editor, cx| {
+                this.update_in(&mut cx, |editor, window, cx| {
                     editor.perform_format(
                         project.clone(),
                         FormatTrigger::Save,
@@ -860,7 +860,7 @@ impl Item for Editor {
             project.update(cx, |project, cx| project.reload_buffers(buffers, true, cx));
         cx.spawn_in(window, |this, mut cx| async move {
             let transaction = reload_buffers.log_err().await;
-            this.update(&mut cx, |editor, cx| {
+            this.update_in(&mut cx, |editor, window, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), window, cx)
             })?;
             buffer
@@ -1145,7 +1145,7 @@ impl SerializableItem for Editor {
                         });
                         window.spawn(cx, |mut cx| async move {
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
-                            editor.update(&mut cx, |editor, cx| {
+                            editor.update_in(&mut cx, |editor, window, cx| {
                                 editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
                             })?;
                             Ok(editor)
@@ -1731,7 +1731,7 @@ mod tests {
         workspace
             .update_in(cx, |workspace, window, cx| {
                 let pane = workspace.active_pane();
-                pane.update_in(cx, |_, window, cx| {
+                pane.update(cx, |_, cx| {
                     Editor::deserialize(
                         project.clone(),
                         workspace.weak_handle(),

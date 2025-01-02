@@ -1,9 +1,8 @@
-use std::{ops::Range, time::Duration};
-
 use collections::HashMap;
+use gpui::{AppContext, ModelContext, Window};
 use itertools::Itertools;
+use std::{ops::Range, time::Duration};
 use text::{AnchorRangeExt, BufferId, ToPoint};
-use ui::ViewContext;
 use util::ResultExt;
 
 use crate::Editor;

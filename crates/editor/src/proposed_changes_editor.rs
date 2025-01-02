@@ -60,7 +60,7 @@ impl ProposedChangesEditor {
         let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
-            editor: window.new_view(cx, |cx| {
+            editor: window.new_view(cx, |window, cx| {
                 let mut editor =
                     Editor::for_multibuffer(multibuffer.clone(), project, true, window, cx);
                 editor.set_expand_all_diff_hunks();
@@ -212,7 +212,7 @@ impl ProposedChangesEditor {
                 buffer_entries.push(BufferEntry {
                     branch: branch_buffer.clone(),
                     base: location.buffer.clone(),
-                    _subscription: cx.subscribe_in(&branch_buffer, window, Self::on_buffer_event),
+                    _subscription: cx.subscribe(&branch_buffer, Self::on_buffer_event),
                 });
             }
 
@@ -252,7 +252,6 @@ impl ProposedChangesEditor {
         &mut self,
         buffer: Model<Buffer>,
         event: &BufferEvent,
-        _window: &mut Window,
         _cx: &mut ModelContext<Self>,
     ) {
         match event {
@@ -297,11 +296,11 @@ impl EventEmitter<EditorEvent> for ProposedChangesEditor {}
 impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
-    fn tab_icon(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::Diff))
     }
 
-    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         Some(self.title.clone())
     }
 
@@ -336,7 +335,8 @@ impl Item for ProposedChangesEditor {
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.editor.update(window, cx, Item::deactivated);
+        self.editor
+            .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
     fn navigate(
@@ -405,7 +405,9 @@ impl Render for ProposedChangesEditorToolbar {
                         .map(|binding| binding.into_any_element());
 
                 button_like.children(keybinding).on_click({
-                    move |_event, cx| focus_handle.dispatch_action(&ApplyAllDiffHunks, window)
+                    move |_event, window, cx| {
+                        focus_handle.dispatch_action(&ApplyAllDiffHunks, window, cx)
+                    }
                 })
             }
             None => button_like.disabled(true),

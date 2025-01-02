@@ -6,7 +6,9 @@ use crate::{
     SelectMode, ToDisplayPoint, ToggleCodeActions,
 };
 use gpui::prelude::FluentBuilder;
-use gpui::{DismissEvent, Model, ModelContext, Pixels, Point, Subscription, Window};
+use gpui::{
+    DismissEvent, FocusableView as _, Model, ModelContext, Pixels, Point, Subscription, Window,
+};
 use std::ops::Range;
 use text::PointUtf16;
 use workspace::OpenInTerminal;
@@ -129,7 +131,7 @@ pub fn deploy_context_menu(
     let display_map = editor.selections.display_map(cx);
     let source_anchor = display_map.display_point_to_anchor(point, text::Bias::Right);
     let context_menu = if let Some(custom) = editor.custom_context_menu.take() {
-        let menu = custom(editor, point, cx);
+        let menu = custom(editor, point, window, cx);
         editor.custom_context_menu = Some(custom);
         let Some(menu) = menu else {
             return;

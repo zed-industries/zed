@@ -435,7 +435,7 @@ impl Editor {
         if opened_first_time {
             cx.spawn_in(window, |editor, mut cx| async move {
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update_in(&mut cx, |editor, window, cx| {
                         editor.refresh_inlay_hints(
                             InlayHintRefreshReason::NewLinesShown,
                             window,
