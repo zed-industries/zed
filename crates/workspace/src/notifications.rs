@@ -162,7 +162,9 @@ impl Workspace {
             window,
             cx,
             |window, cx| {
-                window.new_view(cx, |_cx| ErrorMessagePrompt::new(format!("Error: {err:#}")))
+                window.new_view(cx, |_window, _cx| {
+                    ErrorMessagePrompt::new(format!("Error: {err:#}"))
+                })
             },
         );
     }
@@ -180,7 +182,7 @@ impl Workspace {
             window,
             cx,
             |window, cx| {
-                window.new_view(cx, |_cx| {
+                window.new_view(cx, |_window, _cx| {
                     ErrorMessagePrompt::new(err.to_string()).with_link_button(
                         "See docs",
                         "https://zed.dev/docs/linux#i-cant-open-any-files",
@@ -202,12 +204,12 @@ impl Workspace {
     pub fn show_toast(&mut self, toast: Toast, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.dismiss_notification(&toast.id, window, cx);
         self.show_notification(toast.id.clone(), window, cx, |window, cx| {
-            window.new_view(cx, |_cx| match toast.on_click.as_ref() {
+            window.new_view(cx, |_window, _cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
                     let on_click = on_click.clone();
                     simple_message_notification::MessageNotification::new(toast.msg.clone())
                         .with_click_message(click_msg.clone())
-                        .on_click(move |window, cx| on_click(cx))
+                        .on_click(move |window, cx| on_click(window, cx))
                 }
                 None => simple_message_notification::MessageNotification::new(toast.msg.clone()),
             })
@@ -218,7 +220,7 @@ impl Workspace {
                     .timer(Duration::from_millis(5000))
                     .await;
                 workspace
-                    .update(&mut cx, |workspace, cx| {
+                    .update_in(&mut cx, |workspace, window, cx| {
                         workspace.dismiss_toast(&toast.id, window, cx)
                     })
                     .ok();
@@ -271,9 +273,9 @@ impl LanguageServerPrompt {
         }
     }
 
-    async fn select_option(this: Model<Self>, ix: usize, window: &mut Window, cx: &mut AppContext) {
+    async fn select_option(this: Model<Self>, ix: usize, mut cx: AsyncWindowContext) {
         util::maybe!(async move {
-            let potential_future = this.update_in(&mut cx, |this, window, _| {
+            let potential_future = this.update(&mut cx, |this, _| {
                 this.request.take().map(|request| request.respond(ix))
             });
 
@@ -282,7 +284,7 @@ impl LanguageServerPrompt {
                 .await
                 .ok_or_else(|| anyhow::anyhow!("Stream already closed"))?;
 
-            this.update_in(&mut cx, |_, cx| cx.emit(DismissEvent))?;
+            this.update(&mut cx, |_, cx| cx.emit(DismissEvent))?;
 
             anyhow::Ok(())
         })
@@ -364,7 +366,7 @@ impl Render for LanguageServerPrompt {
                                     ui::IconButton::new("copy", ui::IconName::Copy)
                                         .on_click({
                                             let message = request.message.clone();
-                                            move |_, cx| {
+                                            move |_, window, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                                     message.clone(),
                                                 ))
@@ -384,13 +386,8 @@ impl Render for LanguageServerPrompt {
                                 let this_handle = this_handle.clone();
                                 window
                                     .spawn(cx, |cx| async move {
-                                        LanguageServerPrompt::select_option(
-                                            this_handle,
-                                            ix,
-                                            window,
-                                            cx,
-                                        )
-                                        .await
+                                        LanguageServerPrompt::select_option(this_handle, ix, cx)
+                                            .await
                                     })
                                     .detach()
                             })
@@ -574,7 +571,7 @@ pub mod simple_message_notification {
                             Button::new(message.clone(), message.clone()).on_click(cx.listener(
                                 |this, _, window, cx| {
                                     if let Some(on_click) = this.on_click.as_ref() {
-                                        (on_click)(cx)
+                                        (on_click)(window, cx)
                                     };
                                     this.dismiss(window, cx)
                                 },
@@ -585,7 +582,7 @@ pub mod simple_message_notification {
                                 .style(ButtonStyle::Filled)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     if let Some(on_click) = this.secondary_on_click.as_ref() {
-                                        (on_click)(cx)
+                                        (on_click)(window, cx)
                                     };
                                     this.dismiss(window, cx)
                                 }))
@@ -701,7 +698,8 @@ where
             if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");
                 if let Ok(prompt) = cx.update(|window, cx| {
-                    let detail = f(err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
+                    let detail =
+                        f(err, window, cx).unwrap_or_else(|| format!("{err}. Please try again."));
                     window.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"], cx)
                 }) {
                     prompt.await.ok();
