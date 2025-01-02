@@ -20,7 +20,7 @@ use workspace::Workspace;
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
-use crate::context_strip::ContextStrip;
+use crate::context_strip::{ContextStrip, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::{Chat, ToggleContextPicker, ToggleModelSelector};
@@ -87,6 +87,7 @@ impl MessageEditor {
                     Some(thread_store.clone()),
                     editor.focus_handle(cx),
                     context_picker_menu_handle.clone(),
+                    SuggestContextKind::File,
                     cx,
                 )
             }),

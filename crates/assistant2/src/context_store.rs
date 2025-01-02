@@ -1,4 +1,5 @@
 use gpui::SharedString;
+use project::ProjectEntryId;
 
 use crate::context::{Context, ContextId, ContextKind};
 
@@ -43,5 +44,14 @@ impl ContextStore {
 
     pub fn remove_context(&mut self, id: &ContextId) {
         self.context.retain(|context| context.id != *id);
+    }
+
+    pub fn contains_project_entry(&self, entry_id: ProjectEntryId) -> bool {
+        self.context.iter().any(|probe| match probe.kind {
+            ContextKind::File(probe_entry_id) => probe_entry_id == entry_id,
+            ContextKind::Directory => false,
+            ContextKind::FetchedUrl => false,
+            ContextKind::Thread => false,
+        })
     }
 }

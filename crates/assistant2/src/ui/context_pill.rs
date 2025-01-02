@@ -33,7 +33,7 @@ impl RenderOnce for ContextPill {
             px(4.)
         };
         let icon = match self.context.kind {
-            ContextKind::File => IconName::File,
+            ContextKind::File(_) => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageCircle,
