@@ -37,6 +37,14 @@ impl<'a, T: 'static> ModelContext<'a, T> {
             .expect("The entity must be alive if we have a model context")
     }
 
+    // todo! Remove
+    /// Returns a handle to the model belonging to this context.
+    pub fn view(&self) -> Model<T> {
+        self.weak_model()
+            .upgrade()
+            .expect("The entity must be alive if we have a model context")
+    }
+
     /// Returns a weak handle to the model belonging to this context.
     pub fn weak_model(&self) -> WeakModel<T> {
         self.model_state.clone()
