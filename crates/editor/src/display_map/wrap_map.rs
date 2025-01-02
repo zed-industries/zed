@@ -967,9 +967,9 @@ impl<'a> Iterator for WrapRows<'a> {
             return None;
         }
 
-        let diff_status = self.input_buffer_row.diff_status;
         let buffer_row = self.input_buffer_row;
         let soft_wrapped = self.soft_wrapped;
+        let diff_status = self.input_buffer_row.diff_status;
 
         self.output_row += 1;
         self.transforms

@@ -2063,6 +2063,10 @@ impl MultiBuffer {
         }
 
         self.recompute_expanded_diff_hunks(snapshot, changes, cx);
+        cx.emit(Event::Edited {
+            singleton_buffer_edited: false,
+            edited_buffer: None,
+        });
     }
 
     pub fn all_buffers(&self) -> HashSet<Model<Buffer>> {
@@ -2246,6 +2250,10 @@ impl MultiBuffer {
         }
 
         self.recompute_expanded_diff_hunks(snapshot, changes, cx);
+        cx.emit(Event::Edited {
+            singleton_buffer_edited: false,
+            edited_buffer: None,
+        });
     }
 
     pub fn resize_excerpt(
