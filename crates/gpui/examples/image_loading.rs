@@ -1,11 +1,11 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::anyhow;
-use gpui::{
+use gpui::{Window, ModelContext, 
     black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
     AppContext, Asset, AssetLogger, AssetSource, Bounds, Hsla, ImageAssetLoader, ImageCacheError,
-    ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString, ViewContext,
-    WindowBounds, WindowContext, WindowOptions, LOADING_DELAY,
+    ImgResourceLoader, Length, Pixels, RenderImage, Resource, SharedString, 
+    WindowBounds,  WindowOptions, LOADING_DELAY,
 };
 
 struct Assets {}
@@ -100,7 +100,7 @@ impl ImageLoadingExample {
 }
 
 impl Render for ImageLoadingExample {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().flex().flex_col().size_full().justify_around().child(
             div().flex().flex_row().w_full().justify_around().child(
                 div()
@@ -116,8 +116,8 @@ impl Render for ImageLoadingExample {
                         };
 
                         // Load within the 'loading delay', should not show loading fallback
-                        img(move |cx: &mut WindowContext| {
-                            cx.use_asset::<LoadImageWithParameters>(&image_source)
+                        img(move |window: &mut Window, cx: &mut AppContext| {
+                            window.use_asset::<LoadImageWithParameters>(&image_source, cx)
                         })
                         .id("image-1")
                         .border_1()
@@ -125,7 +125,7 @@ impl Render for ImageLoadingExample {
                         .with_fallback(|| Self::fallback_element().into_any_element())
                         .border_color(red())
                         .with_loading(|| Self::loading_element().into_any_element())
-                        .on_click(move |_, cx| {
+                        .on_click(move |_, window, cx| {
                             cx.remove_asset::<LoadImageWithParameters>(&image_source);
                         })
                     })
@@ -136,8 +136,8 @@ impl Render for ImageLoadingExample {
                             fail: false,
                         };
 
-                        img(move |cx: &mut WindowContext| {
-                            cx.use_asset::<LoadImageWithParameters>(&image_source)
+                        img(move |window: &mut Window, cx: &mut AppContext| {
+                            window.use_asset::<LoadImageWithParameters>(&image_source, cx)
                         })
                         .id("image-2")
                         .with_fallback(|| Self::fallback_element().into_any_element())
@@ -145,7 +145,7 @@ impl Render for ImageLoadingExample {
                         .size_12()
                         .border_1()
                         .border_color(red())
-                        .on_click(move |_, cx| {
+                        .on_click(move |_, window, cx| {
                             cx.remove_asset::<LoadImageWithParameters>(&image_source);
                         })
                     })
@@ -157,8 +157,8 @@ impl Render for ImageLoadingExample {
                         };
 
                         // Fail to load after a long delay
-                        img(move |cx: &mut WindowContext| {
-                            cx.use_asset::<LoadImageWithParameters>(&image_source)
+                        img(move |window: &mut Window, cx: &mut AppContext| {
+                            window.use_asset::<LoadImageWithParameters>(&image_source, cx)
                         })
                         .id("image-3")
                         .with_fallback(|| Self::fallback_element().into_any_element())
@@ -166,7 +166,7 @@ impl Render for ImageLoadingExample {
                         .size_12()
                         .border_1()
                         .border_color(red())
-                        .on_click(move |_, cx| {
+                        .on_click(move |_, window, cx| {
                             cx.remove_asset::<LoadImageWithParameters>(&image_source);
                         })
                     })
@@ -183,7 +183,7 @@ impl Render for ImageLoadingExample {
                             .with_fallback(|| Self::fallback_element().into_any_element())
                             .border_color(red())
                             .with_loading(|| Self::loading_element().into_any_element())
-                            .on_click(move |_, cx| {
+                            .on_click(move |_, window, cx| {
                                 cx.remove_asset::<ImgResourceLoader>(&image_source.clone().into());
                             })
                     }),
@@ -205,9 +205,9 @@ fn main() {
                 ))),
                 ..Default::default()
             };
-            cx.open_window(options, |cx| {
+            cx.open_window(options, |window, cx| {
                 cx.activate(false);
-                cx.new_view(|_cx| ImageLoadingExample {})
+                window.new_view(cx, |_window, _cx| ImageLoadingExample {})
             })
             .unwrap();
         });

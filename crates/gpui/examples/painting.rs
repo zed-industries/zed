@@ -1,6 +1,6 @@
-use gpui::{
+use gpui::{Window, ModelContext, 
     canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, MouseDownEvent, Path,
-    Pixels, Point, Render, ViewContext, WindowOptions,
+    Pixels, Point, Render,  WindowOptions,
 };
 struct PaintingViewer {
     default_lines: Vec<Path<Pixels>>,
@@ -70,13 +70,13 @@ impl PaintingViewer {
         }
     }
 
-    fn clear(&mut self, cx: &mut ViewContext<Self>) {
+    fn clear(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.lines.clear();
         cx.notify();
     }
 }
 impl Render for PaintingViewer {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
         div()
@@ -103,8 +103,8 @@ impl Render for PaintingViewer {
                             .flex()
                             .px_3()
                             .py_1()
-                            .on_click(cx.listener(|this, _, cx| {
-                                this.clear(cx);
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.clear(window, cx);
                             })),
                     ),
             )
@@ -113,11 +113,11 @@ impl Render for PaintingViewer {
                     .size_full()
                     .child(
                         canvas(
-                            move |_, _| {},
-                            move |_, _, cx| {
+                            move |_, _, _| {},
+                            move |_, _, window, cx| {
                                 const STROKE_WIDTH: Pixels = px(2.0);
                                 for path in default_lines {
-                                    cx.paint_path(path, gpui::black());
+                                    window.paint_path(path, gpui::black());
                                 }
                                 for points in lines {
                                     let mut path = Path::new(points[0]);
@@ -135,7 +135,7 @@ impl Render for PaintingViewer {
                                         last = p;
                                     }
 
-                                    cx.paint_path(path, gpui::black());
+                                    window.paint_path(path, gpui::black());
                                 }
                             },
                         )
@@ -143,14 +143,14 @@ impl Render for PaintingViewer {
                     )
                     .on_mouse_down(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, ev: &MouseDownEvent, _| {
+                        cx.listener(|this, ev: &MouseDownEvent, _, _| {
                             this._painting = true;
                             this.start = ev.position;
                             let path = vec![ev.position];
                             this.lines.push(path);
                         }),
                     )
-                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, cx| {
+                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, window, cx| {
                         if !this._painting {
                             return;
                         }
@@ -176,7 +176,7 @@ impl Render for PaintingViewer {
                     }))
                     .on_mouse_up(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _| {
+                        cx.listener(|this, _, _, _| {
                             this._painting = false;
                         }),
                     ),
@@ -191,7 +191,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |cx| cx.new_view(|_| PaintingViewer::new()),
+            |window, cx| window.new_view(cx, |_, _| PaintingViewer::new()),
         )
         .unwrap();
         cx.activate(true);

@@ -4,10 +4,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::{
+use gpui::{Window, ModelContext, 
     actions, div, img, prelude::*, px, rgb, size, App, AppContext, AssetSource, Bounds,
     ImageSource, KeyBinding, Menu, MenuItem, Point, SharedString, SharedUri, TitlebarOptions,
-    ViewContext, WindowBounds, WindowContext, WindowOptions,
+     WindowBounds,  WindowOptions,
 };
 
 struct Assets {
@@ -53,7 +53,7 @@ impl ImageContainer {
 }
 
 impl RenderOnce for ImageContainer {
-    fn render(self, _: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _: &mut AppContext) -> impl IntoElement {
         div().child(
             div()
                 .flex_row()
@@ -72,7 +72,7 @@ struct ImageShowcase {
 }
 
 impl Render for ImageShowcase {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .size_full()
             .flex()
@@ -155,8 +155,8 @@ fn main() {
                 ..Default::default()
             };
 
-            cx.open_window(window_options, |cx| {
-                cx.new_view(|_cx| ImageShowcase {
+            cx.open_window(window_options, |window, cx| {
+                window.new_view(cx, |_window, _cx| ImageShowcase {
                     // Relative path to your root project path
                     local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
                         .unwrap()

@@ -1,4 +1,4 @@
-use gpui::{div, img, prelude::*, App, AppContext, Render, ViewContext, WindowOptions};
+use gpui::{Window, ModelContext, div, img, prelude::*, App, AppContext, Render,  WindowOptions};
 use std::path::PathBuf;
 
 struct GifViewer {
@@ -12,7 +12,7 @@ impl GifViewer {
 }
 
 impl Render for GifViewer {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().size_full().child(
             img(self.gif_path.clone())
                 .size_full()
@@ -40,7 +40,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |cx| cx.new_view(|_cx| GifViewer::new(gif_path)),
+            |window, cx| window.new_view(cx, |_window, _cx| GifViewer::new(gif_path)),
         )
         .unwrap();
         cx.activate(true);
