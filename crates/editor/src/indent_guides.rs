@@ -1,11 +1,10 @@
 use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
-use gpui::{AppContext, Task};
+use gpui::{AppContext, ModelContext, Task, Window};
 use language::{language_settings::language_settings, BufferRow};
 use multi_buffer::{MultiBufferIndentGuide, MultiBufferRow};
 use text::{BufferId, LineIndent, Point};
-use ui::ViewContext;
 use util::ResultExt;
 
 use crate::{DisplaySnapshot, Editor};

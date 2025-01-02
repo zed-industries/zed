@@ -382,7 +382,7 @@ impl InlayHintCache {
             }
 
             editor
-                .update(&mut cx, |editor, cx| {
+                .update_in(&mut cx, |editor, window, cx| {
                     spawn_new_update_tasks(
                         editor,
                         reason_description,
@@ -814,7 +814,7 @@ fn new_update_task(
                 .into_iter()
                 .filter_map(|visible_range| {
                     let fetch_task = editor
-                        .update(&mut cx, |_, cx| {
+                        .update_in(&mut cx, |_, window, cx| {
                             fetch_and_update_hints(
                                 excerpt_buffer.clone(),
                                 query,
@@ -834,24 +834,22 @@ fn new_update_task(
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS,
         ));
 
-        let query_range_failed = |range: &Range<language::Anchor>,
-                                  e: anyhow::Error,
-                                  window: &mut Window,
-                                  cx: &mut AppContext| {
-            log::error!("inlay hint update task for range failed: {e:#?}");
-            editor
-                .update(cx, |editor, cx| {
-                    if let Some(task_ranges) = editor
-                        .inlay_hint_cache
-                        .update_tasks
-                        .get_mut(&query.excerpt_id)
-                    {
-                        let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
-                        task_ranges.invalidate_range(&buffer_snapshot, range);
-                    }
-                })
-                .ok()
-        };
+        let query_range_failed =
+            |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncWindowContext| {
+                log::error!("inlay hint update task for range failed: {e:#?}");
+                editor
+                    .update(cx, |editor, cx| {
+                        if let Some(task_ranges) = editor
+                            .inlay_hint_cache
+                            .update_tasks
+                            .get_mut(&query.excerpt_id)
+                        {
+                            let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
+                            task_ranges.invalidate_range(&buffer_snapshot, range);
+                        }
+                    })
+                    .ok()
+            };
 
         for (range, result) in visible_range_update_results {
             if let Err(e) = result {
@@ -867,7 +865,7 @@ fn new_update_task(
                 .chain(query_ranges.after_visible.into_iter())
                 .filter_map(|invisible_range| {
                     let fetch_task = editor
-                        .update(&mut cx, |_, cx| {
+                        .update_in(&mut cx, |_, window, cx| {
                             fetch_and_update_hints(
                                 excerpt_buffer.clone(),
                                 query,
@@ -919,7 +917,7 @@ fn fetch_and_update_hints(
         let fetch_range_to_log = fetch_range.start.to_point(&buffer_snapshot)
             ..fetch_range.end.to_point(&buffer_snapshot);
         let inlay_hints_fetch_task = editor
-            .update(&mut cx, |editor, cx| {
+            .update_in(&mut cx, |editor, window, cx| {
                 if got_throttled {
                     let query_not_around_visible_range = match editor
                         .excerpts_for_inlay_hints_query(None, window, cx)
@@ -971,7 +969,7 @@ fn fetch_and_update_hints(
                 .cloned()
         })?;
 
-        let visible_hints = editor.update(&mut cx, |editor, cx| editor.visible_inlay_hints(window, cx))?;
+        let visible_hints = editor.update_in(&mut cx, |editor, window, cx| editor.visible_inlay_hints(window, cx))?;
         let new_hints = match inlay_hints_fetch_task {
             Some(fetch_task) => {
                 log::debug!(
@@ -1018,7 +1016,7 @@ fn fetch_and_update_hints(
             // );
             log::trace!("New update: {new_update:?}");
             editor
-                .update(&mut cx, |editor, cx| {
+                .update_in(&mut cx, |editor, window, cx| {
                     apply_hint_update(
                         editor,
                         new_update,
@@ -1338,14 +1336,14 @@ pub mod tests {
 
         let mut edits_made = 1;
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let expected_hints = vec!["0".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Should get its first hints when opening the editor"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 let inlay_cache = editor.inlay_hint_cache();
                 assert_eq!(
                     inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
@@ -1367,14 +1365,14 @@ pub mod tests {
             .unwrap();
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let expected_hints = vec!["0".to_string(), "1".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Should get new hints after an edit"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 let inlay_cache = editor.inlay_hint_cache();
                 assert_eq!(
                     inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
@@ -1394,14 +1392,14 @@ pub mod tests {
         edits_made += 1;
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let expected_hints = vec!["0".to_string(), "1".to_string(), "2".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Should get new hints after hint refresh/ request"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 let inlay_cache = editor.inlay_hint_cache();
                 assert_eq!(
                     inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
@@ -1458,14 +1456,14 @@ pub mod tests {
 
         let mut edits_made = 1;
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let expected_hints = vec!["0".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Should get its first hints when opening the editor"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 assert_eq!(
                     editor.inlay_hint_cache().version,
                     edits_made,
@@ -1491,14 +1489,14 @@ pub mod tests {
         cx.executor().run_until_parked();
 
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let expected_hints = vec!["0".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Should not update hints while the work task is running"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 assert_eq!(
                     editor.inlay_hint_cache().version,
                     edits_made,
@@ -1517,14 +1515,14 @@ pub mod tests {
 
         edits_made += 1;
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let expected_hints = vec!["1".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "New hints should be queried after the work task is done"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 assert_eq!(
                     editor.inlay_hint_cache().version,
                     edits_made,
@@ -1600,7 +1598,7 @@ pub mod tests {
     //         .await
     //         .unwrap();
     //     let rs_editor =
-    //         cx.add_window(|cx| Editor::for_buffer(rs_buffer, Some(project.clone()), cx));
+    //         cx.add_window(|window, cx| Editor::for_buffer(rs_buffer, Some(project.clone()), cx));
 
     //     cx.executor().run_until_parked();
     //     cx.executor().start_waiting();
@@ -1638,7 +1636,7 @@ pub mod tests {
     //                 cached_hint_labels(editor),
     //                 "Should get its first hints when opening the editor"
     //             );
-    //             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+    //             assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
     //             assert_eq!(
     //                 editor.inlay_hint_cache().version,
     //                 1,
@@ -1654,7 +1652,7 @@ pub mod tests {
     //         })
     //         .await
     //         .unwrap();
-    //     let md_editor = cx.add_window(|cx| Editor::for_buffer(md_buffer, Some(project), cx));
+    //     let md_editor = cx.add_window(|window, cx| Editor::for_buffer(md_buffer, Some(project), cx));
 
     //     cx.executor().run_until_parked();
     //     cx.executor().start_waiting();
@@ -1692,7 +1690,7 @@ pub mod tests {
     //                 cached_hint_labels(editor),
     //                 "Markdown editor should have a separate version, repeating Rust editor rules"
     //             );
-    //             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+    //             assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
     //             assert_eq!(editor.inlay_hint_cache().version, 1);
     //         })
     //         .unwrap();
@@ -1712,7 +1710,7 @@ pub mod tests {
     //                 cached_hint_labels(editor),
     //                 "Rust inlay cache should change after the edit"
     //             );
-    //             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+    //             assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
     //             assert_eq!(
     //                 editor.inlay_hint_cache().version,
     //                 2,
@@ -1728,7 +1726,7 @@ pub mod tests {
     //                 cached_hint_labels(editor),
     //                 "Markdown editor should not be affected by Rust editor changes"
     //             );
-    //             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+    //             assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
     //             assert_eq!(editor.inlay_hint_cache().version, 1);
     //         })
     //         .unwrap();
@@ -1748,7 +1746,7 @@ pub mod tests {
     //                 cached_hint_labels(editor),
     //                 "Rust editor should not be affected by Markdown editor changes"
     //             );
-    //             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+    //             assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
     //             assert_eq!(editor.inlay_hint_cache().version, 2);
     //         })
     //         .unwrap();
@@ -1760,7 +1758,7 @@ pub mod tests {
     //                 cached_hint_labels(editor),
     //                 "Markdown editor should also change independently"
     //             );
-    //             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+    //             assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
     //             assert_eq!(editor.inlay_hint_cache().version, 2);
     //         })
     //         .unwrap();
@@ -1838,7 +1836,7 @@ pub mod tests {
 
         let mut edits_made = 1;
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     1,
@@ -1855,7 +1853,7 @@ pub mod tests {
                 );
                 assert_eq!(
                     vec!["other hint".to_string(), "type hint".to_string()],
-                    visible_hint_labels(editor, cx)
+                    visible_hint_labels(editor, window, cx)
                 );
                 let inlay_cache = editor.inlay_hint_cache();
                 assert_eq!(
@@ -1875,7 +1873,7 @@ pub mod tests {
             .expect("inlay refresh request failed");
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     2,
@@ -1892,7 +1890,7 @@ pub mod tests {
                 );
                 assert_eq!(
                     vec!["other hint".to_string(), "type hint".to_string()],
-                    visible_hint_labels(editor, cx)
+                    visible_hint_labels(editor, window, cx)
                 );
                 assert_eq!(
                     editor.inlay_hint_cache().version,
@@ -1951,7 +1949,7 @@ pub mod tests {
                 })
             });
             cx.executor().run_until_parked();
-            editor.update(window, cx, |editor, window, cx| {
+            editor.update(cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     2,
@@ -1968,7 +1966,7 @@ pub mod tests {
                 );
                 assert_eq!(
                     expected_visible_hints,
-                    visible_hint_labels(editor, cx),
+                    visible_hint_labels(editor, window, cx),
                     "Should get its visible hints filtered after the settings change for hint kinds {new_allowed_hint_kinds:?}"
                 );
                 let inlay_cache = editor.inlay_hint_cache();
@@ -1999,7 +1997,7 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     2,
@@ -2010,7 +2008,7 @@ pub mod tests {
                     "Should clear the cache when hints got disabled"
                 );
                 assert!(
-                    visible_hint_labels(editor, cx).is_empty(),
+                    visible_hint_labels(editor, window, cx).is_empty(),
                     "Should clear visible hints when hints got disabled"
                 );
                 let inlay_cache = editor.inlay_hint_cache();
@@ -2030,14 +2028,14 @@ pub mod tests {
             .await
             .expect("inlay refresh request failed");
         cx.executor().run_until_parked();
-        editor.update(window, cx, |editor, window, cx| {
+        editor.update(cx, |editor, window, cx| {
             assert_eq!(
                 lsp_request_count.load(Ordering::Relaxed),
                 2,
                 "Should not load new hints when they got disabled"
             );
             assert!(cached_hint_labels(editor).is_empty());
-            assert!(visible_hint_labels(editor, cx).is_empty());
+            assert!(visible_hint_labels(editor, window, cx).is_empty());
             assert_eq!(
                 editor.inlay_hint_cache().version, edits_made,
                 "The editor should not update the cache version after /refresh query without updates"
@@ -2060,7 +2058,7 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     3,
@@ -2077,7 +2075,7 @@ pub mod tests {
                 );
                 assert_eq!(
                     vec!["parameter hint".to_string()],
-                    visible_hint_labels(editor, cx),
+                    visible_hint_labels(editor, window, cx),
                     "Should get its visible hints repopulated and filtered after the h"
                 );
                 let inlay_cache = editor.inlay_hint_cache();
@@ -2098,7 +2096,7 @@ pub mod tests {
             .expect("inlay refresh request failed");
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     4,
@@ -2114,7 +2112,7 @@ pub mod tests {
                 );
                 assert_eq!(
                     vec!["parameter hint".to_string()],
-                    visible_hint_labels(editor, cx),
+                    visible_hint_labels(editor, window, cx),
                 );
                 assert_eq!(editor.inlay_hint_cache().version, edits_made);
             })
@@ -2183,7 +2181,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
 
-        editor.update(window, cx, |editor, window, cx| {
+        editor.update(cx, |editor, window, cx| {
             let current_text = editor.text(cx);
             for change in &expected_changes {
                 assert!(
@@ -2202,7 +2200,7 @@ pub mod tests {
                 cached_hint_labels(editor),
                 "Should get hints from the last edit landed only"
             );
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
         }).unwrap();
 
         let mut edits = Vec::new();
@@ -2226,7 +2224,7 @@ pub mod tests {
         cx.executor().run_until_parked();
 
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let current_text = editor.text(cx);
                 for change in &expected_changes {
                     assert!(
@@ -2245,7 +2243,7 @@ pub mod tests {
                     cached_hint_labels(editor),
                     "Should get hints from the last edit landed only"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
             })
             .unwrap();
     }
@@ -2334,7 +2332,7 @@ pub mod tests {
     //         })
     //         .await
     //         .unwrap();
-    //     let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), cx));
+    //     let editor = cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), cx));
 
     //     cx.executor().run_until_parked();
 
@@ -2408,7 +2406,7 @@ pub mod tests {
     //             cached_hint_labels(editor),
     //             "Should have hints from both LSP requests made for a big file"
     //         );
-    //         assert_eq!(expected_hints, visible_hint_labels(editor, cx), "Should display only hints from the visible range");
+    //         assert_eq!(expected_hints, visible_hint_labels(editor, window, cx), "Should display only hints from the visible range");
     //         assert_eq!(
     //             editor.inlay_hint_cache().version, requests_count,
     //             "LSP queries should've bumped the cache version"
@@ -2479,7 +2477,7 @@ pub mod tests {
     //                 cached_hint_labels(editor),
     //                 "Should have hints from the new LSP response after the edit"
     //             );
-    //             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+    //             assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
     //             assert_eq!(
     //                 editor.inlay_hint_cache().version,
     //                 lsp_requests,
@@ -2549,7 +2547,7 @@ pub mod tests {
     //         let expected_hints = vec!["5".to_string(), "6".to_string(), "7".to_string()];
     //         assert_eq!(expected_hints, cached_hint_labels(editor),
     //             "Should have hints from the new LSP response after the edit");
-    //         assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+    //         assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
     //         assert_eq!(editor.inlay_hint_cache().version, lsp_requests, "Should update the cache for every LSP response with hints added");
     //     }).unwrap();
     // }
@@ -2672,7 +2670,7 @@ pub mod tests {
         });
 
         cx.executor().run_until_parked();
-        let editor = cx.add_window(|cx| {
+        let editor = cx.add_window(|window, cx| {
             Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
         });
 
@@ -2746,7 +2744,7 @@ pub mod tests {
             .await;
         cx.executor().run_until_parked();
 
-        editor.update(window, cx, |editor, window, cx| {
+        editor.update(cx, |editor, window, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2760,7 +2758,7 @@ pub mod tests {
                     cached_hint_labels(editor),
                     "When scroll is at the edge of a multibuffer, its visible excerpts only should be queried for inlay hints"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(), "Every visible excerpt hints should bump the version");
             }).unwrap();
 
@@ -2778,7 +2776,7 @@ pub mod tests {
             })
             .unwrap();
         cx.executor().run_until_parked();
-        editor.update(window, cx, |editor, window, cx| {
+        editor.update(cx, |editor, window, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2792,7 +2790,7 @@ pub mod tests {
                 ];
                 assert_eq!(expected_hints, cached_hint_labels(editor),
                     "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(),
                     "Due to every excerpt having one hint, we update cache per new excerpt scrolled");
             }).unwrap();
@@ -2808,7 +2806,7 @@ pub mod tests {
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
         ));
         cx.executor().run_until_parked();
-        let last_scroll_update_version = editor.update(window, cx, |editor, window, cx| {
+        let last_scroll_update_version = editor.update(cx, |editor, window, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2825,7 +2823,7 @@ pub mod tests {
                 ];
                 assert_eq!(expected_hints, cached_hint_labels(editor),
                     "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched");
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 assert_eq!(editor.inlay_hint_cache().version, expected_hints.len());
                 expected_hints.len()
             }).unwrap();
@@ -2841,7 +2839,7 @@ pub mod tests {
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
         ));
         cx.executor().run_until_parked();
-        editor.update(window, cx, |editor, window, cx| {
+        editor.update(cx, |editor, window, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2858,7 +2856,7 @@ pub mod tests {
                 ];
                 assert_eq!(expected_hints, cached_hint_labels(editor),
                     "After multibuffer was scrolled to the end, further scrolls up should not bring more hints");
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 assert_eq!(editor.inlay_hint_cache().version, last_scroll_update_version, "No updates should happen during scrolling already scrolled buffer");
             }).unwrap();
 
@@ -2872,7 +2870,7 @@ pub mod tests {
             })
             .unwrap();
         cx.executor().run_until_parked();
-        editor.update(window, cx, |editor, window, cx| {
+        editor.update(cx, |editor, window, cx| {
             let expected_hints = vec![
                 "main hint #0".to_string(),
                 "main hint #1".to_string(),
@@ -2890,7 +2888,7 @@ pub mod tests {
                 "After multibuffer edit, editor gets scrolled back to the last selection; \
     all hints should be invalidated and required for all of its visible excerpts"
             );
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
 
             let current_cache_version = editor.inlay_hint_cache().version;
             // We expect three new hints for the excerpts from `other.rs`:
@@ -2979,7 +2977,7 @@ pub mod tests {
         assert!(!buffer_2_excerpts.is_empty());
 
         cx.executor().run_until_parked();
-        let editor = cx.add_window(|cx| {
+        let editor = cx.add_window(|window, cx| {
             Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
         });
         let editor_edited = Arc::new(AtomicBool::new(false));
@@ -3051,14 +3049,14 @@ pub mod tests {
             .await;
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert_eq!(
                     vec!["main hint #0".to_string(), "other hint #0".to_string()],
                     cached_hint_labels(editor),
                     "Cache should update for both excerpts despite hints display was disabled"
                 );
                 assert!(
-                visible_hint_labels(editor, cx).is_empty(),
+                visible_hint_labels(editor, window, cx).is_empty(),
                 "All hints are disabled and should not be shown despite being present in the cache"
             );
                 assert_eq!(
@@ -3078,14 +3076,14 @@ pub mod tests {
             .unwrap();
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert_eq!(
                     vec!["main hint #0".to_string()],
                     cached_hint_labels(editor),
                     "For the removed excerpt, should clean corresponding cached hints"
                 );
                 assert!(
-                visible_hint_labels(editor, cx).is_empty(),
+                visible_hint_labels(editor, window, cx).is_empty(),
                 "All hints are disabled and should not be shown despite being present in the cache"
             );
                 assert_eq!(
@@ -3109,7 +3107,7 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let expected_hints = vec!["main hint #0".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -3118,7 +3116,7 @@ pub mod tests {
                 );
                 assert_eq!(
                     expected_hints,
-                    visible_hint_labels(editor, cx),
+                    visible_hint_labels(editor, window, cx),
                     "Settings change should make cached hints visible"
                 );
                 assert_eq!(
@@ -3200,7 +3198,8 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        let editor =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
 
         cx.executor().run_until_parked();
         cx.executor().start_waiting();
@@ -3215,10 +3214,10 @@ pub mod tests {
             .unwrap();
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let expected_hints = vec!["1".to_string()];
                 assert_eq!(expected_hints, cached_hint_labels(editor));
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 assert_eq!(editor.inlay_hint_cache().version, 1);
             })
             .unwrap();
@@ -3273,14 +3272,14 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let expected_hints = vec!["1".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Should display inlays after toggle despite them disabled in settings"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 assert_eq!(
                     editor.inlay_hint_cache().version,
                     1,
@@ -3296,12 +3295,12 @@ pub mod tests {
             .unwrap();
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert!(
                     cached_hint_labels(editor).is_empty(),
                     "Should clear hints after 2nd toggle"
                 );
-                assert!(visible_hint_labels(editor, cx).is_empty());
+                assert!(visible_hint_labels(editor, window, cx).is_empty());
                 assert_eq!(editor.inlay_hint_cache().version, 2);
             })
             .unwrap();
@@ -3319,14 +3318,14 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 let expected_hints = vec!["2".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Should query LSP hints for the 2nd time after enabling hints in settings"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
                 assert_eq!(editor.inlay_hint_cache().version, 3);
             })
             .unwrap();
@@ -3338,12 +3337,12 @@ pub mod tests {
             .unwrap();
         cx.executor().run_until_parked();
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert!(
                     cached_hint_labels(editor).is_empty(),
                     "Should clear hints after enabling in settings and a 3rd toggle"
                 );
-                assert!(visible_hint_labels(editor, cx).is_empty());
+                assert!(visible_hint_labels(editor, window, cx).is_empty());
                 assert_eq!(editor.inlay_hint_cache().version, 4);
             })
             .unwrap();
@@ -3354,14 +3353,14 @@ pub mod tests {
             })
             .unwrap();
         cx.executor().run_until_parked();
-        editor.update(window, cx, |editor, window, cx| {
+        editor.update(cx, |editor, window, cx| {
             let expected_hints = vec!["3".to_string()];
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor),
                 "Should query LSP hints for the 3rd time after enabling hints in settings and toggling them back on"
             );
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(expected_hints, visible_hint_labels(editor, window, cx));
             assert_eq!(editor.inlay_hint_cache().version, 5);
         }).unwrap();
     }
@@ -3419,12 +3418,13 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        let editor =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
 
         editor
-            .update(window, cx, |editor, window, cx| {
+            .update(cx, |editor, window, cx| {
                 assert!(cached_hint_labels(editor).is_empty());
-                assert!(visible_hint_labels(editor, cx).is_empty());
+                assert!(visible_hint_labels(editor, window, cx).is_empty());
                 assert_eq!(editor.inlay_hint_cache().version, 0);
             })
             .unwrap();

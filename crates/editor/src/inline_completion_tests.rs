@@ -280,7 +280,7 @@ fn propose_edits<T: ToOffset>(
         (range, text.into())
     });
 
-    cx.update(|cx| {
+    cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
             provider.set_inline_completion(Some(inline_completion::InlineCompletion {
                 edits: edits.collect(),

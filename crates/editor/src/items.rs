@@ -12,8 +12,8 @@ use futures::future::try_join_all;
 use git::repository::GitFileStatus;
 use gpui::{
     point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, SharedString, Styled, Task,
-    VisualContext, WeakModel, Window,
+    IntoElement, Model, ModelContext, ParentElement, Pixels, SharedString, Styled, Task, WeakModel,
+    Window,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
@@ -149,7 +149,6 @@ impl FollowableItem for Editor {
                     scroll_y: state.scroll_y,
                     ..Default::default()
                 },
-                window,
                 &mut cx,
             )
             .await?;
@@ -182,11 +181,7 @@ impl FollowableItem for Editor {
         cx.notify();
     }
 
-    fn to_state_proto(
-        &self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<proto::view::Variant> {
+    fn to_state_proto(&self, window: &Window, cx: &AppContext) -> Option<proto::view::Variant> {
         let buffer = self.buffer.read(cx);
         if buffer
             .as_singleton()
@@ -256,8 +251,8 @@ impl FollowableItem for Editor {
         &self,
         event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> bool {
         let update =
             update.get_or_insert_with(|| proto::update_view::Variant::Editor(Default::default()));
@@ -331,11 +326,11 @@ impl FollowableItem for Editor {
         })
     }
 
-    fn is_project_item(&self, _window: &mut Window, _cx: &mut AppContext) -> bool {
+    fn is_project_item(&self, _window: &Window, _cx: &AppContext) -> bool {
         true
     }
 
-    fn dedup(&self, existing: &Self, window: &mut Window, cx: &mut AppContext) -> Option<Dedup> {
+    fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<Dedup> {
         let self_singleton = self.buffer.read(cx).as_singleton()?;
         let other_singleton = existing.buffer.read(cx).as_singleton()?;
         if self_singleton == other_singleton {
@@ -350,8 +345,7 @@ async fn update_editor_from_message(
     this: WeakModel<Editor>,
     project: Model<Project>,
     message: proto::update_view::Editor,
-    window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut AsyncWindowContext,
 ) -> Result<()> {
     // Open all of the buffers of which excerpts were added to the editor.
     let inserted_excerpt_buffer_ids = message
@@ -459,7 +453,7 @@ async fn update_editor_from_message(
     .await?;
 
     // Update the editor's state.
-    this.update(cx, |editor, cx| {
+    this.update_in(cx, |editor, window, cx| {
         if !selections.is_empty() || pending_selection.is_some() {
             editor.set_selections_from_remote(selections, pending_selection, window, cx);
             editor.request_autoscroll_remotely(Autoscroll::newest(), window, cx);
@@ -620,7 +614,7 @@ impl Item for Editor {
         Some(path.to_string_lossy().to_string().into())
     }
 
-    fn tab_icon(&self, window: &mut Window, cx: &mut AppContext) -> Option<Icon> {
+    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
         ItemSettings::get_global(cx)
             .file_icons
             .then(|| {
@@ -637,8 +631,8 @@ impl Item for Editor {
     fn tab_content(
         &self,
         params: TabContentParams,
-        window: &mut Window,
-        cx: &mut AppContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> AnyElement {
         let label_color = if ItemSettings::get_global(cx).git_status {
             self.buffer()
@@ -715,7 +709,7 @@ impl Item for Editor {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |cx| self.clone(window, cx)))
+        Some(window.new_view(cx, |window, cx| self.clone(window, cx)))
     }
 
     fn set_nav_history(
@@ -1735,9 +1729,9 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Model<Editor> {
         workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 let pane = workspace.active_pane();
-                pane.update(cx, |_, cx| {
+                pane.update_in(cx, |_, window, cx| {
                     Editor::deserialize(
                         project.clone(),
                         workspace.weak_handle(),
@@ -1777,7 +1771,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
             let (workspace, cx) =
-                cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
@@ -1814,7 +1808,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
             let (workspace, cx) =
-                cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -1850,7 +1844,7 @@ mod tests {
             project.update(cx, |project, _| project.languages().add(rust_language()));
 
             let (workspace, cx) =
-                cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -1886,7 +1880,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
             let (workspace, cx) =
-                cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
