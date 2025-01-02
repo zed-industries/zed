@@ -1582,6 +1582,7 @@ impl Workspace {
 
     pub fn prompt_for_new_path(
         &mut self,
+        relative_project_path: Option<ProjectPath>,
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<Option<ProjectPath>> {
         if (self.project.read(cx).is_via_collab() || self.project.read(cx).is_via_ssh())
@@ -1595,8 +1596,17 @@ impl Workspace {
             let start_abs_path = self
                 .project
                 .update(cx, |project, cx| {
-                    let worktree = project.visible_worktrees(cx).next()?;
-                    Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                    let relative_path = relative_project_path.and_then(|relative_path| {
+                        project
+                            .absolute_path(&relative_path, cx)
+                            .and_then(|p| p.parent().map(PathBuf::from))
+                    });
+                    if relative_path.is_none() {
+                        let worktree = project.visible_worktrees(cx).next()?;
+                        Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                    } else {
+                        relative_path
+                    }
                 })
                 .unwrap_or_else(|| Path::new("").into());
 
@@ -1936,6 +1946,7 @@ impl Workspace {
                             ix,
                             &*item,
                             save_intent,
+                            None,
                             &mut cx,
                         )
                         .await?
@@ -2184,6 +2195,13 @@ impl Workspace {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
+    fn active_nearest_project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        self.active_pane()
+            .read(cx)
+            .active_nearest_item()
+            .and_then(|item| item.project_path(cx))
+    }
+
     pub fn save_active_item(
         &mut self,
         save_intent: SaveIntent,
@@ -2194,12 +2212,21 @@ impl Workspace {
         let item_ix = pane.read(cx).active_item_index();
         let item = pane.read(cx).active_item();
         let pane = pane.downgrade();
+        let relative_project_path = self.active_nearest_project_path(cx);
 
         cx.spawn(|mut cx| async move {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
-                    .await
-                    .map(|_| ())
+                Pane::save_item(
+                    project,
+                    &pane,
+                    item_ix,
+                    item.as_ref(),
+                    save_intent,
+                    relative_project_path,
+                    &mut cx,
+                )
+                .await
+                .map(|_| ())
             } else {
                 Ok(())
             }
