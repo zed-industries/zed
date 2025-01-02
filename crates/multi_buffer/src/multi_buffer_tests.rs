@@ -1262,7 +1262,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
         change_set.base_text.as_ref().unwrap().read(cx).remote_id()
     });
 
-    let buffer_lines = (0..snapshot.max_row().0 + 1)
+    let buffer_lines = (0..=snapshot.max_row().0)
         .map(|row| {
             let (buffer, range) = snapshot.buffer_line_for_row(MultiBufferRow(row))?;
             Some((
