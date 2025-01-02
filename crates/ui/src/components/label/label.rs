@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{StyleRefinement, WindowContext};
+use gpui::{Window, AppContext, StyleRefinement, };
 
 use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 
@@ -177,7 +177,7 @@ impl LabelCommon for Label {
 }
 
 impl RenderOnce for Label {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         let target_label = if self.single_line {
             SharedString::from(self.label.replace('\n', "␤"))
         } else {

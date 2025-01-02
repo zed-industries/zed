@@ -586,7 +586,7 @@ mod tests {
             workspace::init_settings(cx);
             Project::init_settings(cx);
 
-            crate::init(cx);
+            crate::init(window, cx);
         });
     }
 

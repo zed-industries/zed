@@ -27,7 +27,7 @@ impl EditorSettingsControls {
 }
 
 impl RenderOnce for EditorSettingsControls {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         SettingsContainer::new()
             .child(
                 SettingsGroup::new("Font")
@@ -80,7 +80,7 @@ impl EditableSettingControl for BufferFontFamilyControl {
 }
 
 impl RenderOnce for BufferFontFamilyControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -89,7 +89,7 @@ impl RenderOnce for BufferFontFamilyControl {
             .child(DropdownMenu::new(
                 "buffer-font-family",
                 value.clone(),
-                ContextMenu::build(cx, |mut menu, cx| {
+                ContextMenu::build(window, cx, |mut menu, window, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 
                     for font_name in font_family_cache.list_font_families(cx) {
@@ -139,7 +139,7 @@ impl EditableSettingControl for BufferFontSizeControl {
 }
 
 impl RenderOnce for BufferFontSizeControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -148,10 +148,10 @@ impl RenderOnce for BufferFontSizeControl {
             .child(NumericStepper::new(
                 "buffer-font-size",
                 value.to_string(),
-                move |_, cx| {
+                move |_, window, cx| {
                     Self::write(value - px(1.), cx);
                 },
-                move |_, cx| {
+                move |_, window, cx| {
                     Self::write(value + px(1.), cx);
                 },
             ))
@@ -184,7 +184,7 @@ impl EditableSettingControl for BufferFontWeightControl {
 }
 
 impl RenderOnce for BufferFontWeightControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -193,10 +193,10 @@ impl RenderOnce for BufferFontWeightControl {
             .child(DropdownMenu::new(
                 "buffer-font-weight",
                 value.0.to_string(),
-                ContextMenu::build(cx, |mut menu, _cx| {
+                ContextMenu::build(window, cx, |mut menu, _window, _cx| {
                     for weight in FontWeight::ALL {
                         menu = menu.custom_entry(
-                            move |_cx| Label::new(weight.0.to_string()).into_any_element(),
+                            move |_window, _cx| Label::new(weight.0.to_string()).into_any_element(),
                             {
                                 move |cx| {
                                     Self::write(weight, cx);
@@ -255,14 +255,14 @@ impl EditableSettingControl for BufferFontLigaturesControl {
 }
 
 impl RenderOnce for BufferFontLigaturesControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         CheckboxWithLabel::new(
             "buffer-font-ligatures",
             Label::new(self.name()),
             value.into(),
-            |selection, cx| {
+            |selection, window, cx| {
                 Self::write(
                     match selection {
                         ToggleState::Selected => true,
@@ -308,14 +308,14 @@ impl EditableSettingControl for InlineGitBlameControl {
 }
 
 impl RenderOnce for InlineGitBlameControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         CheckboxWithLabel::new(
             "inline-git-blame",
             Label::new(self.name()),
             value.into(),
-            |selection, cx| {
+            |selection, window, cx| {
                 Self::write(
                     match selection {
                         ToggleState::Selected => true,
@@ -361,14 +361,14 @@ impl EditableSettingControl for LineNumbersControl {
 }
 
 impl RenderOnce for LineNumbersControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         CheckboxWithLabel::new(
             "line-numbers",
             Label::new(self.name()),
             value.into(),
-            |selection, cx| {
+            |selection, window, cx| {
                 Self::write(
                     match selection {
                         ToggleState::Selected => true,
@@ -407,20 +407,20 @@ impl EditableSettingControl for RelativeLineNumbersControl {
 }
 
 impl RenderOnce for RelativeLineNumbersControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         DropdownMenu::new(
             "relative-line-numbers",
             if value { "Relative" } else { "Ascending" },
-            ContextMenu::build(cx, |menu, _cx| {
+            ContextMenu::build(window, cx, |menu, _window, _cx| {
                 menu.custom_entry(
-                    |_cx| Label::new("Ascending").into_any_element(),
-                    move |cx| Self::write(false, cx),
+                    |_window, _cx| Label::new("Ascending").into_any_element(),
+                    move |window, cx| Self::write(false, cx),
                 )
                 .custom_entry(
-                    |_cx| Label::new("Relative").into_any_element(),
-                    move |cx| Self::write(true, cx),
+                    |_window, _cx| Label::new("Relative").into_any_element(),
+                    move |window, cx| Self::write(true, cx),
                 )
             }),
         )

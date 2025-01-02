@@ -1,11 +1,11 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
-use gpui::{
+use gpui::{Window, AppContext, 
     div, fill, point, px, relative, size, AnyElement, AvailableSpace, Bounds, ContentMask,
     DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
     HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
     LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
     Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    UTF16Selection, UnderlineStyle,  WeakView, WhiteSpace,  WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -88,7 +88,7 @@ impl LayoutCell {
         origin: Point<Pixels>,
         dimensions: &TerminalSize,
         _visible_bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) {
         let pos = {
             let point = self.point;
@@ -99,7 +99,7 @@ impl LayoutCell {
             )
         };
 
-        self.text.paint(pos, dimensions.line_height, cx).ok();
+        self.text.paint(pos, dimensions.line_height, window, cx).ok();
     }
 }
 
@@ -127,7 +127,7 @@ impl LayoutRect {
         }
     }
 
-    pub fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalSize, cx: &mut WindowContext) {
+    pub fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalSize, window: &mut Window, cx: &mut AppContext) {
         let position = {
             let alac_point = self.point;
             point(
@@ -141,7 +141,7 @@ impl LayoutRect {
         )
         .into();
 
-        cx.paint_quad(fill(Bounds::new(position, size), self.color));
+        window.paint_quad(fill(Bounds::new(position, size), self.color));
     }
 }
 
@@ -149,7 +149,7 @@ impl LayoutRect {
 /// We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: Model<Terminal>,
-    terminal_view: View<TerminalView>,
+    terminal_view: Model<TerminalView>,
     workspace: WeakView<Workspace>,
     focus: FocusHandle,
     focused: bool,
@@ -171,7 +171,7 @@ impl TerminalElement {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         terminal: Model<Terminal>,
-        terminal_view: View<TerminalView>,
+        terminal_view: Model<TerminalView>,
         workspace: WeakView<Workspace>,
         focus: FocusHandle,
         focused: bool,
@@ -202,7 +202,7 @@ impl TerminalElement {
         // terminal_theme: &TerminalStyle,
         text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
-        cx: &WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let theme = cx.theme();
         let mut cells = vec![];
@@ -286,7 +286,7 @@ impl TerminalElement {
                         let layout_cell = text_system
                             .shape_line(
                                 cell_text.into(),
-                                text_style.font_size.to_pixels(cx.rem_size()),
+                                text_style.font_size.to_pixels(window.rem_size()),
                                 &[cell_style],
                             )
                             .unwrap();
@@ -412,9 +412,9 @@ impl TerminalElement {
         origin: Point<Pixels>,
         focus_handle: FocusHandle,
         f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut ModelContext<Terminal>),
-    ) -> impl Fn(&E, &mut WindowContext) {
+    ) -> impl Fn(&E, &mut Window, &mut AppContext) {
         move |event, cx| {
-            cx.focus(&focus_handle);
+            window.focus(&focus_handle);
             connection.update(cx, |terminal, cx| {
                 f(terminal, origin, event, cx);
 
@@ -428,7 +428,7 @@ impl TerminalElement {
         origin: Point<Pixels>,
         mode: TermMode,
         hitbox: &Hitbox,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
@@ -437,7 +437,7 @@ impl TerminalElement {
             let terminal = terminal.clone();
             let focus = focus.clone();
             move |e, cx| {
-                cx.focus(&focus);
+                window.focus(&focus);
                 terminal.update(cx, |terminal, cx| {
                     terminal.mouse_down(e, origin, cx);
                     cx.notify();
@@ -445,12 +445,12 @@ impl TerminalElement {
             }
         });
 
-        cx.on_mouse_event({
+        window.on_mouse_event({
             let focus = self.focus.clone();
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
             move |e: &MouseMoveEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble || !focus.is_focused(cx) {
+                if phase != DispatchPhase::Bubble || !focus.is_focused(window) {
                     return;
                 }
 
@@ -482,7 +482,7 @@ impl TerminalElement {
                 terminal.clone(),
                 origin,
                 focus.clone(),
-                move |terminal, origin, e, cx| {
+                move |terminal, origin, e, window, cx| {
                     terminal.mouse_up(e, origin, cx);
                 },
             ),
@@ -493,7 +493,7 @@ impl TerminalElement {
                 terminal.clone(),
                 origin,
                 focus.clone(),
-                move |terminal, origin, e, cx| {
+                move |terminal, origin, e, window, cx| {
                     terminal.mouse_down(e, origin, cx);
                 },
             ),
@@ -503,7 +503,7 @@ impl TerminalElement {
             move |e, cx| {
                 terminal_view
                     .update(cx, |terminal_view, cx| {
-                        terminal_view.scroll_wheel(e, origin, cx);
+                        terminal_view.scroll_wheel(e, origin, window, cx);
                         cx.notify();
                     })
                     .ok();
@@ -519,7 +519,7 @@ impl TerminalElement {
                     terminal.clone(),
                     origin,
                     focus.clone(),
-                    move |terminal, origin, e, cx| {
+                    move |terminal, origin, e, window, cx| {
                         terminal.mouse_down(e, origin, cx);
                     },
                 ),
@@ -530,7 +530,7 @@ impl TerminalElement {
                     terminal.clone(),
                     origin,
                     focus.clone(),
-                    move |terminal, origin, e, cx| {
+                    move |terminal, origin, e, window, cx| {
                         terminal.mouse_up(e, origin, cx);
                     },
                 ),
@@ -541,7 +541,7 @@ impl TerminalElement {
                     terminal,
                     origin,
                     focus,
-                    move |terminal, origin, e, cx| {
+                    move |terminal, origin, e, window, cx| {
                         terminal.mouse_up(e, origin, cx);
                     },
                 ),
@@ -549,7 +549,7 @@ impl TerminalElement {
         }
     }
 
-    fn rem_size(&self, cx: &WindowContext) -> Option<Pixels> {
+    fn rem_size(&self, window: &mut Window, cx: &mut AppContext) -> Option<Pixels> {
         let settings = ThemeSettings::get_global(cx).clone();
         let buffer_font_size = settings.buffer_font_size(cx);
         let rem_size_scale = {

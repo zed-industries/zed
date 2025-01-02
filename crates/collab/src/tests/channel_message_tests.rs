@@ -359,8 +359,8 @@ async fn test_channel_message_changes(
     let chat_panel_b = workspace_b.update(cx_b, ChatPanel::new);
     chat_panel_b
         .update(cx_b, |chat_panel, cx| {
-            chat_panel.set_active(true, cx);
-            chat_panel.select_channel(channel_id, None, cx)
+            chat_panel.set_active(true, window, cx);
+            chat_panel.select_channel(channel_id, None, window, cx)
         })
         .await
         .unwrap();
@@ -395,7 +395,7 @@ async fn test_channel_message_changes(
 
     // Sending a message while the chat is closed should change the flag.
     chat_panel_b.update(cx_b, |chat_panel, cx| {
-        chat_panel.set_active(false, cx);
+        chat_panel.set_active(false, window, cx);
     });
 
     // Sending a message while the chat is open should not change the flag.

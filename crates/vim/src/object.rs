@@ -13,7 +13,7 @@ use editor::{
 
 use itertools::Itertools;
 
-use gpui::{actions, impl_actions, ViewContext};
+use gpui::{Window, ModelContext, actions, impl_actions, };
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
@@ -75,74 +75,74 @@ actions!(
     ]
 );
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
     Vim::action(
         editor,
-        cx,
-        |vim, &Word { ignore_punctuation }: &Word, cx| {
-            vim.object(Object::Word { ignore_punctuation }, cx)
+        window, cx,
+        |vim, &Word { ignore_punctuation }: &Word, window, cx| {
+            vim.object(Object::Word { ignore_punctuation }, window, cx)
         },
     );
-    Vim::action(editor, cx, |vim, _: &Tag, cx| vim.object(Object::Tag, cx));
-    Vim::action(editor, cx, |vim, _: &Sentence, cx| {
-        vim.object(Object::Sentence, cx)
+    Vim::action(editor, window, cx, |vim, _: &Tag, window, cx| vim.object(Object::Tag, window, cx));
+    Vim::action(editor, window, cx, |vim, _: &Sentence, window, cx| {
+        vim.object(Object::Sentence, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Paragraph, cx| {
-        vim.object(Object::Paragraph, cx)
+    Vim::action(editor, window, cx, |vim, _: &Paragraph, window, cx| {
+        vim.object(Object::Paragraph, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Quotes, cx| {
-        vim.object(Object::Quotes, cx)
+    Vim::action(editor, window, cx, |vim, _: &Quotes, window, cx| {
+        vim.object(Object::Quotes, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &BackQuotes, cx| {
-        vim.object(Object::BackQuotes, cx)
+    Vim::action(editor, window, cx, |vim, _: &BackQuotes, window, cx| {
+        vim.object(Object::BackQuotes, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &DoubleQuotes, cx| {
-        vim.object(Object::DoubleQuotes, cx)
+    Vim::action(editor, window, cx, |vim, _: &DoubleQuotes, window, cx| {
+        vim.object(Object::DoubleQuotes, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Parentheses, cx| {
-        vim.object(Object::Parentheses, cx)
+    Vim::action(editor, window, cx, |vim, _: &Parentheses, window, cx| {
+        vim.object(Object::Parentheses, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &SquareBrackets, cx| {
-        vim.object(Object::SquareBrackets, cx)
+    Vim::action(editor, window, cx, |vim, _: &SquareBrackets, window, cx| {
+        vim.object(Object::SquareBrackets, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &CurlyBrackets, cx| {
-        vim.object(Object::CurlyBrackets, cx)
+    Vim::action(editor, window, cx, |vim, _: &CurlyBrackets, window, cx| {
+        vim.object(Object::CurlyBrackets, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &AngleBrackets, cx| {
-        vim.object(Object::AngleBrackets, cx)
+    Vim::action(editor, window, cx, |vim, _: &AngleBrackets, window, cx| {
+        vim.object(Object::AngleBrackets, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &VerticalBars, cx| {
-        vim.object(Object::VerticalBars, cx)
+    Vim::action(editor, window, cx, |vim, _: &VerticalBars, window, cx| {
+        vim.object(Object::VerticalBars, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Argument, cx| {
-        vim.object(Object::Argument, cx)
+    Vim::action(editor, window, cx, |vim, _: &Argument, window, cx| {
+        vim.object(Object::Argument, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Method, cx| {
-        vim.object(Object::Method, cx)
+    Vim::action(editor, window, cx, |vim, _: &Method, window, cx| {
+        vim.object(Object::Method, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Class, cx| {
-        vim.object(Object::Class, cx)
+    Vim::action(editor, window, cx, |vim, _: &Class, window, cx| {
+        vim.object(Object::Class, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Comment, cx| {
+    Vim::action(editor, window, cx, |vim, _: &Comment, window, cx| {
         if !matches!(vim.active_operator(), Some(Operator::Object { .. })) {
-            vim.push_operator(Operator::Object { around: true }, cx);
+            vim.push_operator(Operator::Object { around: true }, window, cx);
         }
-        vim.object(Object::Comment, cx)
+        vim.object(Object::Comment, window, cx)
     });
     Vim::action(
         editor,
-        cx,
-        |vim, &IndentObj { include_below }: &IndentObj, cx| {
-            vim.object(Object::IndentObj { include_below }, cx)
+        window, cx,
+        |vim, &IndentObj { include_below }: &IndentObj, window, cx| {
+            vim.object(Object::IndentObj { include_below }, window, cx)
         },
     );
 }
 
 impl Vim {
-    fn object(&mut self, object: Object, cx: &mut ViewContext<Self>) {
+    fn object(&mut self, object: Object, window: &mut Window, cx: &mut ModelContext<Self>) {
         match self.mode {
-            Mode::Normal => self.normal_object(object, cx),
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => self.visual_object(object, cx),
+            Mode::Normal => self.normal_object(object, window, cx),
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => self.visual_object(object, window, cx),
             Mode::Insert | Mode::Replace | Mode::HelixNormal => {
                 // Shouldn't execute a text object in insert mode. Ignoring
             }

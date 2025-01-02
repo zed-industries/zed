@@ -46,7 +46,7 @@ impl Render for GradientViewer {
                                 .text_color(gpui::white())
                                 .child(format!("{}", color_space))
                                 .active(|this| this.opacity(0.8))
-                                .on_click(cx.listener(move |this, _, window, cx| {
+                                .on_click(cx.listener(move |this, _, window, window, cx| {
                                     this.color_space = match this.color_space {
                                         ColorSpace::Oklab => ColorSpace::Srgb,
                                         ColorSpace::Srgb => ColorSpace::Oklab,
@@ -205,8 +205,8 @@ impl Render for GradientViewer {
                     ),
             )
             .child(div().h_24().child(canvas(
-                move |_, _, _| {},
-                move |bounds, _, window, cx| {
+                move |_, _, _, _| {},
+                move |bounds, _, window, window, cx| {
                     let size = size(bounds.size.width * 0.8, px(80.));
                     let square_bounds = Bounds {
                         origin: point(
@@ -246,7 +246,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |window, cx| window.new_view(cx, |_, _| GradientViewer::new()),
+            |window, window, cx| window.new_view(cx, |_, _| GradientViewer::new()),
         )
         .unwrap();
         cx.activate(true);

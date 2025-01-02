@@ -5,9 +5,9 @@ use crate::{
 use collections::BTreeMap;
 use futures::Future;
 use git::diff::DiffHunkStatus;
-use gpui::{
-    prelude::*, AnyWindowHandle, AppContext, Keystroke, ModelContext, Pixels, Point, View,
-    ViewContext, VisualTestContext, WindowHandle,
+use gpui::{Window, Model, 
+    prelude::*, AnyWindowHandle, AppContext, Keystroke, ModelContext, Pixels, Point, 
+     VisualTestContext, WindowHandle,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
@@ -33,7 +33,7 @@ use super::{build_editor, build_editor_with_project};
 pub struct EditorTestContext {
     pub cx: gpui::VisualTestContext,
     pub window: AnyWindowHandle,
-    pub editor: View<Editor>,
+    pub editor: Model<Editor>,
     pub assertion_cx: AssertionContextManager,
 }
 
@@ -58,8 +58,8 @@ impl EditorTestContext {
             .unwrap();
         let editor = cx.add_window(|cx| {
             let editor =
-                build_editor_with_project(project, MultiBuffer::build_from_buffer(buffer, cx), cx);
-            editor.focus(cx);
+                build_editor_with_project(project, MultiBuffer::build_from_buffer(buffer, cx), window, cx);
+            editor.focus(window, cx);
             editor
         });
         let editor_view = editor.root_view(cx).unwrap();
@@ -115,8 +115,8 @@ impl EditorTestContext {
         });
 
         let editor = cx.add_window(|cx| {
-            let editor = build_editor(buffer, cx);
-            editor.focus(cx);
+            let editor = build_editor(buffer, window, cx);
+            editor.focus(window, cx);
             editor
         });
 
@@ -140,7 +140,7 @@ impl EditorTestContext {
     #[track_caller]
     pub fn editor<F, T>(&mut self, read: F) -> T
     where
-        F: FnOnce(&Editor, &ViewContext<Editor>) -> T,
+        F: FnOnce(&Editor, &Window, &mut ModelContext<Editor>) -> T,
     {
         self.editor.update(&mut self.cx, |this, cx| read(this, cx))
     }
@@ -148,7 +148,7 @@ impl EditorTestContext {
     #[track_caller]
     pub fn update_editor<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Editor, &mut ViewContext<Editor>) -> T,
+        F: FnOnce(&mut Editor, &mut Window, &mut ModelContext<Editor>) -> T,
     {
         self.editor.update(&mut self.cx, update)
     }
@@ -157,14 +157,14 @@ impl EditorTestContext {
     where
         F: FnOnce(&MultiBuffer, &AppContext) -> T,
     {
-        self.editor(|editor, cx| read(editor.buffer().read(cx), cx))
+        self.editor(|editor, window, cx| read(editor.buffer().read(cx), cx))
     }
 
     pub fn update_multibuffer<F, T>(&mut self, update: F) -> T
     where
         F: FnOnce(&mut MultiBuffer, &mut ModelContext<MultiBuffer>) -> T,
     {
-        self.update_editor(|editor, cx| editor.buffer().update(cx, update))
+        self.update_editor(|editor, window, cx| editor.buffer().update(cx, update))
     }
 
     pub fn buffer_text(&mut self) -> String {
@@ -172,7 +172,7 @@ impl EditorTestContext {
     }
 
     pub fn display_text(&mut self) -> String {
-        self.update_editor(|editor, cx| editor.display_text(cx))
+        self.update_editor(|editor, window, cx| editor.display_text(cx))
     }
 
     pub fn buffer<F, T>(&mut self, read: F) -> T
@@ -186,7 +186,7 @@ impl EditorTestContext {
     }
 
     pub fn language_registry(&mut self) -> Arc<LanguageRegistry> {
-        self.editor(|editor, cx| {
+        self.editor(|editor, window, cx| {
             editor
                 .project
                 .as_ref()
@@ -240,7 +240,7 @@ impl EditorTestContext {
         let ranges = self.ranges(marked_text);
         let snapshot = self
             .editor
-            .update(&mut self.cx, |editor, cx| editor.snapshot(cx));
+            .update(&mut self.cx, |editor, cx| editor.snapshot(window, cx));
         ranges[0].start.to_display_point(&snapshot)
     }
 
@@ -250,16 +250,16 @@ impl EditorTestContext {
     }
 
     pub fn pixel_position_for(&mut self, display_point: DisplayPoint) -> Point<Pixels> {
-        self.update_editor(|editor, cx| {
+        self.update_editor(|editor, window, cx| {
             let newest_point = editor.selections.newest_display(cx).head();
             let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
             let line_height = editor
                 .style()
                 .unwrap()
                 .text
-                .line_height_in_pixels(cx.rem_size());
-            let snapshot = editor.snapshot(cx);
-            let details = editor.text_layout_details(cx);
+                .line_height_in_pixels(window.rem_size());
+            let snapshot = editor.snapshot(window, cx);
+            let details = editor.text_layout_details(window, cx);
 
             let y = pixel_position.y
                 + line_height * (display_point.row().as_f32() - newest_point.row().as_f32());
@@ -279,7 +279,7 @@ impl EditorTestContext {
     pub fn set_diff_base(&mut self, diff_base: &str) {
         self.cx.run_until_parked();
         let fs = self
-            .update_editor(|editor, cx| editor.project.as_ref().unwrap().read(cx).fs().as_fake());
+            .update_editor(|editor, window, cx| editor.project.as_ref().unwrap().read(cx).fs().as_fake());
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         fs.set_index_for_repo(
             &Self::root_path().join(".git"),
@@ -303,8 +303,8 @@ impl EditorTestContext {
         ));
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update(&mut self.cx, |editor, cx| {
-            editor.set_text(unmarked_text, cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.set_text(unmarked_text, window, cx);
+            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select_ranges(selection_ranges)
             })
         });
@@ -320,7 +320,7 @@ impl EditorTestContext {
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update(&mut self.cx, |editor, cx| {
             assert_eq!(editor.text(cx), unmarked_text);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select_ranges(selection_ranges)
             })
         });
@@ -357,7 +357,7 @@ impl EditorTestContext {
         // Read the actual diff from the editor's row highlights and block
         // decorations.
         let actual_diff = self.editor.update(&mut self.cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
+            let snapshot = editor.snapshot(window, cx);
             let insertions = editor
                 .highlighted_rows::<DiffRowHighlight>()
                 .map(|(range, _)| {
@@ -431,8 +431,8 @@ impl EditorTestContext {
     #[track_caller]
     pub fn assert_editor_background_highlights<Tag: 'static>(&mut self, marked_text: &str) {
         let expected_ranges = self.ranges(marked_text);
-        let actual_ranges: Vec<Range<usize>> = self.update_editor(|editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        let actual_ranges: Vec<Range<usize>> = self.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
             editor
                 .background_highlights
                 .get(&TypeId::of::<Tag>())
@@ -448,7 +448,7 @@ impl EditorTestContext {
     #[track_caller]
     pub fn assert_editor_text_highlights<Tag: ?Sized + 'static>(&mut self, marked_text: &str) {
         let expected_ranges = self.ranges(marked_text);
-        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+        let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let actual_ranges: Vec<Range<usize>> = snapshot
             .text_highlight_ranges::<Tag>()
             .map(|ranges| ranges.as_ref().clone().1)

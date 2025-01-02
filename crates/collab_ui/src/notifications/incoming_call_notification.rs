@@ -17,8 +17,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
         while let Some(incoming_call) = incoming_call.next().await {
             for window in notification_windows.drain(..) {
                 window
-                    .update(&mut cx, |_, cx| {
-                        cx.remove_window();
+                    .update(&mut cx, |_, window, cx| {
+                        window.remove_window();
                     })
                     .log_err();
             }
@@ -37,7 +37,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                     {
                         let window = cx
                             .open_window(options, |cx| {
-                                cx.new_view(|_| {
+                                window.new_view(cx, |_, _| {
                                     IncomingCallNotification::new(
                                         incoming_call.clone(),
                                         app_state.clone(),
@@ -111,8 +111,8 @@ impl IncomingCallNotification {
 }
 
 impl Render for IncomingCallNotification {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        let ui_font = theme::setup_ui_font(window, cx);
 
         div().size_full().font(ui_font).child(
             CollabNotification::new(

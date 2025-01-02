@@ -8,7 +8,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model, View, WeakView};
+use gpui::{AsyncWindowContext, Model,  WeakView};
 use project::Project;
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
@@ -333,8 +333,8 @@ impl SerializedPaneGroup {
         project: &Model<Project>,
         workspace_id: WorkspaceId,
         workspace: WeakView<Workspace>,
-        cx: &mut AsyncWindowContext,
-    ) -> Option<(Member, Option<View<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
+        window: &mut Window, cx: &mut AppContext,
+    ) -> Option<(Member, Option<Model<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
         match self {
             SerializedPaneGroup::Group {
                 axis,
@@ -346,7 +346,7 @@ impl SerializedPaneGroup {
                 let mut items = Vec::new();
                 for child in children {
                     if let Some((new_member, active_pane, new_items)) = child
-                        .deserialize(project, workspace_id, workspace.clone(), cx)
+                        .deserialize(project, workspace_id, workspace.clone(), window, cx)
                         .await
                     {
                         members.push(new_member);
@@ -371,11 +371,11 @@ impl SerializedPaneGroup {
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
-                    .update(cx, |workspace, cx| workspace.add_pane(cx).downgrade())
+                    .update(cx, |workspace, cx| workspace.add_pane(window, cx).downgrade())
                     .log_err()?;
                 let active = serialized_pane.active;
                 let new_items = serialized_pane
-                    .deserialize_to(project, &pane, workspace_id, workspace.clone(), cx)
+                    .deserialize_to(project, &pane, workspace_id, workspace.clone(), window, cx)
                     .await
                     .log_err()?;
 
@@ -390,7 +390,7 @@ impl SerializedPaneGroup {
                     let pane = pane.upgrade()?;
                     workspace
                         .update(cx, |workspace, cx| {
-                            workspace.force_remove_pane(&pane, &None, cx)
+                            workspace.force_remove_pane(&pane, &None, window, cx)
                         })
                         .log_err()?;
                     None
@@ -422,7 +422,7 @@ impl SerializedPane {
         pane: &WeakView<Pane>,
         workspace_id: WorkspaceId,
         workspace: WeakView<Workspace>,
-        cx: &mut AsyncWindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut item_tasks = Vec::new();
         let mut active_item_index = None;
@@ -436,7 +436,7 @@ impl SerializedPane {
                     workspace.clone(),
                     workspace_id,
                     item.item_id,
-                    cx,
+                    window, cx,
                 )
             })?);
             if item.active {
@@ -454,14 +454,14 @@ impl SerializedPane {
 
             if let Some(item_handle) = item_handle {
                 pane.update(cx, |pane, cx| {
-                    pane.add_item(item_handle.clone(), true, true, None, cx);
+                    pane.add_item(item_handle.clone(), true, true, None, window, cx);
                 })?;
             }
         }
 
         if let Some(active_item_index) = active_item_index {
             pane.update(cx, |pane, cx| {
-                pane.activate_item(active_item_index, false, false, cx);
+                pane.activate_item(active_item_index, false, false, window, cx);
             })?;
         }
 

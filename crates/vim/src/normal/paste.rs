@@ -1,7 +1,7 @@
 use std::cmp;
 
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{impl_actions, ViewContext};
+use gpui::{Window, ModelContext, impl_actions, };
 use language::{Bias, SelectionGoal};
 use serde::Deserialize;
 
@@ -22,15 +22,15 @@ pub struct Paste {
 impl_actions!(vim, [Paste]);
 
 impl Vim {
-    pub fn paste(&mut self, action: &Paste, cx: &mut ViewContext<Self>) {
-        self.record_current_action(cx);
-        self.store_visual_marks(cx);
+    pub fn paste(&mut self, action: &Paste, window: &mut Window, cx: &mut ModelContext<Self>) {
+        self.record_current_action(window, cx);
+        self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);
 
-        self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(cx);
-            editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window, cx);
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, window, cx);
 
                 let selected_register = vim.selected_register.take();
 
@@ -38,7 +38,7 @@ impl Vim {
                     text,
                     clipboard_selections,
                 }) = Vim::update_globals(cx, |globals, cx| {
-                    globals.read_register(selected_register, Some(editor), cx)
+                    globals.read_register(selected_register, Some(editor), window, cx)
                 })
                 .filter(|reg| !reg.text.is_empty())
                 else {
@@ -48,7 +48,7 @@ impl Vim {
                     .filter(|sel| sel.len() > 1 && vim.mode != Mode::VisualLine);
 
                 if !action.preserve_clipboard && vim.mode.is_visual() {
-                    vim.copy_selections_content(editor, vim.mode == Mode::VisualLine, cx);
+                    vim.copy_selections_content(editor, vim.mode == Mode::VisualLine, window, cx);
                 }
 
                 let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
@@ -153,13 +153,13 @@ impl Vim {
                     original_indent_columns.extend(original_indent_column);
                 }
 
-                editor.edit_with_block_indent(edits, original_indent_columns, cx);
+                editor.edit_with_block_indent(edits, original_indent_columns, window, cx);
 
                 // in line_mode vim will insert the new text on the next (or previous if before) line
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
                 // otherwise vim will insert the next text at (or before) the current cursor position,
                 // the cursor will go to the last (or first, if is_multiline) inserted character.
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.replace_cursors_with(|map| {
                         let mut cursors = Vec::new();
                         for (anchor, line_mode, is_multiline) in &new_selections {
@@ -190,7 +190,7 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, cx);
+        self.switch_mode(Mode::Normal, true, window, cx);
     }
 }
 

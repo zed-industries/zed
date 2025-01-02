@@ -1,17 +1,17 @@
-use gpui::{div, prelude::*, px, Render, SharedString, Styled, View, WindowContext};
+use gpui::{Window, AppContext, Model, div, prelude::*, px, Render, SharedString, Styled,  };
 use ui::prelude::*;
 use ui::Tooltip;
 
 pub struct ScrollStory;
 
 impl ScrollStory {
-    pub fn view(cx: &mut WindowContext) -> View<ScrollStory> {
-        cx.new_view(|_cx| ScrollStory)
+    pub fn view(window: &mut Window, cx: &mut AppContext) -> Model<ScrollStory> {
+        window.new_view(cx, |_window, _cx| ScrollStory)
     }
 }
 
 impl Render for ScrollStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let color_1 = theme.status().created;
         let color_2 = theme.status().modified;
@@ -36,7 +36,7 @@ impl Render for ScrollStory {
                         };
                         div()
                             .id(id)
-                            .tooltip(move |cx| Tooltip::text(format!("{}, {}", row, column), cx))
+                            .tooltip(move |cx| Tooltip::text(format!("{}, {}", row, column), window, cx))
                             .bg(bg)
                             .size(px(100_f32))
                             .when(row >= 5 && column >= 5, |d| {

@@ -58,7 +58,7 @@ impl SemanticDb {
 
         cx.update(|cx| {
             cx.observe_new_views(
-                |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
+                |workspace: &mut Workspace, window: &mut Window, cx: &mut ModelContext<Workspace>| {
                     let project = workspace.project().clone();
 
                     if cx.has_global::<SemanticDb>() {

@@ -1,6 +1,6 @@
-use gpui::{
+use gpui::{Window, ModelContext, 
     div, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
-    SemanticVersion, StatefulInteractiveElement, Styled, ViewContext, WeakView,
+    SemanticVersion, StatefulInteractiveElement, Styled,  WeakView,
 };
 use menu::Cancel;
 use release_channel::ReleaseChannel;
@@ -18,12 +18,12 @@ pub struct UpdateNotification {
 impl EventEmitter<DismissEvent> for UpdateNotification {}
 
 impl Render for UpdateNotification {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let app_name = ReleaseChannel::global(cx).display_name();
 
         v_flex()
             .on_action(cx.listener(UpdateNotification::dismiss))
-            .elevation_3(cx)
+            .elevation_3(window, cx)
             .p_4()
             .child(
                 h_flex()
@@ -37,7 +37,7 @@ impl Render for UpdateNotification {
                             .id("cancel")
                             .child(Icon::new(IconName::Close))
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, cx| this.dismiss(&menu::Cancel, cx))),
+                            .on_click(cx.listener(|this, _, window, cx| this.dismiss(&menu::Cancel, window, cx))),
                     ),
             )
             .child(
@@ -45,13 +45,13 @@ impl Render for UpdateNotification {
                     .id("notes")
                     .child(Label::new("View the release notes"))
                     .cursor_pointer()
-                    .on_click(cx.listener(|this, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| {
-                                crate::view_release_notes_locally(workspace, cx);
+                                crate::view_release_notes_locally(workspace, window, cx);
                             })
                             .log_err();
-                        this.dismiss(&menu::Cancel, cx)
+                        this.dismiss(&menu::Cancel, window, cx)
                     })),
             )
     }
@@ -62,7 +62,7 @@ impl UpdateNotification {
         Self { version, workspace }
     }
 
-    pub fn dismiss(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+    pub fn dismiss(&mut self, _: &Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
         cx.emit(DismissEvent);
     }
 }

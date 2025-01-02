@@ -16,8 +16,8 @@ use editor::{
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
 };
 use futures::FutureExt as _;
-use gpui::{
-    div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
+use gpui::{Window, ModelContext, 
+    div, prelude::*, EventEmitter, Model, Render, Subscription, Task,   WeakView,
 };
 use language::Point;
 use project::Fs;
@@ -43,11 +43,11 @@ struct EditorBlock {
     code_range: Range<Anchor>,
     invalidation_anchor: Anchor,
     block_id: CustomBlockId,
-    execution_view: View<ExecutionView>,
+    execution_view: Model<ExecutionView>,
 }
 
 type CloseBlockFn =
-    Arc<dyn for<'a> Fn(CustomBlockId, &'a mut WindowContext) + Send + Sync + 'static>;
+    Arc<dyn for<'a> Fn(CustomBlockId, &'a mut Window, &mut AppContext) + Send + Sync + 'static>;
 
 impl EditorBlock {
     fn new(
@@ -55,7 +55,7 @@ impl EditorBlock {
         code_range: Range<Anchor>,
         status: ExecutionStatus,
         on_close: CloseBlockFn,
-        cx: &mut ViewContext<Session>,
+        window: &mut Window, cx: &mut ModelContext<Session>,
     ) -> anyhow::Result<Self> {
         let editor = editor
             .upgrade()
@@ -66,7 +66,7 @@ impl EditorBlock {
             .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
 
         let execution_view =
-            cx.new_view(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
+            window.new_view(cx, |cx| ExecutionView::new(status, workspace.downgrade(), window, cx));
 
         let (block_id, invalidation_anchor) = editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().clone();
@@ -96,7 +96,7 @@ impl EditorBlock {
                 priority: 0,
             };
 
-            let block_id = editor.insert_blocks([block], None, cx)[0];
+            let block_id = editor.insert_blocks([block], None, window, cx)[0];
             (block_id, invalidation_anchor)
         });
 
@@ -108,26 +108,26 @@ impl EditorBlock {
         })
     }
 
-    fn handle_message(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Session>) {
+    fn handle_message(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut ModelContext<Session>) {
         self.execution_view.update(cx, |execution_view, cx| {
-            execution_view.push_message(&message.content, cx);
+            execution_view.push_message(&message.content, window, cx);
         });
     }
 
     fn create_output_area_renderer(
-        execution_view: View<ExecutionView>,
+        execution_view: Model<ExecutionView>,
         on_close: CloseBlockFn,
     ) -> RenderBlock {
         Arc::new(move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
-            let text_style = crate::outputs::plain::text_style(cx);
+            let text_style = crate::outputs::plain::text_style(window, cx);
 
             let gutter = cx.gutter_dimensions;
 
             let block_id = cx.block_id;
             let on_close = on_close.clone();
 
-            let rem_size = cx.rem_size();
+            let rem_size = window.rem_size();
 
             let text_line_height = text_style.line_height_in_pixels(rem_size);
 
@@ -150,8 +150,8 @@ impl EditorBlock {
                         .icon_color(Color::Muted)
                         .size(ButtonSize::Compact)
                         .shape(IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::text("Close output area", cx))
-                        .on_click(move |_, cx| {
+                        .tooltip(|window, cx| Tooltip::text("Close output area", window, cx))
+                        .on_click(move |_, window, cx| {
                             if let BlockId::Custom(block_id) = block_id {
                                 (on_close)(block_id, cx)
                             }
@@ -193,12 +193,12 @@ impl Session {
         editor: WeakView<Editor>,
         fs: Arc<dyn Fs>,
         kernel_specification: KernelSpecification,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
         let subscription = match editor.upgrade() {
             Some(editor) => {
                 let buffer = editor.read(cx).buffer().clone();
-                cx.subscribe(&buffer, Self::on_buffer_event)
+                cx.subscribe_in(&buffer, window, Self::on_buffer_event)
             }
             None => Subscription::new(|| {}),
         };
@@ -220,17 +220,17 @@ impl Session {
             _buffer_subscription: subscription,
         };
 
-        session.start_kernel(cx);
+        session.start_kernel(window, cx);
         session
     }
 
-    fn start_kernel(&mut self, cx: &mut ViewContext<Self>) {
+    fn start_kernel(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let kernel_language = self.kernel_specification.language();
         let entity_id = self.editor.entity_id();
         let working_directory = self
             .editor
             .upgrade()
-            .and_then(|editor| editor.read(cx).working_directory(cx))
+            .and_then(|editor| editor.read(cx).working_directory(window, cx))
             .unwrap_or_else(temp_dir);
 
         telemetry::event!(
@@ -250,30 +250,30 @@ impl Session {
                 working_directory,
                 self.fs.clone(),
                 session_view,
-                cx,
+                window, cx,
             ),
             KernelSpecification::Remote(remote_kernel_specification) => RemoteRunningKernel::new(
                 remote_kernel_specification,
                 working_directory,
                 session_view,
-                cx,
+                window, cx,
             ),
         };
 
         let pending_kernel = cx
-            .spawn(|this, mut cx| async move {
+            .spawn_in(window, |this, mut cx| async move {
                 let kernel = kernel.await;
 
                 match kernel {
                     Ok(kernel) => {
                         this.update(&mut cx, |session, cx| {
-                            session.kernel(Kernel::RunningKernel(kernel), cx);
+                            session.kernel(Kernel::RunningKernel(kernel), window, cx);
                         })
                         .ok();
                     }
                     Err(err) => {
                         this.update(&mut cx, |session, cx| {
-                            session.kernel_errored(err.to_string(), cx);
+                            session.kernel_errored(err.to_string(), window, cx);
                         })
                         .ok();
                     }
@@ -281,12 +281,12 @@ impl Session {
             })
             .shared();
 
-        self.kernel(Kernel::StartingKernel(pending_kernel), cx);
+        self.kernel(Kernel::StartingKernel(pending_kernel), window, cx);
         cx.notify();
     }
 
-    pub fn kernel_errored(&mut self, error_message: String, cx: &mut ViewContext<Self>) {
-        self.kernel(Kernel::ErroredLaunch(error_message.clone()), cx);
+    pub fn kernel_errored(&mut self, error_message: String, window: &mut Window, cx: &mut ModelContext<Self>) {
+        self.kernel(Kernel::ErroredLaunch(error_message.clone()), window, cx);
 
         self.blocks.values().for_each(|block| {
             block.execution_view.update(cx, |execution_view, cx| {
@@ -309,7 +309,7 @@ impl Session {
         &mut self,
         buffer: Model<MultiBuffer>,
         event: &multi_buffer::Event,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         if let multi_buffer::Event::Edited { .. } = event {
             let snapshot = buffer.read(cx).snapshot(cx);
@@ -328,7 +328,7 @@ impl Session {
             if !blocks_to_remove.is_empty() {
                 self.editor
                     .update(cx, |editor, cx| {
-                        editor.remove_blocks(blocks_to_remove, None, cx);
+                        editor.remove_blocks(blocks_to_remove, None, window, cx);
                     })
                     .ok();
                 cx.notify();
@@ -336,7 +336,7 @@ impl Session {
         }
     }
 
-    fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
+    fn send(&mut self, message: JupyterMessage, _window: &mut Window, _cx: &mut ModelContext<Self>) -> anyhow::Result<()> {
         if let Kernel::RunningKernel(kernel) = &mut self.kernel {
             kernel.request_tx().try_send(message).ok();
         }
@@ -344,13 +344,13 @@ impl Session {
         anyhow::Ok(())
     }
 
-    pub fn clear_outputs(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn clear_outputs(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let blocks_to_remove: HashSet<CustomBlockId> =
             self.blocks.values().map(|block| block.block_id).collect();
 
         self.editor
             .update(cx, |editor, cx| {
-                editor.remove_blocks(blocks_to_remove, None, cx);
+                editor.remove_blocks(blocks_to_remove, None, window, cx);
             })
             .ok();
 
@@ -363,7 +363,7 @@ impl Session {
         anchor_range: Range<Anchor>,
         next_cell: Option<Anchor>,
         move_down: bool,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         let Some(editor) = self.editor.upgrade() else {
             return;
@@ -395,7 +395,7 @@ impl Session {
 
         self.editor
             .update(cx, |editor, cx| {
-                editor.remove_blocks(blocks_to_remove, None, cx);
+                editor.remove_blocks(blocks_to_remove, None, window, cx);
             })
             .ok();
 
@@ -413,7 +413,7 @@ impl Session {
         let weak_editor = self.editor.clone();
 
         let on_close: CloseBlockFn =
-            Arc::new(move |block_id: CustomBlockId, cx: &mut WindowContext| {
+            Arc::new(move |block_id: CustomBlockId, window: &mut Window, cx: &mut AppContext| {
                 if let Some(session) = session_view.upgrade() {
                     session.update(cx, |session, cx| {
                         session.blocks.remove(&parent_message_id);
@@ -425,13 +425,13 @@ impl Session {
                     editor.update(cx, |editor, cx| {
                         let mut block_ids = HashSet::default();
                         block_ids.insert(block_id);
-                        editor.remove_blocks(block_ids, None, cx);
+                        editor.remove_blocks(block_ids, None, window, cx);
                     });
                 }
             });
 
         let Ok(editor_block) =
-            EditorBlock::new(self.editor.clone(), anchor_range, status, on_close, cx)
+            EditorBlock::new(self.editor.clone(), anchor_range, status, on_close, window, cx)
         else {
             return;
         };
@@ -447,17 +447,17 @@ impl Session {
 
         match &self.kernel {
             Kernel::RunningKernel(_) => {
-                self.send(message, cx).ok();
+                self.send(message, window, cx).ok();
             }
             Kernel::StartingKernel(task) => {
                 // Queue up the execution as a task to run after the kernel starts
                 let task = task.clone();
                 let message = message.clone();
 
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn_in(window, |this, mut cx| async move {
                     task.await;
                     this.update(&mut cx, |session, cx| {
-                        session.send(message, cx).ok();
+                        session.send(message, window, cx).ok();
                     })
                     .ok();
                 })
@@ -468,14 +468,14 @@ impl Session {
 
         if move_down {
             editor.update(cx, move |editor, cx| {
-                editor.change_selections(Some(Autoscroll::top_relative(8)), cx, |selections| {
+                editor.change_selections(Some(Autoscroll::top_relative(8)), window, cx, |selections| {
                     selections.select_ranges([new_cursor_pos..new_cursor_pos]);
                 });
             });
         }
     }
 
-    pub fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
+    pub fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut ModelContext<Self>) {
         let parent_message_id = match message.parent_header.as_ref() {
             Some(header) => &header.msg_id,
             None => return,
@@ -507,7 +507,7 @@ impl Session {
 
                 self.blocks.iter_mut().for_each(|(_, block)| {
                     block.execution_view.update(cx, |execution_view, cx| {
-                        execution_view.update_display_data(&update.data, &display_id, cx);
+                        execution_view.update_display_data(&update.data, &display_id, window, cx);
                     });
                 });
                 return;
@@ -516,14 +516,14 @@ impl Session {
         }
 
         if let Some(block) = self.blocks.get_mut(parent_message_id) {
-            block.handle_message(message, cx);
+            block.handle_message(message, window, cx);
         }
     }
 
-    pub fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn interrupt(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         match &mut self.kernel {
             Kernel::RunningKernel(_kernel) => {
-                self.send(InterruptRequest {}.into(), cx).ok();
+                self.send(InterruptRequest {}.into(), window, cx).ok();
             }
             Kernel::StartingKernel(_task) => {
                 // NOTE: If we switch to a literal queue instead of chaining on to the task, clear all queued executions
@@ -532,7 +532,7 @@ impl Session {
         }
     }
 
-    pub fn kernel(&mut self, kernel: Kernel, cx: &mut ViewContext<Self>) {
+    pub fn kernel(&mut self, kernel: Kernel, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Kernel::Shutdown = kernel {
             cx.emit(SessionEvent::Shutdown(self.editor.clone()));
         }
@@ -550,7 +550,7 @@ impl Session {
         self.kernel = kernel;
     }
 
-    pub fn shutdown(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn shutdown(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::ShuttingDown);
 
         match kernel {
@@ -559,7 +559,7 @@ impl Session {
 
                 let forced = kernel.force_shutdown(cx);
 
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn_in(window, |this, mut cx| async move {
                     let message: JupyterMessage = ShutdownRequest { restart: false }.into();
                     request_tx.try_send(message).ok();
 
@@ -569,8 +569,8 @@ impl Session {
                     cx.background_executor().timer(Duration::from_secs(3)).await;
 
                     this.update(&mut cx, |session, cx| {
-                        session.clear_outputs(cx);
-                        session.kernel(Kernel::Shutdown, cx);
+                        session.clear_outputs(window, cx);
+                        session.kernel(Kernel::Shutdown, window, cx);
                         cx.notify();
                     })
                     .ok();
@@ -578,13 +578,13 @@ impl Session {
                 .detach();
             }
             _ => {
-                self.kernel(Kernel::Shutdown, cx);
+                self.kernel(Kernel::Shutdown, window, cx);
             }
         }
         cx.notify();
     }
 
-    pub fn restart(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn restart(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::Restarting);
 
         match kernel {
@@ -596,7 +596,7 @@ impl Session {
 
                 let forced = kernel.force_shutdown(cx);
 
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn_in(window, |this, mut cx| async move {
                     // Send shutdown request with restart flag
                     log::debug!("restarting kernel");
                     let message: JupyterMessage = ShutdownRequest { restart: true }.into();
@@ -611,16 +611,16 @@ impl Session {
                     // Start a new kernel
                     this.update(&mut cx, |session, cx| {
                         // TODO: Differentiate between restart and restart+clear-outputs
-                        session.clear_outputs(cx);
-                        session.start_kernel(cx);
+                        session.clear_outputs(window, cx);
+                        session.start_kernel(window, cx);
                     })
                     .ok();
                 })
                 .detach();
             }
             _ => {
-                self.clear_outputs(cx);
-                self.start_kernel(cx);
+                self.clear_outputs(window, cx);
+                self.start_kernel(window, cx);
             }
         }
         cx.notify();
@@ -634,7 +634,7 @@ pub enum SessionEvent {
 impl EventEmitter<SessionEvent> for Session {}
 
 impl Render for Session {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let (status_text, interrupt_button) = match &self.kernel {
             Kernel::RunningKernel(kernel) => (
                 kernel
@@ -644,8 +644,8 @@ impl Render for Session {
                 Some(
                     Button::new("interrupt", "Interrupt")
                         .style(ButtonStyle::Subtle)
-                        .on_click(cx.listener(move |session, _, cx| {
-                            session.interrupt(cx);
+                        .on_click(cx.listener(move |session, _, window, cx| {
+                            session.interrupt(window, cx);
                         })),
                 ),
             ),
@@ -674,8 +674,8 @@ impl Render for Session {
                 Button::new("shutdown", "Shutdown")
                     .style(ButtonStyle::Subtle)
                     .disabled(self.kernel.is_shutting_down())
-                    .on_click(cx.listener(move |session, _, cx| {
-                        session.shutdown(cx);
+                    .on_click(cx.listener(move |session, _, window, cx| {
+                        session.shutdown(window, cx);
                     })),
             )
             .buttons(interrupt_button)

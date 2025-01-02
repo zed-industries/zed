@@ -9,7 +9,7 @@ use gpui::{AppContext, Task, WeakView};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use ui::{IconName, SharedString, WindowContext};
+use ui::{Window, AppContext, IconName, SharedString, };
 use workspace::Workspace;
 
 pub(crate) struct SelectionCommand;
@@ -48,7 +48,7 @@ impl SlashCommand for SelectionCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _window: &mut Window, _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -60,12 +60,12 @@ impl SlashCommand for SelectionCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let mut events = vec![];
 
         let Some(creases) = workspace
-            .update(cx, selections_creases)
+            .update(window, cx, selections_creases)
             .unwrap_or_else(|e| {
                 events.push(Err(e));
                 None

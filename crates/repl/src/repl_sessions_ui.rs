@@ -1,7 +1,7 @@
 use editor::Editor;
-use gpui::{
+use gpui::{Model, 
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
-    Subscription, View,
+    Subscription, 
 };
 use project::ProjectItem as _;
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
@@ -29,8 +29,8 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
-        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
-            workspace.register_action(|workspace, _: &Sessions, cx| {
+        |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
+            workspace.register_action(|workspace, _: &Sessions, window, cx| {
                 let existing = workspace
                     .active_pane()
                     .read(cx)
@@ -38,14 +38,14 @@ pub fn init(cx: &mut AppContext) {
                     .find_map(|item| item.downcast::<ReplSessionsPage>());
 
                 if let Some(existing) = existing {
-                    workspace.activate_item(&existing, true, true, cx);
+                    workspace.activate_item(&existing, true, true, window, cx);
                 } else {
-                    let repl_sessions_page = ReplSessionsPage::new(cx);
-                    workspace.add_item_to_active_pane(Box::new(repl_sessions_page), None, true, cx)
+                    let repl_sessions_page = ReplSessionsPage::new(window, cx);
+                    workspace.add_item_to_active_pane(Box::new(repl_sessions_page), None, true, window, cx)
                 }
             });
 
-            workspace.register_action(|_workspace, _: &RefreshKernelspecs, cx| {
+            workspace.register_action(|_workspace, _: &RefreshKernelspecs, window, cx| {
                 let store = ReplStore::global(cx);
                 store.update(cx, |store, cx| {
                     store.refresh_kernelspecs(cx).detach();
@@ -55,13 +55,13 @@ pub fn init(cx: &mut AppContext) {
     )
     .detach();
 
-    cx.observe_new_views(move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
+    cx.observe_new_views(move |editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>| {
         if !editor.use_modal_editing() || !editor.buffer().read(cx).is_singleton() {
             return;
         }
 
-        cx.defer(|editor, cx| {
-            let workspace = Workspace::for_window(cx);
+        cx.defer_in(window, |editor, window, cx| {
+            let workspace = Workspace::for_window(window, cx);
             let project = workspace.map(|workspace| workspace.read(cx).project().clone());
 
             let is_local_project = project
@@ -104,7 +104,7 @@ pub fn init(cx: &mut AppContext) {
                             return;
                         }
 
-                        crate::run(editor_handle.clone(), true, cx).log_err();
+                        crate::run(editor_handle.clone(), true, window, cx).log_err();
                     }
                 })
                 .detach();
@@ -117,7 +117,7 @@ pub fn init(cx: &mut AppContext) {
                             return;
                         }
 
-                        crate::run(editor_handle.clone(), false, cx).log_err();
+                        crate::run(editor_handle.clone(), false, window, cx).log_err();
                     }
                 })
                 .detach();
@@ -132,8 +132,8 @@ pub struct ReplSessionsPage {
 }
 
 impl ReplSessionsPage {
-    pub fn new(cx: &mut ViewContext<Workspace>) -> View<Self> {
-        cx.new_view(|cx: &mut ViewContext<Self>| {
+    pub fn new(window: &mut Window, cx: &mut ModelContext<Workspace>) -> Model<Self> {
+        window.new_view(cx, window, window, |window: &mut Window, cx: &mut ModelContext<Self>iewContext<Self>| {
             let focus_handle = cx.focus_handle();
 
             let subscriptions = vec![
@@ -160,7 +160,7 @@ impl FocusableView for ReplSessionsPage {
 impl Item for ReplSessionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
         Some("REPL Sessions".into())
     }
 
@@ -175,8 +175,8 @@ impl Item for ReplSessionsPage {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _: &mut ViewContext<Self>,
-    ) -> Option<View<Self>> {
+        _window: &mut Window, _: &mut ModelContext<Self>,
+    ) -> Option<Model<Self>> {
         None
     }
 
@@ -186,7 +186,7 @@ impl Item for ReplSessionsPage {
 }
 
 impl Render for ReplSessionsPage {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let store = ReplStore::global(cx);
 
         let (kernel_specifications, sessions) = store.update(cx, |store, _cx| {
@@ -214,7 +214,7 @@ impl Render for ReplSessionsPage {
                             .size(ButtonSize::Large)
                             .layer(ElevationIndex::ModalSurface)
                             .child(Label::new("Install Kernels"))
-                            .on_click(move |_, cx| {
+                            .on_click(move |_, window, cx| {
                                 cx.open_url(
                                     "https://zed.dev/docs/repl#language-specific-instructions",
                                 )
@@ -230,7 +230,7 @@ impl Render for ReplSessionsPage {
             return ReplSessionsContainer::new("No Jupyter Kernel Sessions").child(
                 v_flex()
                     .child(Label::new(instructions))
-                    .children(KeyBinding::for_action(&Run, cx)),
+                    .children(KeyBinding::for_action(&Run, window, cx)),
             );
         }
 
@@ -260,7 +260,7 @@ impl ParentElement for ReplSessionsContainer {
 }
 
 impl RenderOnce for ReplSessionsContainer {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         v_flex()
             .p_4()
             .gap_2()

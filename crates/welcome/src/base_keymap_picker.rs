@@ -1,8 +1,8 @@
 use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
-use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, Task, View,
-    ViewContext, VisualContext, WeakView,
+use gpui::{Window, ModelContext, Model, 
+    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, Task, 
+     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Fs;
@@ -24,19 +24,19 @@ pub fn init(cx: &mut AppContext) {
 pub fn toggle(
     workspace: &mut Workspace,
     _: &ToggleBaseKeymapSelector,
-    cx: &mut ViewContext<Workspace>,
+    window: &mut Window, cx: &mut ModelContext<Workspace>,
 ) {
     let fs = workspace.app_state().fs.clone();
-    workspace.toggle_modal(cx, |cx| {
+    workspace.toggle_modal(window, cx, |window, cx| {
         BaseKeymapSelector::new(
-            BaseKeymapSelectorDelegate::new(cx.view().downgrade(), fs, cx),
-            cx,
+            BaseKeymapSelectorDelegate::new(cx.view().downgrade(), fs, window, cx),
+            window, cx,
         )
     });
 }
 
 pub struct BaseKeymapSelector {
-    picker: View<Picker<BaseKeymapSelectorDelegate>>,
+    picker: Model<Picker<BaseKeymapSelectorDelegate>>,
 }
 
 impl FocusableView for BaseKeymapSelector {
@@ -51,15 +51,15 @@ impl ModalView for BaseKeymapSelector {}
 impl BaseKeymapSelector {
     pub fn new(
         delegate: BaseKeymapSelectorDelegate,
-        cx: &mut ViewContext<BaseKeymapSelector>,
+        window: &mut Window, cx: &mut ModelContext<BaseKeymapSelector>,
     ) -> Self {
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }
 
 impl Render for BaseKeymapSelector {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
@@ -75,7 +75,7 @@ impl BaseKeymapSelectorDelegate {
     fn new(
         weak_view: WeakView<BaseKeymapSelector>,
         fs: Arc<dyn Fs>,
-        cx: &mut ViewContext<BaseKeymapSelector>,
+        window: &mut Window, cx: &mut ModelContext<BaseKeymapSelector>,
     ) -> Self {
         let base = BaseKeymap::get(None, cx);
         let selected_index = BaseKeymap::OPTIONS
@@ -94,7 +94,7 @@ impl BaseKeymapSelectorDelegate {
 impl PickerDelegate for BaseKeymapSelectorDelegate {
     type ListItem = ui::ListItem;
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
         "Select a base keymap...".into()
     }
 
@@ -109,7 +109,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        _: &mut ViewContext<Picker<BaseKeymapSelectorDelegate>>,
+        _window: &mut Window, _: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
     ) {
         self.selected_index = ix;
     }
@@ -117,7 +117,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        cx: &mut ViewContext<Picker<BaseKeymapSelectorDelegate>>,
+        window: &mut Window, cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
     ) -> Task<()> {
         let background = cx.background_executor().clone();
         let candidates = BaseKeymap::names()
@@ -125,7 +125,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             .map(|(id, name)| StringMatchCandidate::new(id, name))
             .collect::<Vec<_>>();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -160,7 +160,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<BaseKeymapSelectorDelegate>>) {
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>) {
         if let Some(selection) = self.matches.get(self.selected_index) {
             let base_keymap = BaseKeymap::from_names(&selection.string);
 
@@ -182,7 +182,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             .ok();
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<BaseKeymapSelectorDelegate>>) {
+    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>) {
         self.view
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -194,7 +194,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let keymap_match = &self.matches[ix];
 

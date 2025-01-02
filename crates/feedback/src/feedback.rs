@@ -47,15 +47,15 @@ fn file_bug_report_url(specs: &SystemSpecs) -> String {
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        feedback_modal::FeedbackModal::register(workspace, cx);
+        feedback_modal::FeedbackModal::register(workspace, window, cx);
         workspace
-            .register_action(|_, _: &CopySystemSpecsIntoClipboard, cx| {
-                let specs = SystemSpecs::new(cx);
+            .register_action(|_, _: &CopySystemSpecsIntoClipboard, window, cx| {
+                let specs = SystemSpecs::new(window, cx);
 
-                cx.spawn(|_, mut cx| async move {
+                cx.spawn_in(window, |_, mut cx| async move {
                     let specs = specs.await.to_string();
 
-                    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(specs.clone())))
+                    cx.update(|window, cx| cx.write_to_clipboard(ClipboardItem::new_string(specs.clone())))
                         .log_err();
 
                     cx.prompt(
@@ -69,29 +69,29 @@ pub fn init(cx: &mut AppContext) {
                 })
                 .detach();
             })
-            .register_action(|_, _: &RequestFeature, cx| {
-                let specs = SystemSpecs::new(cx);
-                cx.spawn(|_, mut cx| async move {
+            .register_action(|_, _: &RequestFeature, window, cx| {
+                let specs = SystemSpecs::new(window, cx);
+                cx.spawn_in(window, |_, mut cx| async move {
                     let specs = specs.await;
-                    cx.update(|cx| {
+                    cx.update(|window, cx| {
                         cx.open_url(&request_feature_url(&specs));
                     })
                     .log_err();
                 })
                 .detach();
             })
-            .register_action(move |_, _: &FileBugReport, cx| {
-                let specs = SystemSpecs::new(cx);
-                cx.spawn(|_, mut cx| async move {
+            .register_action(move |_, _: &FileBugReport, window, cx| {
+                let specs = SystemSpecs::new(window, cx);
+                cx.spawn_in(window, |_, mut cx| async move {
                     let specs = specs.await;
-                    cx.update(|cx| {
+                    cx.update(|window, cx| {
                         cx.open_url(&file_bug_report_url(&specs));
                     })
                     .log_err();
                 })
                 .detach();
             })
-            .register_action(move |_, _: &OpenZedRepo, cx| {
+            .register_action(move |_, _: &OpenZedRepo, window, cx| {
                 cx.open_url(zed_repo_url());
             });
     })

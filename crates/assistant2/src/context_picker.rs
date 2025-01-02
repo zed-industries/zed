@@ -5,8 +5,8 @@ mod thread_context_picker;
 
 use std::sync::Arc;
 
-use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, SharedString, Task, View,
+use gpui::{Model, 
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, SharedString, Task, 
     WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -32,15 +32,15 @@ pub enum ConfirmBehavior {
 #[derive(Debug, Clone)]
 enum ContextPickerMode {
     Default,
-    File(View<FileContextPicker>),
-    Directory(View<DirectoryContextPicker>),
-    Fetch(View<FetchContextPicker>),
-    Thread(View<ThreadContextPicker>),
+    File(Model<FileContextPicker>),
+    Directory(Model<DirectoryContextPicker>),
+    Fetch(Model<FetchContextPicker>),
+    Thread(Model<ThreadContextPicker>),
 }
 
 pub(super) struct ContextPicker {
     mode: ContextPickerMode,
-    picker: View<Picker<ContextPickerDelegate>>,
+    picker: Model<Picker<ContextPickerDelegate>>,
 }
 
 impl ContextPicker {
@@ -49,7 +49,7 @@ impl ContextPicker {
         thread_store: Option<WeakModel<ThreadStore>>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
         let mut entries = Vec::new();
         entries.push(ContextPickerEntry {
@@ -91,8 +91,8 @@ impl ContextPicker {
             selected_ix: 0,
         };
 
-        let picker = cx.new_view(|cx| {
-            Picker::nonsearchable_uniform_list(delegate, cx).max_height(Some(rems(20.).into()))
+        let picker = window.new_view(cx, |cx| {
+            Picker::nonsearchable_uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
         });
 
         ContextPicker {
@@ -121,7 +121,7 @@ impl FocusableView for ContextPicker {
 }
 
 impl Render for ContextPicker {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex()
             .w(px(400.))
             .min_w(px(400.))
@@ -165,79 +165,79 @@ impl PickerDelegate for ContextPickerDelegate {
         self.selected_ix
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.selected_ix = ix.min(self.entries.len().saturating_sub(1));
         cx.notify();
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
         "Select a context source…".into()
     }
 
-    fn update_matches(&mut self, _query: String, _cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(&mut self, _query: String, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         if let Some(entry) = self.entries.get(self.selected_ix) {
             self.context_picker
                 .update(cx, |this, cx| {
                     match entry.kind {
                         ContextKind::File => {
-                            this.mode = ContextPickerMode::File(cx.new_view(|cx| {
+                            this.mode = ContextPickerMode::File(window.new_view(cx, |cx| {
                                 FileContextPicker::new(
                                     self.context_picker.clone(),
                                     self.workspace.clone(),
                                     self.context_store.clone(),
                                     self.confirm_behavior,
-                                    cx,
+                                    window, cx,
                                 )
                             }));
                         }
                         ContextKind::Directory => {
-                            this.mode = ContextPickerMode::Directory(cx.new_view(|cx| {
+                            this.mode = ContextPickerMode::Directory(window.new_view(cx, |cx| {
                                 DirectoryContextPicker::new(
                                     self.context_picker.clone(),
                                     self.workspace.clone(),
                                     self.context_store.clone(),
                                     self.confirm_behavior,
-                                    cx,
+                                    window, cx,
                                 )
                             }));
                         }
                         ContextKind::FetchedUrl => {
-                            this.mode = ContextPickerMode::Fetch(cx.new_view(|cx| {
+                            this.mode = ContextPickerMode::Fetch(window.new_view(cx, |cx| {
                                 FetchContextPicker::new(
                                     self.context_picker.clone(),
                                     self.workspace.clone(),
                                     self.context_store.clone(),
                                     self.confirm_behavior,
-                                    cx,
+                                    window, cx,
                                 )
                             }));
                         }
                         ContextKind::Thread => {
                             if let Some(thread_store) = self.thread_store.as_ref() {
-                                this.mode = ContextPickerMode::Thread(cx.new_view(|cx| {
+                                this.mode = ContextPickerMode::Thread(window.new_view(cx, |cx| {
                                     ThreadContextPicker::new(
                                         thread_store.clone(),
                                         self.context_picker.clone(),
                                         self.context_store.clone(),
                                         self.confirm_behavior,
-                                        cx,
+                                        window, cx,
                                     )
                                 }));
                             }
                         }
                     }
 
-                    cx.focus_self();
+                    cx.focus_self(window);
                 })
                 .log_err();
         }
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| match this.mode {
                 ContextPickerMode::Default => cx.emit(DismissEvent),
@@ -253,7 +253,7 @@ impl PickerDelegate for ContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = &self.entries[ix];
 

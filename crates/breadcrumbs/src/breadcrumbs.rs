@@ -1,7 +1,7 @@
 use editor::Editor;
-use gpui::{
+use gpui::{Window, ModelContext, 
     Element, EventEmitter, FocusableView, IntoElement, ParentElement, Render, StyledText,
-    Subscription, ViewContext,
+    Subscription, 
 };
 use itertools::Itertools;
 use std::cmp;
@@ -37,14 +37,14 @@ impl Breadcrumbs {
 impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         const MAX_SEGMENTS: usize = 12;
 
         let element = h_flex()
             .id("breadcrumb-container")
             .flex_grow()
             .overflow_x_scroll()
-            .text_ui(cx);
+            .text_ui(window, cx);
 
         let Some(active_item) = self.active_item.as_ref() else {
             return element;
@@ -72,14 +72,14 @@ impl Render for Breadcrumbs {
         }
 
         let highlighted_segments = segments.into_iter().map(|segment| {
-            let mut text_style = cx.text_style();
+            let mut text_style = window.text_style();
             if let Some(font) = segment.font {
                 text_style.font_family = font.family;
                 text_style.font_features = font.features;
                 text_style.font_style = font.style;
                 text_style.font_weight = font.weight;
             }
-            text_style.color = Color::Muted.color(cx);
+            text_style.color = Color::Muted.color(window, cx);
 
             StyledText::new(segment.text.replace('\n', "␤"))
                 .with_highlights(&text_style, segment.highlights.unwrap_or_default())
@@ -110,20 +110,20 @@ impl Render for Breadcrumbs {
                             }
                         }
                     })
-                    .tooltip(move |cx| {
+                    .tooltip(move |window, cx| {
                         if let Some(editor) = editor.upgrade() {
                             let focus_handle = editor.read(cx).focus_handle(cx);
                             Tooltip::for_action_in(
                                 "Show Symbol Outline",
                                 &zed_actions::outline::ToggleOutline,
                                 &focus_handle,
-                                cx,
+                                window, cx,
                             )
                         } else {
                             Tooltip::for_action(
                                 "Show Symbol Outline",
                                 &zed_actions::outline::ToggleOutline,
-                                cx,
+                                window, cx,
                             )
                         }
                     }),
@@ -140,7 +140,7 @@ impl ToolbarItemView for Breadcrumbs {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = None;
@@ -170,7 +170,7 @@ impl ToolbarItemView for Breadcrumbs {
         item.breadcrumb_location(cx)
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {
+    fn pane_focus_update(&mut self, pane_focused: bool, _window: &mut Window, _: &mut ModelContext<Self>) {
         self.pane_focused = pane_focused;
     }
 }

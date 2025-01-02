@@ -1,5 +1,5 @@
-use gpui::{
-    actions, div, prelude::*, FocusHandle, KeyBinding, Render, Subscription, View, WindowContext,
+use gpui::{Window, AppContext, Model, 
+    actions, div, prelude::*, FocusHandle, KeyBinding, Render, Subscription,  
 };
 use ui::prelude::*;
 
@@ -13,14 +13,14 @@ pub struct FocusStory {
 }
 
 impl FocusStory {
-    pub fn view(cx: &mut WindowContext) -> View<Self> {
+    pub fn view(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
         cx.bind_keys([
             KeyBinding::new("cmd-a", ActionA, Some("parent")),
             KeyBinding::new("cmd-a", ActionB, Some("child-1")),
             KeyBinding::new("cmd-c", ActionC, None),
         ]);
 
-        cx.new_view(move |cx| {
+        window.new_view(cx, window, window, window, window, window, window, move |window, window, window, window, window, window, window, cx| {
             let parent_focus = cx.focus_handle();
             let child_1_focus = cx.focus_handle();
             let child_2_focus = cx.focus_handle();
@@ -56,7 +56,7 @@ impl FocusStory {
 }
 
 impl Render for FocusStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let color_1 = theme.status().created;
         let color_2 = theme.status().modified;
@@ -70,14 +70,14 @@ impl Render for FocusStory {
             .active(|style| style.bg(color_7))
             .track_focus(&self.parent_focus)
             .key_context("parent")
-            .on_action(cx.listener(|_, _action: &ActionA, _cx| {
+            .on_action(cx.listener(|_, _action: &ActionA, _window, _cx| {
                 println!("Action A dispatched on parent");
             }))
-            .on_action(cx.listener(|_, _action: &ActionB, _cx| {
+            .on_action(cx.listener(|_, _action: &ActionB, _window, _cx| {
                 println!("Action B dispatched on parent");
             }))
-            .on_key_down(cx.listener(|_, event, _| println!("Key down on parent {:?}", event)))
-            .on_key_up(cx.listener(|_, event, _| println!("Key up on parent {:?}", event)))
+            .on_key_down(cx.listener(|_, event, _, _| println!("Key down on parent {:?}", event)))
+            .on_key_up(cx.listener(|_, event, _, _| println!("Key up on parent {:?}", event)))
             .size_full()
             .bg(color_1)
             .focus(|style| style.bg(color_2))
@@ -85,7 +85,7 @@ impl Render for FocusStory {
                 div()
                     .track_focus(&self.child_1_focus)
                     .key_context("child-1")
-                    .on_action(cx.listener(|_, _action: &ActionB, _cx| {
+                    .on_action(cx.listener(|_, _action: &ActionB, _window, _cx| {
                         println!("Action B dispatched on child 1 during");
                     }))
                     .w_full()
@@ -94,25 +94,25 @@ impl Render for FocusStory {
                     .focus(|style| style.bg(color_5))
                     .in_focus(|style| style.bg(color_6))
                     .on_key_down(
-                        cx.listener(|_, event, _| println!("Key down on child 1 {:?}", event)),
+                        cx.listener(|_, event, _, _| println!("Key down on child 1 {:?}", event)),
                     )
-                    .on_key_up(cx.listener(|_, event, _| println!("Key up on child 1 {:?}", event)))
+                    .on_key_up(cx.listener(|_, event, _, _| println!("Key up on child 1 {:?}", event)))
                     .child("Child 1"),
             )
             .child(
                 div()
                     .track_focus(&self.child_2_focus)
                     .key_context("child-2")
-                    .on_action(cx.listener(|_, _action: &ActionC, _cx| {
+                    .on_action(cx.listener(|_, _action: &ActionC, _window, _cx| {
                         println!("Action C dispatched on child 2");
                     }))
                     .w_full()
                     .h_6()
                     .bg(color_4)
                     .on_key_down(
-                        cx.listener(|_, event, _| println!("Key down on child 2 {:?}", event)),
+                        cx.listener(|_, event, _, _| println!("Key down on child 2 {:?}", event)),
                     )
-                    .on_key_up(cx.listener(|_, event, _| println!("Key up on child 2 {:?}", event)))
+                    .on_key_up(cx.listener(|_, event, _, _| println!("Key up on child 2 {:?}", event)))
                     .child("Child 2"),
             )
     }

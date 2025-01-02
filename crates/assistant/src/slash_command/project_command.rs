@@ -6,7 +6,7 @@ use crate::PromptBuilder;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult};
 use feature_flags::FeatureFlag;
-use gpui::{AppContext, Task, WeakView, WindowContext};
+use gpui::{Window, AppContext, Task, WeakView, };
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRegistry, LanguageModelTool};
 use schemars::JsonSchema;
@@ -68,7 +68,7 @@ impl SlashCommand for ProjectSlashCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _window: &mut Window, _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -80,7 +80,7 @@ impl SlashCommand for ProjectSlashCommand {
         context_buffer: language::BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let current_model = model_registry.active_model();
@@ -97,7 +97,7 @@ impl SlashCommand for ProjectSlashCommand {
             return Task::ready(Err(anyhow::anyhow!("no project indexer")));
         };
 
-        cx.spawn(|mut cx| async move {
+        window.spawn(cx, |mut cx| async move {
             let current_model = current_model.ok_or_else(|| anyhow!("no model selected"))?;
 
             let prompt =

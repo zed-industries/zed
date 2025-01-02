@@ -1,8 +1,8 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{
+use gpui::{Window, ModelContext, 
     div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
     Model, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
-    UniformListScrollHandle, ViewContext, WeakView,
+    UniformListScrollHandle,  WeakView,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -44,12 +44,12 @@ impl CodeContextMenu {
     pub fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_first(provider, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_first(cx),
+                CodeContextMenu::Completions(menu) => menu.select_first(provider, window, cx),
+                CodeContextMenu::CodeActions(menu) => menu.select_first(window, cx),
             }
             true
         } else {
@@ -60,12 +60,12 @@ impl CodeContextMenu {
     pub fn select_prev(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_prev(provider, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_prev(cx),
+                CodeContextMenu::Completions(menu) => menu.select_prev(provider, window, cx),
+                CodeContextMenu::CodeActions(menu) => menu.select_prev(window, cx),
             }
             true
         } else {
@@ -76,12 +76,12 @@ impl CodeContextMenu {
     pub fn select_next(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_next(provider, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_next(cx),
+                CodeContextMenu::Completions(menu) => menu.select_next(provider, window, cx),
+                CodeContextMenu::CodeActions(menu) => menu.select_next(window, cx),
             }
             true
         } else {
@@ -92,12 +92,12 @@ impl CodeContextMenu {
     pub fn select_last(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_last(provider, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_last(cx),
+                CodeContextMenu::Completions(menu) => menu.select_last(provider, window, cx),
+                CodeContextMenu::CodeActions(menu) => menu.select_last(window, cx),
             }
             true
         } else {
@@ -123,11 +123,11 @@ impl CodeContextMenu {
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> AnyElement {
         match self {
-            CodeContextMenu::Completions(menu) => menu.render(style, max_height_in_lines, cx),
-            CodeContextMenu::CodeActions(menu) => menu.render(style, max_height_in_lines, cx),
+            CodeContextMenu::Completions(menu) => menu.render(style, max_height_in_lines, window, cx),
+            CodeContextMenu::CodeActions(menu) => menu.render(style, max_height_in_lines, window, cx),
         }
     }
 
@@ -136,10 +136,10 @@ impl CodeContextMenu {
         style: &EditorStyle,
         max_size: Size<Pixels>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> Option<AnyElement> {
         match self {
-            CodeContextMenu::Completions(menu) => menu.render_aside(style, max_size, workspace, cx),
+            CodeContextMenu::Completions(menu) => menu.render_aside(style, max_size, workspace, window, cx),
             CodeContextMenu::CodeActions(_) => None,
         }
     }
@@ -264,46 +264,46 @@ impl CompletionsMenu {
     fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
-        self.update_selection_index(0, provider, cx);
+        self.update_selection_index(0, provider, window, cx);
     }
 
     fn select_prev(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
-        self.update_selection_index(self.prev_match_index(), provider, cx);
+        self.update_selection_index(self.prev_match_index(), provider, window, cx);
     }
 
     fn select_next(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
-        self.update_selection_index(self.next_match_index(), provider, cx);
+        self.update_selection_index(self.next_match_index(), provider, window, cx);
     }
 
     fn select_last(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
-        self.update_selection_index(self.entries.len() - 1, provider, cx);
+        self.update_selection_index(self.entries.len() - 1, provider, window, cx);
     }
 
     fn update_selection_index(
         &mut self,
         match_index: usize,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
         if self.selected_item != match_index {
             self.selected_item = match_index;
             self.scroll_handle
                 .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-            self.resolve_visible_completions(provider, cx);
+            self.resolve_visible_completions(provider, window, cx);
             cx.notify();
         }
     }
@@ -349,7 +349,7 @@ impl CompletionsMenu {
     pub fn resolve_visible_completions(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
         if !self.resolve_completions {
             return;
@@ -416,7 +416,7 @@ impl CompletionsMenu {
             cx,
         );
 
-        cx.spawn(move |editor, mut cx| async move {
+        cx.spawn_in(window, move |editor, mut cx| async move {
             if let Some(true) = resolve_task.await.log_err() {
                 editor.update(&mut cx, |_, cx| cx.notify()).ok();
             }
@@ -443,7 +443,7 @@ impl CompletionsMenu {
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> AnyElement {
         let completions = self.completions.borrow_mut();
         let show_completion_documentation = self.show_completion_documentation;
@@ -482,7 +482,7 @@ impl CompletionsMenu {
             cx.view().clone(),
             "completions",
             matches.len(),
-            move |_editor, range, cx| {
+            move |_editor, range, window, cx| {
                 last_rendered_range.borrow_mut().replace(range.clone());
                 let start_ix = range.start;
                 let completions_guard = completions.borrow_mut();
@@ -559,13 +559,13 @@ impl CompletionsMenu {
                                     ListItem::new(mat.candidate_id)
                                         .inset(true)
                                         .toggle_state(item_ix == selected_item)
-                                        .on_click(cx.listener(move |editor, _event, cx| {
+                                        .on_click(cx.listener(move |editor, _event, window, cx| {
                                             cx.stop_propagation();
                                             if let Some(task) = editor.confirm_completion(
                                                 &ConfirmCompletion {
                                                     item_ix: Some(item_ix),
                                                 },
-                                                cx,
+                                                window, cx,
                                             ) {
                                                 task.detach_and_log_err(cx)
                                             }
@@ -590,11 +590,11 @@ impl CompletionsMenu {
                                         ))
                                         .with_highlights(&style.text, None),
                                     )
-                                    .on_click(cx.listener(move |editor, _event, cx| {
+                                    .on_click(cx.listener(move |editor, _event, window, cx| {
                                         cx.stop_propagation();
                                         editor.accept_inline_completion(
                                             &AcceptInlineCompletion {},
-                                            cx,
+                                            window, cx,
                                         );
                                     })),
                             ),
@@ -604,7 +604,7 @@ impl CompletionsMenu {
             },
         )
         .occlude()
-        .max_h(max_height_in_lines as f32 * cx.line_height())
+        .max_h(max_height_in_lines as f32 * window.line_height())
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix)
         .with_sizing_behavior(ListSizingBehavior::Infer);
@@ -617,7 +617,7 @@ impl CompletionsMenu {
         style: &EditorStyle,
         max_size: Size<Pixels>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> Option<AnyElement> {
         if !self.show_completion_documentation {
             return None;
@@ -638,7 +638,7 @@ impl CompletionsMenu {
                             parsed,
                             &style,
                             workspace,
-                            cx,
+                            window, cx,
                         )),
                     Documentation::MultiLineMarkdown(_) => return None,
                     Documentation::SingleLine(_) => return None,
@@ -910,14 +910,14 @@ pub struct CodeActionsMenu {
 }
 
 impl CodeActionsMenu {
-    fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_first(&mut self, window: &mut Window, cx: &mut ModelContext<Editor>) {
         self.selected_item = 0;
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify()
     }
 
-    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_prev(&mut self, window: &mut Window, cx: &mut ModelContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
         } else {
@@ -928,7 +928,7 @@ impl CodeActionsMenu {
         cx.notify();
     }
 
-    fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_next(&mut self, window: &mut Window, cx: &mut ModelContext<Editor>) {
         if self.selected_item + 1 < self.actions.len() {
             self.selected_item += 1;
         } else {
@@ -939,7 +939,7 @@ impl CodeActionsMenu {
         cx.notify();
     }
 
-    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_last(&mut self, window: &mut Window, cx: &mut ModelContext<Editor>) {
         self.selected_item = self.actions.len() - 1;
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
@@ -962,7 +962,7 @@ impl CodeActionsMenu {
         &self,
         _style: &EditorStyle,
         max_height_in_lines: u32,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> AnyElement {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
@@ -970,7 +970,7 @@ impl CodeActionsMenu {
             cx.view().clone(),
             "code_actions_menu",
             self.actions.len(),
-            move |_this, range, cx| {
+            move |_this, range, window, cx| {
                 actions
                     .iter()
                     .skip(range.start)
@@ -985,13 +985,13 @@ impl CodeActionsMenu {
                                 .inset(true)
                                 .toggle_state(selected)
                                 .when_some(action.as_code_action(), |this, action| {
-                                    this.on_click(cx.listener(move |editor, _, cx| {
+                                    this.on_click(cx.listener(move |editor, _, window, cx| {
                                         cx.stop_propagation();
                                         if let Some(task) = editor.confirm_code_action(
                                             &ConfirmCodeAction {
                                                 item_ix: Some(item_ix),
                                             },
-                                            cx,
+                                            window, cx,
                                         ) {
                                             task.detach_and_log_err(cx)
                                         }
@@ -1009,13 +1009,13 @@ impl CodeActionsMenu {
                                     )
                                 })
                                 .when_some(action.as_task(), |this, task| {
-                                    this.on_click(cx.listener(move |editor, _, cx| {
+                                    this.on_click(cx.listener(move |editor, _, window, cx| {
                                         cx.stop_propagation();
                                         if let Some(task) = editor.confirm_code_action(
                                             &ConfirmCodeAction {
                                                 item_ix: Some(item_ix),
                                             },
-                                            cx,
+                                            window, cx,
                                         ) {
                                             task.detach_and_log_err(cx)
                                         }
@@ -1035,7 +1035,7 @@ impl CodeActionsMenu {
             },
         )
         .occlude()
-        .max_h(max_height_in_lines as f32 * cx.line_height())
+        .max_h(max_height_in_lines as f32 * window.line_height())
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(
             self.actions

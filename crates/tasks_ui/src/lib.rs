@@ -1,6 +1,6 @@
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
-use gpui::{AppContext, Task as AsyncTask, ViewContext, WindowContext};
+use gpui::{Window, ModelContext, AppContext, Task as AsyncTask,  };
 use modal::{TaskOverrides, TasksModal};
 use project::{Location, WorktreeId};
 use task::{RevealTarget, TaskId};
@@ -15,10 +15,10 @@ pub use modal::{Rerun, Spawn};
 pub fn init(cx: &mut AppContext) {
     settings::TaskSettings::register(cx);
     cx.observe_new_views(
-        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>| {
             workspace
                 .register_action(spawn_task_or_modal)
-                .register_action(move |workspace, action: &modal::Rerun, cx| {
+                .register_action(move |workspace, action: &modal::Rerun, window, cx| {
                     if let Some((task_source_kind, mut last_scheduled_task)) = workspace
                         .project()
                         .read(cx)
@@ -43,8 +43,8 @@ pub fn init(cx: &mut AppContext) {
                             if let Some(use_new_terminal) = action.use_new_terminal {
                                 original_task.use_new_terminal = use_new_terminal;
                             }
-                            let context_task = task_context(workspace, cx);
-                            cx.spawn(|workspace, mut cx| async move {
+                            let context_task = task_context(workspace, window, cx);
+                            cx.spawn_in(window, |workspace, mut cx| async move {
                                 let task_context = context_task.await;
                                 workspace
                                     .update(&mut cx, |workspace, cx| {
@@ -54,7 +54,7 @@ pub fn init(cx: &mut AppContext) {
                                             &original_task,
                                             &task_context,
                                             false,
-                                            cx,
+                                            window, cx,
                                         )
                                     })
                                     .ok()
@@ -75,11 +75,11 @@ pub fn init(cx: &mut AppContext) {
                                 task_source_kind,
                                 last_scheduled_task,
                                 false,
-                                cx,
+                                window, cx,
                             );
                         }
                     } else {
-                        toggle_modal(workspace, None, cx).detach();
+                        toggle_modal(workspace, None, window, cx).detach();
                     };
                 });
         },
@@ -87,7 +87,7 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
+fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, window: &mut Window, cx: &mut ModelContext<Workspace>) {
     match action {
         Spawn::ByName {
             task_name,
@@ -96,16 +96,16 @@ fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewC
             let overrides = reveal_target.map(|reveal_target| TaskOverrides {
                 reveal_target: Some(reveal_target),
             });
-            spawn_task_with_name(task_name.clone(), overrides, cx).detach_and_log_err(cx)
+            spawn_task_with_name(task_name.clone(), overrides, window, cx).detach_and_log_err(cx)
         }
-        Spawn::ViaModal { reveal_target } => toggle_modal(workspace, *reveal_target, cx).detach(),
+        Spawn::ViaModal { reveal_target } => toggle_modal(workspace, *reveal_target, window, cx).detach(),
     }
 }
 
 fn toggle_modal(
     workspace: &mut Workspace,
     reveal_target: Option<RevealTarget>,
-    cx: &mut ViewContext<Workspace>,
+    window: &mut Window, cx: &mut ModelContext<Workspace>,
 ) -> AsyncTask<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
@@ -113,12 +113,12 @@ fn toggle_modal(
         project.is_local() || project.ssh_connection_string(cx).is_some() || project.is_via_ssh()
     });
     if can_open_modal {
-        let context_task = task_context(workspace, cx);
-        cx.spawn(|workspace, mut cx| async move {
+        let context_task = task_context(workspace, window, cx);
+        cx.spawn_in(window, |workspace, mut cx| async move {
             let task_context = context_task.await;
             workspace
                 .update(&mut cx, |workspace, cx| {
-                    workspace.toggle_modal(cx, |cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
                         TasksModal::new(
                             task_store.clone(),
                             task_context,
@@ -126,7 +126,7 @@ fn toggle_modal(
                                 reveal_target: Some(target),
                             }),
                             workspace_handle,
-                            cx,
+                            window, cx,
                         )
                     })
                 })
@@ -140,11 +140,11 @@ fn toggle_modal(
 fn spawn_task_with_name(
     name: String,
     overrides: Option<TaskOverrides>,
-    cx: &mut ViewContext<Workspace>,
+    window: &mut Window, cx: &mut ModelContext<Workspace>,
 ) -> AsyncTask<anyhow::Result<()>> {
-    cx.spawn(|workspace, mut cx| async move {
+    cx.spawn_in(window, |workspace, mut cx| async move {
         let context_task =
-            workspace.update(&mut cx, |workspace, cx| task_context(workspace, cx))?;
+            workspace.update(&mut cx, |workspace, cx| task_context(workspace, window, cx))?;
         let task_context = context_task.await;
         let tasks = workspace.update(&mut cx, |workspace, cx| {
             let Some(task_inventory) = workspace
@@ -157,7 +157,7 @@ fn spawn_task_with_name(
             else {
                 return Vec::new();
             };
-            let (worktree, location) = active_item_selection_properties(workspace, cx);
+            let (worktree, location) = active_item_selection_properties(workspace, window, cx);
             let (file, language) = location
                 .map(|location| {
                     let buffer = location.buffer.read(cx);
@@ -187,7 +187,7 @@ fn spawn_task_with_name(
                     &target_task,
                     &task_context,
                     false,
-                    cx,
+                    window, cx,
                 );
                 Some(())
             })?
@@ -200,7 +200,7 @@ fn spawn_task_with_name(
                         &Spawn::ViaModal {
                             reveal_target: overrides.and_then(|overrides| overrides.reveal_target),
                         },
-                        cx,
+                        window, cx,
                     );
                 })
                 .ok();
@@ -212,7 +212,7 @@ fn spawn_task_with_name(
 
 fn active_item_selection_properties(
     workspace: &Workspace,
-    cx: &mut WindowContext,
+    window: &mut Window, cx: &mut AppContext,
 ) -> (Option<WorktreeId>, Option<Location>) {
     let active_item = workspace.active_item(cx);
     let worktree_id = active_item
@@ -324,7 +324,7 @@ mod tests {
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
 
         let buffer1 = workspace
             .update(cx, |this, cx| {
@@ -336,7 +336,7 @@ mod tests {
         buffer1.update(cx, |this, cx| {
             this.set_language(Some(typescript_language), cx)
         });
-        let editor1 = cx.new_view(|cx| Editor::for_buffer(buffer1, Some(project.clone()), cx));
+        let editor1 = cx.new_view(|cx| Editor::for_buffer(buffer1, Some(project.clone()), window, cx));
         let buffer2 = workspace
             .update(cx, |this, cx| {
                 this.project().update(cx, |this, cx| {
@@ -346,17 +346,17 @@ mod tests {
             .await
             .unwrap();
         buffer2.update(cx, |this, cx| this.set_language(Some(rust_language), cx));
-        let editor2 = cx.new_view(|cx| Editor::for_buffer(buffer2, Some(project), cx));
+        let editor2 = cx.new_view(|cx| Editor::for_buffer(buffer2, Some(project), window, cx));
 
         let first_context = workspace
             .update(cx, |workspace, cx| {
-                workspace.add_item_to_center(Box::new(editor1.clone()), cx);
-                workspace.add_item_to_center(Box::new(editor2.clone()), cx);
+                workspace.add_item_to_center(Box::new(editor1.clone()), window, cx);
+                workspace.add_item_to_center(Box::new(editor2.clone()), window, cx);
                 assert_eq!(
                     workspace.active_item(cx).unwrap().item_id(),
                     editor2.entity_id()
                 );
-                task_context(workspace, cx)
+                task_context(workspace, window, cx)
             })
             .await;
         assert_eq!(
@@ -379,7 +379,7 @@ mod tests {
 
         // And now, let's select an identifier.
         editor2.update(cx, |editor, cx| {
-            editor.change_selections(None, cx, |selections| selections.select_ranges([14..18]))
+            editor.change_selections(None, window, cx, |selections| selections.select_ranges([14..18]))
         });
 
         assert_eq!(
@@ -435,8 +435,8 @@ mod tests {
             let state = AppState::test(cx);
             file_icons::init((), cx);
             language::init(cx);
-            crate::init(cx);
-            editor::init(cx);
+            crate::init(window, cx);
+            editor::init(window, cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
             TaskStore::init(None);

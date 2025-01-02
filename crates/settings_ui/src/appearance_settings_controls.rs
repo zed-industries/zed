@@ -18,7 +18,7 @@ impl AppearanceSettingsControls {
 }
 
 impl RenderOnce for AppearanceSettingsControls {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         SettingsContainer::new()
             .child(
                 SettingsGroup::new("Theme").child(
@@ -76,13 +76,13 @@ impl EditableSettingControl for ThemeControl {
 }
 
 impl RenderOnce for ThemeControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         DropdownMenu::new(
             "theme",
             value.clone(),
-            ContextMenu::build(cx, |mut menu, cx| {
+            ContextMenu::build(window, cx, |mut menu, window, cx| {
                 let theme_registry = ThemeRegistry::global(cx);
 
                 for theme in theme_registry.list_names() {
@@ -137,7 +137,7 @@ impl EditableSettingControl for ThemeModeControl {
 }
 
 impl RenderOnce for ThemeModeControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -146,7 +146,7 @@ impl RenderOnce for ThemeModeControl {
                     .style(ButtonStyle::Filled)
                     .size(ButtonSize::Large)
                     .toggle_state(value == ThemeMode::Light)
-                    .on_click(|_, cx| Self::write(ThemeMode::Light, cx))
+                    .on_click(|_, window, cx| Self::write(ThemeMode::Light, cx))
                     .first(),
             )
             .child(
@@ -154,7 +154,7 @@ impl RenderOnce for ThemeModeControl {
                     .style(ButtonStyle::Filled)
                     .size(ButtonSize::Large)
                     .toggle_state(value == ThemeMode::System)
-                    .on_click(|_, cx| Self::write(ThemeMode::System, cx))
+                    .on_click(|_, window, cx| Self::write(ThemeMode::System, cx))
                     .middle(),
             )
             .child(
@@ -162,7 +162,7 @@ impl RenderOnce for ThemeModeControl {
                     .style(ButtonStyle::Filled)
                     .size(ButtonSize::Large)
                     .toggle_state(value == ThemeMode::Dark)
-                    .on_click(|_, cx| Self::write(ThemeMode::Dark, cx))
+                    .on_click(|_, window, cx| Self::write(ThemeMode::Dark, cx))
                     .last(),
             )
     }
@@ -194,7 +194,7 @@ impl EditableSettingControl for UiFontFamilyControl {
 }
 
 impl RenderOnce for UiFontFamilyControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -203,7 +203,7 @@ impl RenderOnce for UiFontFamilyControl {
             .child(DropdownMenu::new(
                 "ui-font-family",
                 value.clone(),
-                ContextMenu::build(cx, |mut menu, cx| {
+                ContextMenu::build(window, cx, |mut menu, window, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 
                     for font_name in font_family_cache.list_font_families(cx) {
@@ -253,7 +253,7 @@ impl EditableSettingControl for UiFontSizeControl {
 }
 
 impl RenderOnce for UiFontSizeControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -262,10 +262,10 @@ impl RenderOnce for UiFontSizeControl {
             .child(NumericStepper::new(
                 "ui-font-size",
                 value.to_string(),
-                move |_, cx| {
+                move |_, window, cx| {
                     Self::write(value - px(1.), cx);
                 },
-                move |_, cx| {
+                move |_, window, cx| {
                     Self::write(value + px(1.), cx);
                 },
             ))
@@ -298,7 +298,7 @@ impl EditableSettingControl for UiFontWeightControl {
 }
 
 impl RenderOnce for UiFontWeightControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -307,10 +307,10 @@ impl RenderOnce for UiFontWeightControl {
             .child(DropdownMenu::new(
                 "ui-font-weight",
                 value.0.to_string(),
-                ContextMenu::build(cx, |mut menu, _cx| {
+                ContextMenu::build(window, cx, |mut menu, _window, _cx| {
                     for weight in FontWeight::ALL {
                         menu = menu.custom_entry(
-                            move |_cx| Label::new(weight.0.to_string()).into_any_element(),
+                            move |_window, _cx| Label::new(weight.0.to_string()).into_any_element(),
                             {
                                 move |cx| {
                                     Self::write(weight, cx);
@@ -365,14 +365,14 @@ impl EditableSettingControl for UiFontLigaturesControl {
 }
 
 impl RenderOnce for UiFontLigaturesControl {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         CheckboxWithLabel::new(
             "ui-font-ligatures",
             Label::new(self.name()),
             value.into(),
-            |selection, cx| {
+            |selection, window, cx| {
                 Self::write(
                     match selection {
                         ToggleState::Selected => true,

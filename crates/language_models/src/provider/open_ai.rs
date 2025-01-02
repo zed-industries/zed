@@ -2,9 +2,9 @@ use anyhow::{anyhow, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui::{
+use gpui::{Model, 
     AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
-    View, WhiteSpace,
+     WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -202,8 +202,8 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
+    fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
+        window.new_view(cx, |window, cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
 
@@ -374,25 +374,25 @@ pub fn count_open_ai_tokens(
 }
 
 struct ConfigurationView {
-    api_key_editor: View<Editor>,
+    api_key_editor: Model<Editor>,
     state: gpui::Model<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
-        let api_key_editor = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
+    fn new(state: gpui::Model<State>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+        let api_key_editor = window.new_view(cx, |cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", window, cx);
             editor
         });
 
-        cx.observe(&state, |_, _, cx| {
+        cx.observe_in(&state, window, |_, _, window, cx| {
             cx.notify();
         })
         .detach();
 
-        let load_credentials_task = Some(cx.spawn({
+        let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             |this, mut cx| async move {
                 if let Some(task) = state
@@ -418,14 +418,14 @@ impl ConfigurationView {
         }
     }
 
-    fn save_api_key(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
         let api_key = self.api_key_editor.read(cx).text(cx);
         if api_key.is_empty() {
             return;
         }
 
         let state = self.state.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn_in(window, |_, mut cx| async move {
             state
                 .update(&mut cx, |state, cx| state.set_api_key(api_key, cx))?
                 .await
@@ -435,12 +435,12 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn reset_api_key(&mut self, cx: &mut ViewContext<Self>) {
+    fn reset_api_key(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn_in(window, |_, mut cx| async move {
             state
                 .update(&mut cx, |state, cx| state.reset_api_key(cx))?
                 .await
@@ -450,7 +450,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_api_key_editor(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: cx.theme().colors().text,
@@ -478,13 +478,13 @@ impl ConfigurationView {
         )
     }
 
-    fn should_render_editor(&self, cx: &mut ViewContext<Self>) -> bool {
+    fn should_render_editor(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         const OPENAI_CONSOLE_URL: &str = "https://platform.openai.com/api-keys";
         const INSTRUCTIONS: [&str; 4] = [
             "To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:",
@@ -497,7 +497,7 @@ impl Render for ConfigurationView {
 
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
-        } else if self.should_render_editor(cx) {
+        } else if self.should_render_editor(window, cx) {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
@@ -508,7 +508,7 @@ impl Render for ConfigurationView {
                         .icon(IconName::ExternalLink)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .on_click(move |_, cx| cx.open_url(OPENAI_CONSOLE_URL))
+                        .on_click(move |_, window, cx| cx.open_url(OPENAI_CONSOLE_URL))
                     )
                 )
                 .children(
@@ -522,7 +522,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .rounded_md()
-                        .child(self.render_api_key_editor(cx)),
+                        .child(self.render_api_key_editor(window, cx)),
                 )
                 .child(
                     Label::new(
@@ -558,9 +558,9 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(|cx| Tooltip::text(format!("To reset your API key, unset the {OPENAI_API_KEY_VAR} environment variable."), cx))
+                            this.tooltip(|window, cx| Tooltip::text(format!("To reset your API key, unset the {OPENAI_API_KEY_VAR} environment variable."), window, cx))
                         })
-                        .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
+                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
                 .into_any()
         }

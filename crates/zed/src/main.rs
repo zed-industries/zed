@@ -102,21 +102,21 @@ fn files_not_createad_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
 
     eprintln!("{message}: {error_details}");
     App::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |cx| {
-            cx.new_view(|_| gpui::Empty)
+        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |window, cx| {
+            window.new_view(cx, |_, _| gpui::Empty)
         }) {
             window
-                .update(cx, |_, cx| {
-                    let response = cx.prompt(
+                .update(cx, |_, window, cx| {
+                    let response = window.prompt(
                         gpui::PromptLevel::Critical,
                         message,
                         Some(&error_details),
                         &["Exit"],
-                    );
+                    cx);
 
-                    cx.spawn(|_, mut cx| async move {
+                    cx.spawn_in(window, |_, mut cx| async move {
                         response.await?;
-                        cx.update(|cx| cx.quit())
+                        cx.update(|window, cx| cx.quit())
                     })
                     .detach_and_log_err(cx);
                 })
@@ -440,7 +440,7 @@ fn main() {
             cx,
         );
         snippet_provider::init(cx);
-        inline_completion_registry::init(app_state.client.clone(), cx);
+        inline_completion_registry::init(app_state.client.clone(), window, cx);
         let prompt_builder = assistant::init(
             app_state.fs.clone(),
             app_state.client.clone(),
@@ -470,7 +470,7 @@ fn main() {
         crate::zed::linux_prompts::init(cx);
 
         app_state.languages.set_theme(cx.theme().clone());
-        editor::init(cx);
+        editor::init(window, cx);
         image_viewer::init(cx);
         repl::notebook::init(cx);
         diagnostics::init(cx);
@@ -482,20 +482,20 @@ fn main() {
         file_finder::init(cx);
         tab_switcher::init(cx);
         outline::init(cx);
-        project_symbols::init(cx);
+        project_symbols::init(window, cx);
         project_panel::init(Assets, cx);
-        git_ui::git_panel::init(cx);
+        git_ui::git_panel::init(window, cx);
         outline_panel::init(Assets, cx);
-        tasks_ui::init(cx);
+        tasks_ui::init(window, cx);
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
         search::init(cx);
         vim::init(cx);
         terminal_view::init(cx);
-        journal::init(app_state.clone(), cx);
+        journal::init(app_state.clone(), window, cx);
         language_selector::init(cx);
         toolchain_selector::init(cx);
-        theme_selector::init(cx);
+        theme_selector::init(window, cx);
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -518,8 +518,8 @@ fn main() {
                 for &mut window in cx.windows().iter_mut() {
                     let background_appearance = cx.theme().window_background_appearance();
                     window
-                        .update(cx, |_, cx| {
-                            cx.set_background_appearance(background_appearance)
+                        .update(cx, |_, window, cx| {
+                            window.set_background_appearance(background_appearance)
                         })
                         .ok();
                 }
@@ -617,20 +617,20 @@ fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
 
     for workspace in workspace::local_workspace_windows(cx) {
         workspace
-            .update(cx, |workspace, cx| match &error {
+            .update(cx, |workspace, window, cx| match &error {
                 Some(error) => {
-                    workspace.show_notification(id.clone(), cx, |cx| {
-                        cx.new_view(|_| {
+                    workspace.show_notification(id.clone(), window, cx, |window, cx| {
+                        window.new_view(cx, |_| {
                             MessageNotification::new(format!("Invalid keymap file\n{error}"))
                                 .with_click_message("Open keymap file")
-                                .on_click(|cx| {
-                                    cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                                .on_click(|window, cx| {
+                                    window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
                                     cx.emit(DismissEvent);
                                 })
                         })
                     });
                 }
-                None => workspace.dismiss_notification(&id, cx),
+                None => workspace.dismiss_notification(&id, window, cx),
             })
             .log_err();
     }
@@ -642,7 +642,7 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
 
     for workspace in workspace::local_workspace_windows(cx) {
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, window, cx| {
                 match error.as_ref() {
                     Some(error) => {
                         if let Some(InvalidSettingsError::LocalSettings { .. }) =
@@ -650,21 +650,21 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                         {
                             // Local settings will be displayed by the projects
                         } else {
-                            workspace.show_notification(id.clone(), cx, |cx| {
-                                cx.new_view(|_| {
+                            workspace.show_notification(id.clone(), window, cx, |window, cx| {
+                                window.new_view(cx, |_| {
                                     MessageNotification::new(format!(
                                         "Invalid user settings file\n{error}"
                                     ))
                                     .with_click_message("Open settings file")
-                                    .on_click(|cx| {
-                                        cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
+                                    .on_click(|window, cx| {
+                                        window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
                                         cx.emit(DismissEvent);
                                     })
                                 })
                             });
                         }
                     }
-                    None => workspace.dismiss_notification(&id, cx),
+                    None => workspace.dismiss_notification(&id, window, cx),
                 }
             })
             .log_err();
@@ -874,8 +874,8 @@ async fn restore_or_create_workspace(
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
         cx.update(|cx| {
-            workspace::open_new(Default::default(), app_state, cx, |workspace, cx| {
-                Editor::new_file(workspace, &Default::default(), cx)
+            workspace::open_new(Default::default(), app_state, cx, |workspace, window, cx| {
+                Editor::new_file(workspace, &Default::default(), window, cx)
             })
         })?
         .await?;

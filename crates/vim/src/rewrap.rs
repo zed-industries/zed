@@ -7,16 +7,16 @@ use ui::ViewContext;
 
 actions!(vim, [Rewrap]);
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    Vim::action(editor, cx, |vim, _: &Rewrap, cx| {
-        vim.record_current_action(cx);
+pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, window, cx, |vim, _: &Rewrap, window, cx| {
+        vim.record_current_action(window, cx);
         Vim::take_count(cx);
-        vim.store_visual_marks(cx);
-        vim.update_editor(cx, |vim, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                let mut positions = vim.save_selection_starts(editor, cx);
-                editor.rewrap_impl(IsVimMode::Yes, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        vim.store_visual_marks(window, cx);
+        vim.update_editor(window, cx, |vim, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                let mut positions = vim.save_selection_starts(editor, window, cx);
+                editor.rewrap_impl(IsVimMode::Yes, window, cx);
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         if let Some(anchor) = positions.remove(&selection.id) {
                             let mut point = anchor.to_display_point(map);
@@ -28,7 +28,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             });
         });
         if vim.mode.is_visual() {
-            vim.switch_mode(Mode::Normal, true, cx)
+            vim.switch_mode(Mode::Normal, true, window, cx)
         }
     });
 }
@@ -38,22 +38,22 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(cx);
-        self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(cx);
-            editor.transact(cx, |editor, cx| {
+        self.stop_recording(window, cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window, cx);
+            editor.transact(window, cx, |editor, window, cx| {
                 let mut selection_starts: HashMap<_, _> = Default::default();
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         selection_starts.insert(selection.id, anchor);
                         motion.expand_selection(map, selection, times, false, &text_layout_details);
                     });
                 });
-                editor.rewrap_impl(IsVimMode::Yes, cx);
-                editor.change_selections(None, cx, |s| {
+                editor.rewrap_impl(IsVimMode::Yes, window, cx);
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = selection_starts.remove(&selection.id).unwrap();
                         let mut point = anchor.to_display_point(map);
@@ -69,21 +69,21 @@ impl Vim {
         &mut self,
         object: Object,
         around: bool,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(cx);
-        self.update_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
+        self.stop_recording(window, cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
                 let mut original_positions: HashMap<_, _> = Default::default();
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         original_positions.insert(selection.id, anchor);
                         object.expand_selection(map, selection, around);
                     });
                 });
-                editor.rewrap_impl(IsVimMode::Yes, cx);
-                editor.change_selections(None, cx, |s| {
+                editor.rewrap_impl(IsVimMode::Yes, window, cx);
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = original_positions.remove(&selection.id).unwrap();
                         let mut point = anchor.to_display_point(map);

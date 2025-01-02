@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::Editor;
-use gpui::{actions, AppContext, ViewContext, WindowContext};
+use gpui::{Window, ModelContext, actions, AppContext,  };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -59,16 +59,16 @@ pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
     JournalSettings::register(cx);
 
     cx.observe_new_views(
-        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
-            workspace.register_action(|workspace, _: &NewJournalEntry, cx| {
-                new_journal_entry(workspace, cx);
+        |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
+            workspace.register_action(|workspace, _: &NewJournalEntry, window, cx| {
+                new_journal_entry(workspace, window, cx);
             });
         },
     )
     .detach();
 }
 
-pub fn new_journal_entry(workspace: &Workspace, cx: &mut WindowContext) {
+pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut AppContext) {
     let settings = JournalSettings::get_global(cx);
     let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,
@@ -117,11 +117,11 @@ pub fn new_journal_entry(workspace: &Workspace, cx: &mut WindowContext) {
     let app_state = workspace.app_state().clone();
     let view_snapshot = workspace.weak_handle().clone();
 
-    cx.spawn(|mut cx| async move {
+    window.spawn(cx, |mut cx| async move {
         let (journal_dir, entry_path) = create_entry.await?;
         let opened = if open_new_workspace {
             let (new_workspace, _) = cx
-                .update(|cx| {
+                .update(|window, cx| {
                     workspace::open_paths(
                         &[journal_dir],
                         app_state,
@@ -131,14 +131,14 @@ pub fn new_journal_entry(workspace: &Workspace, cx: &mut WindowContext) {
                 })?
                 .await?;
             new_workspace
-                .update(&mut cx, |workspace, cx| {
-                    workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
+                .update(&mut cx, |workspace, window, cx| {
+                    workspace.open_paths(vec![entry_path], OpenVisible::All, None, window, cx)
                 })?
                 .await
         } else {
             view_snapshot
                 .update(&mut cx, |workspace, cx| {
-                    workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
+                    workspace.open_paths(vec![entry_path], OpenVisible::All, None, window, cx)
                 })?
                 .await
         };
@@ -147,14 +147,14 @@ pub fn new_journal_entry(workspace: &Workspace, cx: &mut WindowContext) {
             if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
                 editor.update(&mut cx, |editor, cx| {
                     let len = editor.buffer().read(cx).len(cx);
-                    editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                    editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
                         s.select_ranges([len..len])
                     });
                     if len > 0 {
-                        editor.insert("\n\n", cx);
+                        editor.insert("\n\n", window, cx);
                     }
-                    editor.insert(&entry_heading, cx);
-                    editor.insert("\n\n", cx);
+                    editor.insert(&entry_heading, window, cx);
+                    editor.insert("\n\n", window, cx);
                 })?;
             }
         }

@@ -35,7 +35,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToOffset};
-use ui::{IconName, WindowContext};
+use ui::{Window, AppContext, IconName, };
 use unindent::Unindent;
 use util::{
     test::{generate_marked_text, marked_text_ranges},
@@ -48,7 +48,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    assistant_panel::init(cx);
+    assistant_panel::init(window, cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new_model(|cx| {
@@ -189,7 +189,7 @@ fn test_message_splitting(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
     LanguageModelRegistry::test(cx);
-    assistant_panel::init(cx);
+    assistant_panel::init(window, cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
@@ -294,7 +294,7 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    assistant_panel::init(cx);
+    assistant_panel::init(window, cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new_model(|cx| {
@@ -1446,7 +1446,7 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    assistant_panel::init(cx);
+    assistant_panel::init(window, cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new_model(|cx| {
@@ -1643,7 +1643,7 @@ impl SlashCommand for FakeSlashCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _window: &mut Window, _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(vec![]))
     }
@@ -1659,7 +1659,7 @@ impl SlashCommand for FakeSlashCommand {
         _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        _cx: &mut WindowContext,
+        _window: &mut Window, _cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         Task::ready(Ok(SlashCommandOutput {
             text: format!("Executed fake command: {}", self.0),

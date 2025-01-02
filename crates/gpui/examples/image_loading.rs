@@ -125,7 +125,7 @@ impl Render for ImageLoadingExample {
                         .with_fallback(|| Self::fallback_element().into_any_element())
                         .border_color(red())
                         .with_loading(|| Self::loading_element().into_any_element())
-                        .on_click(move |_, window, cx| {
+                        .on_click(move |_, window, window, cx| {
                             cx.remove_asset::<LoadImageWithParameters>(&image_source);
                         })
                     })
@@ -145,7 +145,7 @@ impl Render for ImageLoadingExample {
                         .size_12()
                         .border_1()
                         .border_color(red())
-                        .on_click(move |_, window, cx| {
+                        .on_click(move |_, window, window, cx| {
                             cx.remove_asset::<LoadImageWithParameters>(&image_source);
                         })
                     })
@@ -166,7 +166,7 @@ impl Render for ImageLoadingExample {
                         .size_12()
                         .border_1()
                         .border_color(red())
-                        .on_click(move |_, window, cx| {
+                        .on_click(move |_, window, window, cx| {
                             cx.remove_asset::<LoadImageWithParameters>(&image_source);
                         })
                     })
@@ -183,7 +183,7 @@ impl Render for ImageLoadingExample {
                             .with_fallback(|| Self::fallback_element().into_any_element())
                             .border_color(red())
                             .with_loading(|| Self::loading_element().into_any_element())
-                            .on_click(move |_, window, cx| {
+                            .on_click(move |_, window, window, cx| {
                                 cx.remove_asset::<ImgResourceLoader>(&image_source.clone().into());
                             })
                     }),
@@ -205,7 +205,7 @@ fn main() {
                 ))),
                 ..Default::default()
             };
-            cx.open_window(options, |window, cx| {
+            cx.open_window(options, |window, window, cx| {
                 cx.activate(false);
                 window.new_view(cx, |_window, _cx| ImageLoadingExample {})
             })

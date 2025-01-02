@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, View, WindowOptions};
+use gpui::{Model, prelude::*, rgb, App, KeyBinding, StyleRefinement,  WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
@@ -7,7 +7,7 @@ use settings::SettingsStore;
 use std::sync::Arc;
 use theme::LoadThemes;
 use ui::prelude::*;
-use ui::{div, WindowContext};
+use ui::{Window, AppContext, div, };
 
 const MARKDOWN_EXAMPLE: &str = r#"
 # Markdown Example Document
@@ -112,8 +112,8 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
-        cx.open_window(WindowOptions::default(), |cx| {
-            cx.new_view(|cx| {
+        cx.open_window(WindowOptions::default(), |window, cx| {
+            window.new_view(cx, |window, cx| {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
                         font_family: "Zed Plex Sans".into(),
@@ -130,17 +130,17 @@ pub fn main() {
                         background_color: Some(cx.theme().colors().editor_background),
                         ..Default::default()
                     },
-                    rule_color: Color::Muted.color(cx),
-                    block_quote_border_color: Color::Muted.color(cx),
+                    rule_color: Color::Muted.color(window, cx),
+                    block_quote_border_color: Color::Muted.color(window, cx),
                     block_quote: gpui::TextStyleRefinement {
-                        color: Some(Color::Muted.color(cx)),
+                        color: Some(Color::Muted.color(window, cx)),
                         ..Default::default()
                     },
                     link: gpui::TextStyleRefinement {
-                        color: Some(Color::Accent.color(cx)),
+                        color: Some(Color::Accent.color(window, cx)),
                         underline: Some(gpui::UnderlineStyle {
                             thickness: px(1.),
-                            color: Some(Color::Accent.color(cx)),
+                            color: Some(Color::Accent.color(window, cx)),
                             wavy: false,
                         }),
                         ..Default::default()
@@ -158,7 +158,7 @@ pub fn main() {
                     MARKDOWN_EXAMPLE.to_string(),
                     markdown_style,
                     language_registry,
-                    cx,
+                    window, cx,
                 )
             })
         })
@@ -167,7 +167,7 @@ pub fn main() {
 }
 
 struct MarkdownExample {
-    markdown: View<Markdown>,
+    markdown: Model<Markdown>,
 }
 
 impl MarkdownExample {
@@ -175,16 +175,16 @@ impl MarkdownExample {
         text: String,
         style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Self {
         let markdown =
-            cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), None, cx));
+            window.new_view(cx, |window, cx| Markdown::new(text, style, Some(language_registry), None, window, cx));
         Self { markdown }
     }
 }
 
 impl Render for MarkdownExample {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .id("markdown-example")
             .debug_selector(|| "foo".into())

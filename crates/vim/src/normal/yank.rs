@@ -20,22 +20,22 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
-        self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(cx);
-            editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window, cx);
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, window, cx);
                 let mut original_positions: HashMap<_, _> = Default::default();
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let original_position = (selection.head(), selection.goal);
                         original_positions.insert(selection.id, original_position);
                         motion.expand_selection(map, selection, times, true, &text_layout_details);
                     });
                 });
-                vim.yank_selections_content(editor, motion.linewise(), cx);
-                editor.change_selections(None, cx, |s| {
+                vim.yank_selections_content(editor, motion.linewise(), window, cx);
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = original_positions.remove(&selection.id).unwrap();
                         selection.collapse_to(head, goal);
@@ -43,23 +43,23 @@ impl Vim {
                 });
             });
         });
-        self.exit_temporary_normal(cx);
+        self.exit_temporary_normal(window, cx);
     }
 
-    pub fn yank_object(&mut self, object: Object, around: bool, cx: &mut ViewContext<Self>) {
-        self.update_editor(cx, |vim, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+    pub fn yank_object(&mut self, object: Object, around: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, window, cx);
                 let mut original_positions: HashMap<_, _> = Default::default();
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let original_position = (selection.head(), selection.goal);
                         object.expand_selection(map, selection, around);
                         original_positions.insert(selection.id, original_position);
                     });
                 });
-                vim.yank_selections_content(editor, false, cx);
-                editor.change_selections(None, cx, |s| {
+                vim.yank_selections_content(editor, false, window, cx);
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = original_positions.remove(&selection.id).unwrap();
                         selection.collapse_to(head, goal);
@@ -67,14 +67,14 @@ impl Vim {
                 });
             });
         });
-        self.exit_temporary_normal(cx);
+        self.exit_temporary_normal(window, cx);
     }
 
     pub fn yank_selections_content(
         &mut self,
         editor: &mut Editor,
         linewise: bool,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
         self.copy_ranges(
             editor,
@@ -86,7 +86,7 @@ impl Vim {
                 .iter()
                 .map(|s| s.range())
                 .collect(),
-            cx,
+            window, cx,
         )
     }
 
@@ -94,7 +94,7 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
         self.copy_ranges(
             editor,
@@ -106,7 +106,7 @@ impl Vim {
                 .iter()
                 .map(|s| s.range())
                 .collect(),
-            cx,
+            window, cx,
         )
     }
 
@@ -116,7 +116,7 @@ impl Vim {
         linewise: bool,
         is_yank: bool,
         selections: Vec<Range<Point>>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
         let buffer = editor.buffer().read(cx).snapshot(cx);
         let mut text = String::new();
@@ -192,7 +192,7 @@ impl Vim {
                 selected_register,
                 is_yank,
                 linewise,
-                cx,
+                window, cx,
             )
         });
 
@@ -204,14 +204,14 @@ impl Vim {
         editor.highlight_background::<HighlightOnYank>(
             &ranges_to_highlight,
             |colors| colors.editor_document_highlight_read_background,
-            cx,
+            window, cx,
         );
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             cx.background_executor()
                 .timer(Duration::from_millis(highlight_duration))
                 .await;
             this.update(&mut cx, |editor, cx| {
-                editor.clear_background_highlights::<HighlightOnYank>(cx)
+                editor.clear_background_highlights::<HighlightOnYank>(window, cx)
             })
             .ok();
         })

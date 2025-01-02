@@ -15,9 +15,9 @@ actions!(debug, [OpenThemePreview]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, _: &OpenThemePreview, cx| {
-            let theme_preview = cx.new_view(ThemePreview::new);
-            workspace.add_item_to_active_pane(Box::new(theme_preview), None, true, cx)
+        workspace.register_action(|workspace, _: &OpenThemePreview, window, cx| {
+            let theme_preview = window.new_view(ThemePreview::new, cx);
+            workspace.add_item_to_active_pane(Box::new(theme_preview), None, true, window, cx)
         });
     })
     .detach();
@@ -46,7 +46,7 @@ struct ThemePreview {
 }
 
 impl ThemePreview {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         Self {
             current_page: ThemePreviewPage::Overview,
             focus_handle: cx.focus_handle(),
@@ -56,12 +56,12 @@ impl ThemePreview {
     pub fn view(
         &self,
         page: ThemePreviewPage,
-        cx: &mut ViewContext<ThemePreview>,
+        window: &mut Window, cx: &mut ModelContext<ThemePreview>,
     ) -> impl IntoElement {
         match page {
-            ThemePreviewPage::Overview => self.render_overview_page(cx).into_any_element(),
-            ThemePreviewPage::Typography => self.render_typography_page(cx).into_any_element(),
-            ThemePreviewPage::Components => self.render_components_page(cx).into_any_element(),
+            ThemePreviewPage::Overview => self.render_overview_page(window, cx).into_any_element(),
+            ThemePreviewPage::Typography => self.render_typography_page(window, cx).into_any_element(),
+            ThemePreviewPage::Components => self.render_components_page(window, cx).into_any_element(),
         }
     }
 }
@@ -80,7 +80,7 @@ impl Item for ThemePreview {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(crate::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, window: &mut Window, cx: &mut AppContext) -> Option<SharedString> {
         let name = cx.theme().name.clone();
         Some(format!("{} Preview", name).into())
     }
@@ -92,24 +92,24 @@ impl Item for ThemePreview {
     fn clone_on_split(
         &self,
         _workspace_id: Option<crate::WorkspaceId>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Option<gpui::View<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_view(Self::new))
+        Some(window.new_view(Self::new, cx))
     }
 }
 
 const AVATAR_URL: &str = "https://avatars.githubusercontent.com/u/1714999?v=4";
 
 impl ThemePreview {
-    fn preview_bg(cx: &WindowContext) -> Hsla {
+    fn preview_bg(window: &mut Window, cx: &mut AppContext) -> Hsla {
         cx.theme().colors().editor_background
     }
 
-    fn render_text(&self, layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
-        let bg = layer.bg(cx);
+    fn render_text(&self, layer: ElevationIndex, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        let bg = layer.bg(window, cx);
 
         let label_with_contrast = |label: &str, fg: Hsla| {
             let contrast = calculate_contrast_ratio(fg, bg);
@@ -140,119 +140,119 @@ impl ThemePreview {
                             .child(
                                 Label::new(label_with_contrast(
                                     "Default Text",
-                                    Color::Default.color(cx),
+                                    Color::Default.color(window, cx),
                                 ))
                                 .color(Color::Default),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Accent Text",
-                                    Color::Accent.color(cx),
+                                    Color::Accent.color(window, cx),
                                 ))
                                 .color(Color::Accent),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Conflict Text",
-                                    Color::Conflict.color(cx),
+                                    Color::Conflict.color(window, cx),
                                 ))
                                 .color(Color::Conflict),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Created Text",
-                                    Color::Created.color(cx),
+                                    Color::Created.color(window, cx),
                                 ))
                                 .color(Color::Created),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Deleted Text",
-                                    Color::Deleted.color(cx),
+                                    Color::Deleted.color(window, cx),
                                 ))
                                 .color(Color::Deleted),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Disabled Text",
-                                    Color::Disabled.color(cx),
+                                    Color::Disabled.color(window, cx),
                                 ))
                                 .color(Color::Disabled),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Error Text",
-                                    Color::Error.color(cx),
+                                    Color::Error.color(window, cx),
                                 ))
                                 .color(Color::Error),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Hidden Text",
-                                    Color::Hidden.color(cx),
+                                    Color::Hidden.color(window, cx),
                                 ))
                                 .color(Color::Hidden),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Hint Text",
-                                    Color::Hint.color(cx),
+                                    Color::Hint.color(window, cx),
                                 ))
                                 .color(Color::Hint),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Ignored Text",
-                                    Color::Ignored.color(cx),
+                                    Color::Ignored.color(window, cx),
                                 ))
                                 .color(Color::Ignored),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Info Text",
-                                    Color::Info.color(cx),
+                                    Color::Info.color(window, cx),
                                 ))
                                 .color(Color::Info),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Modified Text",
-                                    Color::Modified.color(cx),
+                                    Color::Modified.color(window, cx),
                                 ))
                                 .color(Color::Modified),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Muted Text",
-                                    Color::Muted.color(cx),
+                                    Color::Muted.color(window, cx),
                                 ))
                                 .color(Color::Muted),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Placeholder Text",
-                                    Color::Placeholder.color(cx),
+                                    Color::Placeholder.color(window, cx),
                                 ))
                                 .color(Color::Placeholder),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Selected Text",
-                                    Color::Selected.color(cx),
+                                    Color::Selected.color(window, cx),
                                 ))
                                 .color(Color::Selected),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Success Text",
-                                    Color::Success.color(cx),
+                                    Color::Success.color(window, cx),
                                 ))
                                 .color(Color::Success),
                             )
                             .child(
                                 Label::new(label_with_contrast(
                                     "Warning Text",
-                                    Color::Warning.color(cx),
+                                    Color::Warning.color(window, cx),
                                 ))
                                 .color(Color::Warning),
                             )
@@ -269,9 +269,9 @@ impl ThemePreview {
             )
     }
 
-    fn render_colors(&self, layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
-        let bg = layer.bg(cx);
-        let all_colors = all_theme_colors(cx);
+    fn render_colors(&self, layer: ElevationIndex, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        let bg = layer.bg(window, cx);
+        let all_colors = all_theme_colors(window, cx);
 
         v_flex()
             .gap_1()
@@ -299,9 +299,9 @@ impl ThemePreview {
                                 )
                                 .size(ButtonSize::None)
                                 .style(ButtonStyle::Transparent)
-                                .tooltip(move |cx| {
+                                .tooltip(move |window, cx| {
                                     let name = name.clone();
-                                    Tooltip::with_meta(name, None, format!("{:?}", color), cx)
+                                    Tooltip::with_meta(name, None, format!("{:?}", color), window, cx)
                                 }),
                         )
                     })),
@@ -311,19 +311,19 @@ impl ThemePreview {
     fn render_theme_layer(
         &self,
         layer: ElevationIndex,
-        cx: &ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> impl IntoElement {
         v_flex()
             .p_4()
-            .bg(layer.bg(cx))
+            .bg(layer.bg(window, cx))
             .text_color(cx.theme().colors().text)
             .gap_2()
             .child(Headline::new(layer.clone().to_string()).size(HeadlineSize::Medium))
-            .child(self.render_text(layer, cx))
-            .child(self.render_colors(layer, cx))
+            .child(self.render_text(layer, window, cx))
+            .child(self.render_colors(layer, window, cx))
     }
 
-    fn render_overview_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn render_overview_page(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex()
             .id("theme-preview-overview")
             .overflow_scroll()
@@ -333,13 +333,13 @@ impl ThemePreview {
                     .child(Headline::new("Theme Preview").size(HeadlineSize::Large))
                     .child(div().w_full().text_color(cx.theme().colors().text_muted).child("This view lets you preview a range of UI elements across a theme. Use it for testing out changes to the theme."))
                     )
-            .child(self.render_theme_layer(ElevationIndex::Background, cx))
-            .child(self.render_theme_layer(ElevationIndex::Surface, cx))
-            .child(self.render_theme_layer(ElevationIndex::EditorSurface, cx))
-            .child(self.render_theme_layer(ElevationIndex::ElevatedSurface, cx))
+            .child(self.render_theme_layer(ElevationIndex::Background, window, cx))
+            .child(self.render_theme_layer(ElevationIndex::Surface, window, cx))
+            .child(self.render_theme_layer(ElevationIndex::EditorSurface, window, cx))
+            .child(self.render_theme_layer(ElevationIndex::ElevatedSurface, window, cx))
     }
 
-    fn render_typography_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn render_typography_page(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex()
             .id("theme-preview-typography")
             .overflow_scroll()
@@ -361,7 +361,7 @@ impl ThemePreview {
             )
     }
 
-    fn render_components_page(&self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render_components_page(&self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let layer = ElevationIndex::Surface;
 
         v_flex()
@@ -369,30 +369,30 @@ impl ThemePreview {
             .overflow_scroll()
             .size_full()
             .gap_2()
-            .child(Button::render_component_previews(cx))
-            .child(Checkbox::render_component_previews(cx))
-            .child(CheckboxWithLabel::render_component_previews(cx))
-            .child(ContentGroup::render_component_previews(cx))
-            .child(DecoratedIcon::render_component_previews(cx))
-            .child(Facepile::render_component_previews(cx))
-            .child(Icon::render_component_previews(cx))
-            .child(IconDecoration::render_component_previews(cx))
-            .child(Indicator::render_component_previews(cx))
-            .child(Switch::render_component_previews(cx))
-            .child(SwitchWithLabel::render_component_previews(cx))
-            .child(Table::render_component_previews(cx))
+            .child(Button::render_component_previews(window, cx))
+            .child(Checkbox::render_component_previews(window, cx))
+            .child(CheckboxWithLabel::render_component_previews(window, cx))
+            .child(ContentGroup::render_component_previews(window, cx))
+            .child(DecoratedIcon::render_component_previews(window, cx))
+            .child(Facepile::render_component_previews(window, cx))
+            .child(Icon::render_component_previews(window, cx))
+            .child(IconDecoration::render_component_previews(window, cx))
+            .child(Indicator::render_component_previews(window, cx))
+            .child(Switch::render_component_previews(window, cx))
+            .child(SwitchWithLabel::render_component_previews(window, cx))
+            .child(Table::render_component_previews(window, cx))
     }
 
-    fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn render_page_nav(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         h_flex()
             .id("theme-preview-nav")
             .items_center()
             .gap_4()
             .py_2()
-            .bg(Self::preview_bg(cx))
+            .bg(Self::preview_bg(window, cx))
             .children(ThemePreviewPage::iter().map(|p| {
                 Button::new(ElementId::Name(p.name().into()), p.name())
-                    .on_click(cx.listener(move |this, _, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.current_page = p;
                         cx.notify();
                     }))
@@ -403,7 +403,7 @@ impl ThemePreview {
 }
 
 impl Render for ThemePreview {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl ui::IntoElement {
         v_flex()
             .id("theme-preview")
             .key_context("ThemePreview")
@@ -413,8 +413,8 @@ impl Render for ThemePreview {
             .max_h_full()
             .track_focus(&self.focus_handle)
             .px_2()
-            .bg(Self::preview_bg(cx))
-            .child(self.render_page_nav(cx))
-            .child(self.view(self.current_page, cx))
+            .bg(Self::preview_bg(window, cx))
+            .child(self.render_page_nav(window, cx))
+            .child(self.view(self.current_page, window, cx))
     }
 }

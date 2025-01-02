@@ -7,7 +7,7 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use gpui::{Model, VisualContext};
 use language::Buffer;
-use ui::{SharedString, ViewContext};
+use ui::{Window, ModelContext, SharedString, };
 use workspace::{
     notifications::{simple_message_notification, NotificationId},
     Workspace,
@@ -136,7 +136,7 @@ fn language_extension_key(extension_id: &str) -> String {
     format!("{}_extension_suggest", extension_id)
 }
 
-pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
+pub(crate) fn suggest(buffer: Model<Buffer>, window: &mut Window, cx: &mut ModelContext<Workspace>) {
     let Some(file) = buffer.read(cx).file().cloned() else {
         return;
     };
@@ -154,7 +154,7 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
         return;
     };
 
-    cx.on_next_frame(move |workspace, cx| {
+    cx.on_next_frame(window, move |workspace, window, cx| {
         let Some(editor) = workspace.active_item_as::<Editor>(cx) else {
             return;
         };
@@ -169,8 +169,8 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
             SharedString::from(extension_id.clone()),
         );
 
-        workspace.show_notification(notification_id, cx, |cx| {
-            cx.new_view(move |_cx| {
+        workspace.show_notification(notification_id, window, cx, |window, cx| {
+            window.new_view(cx, move |_cx| {
                 simple_message_notification::MessageNotification::new(format!(
                     "Do you want to install the recommended '{}' extension for '{}' files?",
                     extension_id, file_name_or_extension
@@ -187,7 +187,7 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
                     }
                 })
                 .with_secondary_click_message("No")
-                .on_secondary_click(move |cx| {
+                .on_secondary_click(move |window, cx| {
                     let key = language_extension_key(&extension_id);
                     db::write_and_log(cx, move || {
                         KEY_VALUE_STORE.write_kvp(key, "dismissed".to_string())

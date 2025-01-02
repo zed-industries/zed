@@ -1,6 +1,6 @@
 use std::fmt::{self, Display, Formatter};
 
-use gpui::{hsla, point, px, BoxShadow, Hsla, WindowContext};
+use gpui::{Window, AppContext, hsla, point, px, BoxShadow, Hsla, };
 use smallvec::{smallvec, SmallVec};
 use theme::ActiveTheme;
 
@@ -84,7 +84,7 @@ impl ElevationIndex {
     }
 
     /// Returns the background color for the given elevation index.
-    pub fn bg(&self, cx: &WindowContext) -> Hsla {
+    pub fn bg(&self, window: &mut Window, cx: &mut AppContext) -> Hsla {
         match self {
             ElevationIndex::Background => cx.theme().colors().background,
             ElevationIndex::Surface => cx.theme().colors().surface_background,

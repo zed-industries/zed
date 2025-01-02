@@ -3,12 +3,12 @@
 // it causes compile errors.
 #![cfg_attr(target_os = "macos", allow(unused_imports))]
 
-use gpui::{
+use gpui::{Window, ModelContext, Model, 
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
     px, rgb, size, AsyncAppContext, Bounds, InteractiveElement, KeyBinding, Menu, MenuItem,
     ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
-    StatefulInteractiveElement as _, Styled, Task, View, ViewContext, VisualContext, WindowBounds,
+    StatefulInteractiveElement as _, Styled, Task,   VisualContext, WindowBounds,
     WindowHandle, WindowOptions,
 };
 #[cfg(not(target_os = "windows"))]
@@ -117,7 +117,7 @@ struct LivekitWindow {
 struct ParticipantState {
     audio_output_stream: Option<(RemoteTrackPublication, AudioStream)>,
     muted: bool,
-    screen_share_output_view: Option<(RemoteVideoTrack, View<RemoteVideoTrackView>)>,
+    screen_share_output_view: Option<(RemoteVideoTrack, Model<RemoteVideoTrackView>)>,
     speaking: bool,
 }
 
@@ -139,12 +139,12 @@ impl LivekitWindow {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |cx| {
-                    cx.new_view(|cx| {
-                        let _events_task = cx.spawn(|this, mut cx| async move {
+                |window, cx| {
+                    window.new_view(cx, |window, cx| {
+                        let _events_task = cx.spawn_in(window, |this, mut cx| async move {
                             while let Some(event) = events.recv().await {
                                 this.update(&mut cx, |this: &mut LivekitWindow, cx| {
-                                    this.handle_room_event(event, cx)
+                                    this.handle_room_event(event, window, cx)
                                 })
                                 .ok();
                             }
@@ -167,7 +167,7 @@ impl LivekitWindow {
         .unwrap()
     }
 
-    fn handle_room_event(&mut self, event: RoomEvent, cx: &mut ViewContext<Self>) {
+    fn handle_room_event(&mut self, event: RoomEvent, window: &mut Window, cx: &mut ModelContext<Self>) {
         eprintln!("event: {event:?}");
 
         match event {
@@ -210,7 +210,7 @@ impl LivekitWindow {
                     RemoteTrack::Video(track) => {
                         output.screen_share_output_view = Some((
                             track.clone(),
-                            cx.new_view(|cx| RemoteVideoTrackView::new(track, cx)),
+                            window.new_view(cx, |cx| RemoteVideoTrackView::new(track, window, cx)),
                         ));
                     }
                 }
@@ -264,7 +264,7 @@ impl LivekitWindow {
         }
     }
 
-    fn toggle_mute(&mut self, cx: &mut ViewContext<Self>) {
+    fn toggle_mute(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(track) = &self.microphone_track {
             if track.is_muted() {
                 track.unmute();
@@ -274,7 +274,7 @@ impl LivekitWindow {
             cx.notify();
         } else {
             let participant = self.room.local_participant();
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn_in(window, |this, mut cx| async move {
                 let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
                 let publication = participant
                     .publish_track(
@@ -296,7 +296,7 @@ impl LivekitWindow {
         }
     }
 
-    fn toggle_screen_share(&mut self, cx: &mut ViewContext<Self>) {
+    fn toggle_screen_share(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(track) = self.screen_share_track.take() {
             self.screen_share_stream.take();
             let participant = self.room.local_participant();
@@ -309,7 +309,7 @@ impl LivekitWindow {
         } else {
             let participant = self.room.local_participant();
             let sources = cx.screen_capture_sources();
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn_in(window, |this, mut cx| async move {
                 let sources = sources.await.unwrap()?;
                 let source = sources.into_iter().next().unwrap();
                 let (track, stream) = capture_local_video_track(&*source).await?;
@@ -337,7 +337,7 @@ impl LivekitWindow {
     fn toggle_remote_audio_for_participant(
         &mut self,
         identity: &ParticipantIdentity,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         let participant = self.remote_participants.iter().find_map(|(id, state)| {
             if id == identity {
@@ -355,7 +355,7 @@ impl LivekitWindow {
 
 #[cfg(not(windows))]
 impl Render for LivekitWindow {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         fn button() -> gpui::Div {
             div()
                 .w(px(180.0))
@@ -383,7 +383,7 @@ impl Render for LivekitWindow {
                         } else {
                             "Publish mic"
                         })
-                        .on_click(cx.listener(|this, _, cx| this.toggle_mute(cx))),
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_mute(window, cx))),
                     button()
                         .id("toggle-screen-share")
                         .child(if self.screen_share_track.is_none() {
@@ -391,7 +391,7 @@ impl Render for LivekitWindow {
                         } else {
                             "Unshare screen"
                         })
-                        .on_click(cx.listener(|this, _, cx| this.toggle_screen_share(cx))),
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_screen_share(window, cx))),
                 ]),
             )
             .child(
@@ -429,7 +429,7 @@ impl Render for LivekitWindow {
                                             let identity = identity.clone();
                                             move |this, _, cx| {
                                                 this.toggle_remote_audio_for_participant(
-                                                    &identity, cx,
+                                                    &identity, window, cx,
                                                 );
                                             }
                                         })),

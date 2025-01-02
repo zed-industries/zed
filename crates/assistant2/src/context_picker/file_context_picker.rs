@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
+use gpui::{Model, AppContext, DismissEvent, FocusHandle, FocusableView, Task,  WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, WorktreeId};
 use ui::{prelude::*, ListItem};
@@ -17,7 +17,7 @@ use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 
 pub struct FileContextPicker {
-    picker: View<Picker<FileContextPickerDelegate>>,
+    picker: Model<Picker<FileContextPickerDelegate>>,
 }
 
 impl FileContextPicker {
@@ -26,7 +26,7 @@ impl FileContextPicker {
         workspace: WeakView<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate = FileContextPickerDelegate::new(
             context_picker,
@@ -34,7 +34,7 @@ impl FileContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
@@ -47,7 +47,7 @@ impl FocusableView for FileContextPicker {
 }
 
 impl Render for FileContextPicker {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         self.picker.clone()
     }
 }
@@ -82,8 +82,8 @@ impl FileContextPickerDelegate {
         &mut self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: &View<Workspace>,
-        cx: &mut ViewContext<Picker<Self>>,
+        workspace: &Model<Workspace>,
+        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
             let workspace = workspace.read(cx);
@@ -165,22 +165,22 @@ impl PickerDelegate for FileContextPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
         "Search files…".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(());
         };
 
-        let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, cx);
+        let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, window, cx);
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             // TODO: This should be probably be run in the background.
             let paths = search_task.await;
 
@@ -191,7 +191,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         let Some(mat) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -206,7 +206,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         let path = mat.path.clone();
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let Some(open_buffer_task) = project
                 .update(&mut cx, |project, cx| {
                     project.open_buffer((worktree_id, path.clone()), cx)
@@ -240,7 +240,7 @@ impl PickerDelegate for FileContextPickerDelegate {
 
                 match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }
 
                 anyhow::Ok(())
@@ -251,7 +251,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         .detach_and_log_err(cx);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| {
                 this.reset_mode();
@@ -264,7 +264,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
 

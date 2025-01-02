@@ -85,7 +85,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| window.new_view(cx, |_window, _cx| HelloWorld {}),
+            |window, window, cx| window.new_view(cx, |_window, _cx| HelloWorld {}),
         )
         .unwrap();
     });

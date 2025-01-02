@@ -107,7 +107,7 @@ impl SearchOptions {
         &self,
         active: bool,
         focus_handle: FocusHandle,
-        action: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+        action: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static,
     ) -> impl IntoElement {
         IconButton::new(self.label(), self.icon())
             .on_click(action)
@@ -117,23 +117,23 @@ impl SearchOptions {
             .tooltip({
                 let action = self.to_toggle_action();
                 let label = self.label();
-                move |cx| Tooltip::for_action_in(label, &*action, &focus_handle, cx)
+                move |cx| Tooltip::for_action_in(label, &*action, &focus_handle, window, cx)
             })
     }
 }
 
-pub(crate) fn show_no_more_matches(cx: &mut WindowContext) {
-    cx.defer(|cx| {
+pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut AppContext) {
+    window.defer(cx, |window, cx| {
         struct NotifType();
         let notification_id = NotificationId::unique::<NotifType>();
-        let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+        let Some(workspace) = window.window_handle().downcast::<Workspace>() else {
             return;
         };
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, window, cx| {
                 workspace.show_toast(
                     Toast::new(notification_id.clone(), "No more matches").autohide(),
-                    cx,
+                    window, cx,
                 );
             })
             .ok();

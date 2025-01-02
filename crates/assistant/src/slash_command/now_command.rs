@@ -36,7 +36,7 @@ impl SlashCommand for NowSlashCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _window: &mut Window, _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -48,7 +48,7 @@ impl SlashCommand for NowSlashCommand {
         _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        _cx: &mut WindowContext,
+        _window: &mut Window, _cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let now = Local::now();
         let text = format!("Today is {now}.", now = now.to_rfc2822());

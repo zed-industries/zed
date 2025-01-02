@@ -1,4 +1,4 @@
-use gpui::{OwnedMenu, OwnedMenuItem, View};
+use gpui::{Model, OwnedMenu, OwnedMenuItem, };
 use smallvec::SmallVec;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
@@ -13,7 +13,7 @@ pub struct ApplicationMenu {
 }
 
 impl ApplicationMenu {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let menus = cx.get_menus().unwrap_or_default();
         Self {
             entries: menus
@@ -60,9 +60,9 @@ impl ApplicationMenu {
         cleaned
     }
 
-    fn build_menu_from_items(entry: MenuEntry, cx: &mut WindowContext) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, cx| {
-            let menu = menu.when_some(cx.focused(), |menu, focused| menu.context(focused));
+    fn build_menu_from_items(entry: MenuEntry, window: &mut Window, cx: &mut AppContext) -> Model<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            let menu = menu.when_some(window.focused(cx), |menu, focused| menu.context(focused));
             let sanitized_items = Self::sanitize_menu_items(entry.menu.items);
 
             sanitized_items
@@ -99,7 +99,7 @@ impl ApplicationMenu {
             .occlude()
             .child(
                 PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
-                    .menu(move |cx| Self::build_menu_from_items(entry.clone(), cx).into())
+                    .menu(move |window, cx| Self::build_menu_from_items(entry.clone(), window, cx).into())
                     .trigger(
                         IconButton::new(
                             SharedString::from(format!("{}-menu-trigger", menu_name)),
@@ -108,7 +108,7 @@ impl ApplicationMenu {
                         .style(ButtonStyle::Subtle)
                         .icon_size(IconSize::Small)
                         .when(!handle.is_deployed(), |this| {
-                            this.tooltip(|cx| Tooltip::text("Open Application Menu", cx))
+                            this.tooltip(|window, cx| Tooltip::text("Open Application Menu", window, cx))
                         }),
                     )
                     .with_handle(handle),
@@ -132,7 +132,7 @@ impl ApplicationMenu {
             .occlude()
             .child(
                 PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
-                    .menu(move |cx| Self::build_menu_from_items(entry.clone(), cx).into())
+                    .menu(move |window, cx| Self::build_menu_from_items(entry.clone(), window, cx).into())
                     .trigger(
                         Button::new(
                             SharedString::from(format!("{}-menu-trigger", menu_name)),
@@ -143,14 +143,14 @@ impl ApplicationMenu {
                     )
                     .with_handle(current_handle.clone()),
             )
-            .on_hover(move |hover_enter, cx| {
+            .on_hover(move |hover_enter, window, cx| {
                 // Skip if menu is already open to avoid focus issue
                 if *hover_enter && !current_handle.is_deployed() {
-                    all_handles.iter().for_each(|h| h.hide(cx));
+                    all_handles.iter().for_each(|h| h.hide(window, cx));
 
                     // Defer to prevent focus race condition with the previously open menu
                     let handle = current_handle.clone();
-                    cx.defer(move |cx| handle.show(cx));
+                    window.defer(cx, move |window, cx| handle.show(window, cx));
                 }
             })
     }
@@ -161,7 +161,7 @@ impl ApplicationMenu {
 }
 
 impl Render for ApplicationMenu {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         let is_any_deployed = self.is_any_deployed();
         div()
             .flex()

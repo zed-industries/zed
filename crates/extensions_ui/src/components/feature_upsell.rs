@@ -44,7 +44,7 @@ impl FeatureUpsell {
 }
 
 impl RenderOnce for FeatureUpsell {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         self.base
             .p_4()
             .justify_between()

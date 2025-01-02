@@ -19,7 +19,7 @@ use crate::{
 use anyhow::Context;
 use clock::Global;
 use futures::future;
-use gpui::{AsyncWindowContext, Model, ModelContext, Task, ViewContext};
+use gpui::{Window, AsyncWindowContext, Model, ModelContext, Task, };
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -286,7 +286,7 @@ impl InlayHintCache {
         multi_buffer: &Model<MultiBuffer>,
         new_hint_settings: InlayHintSettings,
         visible_hints: Vec<Inlay>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> ControlFlow<Option<InlaySplice>> {
         self.invalidate_debounce = debounce_value(new_hint_settings.edit_debounce_ms);
         self.append_debounce = debounce_value(new_hint_settings.scroll_debounce_ms);
@@ -304,7 +304,7 @@ impl InlayHintCache {
                         multi_buffer,
                         &visible_hints,
                         &new_allowed_hint_kinds,
-                        cx,
+                        window, cx,
                     );
                     if new_splice.is_some() {
                         self.version += 1;
@@ -344,7 +344,7 @@ impl InlayHintCache {
         excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
         invalidate: InvalidationStrategy,
         ignore_debounce: bool,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> Option<InlaySplice> {
         if !self.enabled {
             return None;
@@ -373,7 +373,7 @@ impl InlayHintCache {
         } else {
             self.append_debounce
         };
-        self.refresh_task = Some(cx.spawn(|editor, mut cx| async move {
+        self.refresh_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
             if let Some(debounce_duration) = debounce_duration {
                 cx.background_executor().timer(debounce_duration).await;
             }
@@ -386,7 +386,7 @@ impl InlayHintCache {
                         excerpts_to_query,
                         invalidate,
                         cache_version,
-                        cx,
+                        window, cx,
                     )
                 })
                 .ok();
@@ -407,7 +407,7 @@ impl InlayHintCache {
         multi_buffer: &Model<MultiBuffer>,
         visible_hints: &[Inlay],
         new_kinds: &HashSet<Option<InlayHintKind>>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> Option<InlaySplice> {
         let old_kinds = &self.allowed_hint_kinds;
         if new_kinds == old_kinds {
@@ -579,7 +579,7 @@ impl InlayHintCache {
         buffer_id: BufferId,
         excerpt_id: ExcerptId,
         id: InlayId,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
         if let Some(excerpt_hints) = self.hints.get(&excerpt_id) {
             let mut guard = excerpt_hints.write();
@@ -589,7 +589,7 @@ impl InlayHintCache {
                     let server_id = *server_id;
                     cached_hint.resolve_state = ResolveState::Resolving;
                     drop(guard);
-                    cx.spawn(|editor, mut cx| async move {
+                    cx.spawn_in(window, |editor, mut cx| async move {
                         let resolved_hint_task = editor.update(&mut cx, |editor, cx| {
                             let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
                             editor.semantics_provider.as_ref()?.resolve_inlay_hint(
@@ -640,7 +640,7 @@ fn spawn_new_update_tasks(
     excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
     invalidate: InvalidationStrategy,
     update_cache_version: usize,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window, cx: &mut ModelContext<Editor>,
 ) {
     for (excerpt_id, (excerpt_buffer, new_task_buffer_version, excerpt_visible_range)) in
         excerpts_to_query
@@ -688,7 +688,7 @@ fn spawn_new_update_tasks(
         };
 
         let mut new_update_task =
-            |query_ranges| new_update_task(query, query_ranges, excerpt_buffer.clone(), cx);
+            |query_ranges| new_update_task(query, query_ranges, excerpt_buffer.clone(), window, cx);
 
         match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
             hash_map::Entry::Occupied(mut o) => {
@@ -797,9 +797,9 @@ fn new_update_task(
     query: ExcerptQuery,
     query_ranges: QueryRanges,
     excerpt_buffer: Model<Buffer>,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window, cx: &mut ModelContext<Editor>,
 ) -> Task<()> {
-    cx.spawn(move |editor, mut cx| async move {
+    cx.spawn_in(window, move |editor, mut cx| async move {
         let visible_range_update_results = future::join_all(
             query_ranges
                 .visible
@@ -812,7 +812,7 @@ fn new_update_task(
                                 query,
                                 visible_range.clone(),
                                 query.invalidate.should_invalidate(),
-                                cx,
+                                window, cx,
                             )
                         })
                         .log_err()?;
@@ -826,7 +826,7 @@ fn new_update_task(
         ));
 
         let query_range_failed =
-            |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncWindowContext| {
+            |range: &Range<language::Anchor>, e: anyhow::Error, window: &mut Window, cx: &mut AppContext| {
                 log::error!("inlay hint update task for range failed: {e:#?}");
                 editor
                     .update(cx, |editor, cx| {
@@ -862,7 +862,7 @@ fn new_update_task(
                                 query,
                                 invisible_range.clone(),
                                 false, // visible screen request already invalidated the entries
-                                cx,
+                                window, cx,
                             )
                         })
                         .log_err()?;
@@ -883,9 +883,9 @@ fn fetch_and_update_hints(
     query: ExcerptQuery,
     fetch_range: Range<language::Anchor>,
     invalidate: bool,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window, cx: &mut ModelContext<Editor>,
 ) -> Task<anyhow::Result<()>> {
-    cx.spawn(|editor, mut cx| async move {
+    cx.spawn_in(window, |editor, mut cx| async move {
         let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
         let (lsp_request_limiter, multi_buffer_snapshot) =
             editor.update(&mut cx, |editor, cx| {
@@ -909,7 +909,7 @@ fn fetch_and_update_hints(
             .update(&mut cx, |editor, cx| {
                 if got_throttled {
                     let query_not_around_visible_range = match editor
-                        .excerpts_for_inlay_hints_query(None, cx)
+                        .excerpts_for_inlay_hints_query(None, window, cx)
                         .remove(&query.excerpt_id)
                     {
                         Some((_, _, current_visible_range)) => {
@@ -958,7 +958,7 @@ fn fetch_and_update_hints(
                 .cloned()
         })?;
 
-        let visible_hints = editor.update(&mut cx, |editor, cx| editor.visible_inlay_hints(cx))?;
+        let visible_hints = editor.update(&mut cx, |editor, cx| editor.visible_inlay_hints(window, cx))?;
         let new_hints = match inlay_hints_fetch_task {
             Some(fetch_task) => {
                 log::debug!(
@@ -1013,7 +1013,7 @@ fn fetch_and_update_hints(
                         invalidate,
                         buffer_snapshot,
                         multi_buffer_snapshot,
-                        cx,
+                        window, cx,
                     );
                 })
                 .ok();
@@ -1129,7 +1129,7 @@ fn apply_hint_update(
     invalidate: bool,
     buffer_snapshot: BufferSnapshot,
     multi_buffer_snapshot: MultiBufferSnapshot,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window, cx: &mut ModelContext<Editor>,
 ) {
     let cached_excerpt_hints = editor
         .inlay_hint_cache
@@ -1248,7 +1248,7 @@ fn apply_hint_update(
         editor.inlay_hint_cache.version += 1;
     }
     if displayed_inlays_changed {
-        editor.splice_inlays(to_remove, to_insert, cx)
+        editor.splice_inlays(to_remove, to_insert, window, cx)
     }
 }
 
@@ -1324,7 +1324,7 @@ pub mod tests {
 
         let mut edits_made = 1;
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let expected_hints = vec!["0".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -1345,15 +1345,15 @@ pub mod tests {
             .unwrap();
 
         editor
-            .update(cx, |editor, cx| {
-                editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-                editor.handle_input("some change", cx);
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+                editor.handle_input("some change", window, cx);
                 edits_made += 1;
             })
             .unwrap();
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let expected_hints = vec!["0".to_string(), "1".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -1380,7 +1380,7 @@ pub mod tests {
         edits_made += 1;
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let expected_hints = vec!["0".to_string(), "1".to_string(), "2".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -1444,7 +1444,7 @@ pub mod tests {
 
         let mut edits_made = 1;
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let expected_hints = vec!["0".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -1477,7 +1477,7 @@ pub mod tests {
         cx.executor().run_until_parked();
 
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let expected_hints = vec!["0".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -1503,7 +1503,7 @@ pub mod tests {
 
         edits_made += 1;
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let expected_hints = vec!["1".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -1824,7 +1824,7 @@ pub mod tests {
 
         let mut edits_made = 1;
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     1,
@@ -1861,7 +1861,7 @@ pub mod tests {
             .expect("inlay refresh request failed");
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     2,
@@ -1937,7 +1937,7 @@ pub mod tests {
                 })
             });
             cx.executor().run_until_parked();
-            editor.update(cx, |editor, cx| {
+            editor.update(window, cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     2,
@@ -1985,7 +1985,7 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     2,
@@ -2016,7 +2016,7 @@ pub mod tests {
             .await
             .expect("inlay refresh request failed");
         cx.executor().run_until_parked();
-        editor.update(cx, |editor, cx| {
+        editor.update(window, cx, |editor, window, cx| {
             assert_eq!(
                 lsp_request_count.load(Ordering::Relaxed),
                 2,
@@ -2046,7 +2046,7 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     3,
@@ -2084,7 +2084,7 @@ pub mod tests {
             .expect("inlay refresh request failed");
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
                     4,
@@ -2159,9 +2159,9 @@ pub mod tests {
             "initial change #3",
         ] {
             editor
-                .update(cx, |editor, cx| {
-                    editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-                    editor.handle_input(change_after_opening, cx);
+                .update(cx, |editor, window, cx| {
+                    editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+                    editor.handle_input(change_after_opening, window, cx);
                 })
                 .unwrap();
             expected_changes.push(change_after_opening);
@@ -2169,7 +2169,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
 
-        editor.update(cx, |editor, cx| {
+        editor.update(window, cx, |editor, window, cx| {
             let current_text = editor.text(cx);
             for change in &expected_changes {
                 assert!(
@@ -2201,9 +2201,9 @@ pub mod tests {
             let task_editor = editor;
             edits.push(cx.spawn(|mut cx| async move {
                 task_editor
-                    .update(&mut cx, |editor, cx| {
-                        editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-                        editor.handle_input(async_later_change, cx);
+                    .update(&mut cx, |editor, window, cx| {
+                        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+                        editor.handle_input(async_later_change, window, cx);
                     })
                     .unwrap();
             }));
@@ -2212,7 +2212,7 @@ pub mod tests {
         cx.executor().run_until_parked();
 
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let current_text = editor.text(cx);
                 for change in &expected_changes {
                     assert!(
@@ -2659,7 +2659,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         let editor = cx
-            .add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx));
+            .add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx));
 
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
@@ -2731,7 +2731,7 @@ pub mod tests {
             .await;
         cx.executor().run_until_parked();
 
-        editor.update(cx, |editor, cx| {
+        editor.update(window, cx, |editor, window, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2750,20 +2750,20 @@ pub mod tests {
             }).unwrap();
 
         editor
-            .update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
                     s.select_ranges([Point::new(4, 0)..Point::new(4, 0)])
                 });
-                editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
                     s.select_ranges([Point::new(22, 0)..Point::new(22, 0)])
                 });
-                editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
                     s.select_ranges([Point::new(50, 0)..Point::new(50, 0)])
                 });
             })
             .unwrap();
         cx.executor().run_until_parked();
-        editor.update(cx, |editor, cx| {
+        editor.update(window, cx, |editor, window, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2783,8 +2783,8 @@ pub mod tests {
             }).unwrap();
 
         editor
-            .update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
                     s.select_ranges([Point::new(100, 0)..Point::new(100, 0)])
                 });
             })
@@ -2793,7 +2793,7 @@ pub mod tests {
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
         ));
         cx.executor().run_until_parked();
-        let last_scroll_update_version = editor.update(cx, |editor, cx| {
+        let last_scroll_update_version = editor.update(window, cx, |editor, window, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2816,8 +2816,8 @@ pub mod tests {
             }).unwrap();
 
         editor
-            .update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
                     s.select_ranges([Point::new(4, 0)..Point::new(4, 0)])
                 });
             })
@@ -2826,7 +2826,7 @@ pub mod tests {
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
         ));
         cx.executor().run_until_parked();
-        editor.update(cx, |editor, cx| {
+        editor.update(window, cx, |editor, window, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2849,15 +2849,15 @@ pub mod tests {
 
         editor_edited.store(true, Ordering::Release);
         editor
-            .update(cx, |editor, cx| {
-                editor.change_selections(None, cx, |s| {
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(None, window, cx, |s| {
                     s.select_ranges([Point::new(57, 0)..Point::new(57, 0)])
                 });
-                editor.handle_input("++++more text++++", cx);
+                editor.handle_input("++++more text++++", window, cx);
             })
             .unwrap();
         cx.executor().run_until_parked();
-        editor.update(cx, |editor, cx| {
+        editor.update(window, cx, |editor, window, cx| {
             let expected_hints = vec![
                 "main hint #0".to_string(),
                 "main hint #1".to_string(),
@@ -2965,7 +2965,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         let editor = cx
-            .add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx));
+            .add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx));
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);
@@ -3035,7 +3035,7 @@ pub mod tests {
             .await;
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 assert_eq!(
                     vec!["main hint #0".to_string(), "other hint #0".to_string()],
                     cached_hint_labels(editor),
@@ -3054,7 +3054,7 @@ pub mod tests {
             .unwrap();
 
         editor
-            .update(cx, |editor, cx| {
+            .update(cx, |editor, window, cx| {
                 editor.buffer().update(cx, |multibuffer, cx| {
                     multibuffer.remove_excerpts(buffer_2_excerpts, cx)
                 })
@@ -3062,7 +3062,7 @@ pub mod tests {
             .unwrap();
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 assert_eq!(
                     vec!["main hint #0".to_string()],
                     cached_hint_labels(editor),
@@ -3093,7 +3093,7 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let expected_hints = vec!["main hint #0".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -3184,22 +3184,22 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), cx));
+        let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
 
         cx.executor().run_until_parked();
         cx.executor().start_waiting();
 
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
-                editor.change_selections(None, cx, |s| {
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(None, window, cx, |s| {
                     s.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
                 })
             })
             .unwrap();
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let expected_hints = vec!["1".to_string()];
                 assert_eq!(expected_hints, cached_hint_labels(editor));
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
@@ -3249,15 +3249,15 @@ pub mod tests {
         .await;
 
         editor
-            .update(cx, |editor, cx| {
-                editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
+            .update(cx, |editor, window, cx| {
+                editor.toggle_inlay_hints(&crate::ToggleInlayHints, window, cx)
             })
             .unwrap();
         cx.executor().start_waiting();
 
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let expected_hints = vec!["1".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -3274,13 +3274,13 @@ pub mod tests {
             .unwrap();
 
         editor
-            .update(cx, |editor, cx| {
-                editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
+            .update(cx, |editor, window, cx| {
+                editor.toggle_inlay_hints(&crate::ToggleInlayHints, window, cx)
             })
             .unwrap();
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 assert!(
                     cached_hint_labels(editor).is_empty(),
                     "Should clear hints after 2nd toggle"
@@ -3303,7 +3303,7 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 let expected_hints = vec!["2".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -3316,13 +3316,13 @@ pub mod tests {
             .unwrap();
 
         editor
-            .update(cx, |editor, cx| {
-                editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
+            .update(cx, |editor, window, cx| {
+                editor.toggle_inlay_hints(&crate::ToggleInlayHints, window, cx)
             })
             .unwrap();
         cx.executor().run_until_parked();
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 assert!(
                     cached_hint_labels(editor).is_empty(),
                     "Should clear hints after enabling in settings and a 3rd toggle"
@@ -3333,12 +3333,12 @@ pub mod tests {
             .unwrap();
 
         editor
-            .update(cx, |editor, cx| {
-                editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
+            .update(cx, |editor, window, cx| {
+                editor.toggle_inlay_hints(&crate::ToggleInlayHints, window, cx)
             })
             .unwrap();
         cx.executor().run_until_parked();
-        editor.update(cx, |editor, cx| {
+        editor.update(window, cx, |editor, window, cx| {
             let expected_hints = vec!["3".to_string()];
             assert_eq!(
                 expected_hints,
@@ -3360,7 +3360,7 @@ pub mod tests {
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
-            crate::init(cx);
+            crate::init(window, cx);
         });
 
         update_test_language_settings(cx, f);
@@ -3403,10 +3403,10 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), cx));
+        let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
 
         editor
-            .update(cx, |editor, cx| {
+            .update(window, cx, |editor, window, cx| {
                 assert!(cached_hint_labels(editor).is_empty());
                 assert!(visible_hint_labels(editor, cx).is_empty());
                 assert_eq!(editor.inlay_hint_cache().version, 0);
@@ -3434,9 +3434,9 @@ pub mod tests {
         labels
     }
 
-    pub fn visible_hint_labels(editor: &Editor, cx: &ViewContext<Editor>) -> Vec<String> {
+    pub fn visible_hint_labels(editor: &Editor, window: &mut Window, cx: &mut ModelContext<Editor>) -> Vec<String> {
         let mut hints = editor
-            .visible_inlay_hints(cx)
+            .visible_inlay_hints(window, cx)
             .into_iter()
             .map(|hint| hint.text.to_string())
             .collect::<Vec<_>>();

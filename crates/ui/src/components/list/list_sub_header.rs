@@ -40,7 +40,7 @@ impl Toggleable for ListSubHeader {
 }
 
 impl RenderOnce for ListSubHeader {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .flex_1()
             .w_full()

@@ -1,6 +1,6 @@
-use gpui::{
+use gpui::{Window, AppContext, 
     div, AnyElement, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId, Hitbox,
-    IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled, WindowContext,
+    IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled, 
 };
 
 /// An element that sets a particular rem size for its children.
@@ -43,9 +43,9 @@ impl Element for WithRemSize {
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        cx.with_rem_size(Some(self.rem_size), |cx| self.div.request_layout(id, cx))
+        window.with_rem_size(Some(self.rem_size), |window| self.div.request_layout(id, window, cx))
     }
 
     fn prepaint(
@@ -53,10 +53,10 @@ impl Element for WithRemSize {
         id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Self::PrepaintState {
-        cx.with_rem_size(Some(self.rem_size), |cx| {
-            self.div.prepaint(id, bounds, request_layout, cx)
+        window.with_rem_size(Some(self.rem_size), |window| {
+            self.div.prepaint(id, bounds, request_layout, window, cx)
         })
     }
 
@@ -66,10 +66,10 @@ impl Element for WithRemSize {
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) {
-        cx.with_rem_size(Some(self.rem_size), |cx| {
-            self.div.paint(id, bounds, request_layout, prepaint, cx)
+        window.with_rem_size(Some(self.rem_size), |window| {
+            self.div.paint(id, bounds, request_layout, prepaint, window, cx)
         })
     }
 }

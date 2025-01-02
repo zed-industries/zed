@@ -14,6 +14,6 @@ pub use search_input::*;
 pub use with_rem_size::*;
 
 /// Returns true if the current theme is light or vibrant light.
-pub fn is_light(cx: &WindowContext) -> bool {
+pub fn is_light(window: &mut Window, cx: &mut AppContext) -> bool {
     cx.theme().appearance.is_light()
 }

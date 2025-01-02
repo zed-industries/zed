@@ -14,15 +14,15 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(cx);
-        self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(cx);
-            editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+        self.stop_recording(window, cx);
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window, cx);
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, window, cx);
                 let mut original_columns: HashMap<_, _> = Default::default();
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let original_head = selection.head();
                         original_columns.insert(selection.id, original_head.column());
@@ -59,12 +59,12 @@ impl Vim {
                         }
                     });
                 });
-                vim.copy_selections_content(editor, motion.linewise(), cx);
-                editor.insert("", cx);
+                vim.copy_selections_content(editor, motion.linewise(), window, cx);
+                editor.insert("", window, cx);
 
                 // Fixup cursor position after the deletion
-                editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.set_clip_at_line_ends(true, window, cx);
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let mut cursor = selection.head();
                         if motion.linewise() {
@@ -76,20 +76,20 @@ impl Vim {
                         selection.collapse_to(cursor, selection.goal)
                     });
                 });
-                editor.refresh_inline_completion(true, false, cx);
+                editor.refresh_inline_completion(true, false, window, cx);
             });
         });
     }
 
-    pub fn delete_object(&mut self, object: Object, around: bool, cx: &mut ViewContext<Self>) {
-        self.stop_recording(cx);
-        self.update_editor(cx, |vim, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+    pub fn delete_object(&mut self, object: Object, around: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+        self.stop_recording(window, cx);
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, window, cx);
                 // Emulates behavior in vim where if we expanded backwards to include a newline
                 // the cursor gets set back to the start of the line
                 let mut should_move_to_start: HashSet<_> = Default::default();
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         object.expand_selection(map, selection, around);
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
@@ -141,12 +141,12 @@ impl Vim {
                         }
                     });
                 });
-                vim.copy_selections_content(editor, false, cx);
-                editor.insert("", cx);
+                vim.copy_selections_content(editor, false, window, cx);
+                editor.insert("", window, cx);
 
                 // Fixup cursor position after the deletion
-                editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.set_clip_at_line_ends(true, window, cx);
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let mut cursor = selection.head();
                         if should_move_to_start.contains(&selection.id) {
@@ -156,7 +156,7 @@ impl Vim {
                         selection.collapse_to(cursor, selection.goal)
                     });
                 });
-                editor.refresh_inline_completion(true, false, cx);
+                editor.refresh_inline_completion(true, false, window, cx);
             });
         });
     }

@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{
     list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
     ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, View, WeakView,
+    TextStyleRefinement,  WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -25,7 +25,7 @@ pub struct ActiveThread {
     thread: Model<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
-    rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
+    rendered_messages_by_id: HashMap<MessageId, Model<Markdown>>,
     last_error: Option<ThreadError>,
     _subscriptions: Vec<Subscription>,
 }
@@ -36,7 +36,7 @@ impl ActiveThread {
         workspace: WeakView<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
         let subscriptions = vec![
             cx.observe(&thread, |_, _, cx| cx.notify()),
@@ -52,8 +52,8 @@ impl ActiveThread {
             rendered_messages_by_id: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.view().downgrade();
-                move |ix, cx: &mut WindowContext| {
-                    this.update(cx, |this, cx| this.render_message(ix, cx))
+                move |ix, window: &mut Window, cx: &mut AppContext| {
+                    this.update(cx, |this, cx| this.render_message(ix, window, cx))
                         .unwrap()
                 }
             }),
@@ -62,7 +62,7 @@ impl ActiveThread {
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
-            this.push_message(&message.id, message.text.clone(), cx);
+            this.push_message(&message.id, message.text.clone(), window, cx);
         }
 
         this
@@ -84,16 +84,16 @@ impl ActiveThread {
         self.last_error.take();
     }
 
-    fn push_message(&mut self, id: &MessageId, text: String, cx: &mut ViewContext<Self>) {
+    fn push_message(&mut self, id: &MessageId, text: String, window: &mut Window, cx: &mut ModelContext<Self>) {
         let old_len = self.messages.len();
         self.messages.push(*id);
         self.list_state.splice(old_len..old_len, 1);
 
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
-        let ui_font_size = TextSize::Default.rems(cx);
-        let buffer_font_size = TextSize::Small.rems(cx);
-        let mut text_style = cx.text_style();
+        let ui_font_size = TextSize::Default.rems(window, cx);
+        let buffer_font_size = TextSize::Small.rems(window, cx);
+        let mut text_style = window.text_style();
 
         text_style.refine(&TextStyleRefinement {
             font_family: Some(theme_settings.ui_font.family.clone()),
@@ -143,13 +143,13 @@ impl ActiveThread {
             ..Default::default()
         };
 
-        let markdown = cx.new_view(|cx| {
+        let markdown = window.new_view(cx, |cx| {
             Markdown::new(
                 text,
                 markdown_style,
                 Some(self.language_registry.clone()),
                 None,
-                cx,
+                window, cx,
             )
         });
         self.rendered_messages_by_id.insert(*id, markdown);
@@ -163,7 +163,7 @@ impl ActiveThread {
         &mut self,
         _: Model<Thread>,
         event: &ThreadEvent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         match event {
             ThreadEvent::ShowError(error) => {
@@ -174,7 +174,7 @@ impl ActiveThread {
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, cx| {
-                        markdown.append(text, cx);
+                        markdown.append(text, window, cx);
                     });
                 }
             }
@@ -185,7 +185,7 @@ impl ActiveThread {
                     .message(*message_id)
                     .map(|message| message.text.clone())
                 {
-                    self.push_message(message_id, message_text, cx);
+                    self.push_message(message_id, message_text, window, cx);
                 }
 
                 cx.notify();
@@ -219,7 +219,7 @@ impl ActiveThread {
         }
     }
 
-    fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_message(&self, ix: usize, window: &mut Window, cx: &mut ModelContext<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
@@ -270,7 +270,7 @@ impl ActiveThread {
                                     ),
                             ),
                     )
-                    .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
+                    .child(div().p_2p5().text_ui(window, cx).child(markdown.clone()))
                     .when_some(context, |parent, context| {
                         if !context.is_empty() {
                             parent.child(
@@ -291,7 +291,7 @@ impl ActiveThread {
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         list(self.list_state.clone()).flex_1().py_1()
     }
 }

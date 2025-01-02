@@ -1,5 +1,5 @@
 use crate::ProjectDiagnosticsEditor;
-use gpui::{EventEmitter, ParentElement, Render, View, ViewContext, WeakView};
+use gpui::{Window, ModelContext, Model, EventEmitter, ParentElement, Render,   WeakView};
 use ui::prelude::*;
 use ui::{IconButton, IconButtonShape, IconName, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
@@ -9,7 +9,7 @@ pub struct ToolbarControls {
 }
 
 impl Render for ToolbarControls {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let mut include_warnings = false;
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
@@ -47,11 +47,11 @@ impl Render for ToolbarControls {
                         .icon_color(Color::Info)
                         .shape(IconButtonShape::Square)
                         .disabled(is_updating)
-                        .tooltip(move |cx| Tooltip::text("Update excerpts", cx))
-                        .on_click(cx.listener(|this, _, cx| {
+                        .tooltip(move |window, cx| Tooltip::text("Update excerpts", window, cx))
+                        .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(diagnostics) = this.diagnostics() {
                                 diagnostics.update(cx, |diagnostics, cx| {
-                                    diagnostics.update_all_excerpts(cx);
+                                    diagnostics.update_all_excerpts(window, cx);
                                 });
                             }
                         })),
@@ -61,11 +61,11 @@ impl Render for ToolbarControls {
                 IconButton::new("toggle-warnings", IconName::Warning)
                     .icon_color(warning_color)
                     .shape(IconButtonShape::Square)
-                    .tooltip(move |cx| Tooltip::text(tooltip, cx))
-                    .on_click(cx.listener(|this, _, cx| {
+                    .tooltip(move |window, cx| Tooltip::text(tooltip, window, cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(editor) = this.diagnostics() {
                             editor.update(cx, |editor, cx| {
-                                editor.toggle_warnings(&Default::default(), cx);
+                                editor.toggle_warnings(&Default::default(), window, cx);
                             });
                         }
                     })),
@@ -79,7 +79,7 @@ impl ToolbarItemView for ToolbarControls {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        _: &mut ViewContext<Self>,
+        _window: &mut Window, _: &mut ModelContext<Self>,
     ) -> ToolbarItemLocation {
         if let Some(pane_item) = active_pane_item.as_ref() {
             if let Some(editor) = pane_item.downcast::<ProjectDiagnosticsEditor>() {
@@ -105,7 +105,7 @@ impl ToolbarControls {
         ToolbarControls { editor: None }
     }
 
-    fn diagnostics(&self) -> Option<View<ProjectDiagnosticsEditor>> {
+    fn diagnostics(&self) -> Option<Model<ProjectDiagnosticsEditor>> {
         self.editor.as_ref()?.upgrade()
     }
 }

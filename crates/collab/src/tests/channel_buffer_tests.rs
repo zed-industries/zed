@@ -9,7 +9,7 @@ use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
-use gpui::{BackgroundExecutor, Model, TestAppContext, ViewContext};
+use gpui::{Window, ModelContext, BackgroundExecutor, Model, TestAppContext, };
 use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
 use std::ops::Range;
@@ -161,23 +161,23 @@ async fn test_channel_notes_participant_indices(
 
     // Clients A, B, and C open the channel notes
     let channel_view_a = cx_a
-        .update(|cx| ChannelView::open(channel_id, None, workspace_a.clone(), cx))
+        .update(|cx| ChannelView::open(channel_id, None, workspace_a.clone(), window, cx))
         .await
         .unwrap();
     let channel_view_b = cx_b
-        .update(|cx| ChannelView::open(channel_id, None, workspace_b.clone(), cx))
+        .update(|cx| ChannelView::open(channel_id, None, workspace_b.clone(), window, cx))
         .await
         .unwrap();
     let channel_view_c = cx_c
-        .update(|cx| ChannelView::open(channel_id, None, workspace_c.clone(), cx))
+        .update(|cx| ChannelView::open(channel_id, None, workspace_c.clone(), window, cx))
         .await
         .unwrap();
 
     // Clients A, B, and C all insert and select some text
     channel_view_a.update(cx_a, |notes, cx| {
         notes.editor.update(cx, |editor, cx| {
-            editor.insert("a", cx);
-            editor.change_selections(None, cx, |selections| {
+            editor.insert("a", window, cx);
+            editor.change_selections(None, window, cx, |selections| {
                 selections.select_ranges(vec![0..1]);
             });
         });
@@ -185,9 +185,9 @@ async fn test_channel_notes_participant_indices(
     executor.run_until_parked();
     channel_view_b.update(cx_b, |notes, cx| {
         notes.editor.update(cx, |editor, cx| {
-            editor.move_down(&Default::default(), cx);
-            editor.insert("b", cx);
-            editor.change_selections(None, cx, |selections| {
+            editor.move_down(&Default::default(), window, cx);
+            editor.insert("b", window, cx);
+            editor.change_selections(None, window, cx, |selections| {
                 selections.select_ranges(vec![1..2]);
             });
         });
@@ -195,9 +195,9 @@ async fn test_channel_notes_participant_indices(
     executor.run_until_parked();
     channel_view_c.update(cx_c, |notes, cx| {
         notes.editor.update(cx, |editor, cx| {
-            editor.move_down(&Default::default(), cx);
-            editor.insert("c", cx);
-            editor.change_selections(None, cx, |selections| {
+            editor.move_down(&Default::default(), window, cx);
+            editor.insert("c", window, cx);
+            editor.change_selections(None, window, cx, |selections| {
                 selections.select_ranges(vec![2..3]);
             });
         });
@@ -208,7 +208,7 @@ async fn test_channel_notes_participant_indices(
     executor.run_until_parked();
     channel_view_a.update(cx_a, |notes, cx| {
         notes.editor.update(cx, |editor, cx| {
-            assert_remote_selections(editor, &[(None, 1..2), (None, 2..3)], cx);
+            assert_remote_selections(editor, &[(None, 1..2), (None, 2..3)], window, cx);
         });
     });
 
@@ -227,7 +227,7 @@ async fn test_channel_notes_participant_indices(
             assert_remote_selections(
                 editor,
                 &[(Some(ParticipantIndex(1)), 1..2), (None, 2..3)],
-                cx,
+                window, cx,
             );
         });
     });
@@ -236,7 +236,7 @@ async fn test_channel_notes_participant_indices(
             assert_remote_selections(
                 editor,
                 &[(Some(ParticipantIndex(0)), 0..1), (None, 2..3)],
-                cx,
+                window, cx,
             );
         });
     });
@@ -253,7 +253,7 @@ async fn test_channel_notes_participant_indices(
     executor.start_waiting();
     let editor_a = workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace.open_path((worktree_id_a, "file.txt"), None, true, cx)
+            workspace.open_path((worktree_id_a, "file.txt"), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -262,7 +262,7 @@ async fn test_channel_notes_participant_indices(
     executor.start_waiting();
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id_a, "file.txt"), None, true, cx)
+            workspace.open_path((worktree_id_a, "file.txt"), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -270,12 +270,12 @@ async fn test_channel_notes_participant_indices(
         .unwrap();
 
     editor_a.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |selections| {
+        editor.change_selections(None, window, cx, |selections| {
             selections.select_ranges(vec![0..1]);
         });
     });
     editor_b.update(cx_b, |editor, cx| {
-        editor.change_selections(None, cx, |selections| {
+        editor.change_selections(None, window, cx, |selections| {
             selections.select_ranges(vec![2..3]);
         });
     });
@@ -283,10 +283,10 @@ async fn test_channel_notes_participant_indices(
 
     // Clients A and B see each other with the same colors as in the channel notes.
     editor_a.update(cx_a, |editor, cx| {
-        assert_remote_selections(editor, &[(Some(ParticipantIndex(1)), 2..3)], cx);
+        assert_remote_selections(editor, &[(Some(ParticipantIndex(1)), 2..3)], window, cx);
     });
     editor_b.update(cx_b, |editor, cx| {
-        assert_remote_selections(editor, &[(Some(ParticipantIndex(0)), 0..1)], cx);
+        assert_remote_selections(editor, &[(Some(ParticipantIndex(0)), 0..1)], window, cx);
     });
 }
 
@@ -294,9 +294,9 @@ async fn test_channel_notes_participant_indices(
 fn assert_remote_selections(
     editor: &mut Editor,
     expected_selections: &[(Option<ParticipantIndex>, Range<usize>)],
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window, cx: &mut ModelContext<Editor>,
 ) {
-    let snapshot = editor.snapshot(cx);
+    let snapshot = editor.snapshot(window, cx);
     let range = Anchor::min()..Anchor::max();
     let remote_selections = snapshot
         .remote_selections_in_range(&range, editor.collaboration_hub().unwrap(), cx)
@@ -643,7 +643,7 @@ async fn test_channel_buffer_changes(
     // Closing the buffer should re-enable change tracking
     cx_b.update(|cx| {
         workspace_b.update(cx, |workspace, cx| {
-            workspace.close_all_items_and_panes(&Default::default(), cx)
+            workspace.close_all_items_and_panes(&Default::default(), window, cx)
         });
     });
     deterministic.run_until_parked();

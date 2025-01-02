@@ -1,7 +1,7 @@
 use futures::FutureExt;
-use gpui::{
+use gpui::{Window, AppContext, 
     AnyElement, AnyView, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText,
-    IntoElement, SharedString, StrikethroughStyle, StyledText, UnderlineStyle, WindowContext,
+    IntoElement, SharedString, StrikethroughStyle, StyledText, UnderlineStyle, 
 };
 use language::{HighlightId, Language, LanguageRegistry};
 use std::{ops::Range, sync::Arc};
@@ -40,7 +40,7 @@ pub struct RichText {
 
     pub custom_ranges: Vec<Range<usize>>,
     custom_ranges_tooltip_fn:
-        Option<Arc<dyn Fn(usize, Range<usize>, &mut WindowContext) -> Option<AnyView>>>,
+        Option<Arc<dyn Fn(usize, Range<usize>, &mut Window, &mut AppContext) -> Option<AnyView>>>,
 }
 
 /// Allows one to specify extra links to the rendered markdown, which can be used
@@ -85,19 +85,19 @@ impl RichText {
 
     pub fn set_tooltip_builder_for_custom_ranges(
         &mut self,
-        f: impl Fn(usize, Range<usize>, &mut WindowContext) -> Option<AnyView> + 'static,
+        f: impl Fn(usize, Range<usize>, &mut Window, &mut AppContext) -> Option<AnyView> + 'static,
     ) {
         self.custom_ranges_tooltip_fn = Some(Arc::new(f));
     }
 
-    pub fn element(&self, id: ElementId, cx: &mut WindowContext) -> AnyElement {
+    pub fn element(&self, id: ElementId, window: &mut Window, cx: &mut AppContext) -> AnyElement {
         let theme = cx.theme();
         let code_background = theme.colors().surface_background;
 
         InteractiveText::new(
             id,
             StyledText::new(self.text.clone()).with_highlights(
-                &cx.text_style(),
+                &window.text_style(),
                 self.highlights.iter().map(|(range, highlight)| {
                     (
                         range.clone(),
@@ -158,7 +158,7 @@ impl RichText {
             move |idx, cx| {
                 for (ix, range) in link_ranges.iter().enumerate() {
                     if range.contains(&idx) {
-                        return Some(LinkPreview::new(&link_urls[ix], cx));
+                        return Some(LinkPreview::new(&link_urls[ix], window, cx));
                     }
                 }
                 for range in &custom_tooltip_ranges {

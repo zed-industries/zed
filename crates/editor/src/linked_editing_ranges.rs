@@ -42,14 +42,14 @@ const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 // TODO do not refresh anything at all, if the settings/capabilities do not have it enabled.
 pub(super) fn refresh_linked_ranges(
     editor: &mut Editor,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window, cx: &mut ModelContext<Editor>,
 ) -> Option<()> {
     if editor.pending_rename.is_some() {
         return None;
     }
     let project = editor.project.as_ref()?.downgrade();
 
-    editor.linked_editing_range_task = Some(cx.spawn(|editor, mut cx| async move {
+    editor.linked_editing_range_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
         cx.background_executor().timer(UPDATE_DEBOUNCE).await;
 
         let mut applicable_selections = Vec::new();

@@ -2,8 +2,8 @@
 
 use crate::prelude::*;
 use crate::v_flex;
-use gpui::{
-    div, AnyElement, Element, IntoElement, ParentElement, Pixels, RenderOnce, Styled, WindowContext,
+use gpui::{Window, AppContext, 
+    div, AnyElement, Element, IntoElement, ParentElement, Pixels, RenderOnce, Styled, 
 };
 use smallvec::SmallVec;
 
@@ -44,20 +44,20 @@ pub struct Popover {
 }
 
 impl RenderOnce for Popover {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         div()
             .flex()
             .gap_1()
             .child(
                 v_flex()
-                    .elevation_2(cx)
+                    .elevation_2(window, cx)
                     .py(POPOVER_Y_PADDING / 2.)
                     .children(self.children),
             )
             .when_some(self.aside, |this, aside| {
                 this.child(
                     v_flex()
-                        .elevation_2(cx)
+                        .elevation_2(window, cx)
                         .bg(cx.theme().colors().surface_background)
                         .px_1()
                         .child(aside),

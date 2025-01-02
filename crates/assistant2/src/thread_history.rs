@@ -19,7 +19,7 @@ impl ThreadHistory {
     pub(crate) fn new(
         assistant_panel: WeakView<AssistantPanel>,
         thread_store: Model<ThreadStore>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
@@ -37,7 +37,7 @@ impl FocusableView for ThreadHistory {
 }
 
 impl Render for ThreadHistory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
 
         v_flex()
@@ -62,7 +62,7 @@ impl Render for ThreadHistory {
                             cx.view().clone(),
                             "thread-history",
                             threads.len(),
-                            move |history, range, _cx| {
+                            move |history, range, _window, _cx| {
                                 threads[range]
                                     .iter()
                                     .map(|thread| {
@@ -98,7 +98,7 @@ impl PastThread {
 }
 
 impl RenderOnce for PastThread {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let (id, summary) = {
             const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
             let thread = self.thread.read(cx);
@@ -139,14 +139,14 @@ impl RenderOnce for PastThread {
                         IconButton::new("delete", IconName::TrashAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
-                            .tooltip(|cx| Tooltip::text("Delete Thread", cx))
+                            .tooltip(|window, cx| Tooltip::text("Delete Thread", window, cx))
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
                                 let id = id.clone();
                                 move |_event, cx| {
                                     assistant_panel
                                         .update(cx, |this, cx| {
-                                            this.delete_thread(&id, cx);
+                                            this.delete_thread(&id, window, cx);
                                         })
                                         .ok();
                                 }
@@ -159,7 +159,7 @@ impl RenderOnce for PastThread {
                 move |_event, cx| {
                     assistant_panel
                         .update(cx, |this, cx| {
-                            this.open_thread(&id, cx);
+                            this.open_thread(&id, window, cx);
                         })
                         .ok();
                 }

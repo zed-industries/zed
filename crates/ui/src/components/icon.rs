@@ -40,7 +40,7 @@ impl From<AnimationElement<Icon>> for AnyIcon {
 }
 
 impl RenderOnce for AnyIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         match self {
             Self::Icon(icon) => icon.into_any_element(),
             Self::AnimatedIcon(animated_icon) => animated_icon.into_any_element(),
@@ -76,8 +76,8 @@ impl IconSize {
     /// The returned tuple contains:
     ///   1. The length of one side of the square
     ///   2. The padding of one side of the square
-    pub fn square_components(&self, cx: &mut WindowContext) -> (Pixels, Pixels) {
-        let icon_size = self.rems() * cx.rem_size();
+    pub fn square_components(&self, window: &mut Window, cx: &mut AppContext) -> (Pixels, Pixels) {
+        let icon_size = self.rems() * window.rem_size();
         let padding = match self {
             IconSize::Indicator => DynamicSpacing::Base00.px(cx),
             IconSize::XSmall => DynamicSpacing::Base02.px(cx),
@@ -89,8 +89,8 @@ impl IconSize {
     }
 
     /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
-    pub fn square(&self, cx: &mut WindowContext) -> Pixels {
-        let (icon_size, padding) = self.square_components(cx);
+    pub fn square(&self, window: &mut Window, cx: &mut AppContext) -> Pixels {
+        let (icon_size, padding) = self.square_components(window, cx);
 
         icon_size + padding * 2.
     }
@@ -367,13 +367,13 @@ impl Icon {
 }
 
 impl RenderOnce for Icon {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         svg()
             .with_transformation(self.transformation)
             .size(self.size)
             .flex_none()
             .path(self.path)
-            .text_color(self.color.color(cx))
+            .text_color(self.color.color(window, cx))
     }
 }
 
@@ -436,7 +436,7 @@ pub struct IconDecoration {
 
 impl IconDecoration {
     /// Create a new icon decoration
-    pub fn new(kind: IconDecorationKind, knockout_color: Hsla, cx: &WindowContext) -> Self {
+    pub fn new(kind: IconDecorationKind, knockout_color: Hsla, window: &mut Window, cx: &mut AppContext) -> Self {
         let color = cx.theme().colors().icon;
         let position = Point::default();
 
@@ -491,7 +491,7 @@ impl IconDecoration {
 }
 
 impl RenderOnce for IconDecoration {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         div()
             .size(px(ICON_DECORATION_SIZE))
             .flex_none()
@@ -530,7 +530,7 @@ impl RenderOnce for IconDecoration {
 }
 
 impl ComponentPreview for IconDecoration {
-    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(window: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
 
         let examples = all_kinds
@@ -540,7 +540,7 @@ impl ComponentPreview for IconDecoration {
 
                 single_example(
                     name,
-                    IconDecoration::new(*kind, cx.theme().colors().surface_background, cx),
+                    IconDecoration::new(*kind, cx.theme().colors().surface_background, window, cx),
                 )
             })
             .collect();
@@ -562,7 +562,7 @@ impl DecoratedIcon {
 }
 
 impl RenderOnce for DecoratedIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         div()
             .relative()
             .size(self.icon.size)
@@ -572,7 +572,7 @@ impl RenderOnce for DecoratedIcon {
 }
 
 impl ComponentPreview for DecoratedIcon {
-    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(window: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let icon_1 = Icon::new(IconName::FileDoc);
         let icon_2 = Icon::new(IconName::FileDoc);
         let icon_3 = Icon::new(IconName::FileDoc);
@@ -581,7 +581,7 @@ impl ComponentPreview for DecoratedIcon {
         let decoration_x = IconDecoration::new(
             IconDecorationKind::X,
             cx.theme().colors().surface_background,
-            cx,
+            window, cx,
         )
         .color(cx.theme().status().error)
         .position(Point {
@@ -592,7 +592,7 @@ impl ComponentPreview for DecoratedIcon {
         let decoration_triangle = IconDecoration::new(
             IconDecorationKind::Triangle,
             cx.theme().colors().surface_background,
-            cx,
+            window, cx,
         )
         .color(cx.theme().status().error)
         .position(Point {
@@ -603,7 +603,7 @@ impl ComponentPreview for DecoratedIcon {
         let decoration_dot = IconDecoration::new(
             IconDecorationKind::Dot,
             cx.theme().colors().surface_background,
-            cx,
+            window, cx,
         )
         .color(cx.theme().status().error)
         .position(Point {
@@ -666,7 +666,7 @@ impl IconWithIndicator {
 }
 
 impl RenderOnce for IconWithIndicator {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let indicator_border_color = self
             .indicator_border_color
             .unwrap_or_else(|| cx.theme().colors().elevated_surface_background);
@@ -691,7 +691,7 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl ComponentPreview for Icon {
-    fn examples(_cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
+    fn examples(_window: &mut Window, _cx: &mut AppContext) -> Vec<ComponentExampleGroup<Icon>> {
         let arrow_icons = vec![
             IconName::ArrowDown,
             IconName::ArrowLeft,

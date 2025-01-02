@@ -32,15 +32,15 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         target: SurroundsType,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(cx);
+        self.stop_recording(window, cx);
         let count = Vim::take_count(cx);
         let mode = self.mode;
-        self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(cx);
-            editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window, cx);
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, window, cx);
 
                 let pair = match find_surround_pair(&all_support_surround_pair(), &text) {
                     Some(pair) => pair.clone(),
@@ -119,9 +119,9 @@ impl Vim {
                     }
                 }
 
-                editor.edit(edits, cx);
-                editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.edit(edits, window, cx);
+                editor.set_clip_at_line_ends(true, window, cx);
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     if mode == Mode::VisualBlock {
                         s.select_anchor_ranges(anchors.into_iter().take(1))
                     } else {
@@ -130,11 +130,11 @@ impl Vim {
                 });
             });
         });
-        self.switch_mode(Mode::Normal, false, cx);
+        self.switch_mode(Mode::Normal, false, window, cx);
     }
 
-    pub fn delete_surrounds(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {
-        self.stop_recording(cx);
+    pub fn delete_surrounds(&mut self, text: Arc<str>, window: &mut Window, cx: &mut ModelContext<Self>) {
+        self.stop_recording(window, cx);
 
         // only legitimate surrounds can be removed
         let pair = match find_surround_pair(&all_support_surround_pair(), &text) {
@@ -147,9 +147,9 @@ impl Vim {
         };
         let surround = pair.end != *text;
 
-        self.update_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, window, cx);
 
                 let (display_map, display_selections) = editor.selections.all_display(cx);
                 let mut edits = Vec::new();
@@ -214,22 +214,22 @@ impl Vim {
                     }
                 }
 
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.select_ranges(anchors);
                 });
                 edits.sort_by_key(|(range, _)| range.start);
-                editor.edit(edits, cx);
-                editor.set_clip_at_line_ends(true, cx);
+                editor.edit(edits, window, cx);
+                editor.set_clip_at_line_ends(true, window, cx);
             });
         });
     }
 
-    pub fn change_surrounds(&mut self, text: Arc<str>, target: Object, cx: &mut ViewContext<Self>) {
+    pub fn change_surrounds(&mut self, text: Arc<str>, target: Object, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(will_replace_pair) = object_to_bracket_pair(target) {
-            self.stop_recording(cx);
-            self.update_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| {
-                    editor.set_clip_at_line_ends(false, cx);
+            self.stop_recording(window, cx);
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.transact(window, cx, |editor, window, cx| {
+                    editor.set_clip_at_line_ends(false, window, cx);
 
                     let pair = match find_surround_pair(&all_support_surround_pair(), &text) {
                         Some(pair) => pair.clone(),
@@ -316,9 +316,9 @@ impl Vim {
                         })
                         .collect::<Vec<_>>();
                     edits.sort_by_key(|(range, _)| range.start);
-                    editor.edit(edits, cx);
-                    editor.set_clip_at_line_ends(true, cx);
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    editor.edit(edits, window, cx);
+                    editor.set_clip_at_line_ends(true, window, cx);
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         s.select_anchor_ranges(stable_anchors);
                     });
                 });
@@ -336,13 +336,13 @@ impl Vim {
     pub fn check_and_move_to_valid_bracket_pair(
         &mut self,
         object: Object,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> bool {
         let mut valid = false;
         if let Some(pair) = object_to_bracket_pair(object) {
-            self.update_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| {
-                    editor.set_clip_at_line_ends(false, cx);
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.transact(window, cx, |editor, window, cx| {
+                    editor.set_clip_at_line_ends(false, window, cx);
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut anchors = Vec::new();
 
@@ -375,10 +375,10 @@ impl Vim {
                             anchors.push(start..start)
                         }
                     }
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         s.select_ranges(anchors);
                     });
-                    editor.set_clip_at_line_ends(true, cx);
+                    editor.set_clip_at_line_ends(true, window, cx);
                 });
             });
         }

@@ -53,7 +53,7 @@ const NAMESPACE: &str = "assistant2";
 /// Initializes the `assistant2` crate.
 pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mut AppContext) {
     AssistantSettings::register(cx);
-    assistant_panel::init(cx);
+    assistant_panel::init(window, cx);
 
     let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {
         fs: fs.clone(),

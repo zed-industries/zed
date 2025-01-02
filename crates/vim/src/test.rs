@@ -53,9 +53,9 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     // Selections aren't changed if editor is blurred but vim-mode is still disabled.
     cx.cx.set_state("«hjklˇ»");
     cx.assert_editor_state("«hjklˇ»");
-    cx.update_editor(|_, cx| cx.blur());
+    cx.update_editor(|_, window, cx| window.blur());
     cx.assert_editor_state("«hjklˇ»");
-    cx.update_editor(|_, cx| cx.focus_self());
+    cx.update_editor(|_, window, cx| cx.focus_self(window));
     cx.assert_editor_state("«hjklˇ»");
 
     // Enabling dynamically sets vim mode again and restores normal mode
@@ -111,7 +111,7 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
     );
     cx.simulate_keystrokes("/");
 
-    let search_bar = cx.workspace(|workspace, cx| {
+    let search_bar = cx.workspace(|workspace, window, cx| {
         workspace
             .active_pane()
             .read(cx)
@@ -121,7 +121,7 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
             .expect("Buffer search bar should be deployed")
     });
 
-    cx.update_view(search_bar, |bar, cx| {
+    cx.update_view(search_bar, |bar, window, cx| {
         assert_eq!(bar.query(cx), "");
     })
 }
@@ -248,7 +248,7 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
     cx.set_state(indoc! {"aa\nbˇb\ncc\ncc\ncc\n"}, Mode::Normal);
     cx.simulate_keystrokes("/ c c");
 
-    let search_bar = cx.workspace(|workspace, cx| {
+    let search_bar = cx.workspace(|workspace, window, cx| {
         workspace
             .active_pane()
             .read(cx)
@@ -258,12 +258,12 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
             .expect("Buffer search bar should be deployed")
     });
 
-    cx.update_view(search_bar, |bar, cx| {
+    cx.update_view(search_bar, |bar, window, cx| {
         assert_eq!(bar.query(cx), "cc");
     });
 
-    cx.update_editor(|editor, cx| {
-        let highlights = editor.all_text_background_highlights(cx);
+    cx.update_editor(|editor, window, cx| {
+        let highlights = editor.all_text_background_highlights(window, cx);
         assert_eq!(3, highlights.len());
         assert_eq!(
             DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 2),

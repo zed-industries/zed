@@ -40,7 +40,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |window, cx| window.new_view(cx, |_window, _cx| GifViewer::new(gif_path)),
+            |window, window, cx| window.new_view(cx, |_window, _cx| GifViewer::new(gif_path)),
         )
         .unwrap();
         cx.activate(true);

@@ -24,7 +24,7 @@ pub enum DividerColor {
 }
 
 impl DividerColor {
-    pub fn hsla(self, cx: &WindowContext) -> Hsla {
+    pub fn hsla(self, window: &mut Window, cx: &mut AppContext) -> Hsla {
         match self {
             DividerColor::Border => cx.theme().colors().border,
             DividerColor::BorderVariant => cx.theme().colors().border_variant,
@@ -41,10 +41,10 @@ pub struct Divider {
 }
 
 impl RenderOnce for Divider {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         match self.style {
-            DividerStyle::Solid => self.render_solid(cx).into_any_element(),
-            DividerStyle::Dashed => self.render_dashed(cx).into_any_element(),
+            DividerStyle::Solid => self.render_solid(window, cx).into_any_element(),
+            DividerStyle::Dashed => self.render_dashed(window, cx).into_any_element(),
         }
     }
 }
@@ -96,7 +96,7 @@ impl Divider {
         self
     }
 
-    pub fn render_solid(self, cx: &WindowContext) -> impl IntoElement {
+    pub fn render_solid(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         div()
             .map(|this| match self.direction {
                 DividerDirection::Horizontal => {
@@ -106,12 +106,12 @@ impl Divider {
                     this.w_px().h_full().when(self.inset, |this| this.my_1p5())
                 }
             })
-            .bg(self.color.hsla(cx))
+            .bg(self.color.hsla(window, cx))
     }
 
     // TODO: Use canvas or a shader here
     // This obviously is a short term approach
-    pub fn render_dashed(self, cx: &WindowContext) -> impl IntoElement {
+    pub fn render_dashed(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let segment_count = 128;
         let segment_count_f = segment_count as f32;
         let segment_min_w = 6.;
@@ -123,7 +123,7 @@ impl Divider {
             DividerDirection::Horizontal => (px(segment_min_w), px(1.)),
             DividerDirection::Vertical => (px(1.), px(segment_min_w)),
         };
-        let color = self.color.hsla(cx);
+        let color = self.color.hsla(window, cx);
         let total_min_w = segment_min_w * segment_count_f * 2.; // * 2 because of the gap
 
         base.min_w(px(total_min_w))

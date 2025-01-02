@@ -237,13 +237,13 @@ impl NeovimBackedTestContext {
         self.neovim.set_option(&format!("scrolloff={}", 3)).await;
         // +2 to account for the vim command UI at the bottom.
         self.neovim.set_option(&format!("lines={}", rows + 2)).await;
-        let (line_height, visible_line_count) = self.editor(|editor, cx| {
+        let (line_height, visible_line_count) = self.editor(|editor, window, cx| {
             (
                 editor
                     .style()
                     .unwrap()
                     .text
-                    .line_height_in_pixels(cx.rem_size()),
+                    .line_height_in_pixels(window.rem_size()),
                 editor.visible_line_count().unwrap(),
             )
         });
@@ -251,7 +251,7 @@ impl NeovimBackedTestContext {
         let window = self.window;
         let margin = self
             .update_window(window, |_, cx| {
-                cx.viewport_size().height - line_height * visible_line_count
+                window.viewport_size().height - line_height * visible_line_count
             })
             .unwrap();
 

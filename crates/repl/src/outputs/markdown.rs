@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{div, prelude::*, ClipboardItem, Model, Task, ViewContext, WindowContext};
+use gpui::{Window, ModelContext, AppContext, div, prelude::*, ClipboardItem, Model, Task,  };
 use language::Buffer;
 use markdown_preview::{
     markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
@@ -16,8 +16,8 @@ pub struct MarkdownView {
 }
 
 impl MarkdownView {
-    pub fn from(text: String, cx: &mut ViewContext<Self>) -> Self {
-        let task = cx.spawn(|markdown_view, mut cx| {
+    pub fn from(text: String, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+        let task = cx.spawn_in(window, |markdown_view, mut cx| {
             let text = text.clone();
             let parsed = cx
                 .background_executor()
@@ -43,19 +43,19 @@ impl MarkdownView {
 }
 
 impl OutputContent for MarkdownView {
-    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_string(self.raw_text.clone()))
     }
 
-    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+    fn has_clipboard_content(&self, _window: &mut Window, _cx: &mut AppContext) -> bool {
         true
     }
 
-    fn has_buffer_content(&self, _cx: &WindowContext) -> bool {
+    fn has_buffer_content(&self, _window: &mut Window, _cx: &mut AppContext) -> bool {
         true
     }
 
-    fn buffer_content(&mut self, cx: &mut WindowContext) -> Option<Model<Buffer>> {
+    fn buffer_content(&mut self, window: &mut Window, cx: &mut AppContext) -> Option<Model<Buffer>> {
         let buffer = cx.new_model(|cx| {
             // TODO: Bring in the language registry so we can set the language to markdown
             let mut buffer = Buffer::local(self.raw_text.clone(), cx)
@@ -68,13 +68,13 @@ impl OutputContent for MarkdownView {
 }
 
 impl Render for MarkdownView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let Some(parsed) = self.contents.as_ref() else {
             return div().into_any_element();
         };
 
         let mut markdown_render_context =
-            markdown_preview::markdown_renderer::RenderContext::new(None, cx);
+            markdown_preview::markdown_renderer::RenderContext::new(None, window, cx);
 
         v_flex()
             .gap_3()

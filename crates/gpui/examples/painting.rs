@@ -103,7 +103,7 @@ impl Render for PaintingViewer {
                             .flex()
                             .px_3()
                             .py_1()
-                            .on_click(cx.listener(|this, _, window, cx| {
+                            .on_click(cx.listener(|this, _, window, window, cx| {
                                 this.clear(window, cx);
                             })),
                     ),
@@ -113,8 +113,8 @@ impl Render for PaintingViewer {
                     .size_full()
                     .child(
                         canvas(
-                            move |_, _, _| {},
-                            move |_, _, window, cx| {
+                            move |_, _, _, _| {},
+                            move |_, _, window, window, cx| {
                                 const STROKE_WIDTH: Pixels = px(2.0);
                                 for path in default_lines {
                                     window.paint_path(path, gpui::black());
@@ -143,14 +143,14 @@ impl Render for PaintingViewer {
                     )
                     .on_mouse_down(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, ev: &MouseDownEvent, _, _| {
+                        cx.listener(|this, ev: &MouseDownEvent, _, _, _| {
                             this._painting = true;
                             this.start = ev.position;
                             let path = vec![ev.position];
                             this.lines.push(path);
                         }),
                     )
-                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, window, cx| {
+                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, window, window, cx| {
                         if !this._painting {
                             return;
                         }
@@ -176,7 +176,7 @@ impl Render for PaintingViewer {
                     }))
                     .on_mouse_up(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, _| {
+                        cx.listener(|this, _, _, _, _| {
                             this._painting = false;
                         }),
                     ),
@@ -191,7 +191,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |window, cx| window.new_view(cx, |_, _| PaintingViewer::new()),
+            |window, window, cx| window.new_view(cx, |_, _| PaintingViewer::new()),
         )
         .unwrap();
         cx.activate(true);

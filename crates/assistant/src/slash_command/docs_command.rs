@@ -165,7 +165,7 @@ impl SlashCommand for DocsSlashCommand {
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         self.ensure_rust_doc_providers_are_registered(workspace, cx);
 
@@ -274,7 +274,7 @@ impl SlashCommand for DocsSlashCommand {
         _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         if arguments.is_empty() {
             return Task::ready(Err(anyhow!("missing an argument")));

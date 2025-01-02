@@ -241,7 +241,7 @@ pub fn init(
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
     assistant_tool::init(cx);
-    assistant_panel::init(cx);
+    assistant_panel::init(window, cx);
     context_server::init(cx);
 
     let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {

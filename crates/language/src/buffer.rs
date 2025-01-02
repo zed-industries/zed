@@ -24,9 +24,9 @@ pub use clock::ReplicaId;
 use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
-use gpui::{
+use gpui::{Window, 
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
-    Pixels, Task, TaskLabel, WindowContext,
+    Pixels, Task, TaskLabel, 
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;

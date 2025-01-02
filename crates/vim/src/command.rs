@@ -13,7 +13,7 @@ use editor::{
     display_map::ToDisplayPoint,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_actions, Action, AppContext, Global, ViewContext, WindowContext};
+use gpui::{Window, ModelContext, actions, impl_actions, Action, AppContext, Global,  };
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -93,18 +93,18 @@ impl Deref for WrappedAction {
     }
 }
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    Vim::action(editor, cx, |vim, _: &VisualCommand, cx| {
-        let Some(workspace) = vim.workspace(cx) else {
+pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, window, cx, |vim, _: &VisualCommand, window, cx| {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>", cx);
+            command_palette::CommandPalette::toggle(workspace, "'<,'>", window, cx);
         })
     });
 
-    Vim::action(editor, cx, |vim, _: &CountCommand, cx| {
-        let Some(workspace) = vim.workspace(cx) else {
+    Vim::action(editor, window, cx, |vim, _: &CountCommand, window, cx| {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -112,36 +112,36 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             command_palette::CommandPalette::toggle(
                 workspace,
                 &format!(".,.+{}", count.saturating_sub(1)),
-                cx,
+                window, cx,
             );
         })
     });
 
-    Vim::action(editor, cx, |vim, action: &GoToLine, cx| {
-        vim.switch_mode(Mode::Normal, false, cx);
-        let result = vim.update_editor(cx, |vim, editor, cx| {
-            action.range.head().buffer_row(vim, editor, cx)
+    Vim::action(editor, window, cx, |vim, action: &GoToLine, window, cx| {
+        vim.switch_mode(Mode::Normal, false, window, cx);
+        let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
+            action.range.head().buffer_row(vim, editor, window, cx)
         });
         let buffer_row = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(cx) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, cx);
+                    e.notify_err(workspace, window, cx);
                 });
                 return;
             }
             Some(Ok(result)) => result,
         };
-        vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), cx);
+        vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), window, cx);
     });
 
-    Vim::action(editor, cx, |vim, action: &YankCommand, cx| {
-        vim.update_editor(cx, |vim, editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            if let Ok(range) = action.range.buffer_range(vim, editor, cx) {
+    Vim::action(editor, window, cx, |vim, action: &YankCommand, window, cx| {
+        vim.update_editor(window, cx, |vim, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            if let Ok(range) = action.range.buffer_range(vim, editor, window, cx) {
                 let end = if range.end < snapshot.buffer_snapshot.max_row() {
                     Point::new(range.end.0 + 1, 0)
                 } else {
@@ -152,31 +152,31 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
                     true,
                     true,
                     vec![Point::new(range.start.0, 0)..end],
-                    cx,
+                    window, cx,
                 )
             }
         });
     });
 
-    Vim::action(editor, cx, |_, action: &WithCount, cx| {
+    Vim::action(editor, window, cx, |_, action: &WithCount, window, cx| {
         for _ in 0..action.count {
-            cx.dispatch_action(action.action.boxed_clone())
+            window.dispatch_action(action.action.boxed_clone(), cx)
         }
     });
 
-    Vim::action(editor, cx, |vim, action: &WithRange, cx| {
-        let result = vim.update_editor(cx, |vim, editor, cx| {
-            action.range.buffer_range(vim, editor, cx)
+    Vim::action(editor, window, cx, |vim, action: &WithRange, window, cx| {
+        let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
+            action.range.buffer_range(vim, editor, window, cx)
         });
 
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(cx) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, cx);
+                    e.notify_err(workspace, window, cx);
                 });
                 return;
             }
@@ -184,21 +184,21 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         };
 
         let previous_selections = vim
-            .update_editor(cx, |_, editor, cx| {
+            .update_editor(window, cx, |_, editor, window, cx| {
                 let selections = action
                     .restore_selection
                     .then(|| editor.selections.disjoint_anchor_ranges());
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     let end = Point::new(range.end.0, s.buffer().line_len(range.end));
                     s.select_ranges([end..Point::new(range.start.0, 0)]);
                 });
                 selections
             })
             .flatten();
-        cx.dispatch_action(action.action.boxed_clone());
-        cx.defer(move |vim, cx| {
-            vim.update_editor(cx, |_, editor, cx| {
-                editor.change_selections(None, cx, |s| {
+        window.dispatch_action(action.action.boxed_clone(), cx);
+        cx.defer_in(window, move |vim, window, cx| {
+            vim.update_editor(window, cx, |_, editor, window, cx| {
+                editor.change_selections(None, window, cx, |s| {
                     if let Some(previous_selections) = previous_selections {
                         s.select_ranges(previous_selections);
                     } else {
@@ -211,8 +211,8 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         });
     });
 
-    Vim::action(editor, cx, |vim, action: &OnMatchingLines, cx| {
-        action.run(vim, cx)
+    Vim::action(editor, window, cx, |vim, action: &OnMatchingLines, window, cx| {
+        action.run(vim, window, cx)
     })
 }
 
@@ -433,9 +433,9 @@ impl Position {
         &self,
         vim: &Vim,
         editor: &mut Editor,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Result<MultiBufferRow> {
-        let snapshot = editor.snapshot(cx);
+        let snapshot = editor.snapshot(window, cx);
         let target = match self {
             Position::Line { row, offset } => row.saturating_add_signed(offset.saturating_sub(1)),
             Position::Mark { name, offset } => {
@@ -479,11 +479,11 @@ impl CommandRange {
         &self,
         vim: &Vim,
         editor: &mut Editor,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Result<Range<MultiBufferRow>> {
-        let start = self.start.buffer_row(vim, editor, cx)?;
+        let start = self.start.buffer_row(vim, editor, window, cx)?;
         let end = if let Some(end) = self.end.as_ref() {
-            end.buffer_row(vim, editor, cx)?
+            end.buffer_row(vim, editor, window, cx)?
         } else {
             start
         };
@@ -933,19 +933,19 @@ impl OnMatchingLines {
         })
     }
 
-    pub fn run(&self, vim: &mut Vim, cx: &mut ViewContext<Vim>) {
-        let result = vim.update_editor(cx, |vim, editor, cx| {
-            self.range.buffer_range(vim, editor, cx)
+    pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut ModelContext<Vim>) {
+        let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
+            self.range.buffer_range(vim, editor, window, cx)
         });
 
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(cx) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, cx);
+                    e.notify_err(workspace, window, cx);
                 });
                 return;
             }
@@ -958,11 +958,11 @@ impl OnMatchingLines {
         let mut regexes = match Regex::new(&self.search) {
             Ok(regex) => vec![(regex, !self.invert)],
             e @ Err(_) => {
-                let Some(workspace) = vim.workspace(cx) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, cx);
+                    e.notify_err(workspace, window, cx);
                 });
                 return;
             }
@@ -980,16 +980,16 @@ impl OnMatchingLines {
             regexes.push((regex, !inner.invert))
         }
 
-        if let Some(pane) = vim.pane(cx) {
+        if let Some(pane) = vim.pane(window, cx) {
             pane.update(cx, |pane, cx| {
                 if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
                 {
                     search_bar.update(cx, |search_bar, cx| {
-                        if search_bar.show(cx) {
+                        if search_bar.show(window, cx) {
                             let _ = search_bar.search(
                                 &last_pattern,
                                 Some(SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE),
-                                cx,
+                                window, cx,
                             );
                         }
                     });
@@ -997,15 +997,15 @@ impl OnMatchingLines {
             });
         };
 
-        vim.update_editor(cx, |_, editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        vim.update_editor(window, cx, |_, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
             let mut row = range.start.0;
 
             let point_range = Point::new(range.start.0, 0)
                 ..snapshot
                     .buffer_snapshot
                     .clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
-            cx.spawn(|editor, mut cx| async move {
+            cx.spawn_in(window, |editor, mut cx| async move {
                 let new_selections = cx
                     .background_executor()
                     .spawn(async move {
@@ -1041,17 +1041,17 @@ impl OnMatchingLines {
                 }
                 editor
                     .update(&mut cx, |editor, cx| {
-                        editor.start_transaction_at(Instant::now(), cx);
-                        editor.change_selections(None, cx, |s| {
+                        editor.start_transaction_at(Instant::now(), window, cx);
+                        editor.change_selections(None, window, cx, |s| {
                             s.replace_cursors_with(|_| new_selections);
                         });
-                        cx.dispatch_action(action);
-                        cx.defer(move |editor, cx| {
+                        window.dispatch_action(action, cx);
+                        cx.defer_in(window, move |editor, window, cx| {
                             let newest = editor.selections.newest::<Point>(cx).clone();
-                            editor.change_selections(None, cx, |s| {
+                            editor.change_selections(None, window, cx, |s| {
                                 s.select(vec![newest]);
                             });
-                            editor.end_transaction_at(Instant::now(), cx);
+                            editor.end_transaction_at(Instant::now(), window, cx);
                         })
                     })
                     .ok();
@@ -1170,7 +1170,7 @@ mod test {
     async fn test_command_write(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         let path = Path::new("/root/dir/file.rs");
-        let fs = cx.workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.workspace(|workspace, window, cx| workspace.project().read(cx).fs().clone());
 
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
@@ -1198,13 +1198,13 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.simulate_keystrokes(": n e w enter");
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.simulate_keystrokes(": q enter");
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 1));
         cx.simulate_keystrokes(": n e w enter");
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.simulate_keystrokes(": q a enter");
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 0));
+        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 0));
     }
 
     #[gpui::test]
@@ -1266,7 +1266,7 @@ mod test {
         workspace: &mut Workspace,
         expected_path: &str,
         expected_text: &str,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window, cx: &mut ModelContext<Workspace>,
     ) {
         let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
 
@@ -1290,12 +1290,12 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         // Assert base state, that we're in /root/dir/file.rs
-        cx.workspace(|workspace, cx| {
-            assert_active_item(workspace, "/root/dir/file.rs", "", cx);
+        cx.workspace(|workspace, window, cx| {
+            assert_active_item(workspace, "/root/dir/file.rs", "", window, cx);
         });
 
         // Insert a new file
-        let fs = cx.workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.workspace(|workspace, window, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
             .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
             .await;
@@ -1310,13 +1310,13 @@ mod test {
         cx.simulate_keystrokes("g f");
 
         // We now have two items
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
-        cx.workspace(|workspace, cx| {
-            assert_active_item(workspace, "/root/dir/file2.rs", "This is file2.rs", cx);
+        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, window, cx| {
+            assert_active_item(workspace, "/root/dir/file2.rs", "This is file2.rs", window, cx);
         });
 
         // Update editor to point to `file2.rs`
-        cx.editor = cx.workspace(|workspace, cx| workspace.active_item_as::<Editor>(cx).unwrap());
+        cx.editor = cx.workspace(|workspace, window, cx| workspace.active_item_as::<Editor>(cx).unwrap());
 
         // Put the path to the third file into the currently open buffer,
         // but remove its suffix, because we want that lookup to happen automatically.
@@ -1326,9 +1326,9 @@ mod test {
         cx.simulate_keystrokes("g f");
 
         // We now have three items
-        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 3));
-        cx.workspace(|workspace, cx| {
-            assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", cx);
+        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 3));
+        cx.workspace(|workspace, window, cx| {
+            assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", window, cx);
         });
     }
 

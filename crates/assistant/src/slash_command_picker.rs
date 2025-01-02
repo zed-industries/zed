@@ -27,8 +27,8 @@ enum SlashCommandEntry {
     Info(SlashCommandInfo),
     Advert {
         name: SharedString,
-        renderer: fn(&mut WindowContext) -> AnyElement,
-        on_confirm: fn(&mut WindowContext),
+        renderer: fn(&mut Window, &mut AppContext) -> AnyElement,
+        on_confirm: fn(&mut Window, &mut AppContext),
     },
 }
 
@@ -73,18 +73,18 @@ impl PickerDelegate for SlashCommandDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.selected_index = ix.min(self.filtered_commands.len().saturating_sub(1));
         cx.notify();
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
         "Select a command...".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
         let all_commands = self.all_commands.clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let filtered_commands = cx
                 .background_executor()
                 .spawn(async move {
@@ -106,7 +106,7 @@ impl PickerDelegate for SlashCommandDelegate {
 
             this.update(&mut cx, |this, cx| {
                 this.delegate.filtered_commands = filtered_commands;
-                this.delegate.set_selected_index(0, cx);
+                this.delegate.set_selected_index(0, window, cx);
                 cx.notify();
             })
             .ok();
@@ -139,13 +139,13 @@ impl PickerDelegate for SlashCommandDelegate {
         ret
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         if let Some(command) = self.filtered_commands.get(self.selected_index) {
             match command {
                 SlashCommandEntry::Info(info) => {
                     self.active_context_editor
                         .update(cx, |context_editor, cx| {
-                            context_editor.insert_command(&info.name, cx)
+                            context_editor.insert_command(&info.name, window, cx)
                         })
                         .ok();
                 }
@@ -157,7 +157,7 @@ impl PickerDelegate for SlashCommandDelegate {
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {}
 
     fn editor_position(&self) -> PickerEditorPosition {
         PickerEditorPosition::End
@@ -167,7 +167,7 @@ impl PickerDelegate for SlashCommandDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let command_info = self.filtered_commands.get(ix)?;
 
@@ -179,7 +179,7 @@ impl PickerDelegate for SlashCommandDelegate {
                     .toggle_state(selected)
                     .tooltip({
                         let description = info.description.clone();
-                        move |cx| cx.new_view(|_| Tooltip::new(description.clone())).into()
+                        move |cx| window.new_view(cx, |_, _| Tooltip::new(description.clone())).into()
                     })
                     .child(
                         v_flex()
@@ -192,7 +192,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                 h_flex()
                                     .gap_1p5()
                                     .child(Icon::new(info.icon).size(IconSize::XSmall))
-                                    .child(div().font_buffer(cx).child({
+                                    .child(div().font_buffer(window, cx).child({
                                         let mut label = format!("{}", info.name);
                                         if let Some(args) = info.args.as_ref().filter(|_| selected)
                                         {
@@ -203,7 +203,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                     .children(info.args.clone().filter(|_| !selected).map(
                                         |args| {
                                             div()
-                                                .font_buffer(cx)
+                                                .font_buffer(window, cx)
                                                 .child(
                                                     Label::new(args)
                                                         .single_line()
@@ -236,7 +236,7 @@ impl PickerDelegate for SlashCommandDelegate {
 }
 
 impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let all_models = self
             .working_set
             .featured_command_names(cx)
@@ -265,7 +265,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                         .child(
                             h_flex()
                                 .w_full()
-                                .font_buffer(cx)
+                                .font_buffer(window, cx)
                                 .items_center()
                                 .justify_between()
                                 .child(
@@ -274,7 +274,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                                         .gap_1p5()
                                         .child(Icon::new(IconName::Plus).size(IconSize::XSmall))
                                         .child(
-                                            div().font_buffer(cx).child(
+                                            div().font_buffer(window, cx).child(
                                                 Label::new("create-your-command")
                                                     .size(LabelSize::Small),
                                             ),
@@ -304,8 +304,8 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             selected_index: 0,
         };
 
-        let picker_view = cx.new_view(|cx| {
-            let picker = Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into()));
+        let picker_view = window.new_view(cx, |window, cx| {
+            let picker = Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()));
             picker
         });
 
@@ -314,7 +314,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             .update(cx, |this, _| this.slash_menu_handle.clone())
             .ok();
         PopoverMenu::new("model-switcher")
-            .menu(move |_cx| Some(picker_view.clone()))
+            .menu(move |_window, _cx| Some(picker_view.clone()))
             .trigger(self.trigger)
             .attach(gpui::Corner::TopLeft)
             .anchor(gpui::Corner::BottomLeft)

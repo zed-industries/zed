@@ -2,7 +2,7 @@ use crate::ProjectIndex;
 use gpui::{
     canvas, div, list, uniform_list, AnyElement, AppContext, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, IntoElement, ListOffset, ListState, Model, MouseMoveEvent, Render,
-    UniformListScrollHandle, View,
+    UniformListScrollHandle, 
 };
 use project::WorktreeId;
 use settings::Settings;
@@ -33,23 +33,23 @@ enum Row {
 }
 
 impl ProjectIndexDebugView {
-    pub fn new(index: Model<ProjectIndex>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(index: Model<ProjectIndex>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let mut this = Self {
             rows: Vec::new(),
             list_scroll_handle: UniformListScrollHandle::new(),
             selected_path: None,
             hovered_row_ix: None,
             focus_handle: cx.focus_handle(),
-            _subscription: cx.subscribe(&index, |this, _, _, cx| this.update_rows(cx)),
+            _subscription: cx.subscribe_in(&index, window, |this, _, _, window, cx| this.update_rows(window, cx)),
             index,
         };
-        this.update_rows(cx);
+        this.update_rows(window, cx);
         this
     }
 
-    fn update_rows(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_rows(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let worktree_indices = self.index.read(cx).worktree_indices(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let mut rows = Vec::new();
 
             for index in worktree_indices {
@@ -83,7 +83,7 @@ impl ProjectIndexDebugView {
         &mut self,
         worktree_id: WorktreeId,
         file_path: Arc<Path>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         let project_index = self.index.read(cx);
         let fs = project_index.fs().clone();
@@ -93,7 +93,7 @@ impl ProjectIndexDebugView {
             .embedding_index()
             .chunks_for_path(file_path.clone(), cx);
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let chunks = chunks.await?;
             let content = fs.load(&root_path.join(&file_path)).await?;
             let chunks = chunks
@@ -121,7 +121,7 @@ impl ProjectIndexDebugView {
                         px(100.),
                         move |ix, cx| {
                             if let Some(view) = view.upgrade() {
-                                view.update(cx, |view, cx| view.render_chunk(ix, cx))
+                                view.update(cx, |view, cx| view.render_chunk(ix, window, cx))
                             } else {
                                 div().into_any()
                             }
@@ -136,7 +136,7 @@ impl ProjectIndexDebugView {
         None
     }
 
-    fn render_chunk(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_chunk(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Self>) -> AnyElement {
         let buffer_font = ThemeSettings::get_global(cx).buffer_font.clone();
         let Some(state) = &self.selected_path else {
             return div().into_any();
@@ -146,7 +146,7 @@ impl ProjectIndexDebugView {
         let chunk = &state.chunks[ix];
 
         div()
-            .text_ui(cx)
+            .text_ui(window, cx)
             .w_full()
             .font(buffer_font)
             .child(
@@ -163,7 +163,7 @@ impl ProjectIndexDebugView {
                             .child(
                                 Button::new(("prev", ix), "prev")
                                     .disabled(ix == 0)
-                                    .on_click(cx.listener(move |this, _, _| {
+                                    .on_click(cx.listener(move |this, _, _, _| {
                                         this.scroll_to_chunk(ix.saturating_sub(1))
                                     })),
                             )
@@ -171,7 +171,7 @@ impl ProjectIndexDebugView {
                                 Button::new(("next", ix), "next")
                                     .disabled(ix + 1 == state.chunks.len())
                                     .on_click(
-                                        cx.listener(move |this, _, _| this.scroll_to_chunk(ix + 1)),
+                                        cx.listener(move |this, _, _, _| this.scroll_to_chunk(ix + 1)),
                                     ),
                             ),
                     ),
@@ -196,7 +196,7 @@ impl ProjectIndexDebugView {
 }
 
 impl Render for ProjectIndexDebugView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         if let Some(selected_path) = self.selected_path.as_ref() {
             v_flex()
                 .child(
@@ -211,7 +211,7 @@ impl Render for ProjectIndexDebugView {
                         .border_b_1()
                         .border_color(cx.theme().colors().border)
                         .cursor(CursorStyle::PointingHand)
-                        .on_click(cx.listener(|this, _, cx| {
+                        .on_click(cx.listener(|this, _, window, cx| {
                             this.selected_path.take();
                             cx.notify();
                         })),
@@ -224,7 +224,7 @@ impl Render for ProjectIndexDebugView {
                 cx.view().clone(),
                 "ProjectIndexDebugView",
                 self.rows.len(),
-                move |this, range, cx| {
+                move |this, range, window, cx| {
                     this.rows[range]
                         .iter()
                         .enumerate()
@@ -236,7 +236,7 @@ impl Render for ProjectIndexDebugView {
                                 .id(ix)
                                 .pl_8()
                                 .child(Label::new(file_path.to_string_lossy().to_string()))
-                                .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, cx| {
+                                .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, window, cx| {
                                     if this.hovered_row_ix != Some(ix) {
                                         this.hovered_row_ix = Some(ix);
                                         cx.notify();
@@ -247,7 +247,7 @@ impl Render for ProjectIndexDebugView {
                                     let worktree_id = *worktree_id;
                                     let file_path = file_path.clone();
                                     move |this, _, cx| {
-                                        this.handle_path_click(worktree_id, file_path.clone(), cx);
+                                        this.handle_path_click(worktree_id, file_path.clone(), window, cx);
                                     }
                                 })),
                         })
@@ -260,11 +260,11 @@ impl Render for ProjectIndexDebugView {
             .into_any_element();
 
             canvas(
-                move |bounds, cx| {
+                move |bounds, window, cx| {
                     list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
                     list
                 },
-                |_, mut list, cx| {
+                |_, mut list, window, cx| {
                     list.paint(cx);
                 },
             )
@@ -279,19 +279,19 @@ impl EventEmitter<()> for ProjectIndexDebugView {}
 impl Item for ProjectIndexDebugView {
     type Event = ();
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
         Some("Project Index (Debug)".into())
     }
 
     fn clone_on_split(
         &self,
         _: Option<workspace::WorkspaceId>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<View<Self>>
+        window: &mut Window, cx: &mut ModelContext<Self>,
+    ) -> Option<Model<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_view(|cx| Self::new(self.index.clone(), cx)))
+        Some(window.new_view(cx, |cx| Self::new(self.index.clone(), window, cx)))
     }
 }
 

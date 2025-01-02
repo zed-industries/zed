@@ -61,7 +61,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     let language_server_id = LanguageServerId(0);
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
@@ -156,7 +156,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             true,
             project.clone(),
             workspace.downgrade(),
-            cx,
+            window, cx,
         )
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
@@ -477,7 +477,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let server_id_2 = LanguageServerId(101);
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
@@ -487,7 +487,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             true,
             project.clone(),
             workspace.downgrade(),
-            cx,
+            window, cx,
         )
     });
     let editor = view.update(cx, |view, _| view.editor.clone());
@@ -754,7 +754,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
@@ -764,14 +764,14 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
             true,
             project.clone(),
             workspace.downgrade(),
-            cx,
+            window, cx,
         )
     });
 
     workspace.update(cx, |workspace, cx| {
-        workspace.add_item_to_center(Box::new(mutated_view.clone()), cx);
+        workspace.add_item_to_center(Box::new(mutated_view.clone()), window, cx);
     });
-    mutated_view.update(cx, |view, cx| {
+    mutated_view.update(window, |view, cx| {
         assert!(view.focus_handle.is_focused(cx));
     });
 
@@ -858,7 +858,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 
     log::info!("updating mutated diagnostics view");
-    mutated_view.update(cx, |view, cx| view.update_stale_excerpts(cx));
+    mutated_view.update(cx, |view, cx| view.update_stale_excerpts(window, cx));
     cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");
@@ -868,7 +868,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
             true,
             project.clone(),
             workspace.downgrade(),
-            cx,
+            window, cx,
         )
     });
     cx.executor()
@@ -903,7 +903,7 @@ fn init_test(cx: &mut TestAppContext) {
         workspace::init_settings(cx);
         Project::init_settings(cx);
         crate::init(cx);
-        editor::init(cx);
+        editor::init(window, cx);
     });
 }
 
@@ -917,7 +917,7 @@ struct ExcerptInfo {
 }
 
 fn get_diagnostics_excerpts(
-    view: &View<ProjectDiagnosticsEditor>,
+    view: &Model<ProjectDiagnosticsEditor>,
     cx: &mut VisualTestContext,
 ) -> Vec<ExcerptInfo> {
     view.update(cx, |view, cx| {
@@ -1043,13 +1043,13 @@ const FILE_HEADER: &str = "file header";
 const EXCERPT_HEADER: &str = "excerpt header";
 
 fn editor_blocks(
-    editor: &View<Editor>,
+    editor: &Model<Editor>,
     cx: &mut VisualTestContext,
 ) -> Vec<(DisplayRow, SharedString)> {
     let mut blocks = Vec::new();
     cx.draw(gpui::Point::default(), AvailableSpace::min_size(), |cx| {
         editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
+            let snapshot = editor.snapshot(window, cx);
             blocks.extend(
                 snapshot
                     .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())

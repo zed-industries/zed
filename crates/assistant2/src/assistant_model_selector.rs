@@ -9,7 +9,7 @@ use ui::{prelude::*, ButtonLike, PopoverMenuHandle, Tooltip};
 use crate::{assistant_settings::AssistantSettings, ToggleModelSelector};
 
 pub struct AssistantModelSelector {
-    selector: View<LanguageModelSelector>,
+    selector: Model<LanguageModelSelector>,
     menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
@@ -17,10 +17,10 @@ impl AssistantModelSelector {
     pub(crate) fn new(
         fs: Arc<dyn Fs>,
         menu_handle: PopoverMenuHandle<LanguageModelSelector>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Self {
         Self {
-            selector: cx.new_view(|cx| {
+            selector: window.new_view(cx, |window, cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
                     move |model, cx| {
@@ -30,7 +30,7 @@ impl AssistantModelSelector {
                             move |settings, _cx| settings.set_model(model.clone()),
                         );
                     },
-                    cx,
+                    window, cx,
                 )
             }),
             menu_handle,
@@ -39,7 +39,7 @@ impl AssistantModelSelector {
 }
 
 impl Render for AssistantModelSelector {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
         let focus_handle = self.selector.focus_handle(cx).clone();
 
@@ -76,8 +76,8 @@ impl Render for AssistantModelSelector {
                                 .size(IconSize::XSmall),
                         ),
                 )
-                .tooltip(move |cx| {
-                    Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
+                .tooltip(move |window, cx| {
+                    Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, window, cx)
                 }),
         )
         .with_handle(self.menu_handle.clone())

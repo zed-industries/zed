@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{View, ViewContext, VisualTestContext};
+use gpui::{w, ModelContext, Model, View,  VisualTestContext};
 use indoc::indoc;
 use language::{
     point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
@@ -27,7 +27,7 @@ use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 pub struct EditorLspTestContext {
     pub cx: EditorTestContext,
     pub lsp: lsp::FakeLanguageServer,
-    pub workspace: View<Workspace>,
+    pub workspace: Model<Workspace>,
     pub buffer_lsp_url: lsp::Url,
 }
 
@@ -83,7 +83,7 @@ impl EditorLspTestContext {
         cx.update(|cx| {
             assets::Assets.load_test_fonts(cx);
             language::init(cx);
-            crate::init(cx);
+            crate::init(window, cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
         });
@@ -124,7 +124,7 @@ impl EditorLspTestContext {
             )
             .await;
 
-        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
 
         let workspace = window.root_view(cx).unwrap();
 
@@ -140,7 +140,7 @@ impl EditorLspTestContext {
         let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let item = workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.open_path(file, None, true, cx)
+                workspace.open_path(file, None, true, window, cx)
             })
             .await
             .expect("Could not open test file");
@@ -148,7 +148,7 @@ impl EditorLspTestContext {
             item.act_as::<Editor>(cx)
                 .expect("Opened test file wasn't an editor")
         });
-        editor.update(&mut cx, |editor, cx| editor.focus(cx));
+        editor.update(&mut cx, |editor, cx| editor.focus(window, cx));
 
         let lsp = fake_servers.next().await.unwrap();
         Self {
@@ -264,11 +264,11 @@ impl EditorLspTestContext {
     }
 
     pub fn to_lsp_range(&mut self, range: Range<usize>) -> lsp::Range {
-        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+        let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let start_point = range.start.to_point(&snapshot.buffer_snapshot);
         let end_point = range.end.to_point(&snapshot.buffer_snapshot);
 
-        self.editor(|editor, cx| {
+        self.editor(|editor, window, cx| {
             let buffer = editor.buffer().read(cx);
             let start = point_to_lsp(
                 buffer
@@ -290,10 +290,10 @@ impl EditorLspTestContext {
     }
 
     pub fn to_lsp(&mut self, offset: usize) -> lsp::Position {
-        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+        let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let point = offset.to_point(&snapshot.buffer_snapshot);
 
-        self.editor(|editor, cx| {
+        self.editor(|editor, window, cx| {
             let buffer = editor.buffer().read(cx);
             point_to_lsp(
                 buffer
@@ -307,7 +307,7 @@ impl EditorLspTestContext {
 
     pub fn update_workspace<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: FnOnce(&mut Workspace, &mut Window, &mut ModelContext<Workspace>) -> T,
     {
         self.workspace.update(&mut self.cx.cx, update)
     }

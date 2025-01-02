@@ -1,7 +1,7 @@
 use crate::track::RemoteVideoTrack;
 use anyhow::Result;
 use futures::StreamExt as _;
-use gpui::{Empty, EventEmitter, IntoElement, Render, Task, View, ViewContext, VisualContext as _};
+use gpui::{Window, ModelContext, Model, Empty, EventEmitter, IntoElement, Render, Task,   VisualContext as _};
 
 pub struct RemoteVideoTrackView {
     track: RemoteVideoTrack,
@@ -19,14 +19,14 @@ pub enum RemoteVideoTrackViewEvent {
 }
 
 impl RemoteVideoTrackView {
-    pub fn new(track: RemoteVideoTrack, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(track: RemoteVideoTrack, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         cx.focus_handle();
         let frames = super::play_remote_video_track(&track);
 
         Self {
             track,
             latest_frame: None,
-            _maintain_frame: cx.spawn(|this, mut cx| async move {
+            _maintain_frame: cx.spawn_in(window, |this, mut cx| async move {
                 futures::pin_mut!(frames);
                 while let Some(frame) = frames.next().await {
                     this.update(&mut cx, |this, cx| {
@@ -58,15 +58,15 @@ impl RemoteVideoTrackView {
         }
     }
 
-    pub fn clone(&self, cx: &mut ViewContext<Self>) -> View<Self> {
-        cx.new_view(|cx| Self::new(self.track.clone(), cx))
+    pub fn clone(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Model<Self> {
+        window.new_view(cx, |cx| Self::new(self.track.clone(), window, cx))
     }
 }
 
 impl EventEmitter<RemoteVideoTrackViewEvent> for RemoteVideoTrackView {}
 
 impl Render for RemoteVideoTrackView {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         #[cfg(target_os = "macos")]
         if let Some(latest_frame) = &self.latest_frame {
             use gpui::Styled as _;

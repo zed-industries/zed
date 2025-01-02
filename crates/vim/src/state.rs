@@ -9,13 +9,13 @@ use crate::{UseSystemClipboard, Vim, VimSettings};
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{Anchor, ClipboardSelection, Editor};
-use gpui::{
-    Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global, View, WeakView,
+use gpui::{Model, 
+    Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global,  WeakView,
 };
 use language::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use ui::{SharedString, ViewContext};
+use ui::{Window, ModelContext, SharedString, };
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -183,7 +183,7 @@ impl VimGlobals {
     pub(crate) fn register(cx: &mut AppContext) {
         cx.set_global(VimGlobals::default());
 
-        cx.observe_keystrokes(|event, cx| {
+        cx.observe_keystrokes(|event, window, cx| {
             let Some(action) = event.action.as_ref().map(|action| action.boxed_clone()) else {
                 return;
             };
@@ -218,7 +218,7 @@ impl VimGlobals {
         register: Option<char>,
         is_yank: bool,
         linewise: bool,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
         if let Some(register) = register {
             let lower = register.to_lowercase().next().unwrap_or(register);
@@ -292,13 +292,13 @@ impl VimGlobals {
         &mut self,
         register: Option<char>,
         editor: Option<&mut Editor>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
             return match setting {
                 UseSystemClipboard::Always => cx.read_from_clipboard().map(|item| item.into()),
-                UseSystemClipboard::OnYank if self.system_clipboard_is_newer(cx) => {
+                UseSystemClipboard::OnYank if self.system_clipboard_is_newer(window, cx) => {
                     cx.read_from_clipboard().map(|item| item.into())
                 }
                 _ => self.registers.get(&'"').cloned(),
@@ -337,7 +337,7 @@ impl VimGlobals {
         }
     }
 
-    fn system_clipboard_is_newer(&self, cx: &ViewContext<Editor>) -> bool {
+    fn system_clipboard_is_newer(&self, window: &mut Window, cx: &mut ModelContext<Editor>) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
             if let Some(last_state) = &self.last_yank {
                 Some(last_state.as_ref()) != item.text().as_deref()
@@ -394,7 +394,7 @@ impl VimGlobals {
         }
     }
 
-    pub fn focused_vim(&self) -> Option<View<Vim>> {
+    pub fn focused_vim(&self) -> Option<Model<Vim>> {
         self.focused_vim.as_ref().and_then(|vim| vim.upgrade())
     }
 }

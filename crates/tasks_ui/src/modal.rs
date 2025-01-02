@@ -2,19 +2,19 @@ use std::sync::Arc;
 
 use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{
+use gpui::{Window, ModelContext, 
     rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
     InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, Task,
-    View, ViewContext, VisualContext, WeakView,
+      VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
 use task::{ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
-use ui::{
+use ui::{Window, AppContext, 
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
     KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
-    WindowContext,
+    
 };
 use util::ResultExt;
 use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
@@ -116,7 +116,7 @@ impl TasksModalDelegate {
 }
 
 pub(crate) struct TasksModal {
-    picker: View<Picker<TasksModalDelegate>>,
+    picker: Model<Picker<TasksModalDelegate>>,
     _subscription: Subscription,
 }
 
@@ -126,15 +126,15 @@ impl TasksModal {
         task_context: TaskContext,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = cx.new_view(|cx| {
+        let picker = window.new_view(cx, |cx| {
             Picker::uniform_list(
                 TasksModalDelegate::new(task_store, task_context, task_overrides, workspace),
-                cx,
+                window, cx,
             )
         });
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
+        let _subscription = cx.subscribe_in(&picker, window, |_, _, _, window, cx| {
             cx.emit(DismissEvent);
         });
         Self {
@@ -145,7 +145,7 @@ impl TasksModal {
 }
 
 impl Render for TasksModal {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
+    fn render(&mut self, _window: &mut Window, _: &mut ModelContext<Self>) -> impl gpui::prelude::IntoElement {
         v_flex()
             .key_context("TasksModal")
             .w(rems(34.))
@@ -174,20 +174,20 @@ impl PickerDelegate for TasksModalDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, _cx: &mut ModelContext<picker::Picker<Self>>) {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _: &mut AppContext) -> Arc<str> {
         self.placeholder_text.clone()
     }
 
     fn update_matches(
         &mut self,
         query: String,
-        cx: &mut ViewContext<picker::Picker<Self>>,
+        window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>,
     ) -> Task<()> {
-        cx.spawn(move |picker, mut cx| async move {
+        cx.spawn_in(window, move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
                     match &mut picker.delegate.candidates {
@@ -195,7 +195,7 @@ impl PickerDelegate for TasksModalDelegate {
                         None => {
                             let Ok((worktree, location)) =
                                 picker.delegate.workspace.update(cx, |workspace, cx| {
-                                    active_item_selection_properties(workspace, cx)
+                                    active_item_selection_properties(workspace, window, cx)
                                 })
                             else {
                                 return Vec::new();
@@ -271,7 +271,7 @@ impl PickerDelegate for TasksModalDelegate {
         })
     }
 
-    fn confirm(&mut self, omit_history_entry: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn confirm(&mut self, omit_history_entry: bool, window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
         let task = self
             .matches
@@ -296,13 +296,13 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, window, cx);
             })
             .ok();
         cx.emit(DismissEvent);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>) {
         cx.emit(DismissEvent);
     }
 
@@ -310,7 +310,7 @@ impl PickerDelegate for TasksModalDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<picker::Picker<Self>>,
+        window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
@@ -336,7 +336,7 @@ impl PickerDelegate for TasksModalDelegate {
         let tooltip_label = if tooltip_label_text.trim().is_empty() {
             None
         } else {
-            Some(Tooltip::text(tooltip_label_text, cx))
+            Some(Tooltip::text(tooltip_label_text, window, cx))
         };
 
         let highlighted_location = HighlightedText {
@@ -377,7 +377,7 @@ impl PickerDelegate for TasksModalDelegate {
                 .end_slot::<AnyElement>(history_run_icon)
                 .spacing(ListItemSpacing::Sparse)
                 .when_some(tooltip_label, |list_item, item_label| {
-                    list_item.tooltip(move |_| item_label.clone())
+                    list_item.tooltip(move |_, _| item_label.clone())
                 })
                 .map(|item| {
                     let item = if matches!(source_kind, TaskSourceKind::UserInput)
@@ -390,9 +390,9 @@ impl PickerDelegate for TasksModalDelegate {
                                 .icon_color(Color::Muted)
                                 .size(ButtonSize::None)
                                 .icon_size(IconSize::XSmall)
-                                .on_click(cx.listener(move |picker, _event, cx| {
+                                .on_click(cx.listener(move |picker, _event, window, cx| {
                                     cx.stop_propagation();
-                                    cx.prevent_default();
+                                    window.prevent_default();
 
                                     picker.delegate.delete_previously_used(task_index, cx);
                                     picker.delegate.last_used_candidate_index = picker
@@ -400,10 +400,10 @@ impl PickerDelegate for TasksModalDelegate {
                                         .last_used_candidate_index
                                         .unwrap_or(0)
                                         .checked_sub(1);
-                                    picker.refresh(cx);
+                                    picker.refresh(window, cx);
                                 }))
-                                .tooltip(|cx| {
-                                    Tooltip::text("Delete Previously Scheduled Task", cx)
+                                .tooltip(|window, cx| {
+                                    Tooltip::text("Delete Previously Scheduled Task", window, cx)
                                 }),
                         );
                         item.end_hover_slot(delete_button)
@@ -413,14 +413,14 @@ impl PickerDelegate for TasksModalDelegate {
                     item
                 })
                 .toggle_state(selected)
-                .child(highlighted_location.render(cx)),
+                .child(highlighted_location.render(window, cx)),
         )
     }
 
     fn confirm_completion(
         &mut self,
         _: String,
-        _: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window, _: &mut ModelContext<Picker<Self>>,
     ) -> Option<String> {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
@@ -428,7 +428,7 @@ impl PickerDelegate for TasksModalDelegate {
         Some(task.resolved.as_ref()?.command_label.clone())
     }
 
-    fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm_input(&mut self, omit_history_entry: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         let Some((task_source_kind, mut task)) = self.spawn_oneshot() else {
             return;
         };
@@ -443,7 +443,7 @@ impl PickerDelegate for TasksModalDelegate {
         }
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, window, cx);
             })
             .ok();
         cx.emit(DismissEvent);
@@ -456,9 +456,9 @@ impl PickerDelegate for TasksModalDelegate {
             Vec::new()
         }
     }
-    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+    fn render_footer(&self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Option<gpui::AnyElement> {
         let is_recent_selected = self.divider_index >= Some(self.selected_index);
-        let current_modifiers = cx.modifiers();
+        let current_modifiers = window.modifiers();
         let left_button = if self
             .task_store
             .read(cx)
@@ -484,13 +484,13 @@ impl PickerDelegate for TasksModalDelegate {
                 .child(
                     left_button
                         .map(|(label, action)| {
-                            let keybind = KeyBinding::for_action(&*action, cx);
+                            let keybind = KeyBinding::for_action(&*action, window, cx);
 
                             Button::new("edit-current-task", label)
                                 .label_size(LabelSize::Small)
                                 .when_some(keybind, |this, keybind| this.key_binding(keybind))
-                                .on_click(move |_, cx| {
-                                    cx.dispatch_action(action.boxed_clone());
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(action.boxed_clone(), cx);
                                 })
                                 .into_any_element()
                         })
@@ -503,7 +503,7 @@ impl PickerDelegate for TasksModalDelegate {
                             secondary: current_modifiers.secondary(),
                         }
                         .boxed_clone();
-                        this.children(KeyBinding::for_action(&*action, cx).map(|keybind| {
+                        this.children(KeyBinding::for_action(&*action, window, cx).map(|keybind| {
                             let spawn_oneshot_label = if current_modifiers.secondary() {
                                 "Spawn Oneshot Without History"
                             } else {
@@ -513,10 +513,10 @@ impl PickerDelegate for TasksModalDelegate {
                             Button::new("spawn-onehshot", spawn_oneshot_label)
                                 .label_size(LabelSize::Small)
                                 .key_binding(keybind)
-                                .on_click(move |_, cx| cx.dispatch_action(action.boxed_clone()))
+                                .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
                         }))
                     } else if current_modifiers.secondary() {
-                        this.children(KeyBinding::for_action(&menu::SecondaryConfirm, cx).map(
+                        this.children(KeyBinding::for_action(&menu::SecondaryConfirm, window, cx).map(
                             |keybind| {
                                 let label = if is_recent_selected {
                                     "Rerun Without History"
@@ -526,21 +526,21 @@ impl PickerDelegate for TasksModalDelegate {
                                 Button::new("spawn", label)
                                     .label_size(LabelSize::Small)
                                     .key_binding(keybind)
-                                    .on_click(move |_, cx| {
-                                        cx.dispatch_action(menu::SecondaryConfirm.boxed_clone())
+                                    .on_click(move |_, window, cx| {
+                                        window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
                                     })
                             },
                         ))
                     } else {
-                        this.children(KeyBinding::for_action(&menu::Confirm, cx).map(|keybind| {
+                        this.children(KeyBinding::for_action(&menu::Confirm, window, cx).map(|keybind| {
                             let run_entry_label =
                                 if is_recent_selected { "Rerun" } else { "Spawn" };
 
                             Button::new("spawn", run_entry_label)
                                 .label_size(LabelSize::Small)
                                 .key_binding(keybind)
-                                .on_click(|_, cx| {
-                                    cx.dispatch_action(menu::Confirm.boxed_clone());
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx);
                                 })
                         }))
                     }
@@ -606,7 +606,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -623,7 +623,7 @@ mod tests {
 
         let _ = workspace
             .update(cx, |workspace, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a.ts"), true, cx)
+                workspace.open_abs_path(PathBuf::from("/dir/a.ts"), true, window, cx)
             })
             .await
             .unwrap();
@@ -770,7 +770,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -786,7 +786,7 @@ mod tests {
 
         let _ = workspace
             .update(cx, |workspace, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/file_with.odd_extension"), true, cx)
+                workspace.open_abs_path(PathBuf::from("/dir/file_with.odd_extension"), true, window, cx)
             })
             .await
             .unwrap();
@@ -808,14 +808,14 @@ mod tests {
 
         let second_item = workspace
             .update(cx, |workspace, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/file_without_extension"), true, cx)
+                workspace.open_abs_path(PathBuf::from("/dir/file_without_extension"), true, window, cx)
             })
             .await
             .unwrap();
 
         let editor = cx.update(|cx| second_item.act_as::<Editor>(cx)).unwrap();
         editor.update(cx, |editor, cx| {
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(None, window, cx, |s| {
                 s.select_ranges(Some(Point::new(1, 2)..Point::new(1, 5)))
             })
         });
@@ -906,11 +906,11 @@ mod tests {
                 ))),
             ));
         });
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
 
         let _ts_file_1 = workspace
             .update(cx, |workspace, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a1.ts"), true, cx)
+                workspace.open_abs_path(PathBuf::from("/dir/a1.ts"), true, window, cx)
             })
             .await
             .unwrap();
@@ -946,7 +946,7 @@ mod tests {
 
         let _ts_file_2 = workspace
             .update(cx, |workspace, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, cx)
+                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, window, cx)
             })
             .await
             .unwrap();
@@ -969,7 +969,7 @@ mod tests {
 
         let _rs_file = workspace
             .update(cx, |workspace, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/b.rs"), true, cx)
+                workspace.open_abs_path(PathBuf::from("/dir/b.rs"), true, window, cx)
             })
             .await
             .unwrap();
@@ -984,7 +984,7 @@ mod tests {
         emulate_task_schedule(tasks_picker, &project, "Rust task", cx);
         let _ts_file_2 = workspace
             .update(cx, |workspace, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, cx)
+                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, window, cx)
             })
             .await
             .unwrap();
@@ -1003,7 +1003,7 @@ mod tests {
     }
 
     fn emulate_task_schedule(
-        tasks_picker: View<Picker<TasksModalDelegate>>,
+        tasks_picker: Model<Picker<TasksModalDelegate>>,
         project: &Model<Project>,
         scheduled_task_label: &str,
         cx: &mut VisualTestContext,
@@ -1034,9 +1034,9 @@ mod tests {
     }
 
     fn open_spawn_tasks(
-        workspace: &View<Workspace>,
+        workspace: &Model<Workspace>,
         cx: &mut VisualTestContext,
-    ) -> View<Picker<TasksModalDelegate>> {
+    ) -> Model<Picker<TasksModalDelegate>> {
         cx.dispatch_action(Spawn::modal());
         workspace.update(cx, |workspace, cx| {
             workspace
@@ -1048,12 +1048,12 @@ mod tests {
         })
     }
 
-    fn query(spawn_tasks: &View<Picker<TasksModalDelegate>>, cx: &mut VisualTestContext) -> String {
+    fn query(spawn_tasks: &Model<Picker<TasksModalDelegate>>, cx: &mut VisualTestContext) -> String {
         spawn_tasks.update(cx, |spawn_tasks, cx| spawn_tasks.query(cx))
     }
 
     fn task_names(
-        spawn_tasks: &View<Picker<TasksModalDelegate>>,
+        spawn_tasks: &Model<Picker<TasksModalDelegate>>,
         cx: &mut VisualTestContext,
     ) -> Vec<String> {
         spawn_tasks.update(cx, |spawn_tasks, _| {

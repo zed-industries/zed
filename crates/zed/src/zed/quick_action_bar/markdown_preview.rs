@@ -11,14 +11,14 @@ impl QuickActionBar {
     pub fn render_toggle_markdown_preview(
         &self,
         workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Option<AnyElement> {
         let mut active_editor_is_markdown = false;
 
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 active_editor_is_markdown =
-                    MarkdownPreviewView::resolve_active_item_as_markdown_editor(workspace, cx)
+                    MarkdownPreviewView::resolve_active_item_as_markdown_editor(workspace, window, cx)
                         .is_some();
             });
         }
@@ -37,7 +37,7 @@ impl QuickActionBar {
             .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
-            .tooltip(move |cx| {
+            .tooltip(move |window, cx| {
                 Tooltip::with_meta(
                     "Preview Markdown",
                     Some(&markdown_preview::OpenPreview),
@@ -45,16 +45,16 @@ impl QuickActionBar {
                         "{} to open in a split",
                         text_for_keystroke(&alt_click, PlatformStyle::platform())
                     ),
-                    cx,
+                    window, cx,
                 )
             })
-            .on_click(move |_, cx| {
+            .on_click(move |_, window, cx| {
                 if let Some(workspace) = workspace.upgrade() {
                     workspace.update(cx, |_, cx| {
-                        if cx.modifiers().alt {
-                            cx.dispatch_action(Box::new(OpenPreviewToTheSide));
+                        if window.modifiers().alt {
+                            window.dispatch_action(Box::new(OpenPreviewToTheSide), cx);
                         } else {
-                            cx.dispatch_action(Box::new(OpenPreview));
+                            window.dispatch_action(Box::new(OpenPreview), cx);
                         }
                     });
                 }

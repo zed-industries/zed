@@ -8,7 +8,7 @@ use context_server::{
     manager::{ContextServer, ContextServerManager},
     types::Prompt,
 };
-use gpui::{AppContext, Model, Task, WeakView, WindowContext};
+use gpui::{Window, AppContext, Model, Task, WeakView, };
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -78,7 +78,7 @@ impl SlashCommand for ContextServerSlashCommand {
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Ok((arg_name, arg_value)) = completion_argument(&self.prompt, arguments) else {
             return Task::ready(Err(anyhow!("Failed to complete argument")));
@@ -130,7 +130,7 @@ impl SlashCommand for ContextServerSlashCommand {
         _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();

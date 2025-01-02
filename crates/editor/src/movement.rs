@@ -1015,7 +1015,7 @@ mod tests {
         let window = cx.window;
         _ = cx.update_window(window, |_, cx| {
             let text_layout_details =
-                editor.update(cx, |editor, cx| editor.text_layout_details(cx));
+                editor.update(cx, |editor, cx| editor.text_layout_details(window, cx));
 
             let font = font("Helvetica");
 
@@ -1187,7 +1187,7 @@ mod tests {
         cx.set_global(settings_store);
         theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
-        crate::init(cx);
+        crate::init(window, cx);
         Project::init_settings(cx);
     }
 }

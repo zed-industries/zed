@@ -1,6 +1,6 @@
-use gpui::{
+use gpui::{Window, ModelContext, AppContext, Model, 
     div, green, red, HighlightStyle, InteractiveText, IntoElement, ParentElement, Render, Styled,
-    StyledText, View, ViewContext, VisualContext, WindowContext,
+    StyledText,   VisualContext, 
 };
 use indoc::indoc;
 use story::*;
@@ -8,13 +8,13 @@ use story::*;
 pub struct TextStory;
 
 impl TextStory {
-    pub fn view(cx: &mut WindowContext) -> View<Self> {
-        cx.new_view(|_cx| Self)
+    pub fn view(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
+        window.new_view(cx, |_window, _cx| Self)
     }
 }
 
 impl Render for TextStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title("Text"))
             .children(vec![

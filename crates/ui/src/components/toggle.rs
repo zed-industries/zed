@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
+use gpui::{Window, AppContext, div, prelude::*, ElementId, IntoElement, Styled, };
 use std::sync::Arc;
 
 use crate::prelude::*;
@@ -27,7 +27,7 @@ pub struct Checkbox {
     id: ElementId,
     toggle_state: ToggleState,
     disabled: bool,
-    on_click: Option<Box<dyn Fn(&ToggleState, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>>,
 }
 
 impl Checkbox {
@@ -47,7 +47,7 @@ impl Checkbox {
 
     pub fn on_click(
         mut self,
-        handler: impl Fn(&ToggleState, &mut WindowContext) + 'static,
+        handler: impl Fn(&ToggleState, &mut Window, &mut AppContext) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
@@ -55,7 +55,7 @@ impl Checkbox {
 }
 
 impl RenderOnce for Checkbox {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
         let icon = match self.toggle_state {
@@ -124,7 +124,7 @@ impl RenderOnce for Checkbox {
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
-                    this.on_click(move |_, cx| on_click(&self.toggle_state.inverse(), cx))
+                    this.on_click(move |_, window, cx| on_click(&self.toggle_state.inverse(), cx))
                 },
             )
     }
@@ -136,7 +136,7 @@ pub struct CheckboxWithLabel {
     id: ElementId,
     label: Label,
     checked: ToggleState,
-    on_click: Arc<dyn Fn(&ToggleState, &mut WindowContext) + 'static>,
+    on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>,
 }
 
 impl CheckboxWithLabel {
@@ -144,7 +144,7 @@ impl CheckboxWithLabel {
         id: impl Into<ElementId>,
         label: Label,
         checked: ToggleState,
-        on_click: impl Fn(&ToggleState, &mut WindowContext) + 'static,
+        on_click: impl Fn(&ToggleState, &mut Window, &mut AppContext) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -156,7 +156,7 @@ impl CheckboxWithLabel {
 }
 
 impl RenderOnce for CheckboxWithLabel {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base08.rems(cx))
             .child(Checkbox::new(self.id.clone(), self.checked).on_click({
@@ -168,7 +168,7 @@ impl RenderOnce for CheckboxWithLabel {
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
-                    .on_click(move |_event, cx| {
+                    .on_click(move |_event, window, cx| {
                         (self.on_click)(&self.checked.inverse(), cx);
                     })
                     .child(self.label),
@@ -184,7 +184,7 @@ pub struct Switch {
     id: ElementId,
     toggle_state: ToggleState,
     disabled: bool,
-    on_click: Option<Box<dyn Fn(&ToggleState, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>>,
 }
 
 impl Switch {
@@ -204,7 +204,7 @@ impl Switch {
 
     pub fn on_click(
         mut self,
-        handler: impl Fn(&ToggleState, &mut WindowContext) + 'static,
+        handler: impl Fn(&ToggleState, &mut Window, &mut AppContext) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
@@ -212,9 +212,9 @@ impl Switch {
 }
 
 impl RenderOnce for Switch {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let is_on = self.toggle_state == ToggleState::Selected;
-        let adjust_ratio = if is_light(cx) { 1.5 } else { 1.0 };
+        let adjust_ratio = if is_light(window, cx) { 1.5 } else { 1.0 };
         let base_color = cx.theme().colors().text;
 
         let bg_color = if is_on {
@@ -276,7 +276,7 @@ impl RenderOnce for Switch {
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
-                    this.on_click(move |_, cx| on_click(&self.toggle_state.inverse(), cx))
+                    this.on_click(move |_, window, cx| on_click(&self.toggle_state.inverse(), cx))
                 },
             )
     }
@@ -288,7 +288,7 @@ pub struct SwitchWithLabel {
     id: ElementId,
     label: Label,
     checked: ToggleState,
-    on_click: Arc<dyn Fn(&ToggleState, &mut WindowContext) + 'static>,
+    on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>,
 }
 
 impl SwitchWithLabel {
@@ -296,7 +296,7 @@ impl SwitchWithLabel {
         id: impl Into<ElementId>,
         label: Label,
         checked: ToggleState,
-        on_click: impl Fn(&ToggleState, &mut WindowContext) + 'static,
+        on_click: impl Fn(&ToggleState, &mut Window, &mut AppContext) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -308,7 +308,7 @@ impl SwitchWithLabel {
 }
 
 impl RenderOnce for SwitchWithLabel {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base08.rems(cx))
             .child(Switch::new(self.id.clone(), self.checked).on_click({
@@ -320,7 +320,7 @@ impl RenderOnce for SwitchWithLabel {
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
-                    .on_click(move |_event, cx| {
+                    .on_click(move |_event, window, cx| {
                         (self.on_click)(&self.checked.inverse(), cx);
                     })
                     .child(self.label),
@@ -333,7 +333,7 @@ impl ComponentPreview for Checkbox {
         "A checkbox lets people choose between a pair of opposing states, like enabled and disabled, using a different appearance to indicate each state."
     }
 
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Default",
@@ -384,7 +384,7 @@ impl ComponentPreview for Switch {
         "A switch toggles between two mutually exclusive states, typically used for enabling or disabling a setting."
     }
 
-    fn examples(_cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Default",
@@ -421,7 +421,7 @@ impl ComponentPreview for CheckboxWithLabel {
         "A checkbox with an associated label, allowing users to select an option while providing a descriptive text."
     }
 
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![example_group(vec![
             single_example(
                 "Unselected",
@@ -459,7 +459,7 @@ impl ComponentPreview for SwitchWithLabel {
         "A switch with an associated label, allowing users to select an option while providing a descriptive text."
     }
 
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![example_group(vec![
             single_example(
                 "Off",

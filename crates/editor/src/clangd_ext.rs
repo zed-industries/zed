@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use gpui::{View, ViewContext, WindowContext};
+use gpui::{w, ModelContext, AppContext, Model, View,  };
 use language::Language;
 use url::Url;
 
@@ -16,7 +16,7 @@ fn is_c_language(language: &Language) -> bool {
 pub fn switch_source_header(
     editor: &mut Editor,
     _: &SwitchSourceHeader,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window, cx: &mut ModelContext<Editor>,
 ) {
     let Some(project) = &editor.project else {
         return;
@@ -26,7 +26,7 @@ pub fn switch_source_header(
     };
 
     let Some((_, _, server_to_query, buffer)) =
-        find_specific_language_server_in_selection(editor, cx, is_c_language, CLANGD_SERVER_NAME)
+        find_specific_language_server_in_selection(editor, window, cx, is_c_language, CLANGD_SERVER_NAME)
     else {
         return;
     };
@@ -49,7 +49,7 @@ pub fn switch_source_header(
             cx,
         )
     });
-    cx.spawn(|_editor, mut cx| async move {
+    cx.spawn_in(window, |_editor, mut cx| async move {
         let switch_source_header = switch_source_header_task
             .await
             .with_context(|| format!("Switch source/header LSP request for path \"{source_file}\" failed"))?;
@@ -84,11 +84,11 @@ pub fn switch_source_header(
     .detach_and_log_err(cx);
 }
 
-pub fn apply_related_actions(editor: &View<Editor>, cx: &mut WindowContext) {
+pub fn apply_related_actions(editor: &Model<Editor>, window: &mut Window, cx: &mut AppContext) {
     if editor.update(cx, |e, cx| {
-        find_specific_language_server_in_selection(e, cx, is_c_language, CLANGD_SERVER_NAME)
+        find_specific_language_server_in_selection(e, window, cx, is_c_language, CLANGD_SERVER_NAME)
             .is_some()
     }) {
-        register_action(editor, cx, switch_source_header);
+        register_action(editor, window, cxndow, cx, switch_source_header);
     }
 }

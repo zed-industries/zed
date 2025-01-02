@@ -68,7 +68,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::LineIndent;
-use ui::{px, SharedString, WindowContext};
+use ui::{Window, AppContext, px, SharedString, };
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -78,7 +78,7 @@ pub enum FoldStatus {
     Foldable,
 }
 
-pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
+pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut Window, &mut AppContext) -> AnyElement>;
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
@@ -1751,7 +1751,7 @@ pub mod tests {
 
         _ = cx.update_window(window, |_, cx| {
             let text_layout_details =
-                editor.update(cx, |editor, cx| editor.text_layout_details(cx));
+                editor.update(cx, |editor, cx| editor.text_layout_details(window, cx));
 
             let font_size = px(12.0);
             let wrap_width = Some(px(64.));
@@ -2624,8 +2624,8 @@ pub mod tests {
                 [Crease::inline(
                     range,
                     FoldPlaceholder::test(),
-                    |_row, _status, _toggle, _cx| div(),
-                    |_row, _status, _cx| div(),
+                    |_row, _status, _toggle, _window, _cx| div(),
+                    |_row, _status, _window, _cx| div(),
                 )],
                 &map.buffer.read(cx).snapshot(cx),
             );
@@ -2779,7 +2779,7 @@ pub mod tests {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         language::init(cx);
-        crate::init(cx);
+        crate::init(window, cx);
         Project::init_settings(cx);
         theme::init(LoadThemes::JustBase, cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {

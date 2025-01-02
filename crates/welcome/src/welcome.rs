@@ -4,10 +4,10 @@ mod multibuffer_hint;
 
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{
+use gpui::{Window, ModelContext, Model, 
     actions, svg, Action, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    ParentElement, Render, Styled, Subscription, Task,   VisualContext, WeakView,
+    
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -32,12 +32,12 @@ pub fn init(cx: &mut AppContext) {
     BaseKeymap::register(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
-        workspace.register_action(|workspace, _: &Welcome, cx| {
-            let welcome_page = WelcomePage::new(workspace, cx);
-            workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, cx)
+        workspace.register_action(|workspace, _: &Welcome, window, cx| {
+            let welcome_page = WelcomePage::new(workspace, window, cx);
+            workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx)
         });
         workspace
-            .register_action(|_workspace, _: &ResetHints, cx| MultibufferHint::set_count(0, cx));
+            .register_action(|_workspace, _: &ResetHints, window, cx| MultibufferHint::set_count(0, cx));
     })
     .detach();
 
@@ -48,11 +48,11 @@ pub fn show_welcome_view(
     app_state: Arc<AppState>,
     cx: &mut AppContext,
 ) -> Task<anyhow::Result<()>> {
-    open_new(Default::default(), app_state, cx, |workspace, cx| {
-        workspace.toggle_dock(DockPosition::Left, cx);
-        let welcome_page = WelcomePage::new(workspace, cx);
-        workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
-        cx.focus_view(&welcome_page);
+    open_new(Default::default(), app_state, cx, |workspace, window, cx| {
+        workspace.toggle_dock(DockPosition::Left, window, cx);
+        let welcome_page = WelcomePage::new(workspace, window, cx);
+        workspace.add_item_to_center(Box::new(welcome_page.clone()), window, cx);
+        window.focus_view(&welcome_page, cx);
         cx.notify();
 
         db::write_and_log(cx, || {
@@ -69,7 +69,7 @@ pub struct WelcomePage {
 }
 
 impl Render for WelcomePage {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         h_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -116,7 +116,7 @@ impl Render for WelcomePage {
                                     .border_r_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(
-                                        self.section_label(cx).child(
+                                        self.section_label(window, cx).child(
                                             Label::new("Get Started")
                                                 .size(LabelSize::XSmall)
                                                 .color(Color::Muted),
@@ -128,13 +128,13 @@ impl Render for WelcomePage {
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|this, _, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 this.telemetry.report_app_event(
                                                     "welcome page: change theme".to_string(),
                                                 );
                                                 this.workspace
                                                     .update(cx, |_workspace, cx| {
-                                                        cx.dispatch_action(zed_actions::theme_selector::Toggle::default().boxed_clone());
+                                                        window.dispatch_action(zed_actions::theme_selector::Toggle::default().boxed_clone(), cx);
                                                     })
                                                     .ok();
                                             })),
@@ -145,7 +145,7 @@ impl Render for WelcomePage {
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|this, _, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 this.telemetry.report_app_event(
                                                     "welcome page: change keymap".to_string(),
                                                 );
@@ -154,7 +154,7 @@ impl Render for WelcomePage {
                                                         base_keymap_picker::toggle(
                                                             workspace,
                                                             &Default::default(),
-                                                            cx,
+                                                            window, cx,
                                                         )
                                                     })
                                                     .ok();
@@ -170,11 +170,11 @@ impl Render for WelcomePage {
                                         .icon_color(Color::Muted)
                                         .icon_position(IconPosition::Start)
                                         .on_click(
-                                            cx.listener(|this, _, cx| {
+                                            cx.listener(|this, _, window, cx| {
                                                 this.telemetry.report_app_event(
                                                     "welcome page: sign in to copilot".to_string(),
                                                 );
-                                                copilot::initiate_sign_in(cx);
+                                                copilot::initiate_sign_in(window, cx);
                                             }),
                                         ),
                                     )
@@ -184,13 +184,13 @@ impl Render for WelcomePage {
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|this, _, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 this.telemetry.report_app_event(
                                                     "welcome page: edit settings".to_string(),
                                                 );
-                                                cx.dispatch_action(Box::new(
+                                                window.dispatch_action(Box::new(
                                                     zed_actions::OpenSettings,
-                                                ));
+                                                ), cx);
                                             })),
                                     ),
                             )
@@ -198,7 +198,7 @@ impl Render for WelcomePage {
                                 v_flex()
                                     .gap_2()
                                     .child(
-                                        self.section_label(cx).child(
+                                        self.section_label(window, cx).child(
                                             Label::new("Resources")
                                                 .size(LabelSize::XSmall)
                                                 .color(Color::Muted),
@@ -211,7 +211,7 @@ impl Render for WelcomePage {
                                                 .icon_size(IconSize::XSmall)
                                                 .icon_color(Color::Muted)
                                                 .icon_position(IconPosition::Start)
-                                                .on_click(cx.listener(|this, _, cx| {
+                                                .on_click(cx.listener(|this, _, window, cx| {
                                                     this.telemetry.report_app_event(
                                                         "welcome page: install cli".to_string(),
                                                     );
@@ -229,7 +229,7 @@ impl Render for WelcomePage {
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|this, _, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 this.telemetry.report_app_event(
                                                     "welcome page: view docs".to_string(),
                                                 );
@@ -242,13 +242,13 @@ impl Render for WelcomePage {
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|this, _, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 this.telemetry.report_app_event(
                                                     "welcome page: open extensions".to_string(),
                                                 );
-                                                cx.dispatch_action(Box::new(
+                                                window.dispatch_action(Box::new(
                                                     zed_actions::Extensions,
-                                                ));
+                                                ), cx);
                                             })),
                                     )
                                     .child(
@@ -257,7 +257,7 @@ impl Render for WelcomePage {
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, cx| {
+                                            .on_click(cx.listener(|_, _, window, cx| {
                                                 cx.open_url(BOOK_ONBOARDING);
                                             })),
                                     ),
@@ -277,12 +277,12 @@ impl Render for WelcomePage {
                                         } else {
                                             ui::ToggleState::Unselected
                                         },
-                                        cx.listener(move |this, selection, cx| {
+                                        cx.listener(move |this, selection, window, cx| {
                                             this.telemetry
                                                 .report_app_event("welcome page: toggle vim".to_string());
                                             this.update_settings::<VimModeSetting>(
                                                 selection,
-                                                cx,
+                                                window, cx,
                                                 |setting, value| *setting = Some(value),
                                             );
                                         }),
@@ -291,7 +291,7 @@ impl Render for WelcomePage {
                                         IconButton::new("vim-mode", IconName::Info)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
-                                            .tooltip(|cx| Tooltip::text("You can also toggle Vim Mode via the command palette or Editor Controls menu.", cx)),
+                                            .tooltip(|window, cx| Tooltip::text("You can also toggle Vim Mode via the command palette or Editor Controls menu.", window, cx)),
                                     )
                             )
                             .child(CheckboxWithLabel::new(
@@ -302,11 +302,11 @@ impl Render for WelcomePage {
                                 } else {
                                     ui::ToggleState::Unselected
                                 },
-                                cx.listener(move |this, selection, cx| {
+                                cx.listener(move |this, selection, window, cx| {
                                     this.telemetry.report_app_event(
                                         "welcome page: toggle diagnostic telemetry".to_string(),
                                     );
-                                    this.update_settings::<TelemetrySettings>(selection, cx, {
+                                    this.update_settings::<TelemetrySettings>(selection, window, cx, {
                                         move |settings, value| {
                                             settings.diagnostics = Some(value);
 
@@ -323,11 +323,11 @@ impl Render for WelcomePage {
                                 } else {
                                     ui::ToggleState::Unselected
                                 },
-                                cx.listener(move |this, selection, cx| {
+                                cx.listener(move |this, selection, window, cx| {
                                     this.telemetry.report_app_event(
                                         "welcome page: toggle metric telemetry".to_string(),
                                     );
-                                    this.update_settings::<TelemetrySettings>(selection, cx, {
+                                    this.update_settings::<TelemetrySettings>(selection, window, cx, {
                                         move |settings, value| {
                                             settings.metrics = Some(value);
                                             telemetry::event!("Settings Changed", setting = "metric telemetry", value);
@@ -341,9 +341,9 @@ impl Render for WelcomePage {
 }
 
 impl WelcomePage {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
-        let this = cx.new_view(|cx| {
-            cx.on_release(|this: &mut Self, _, _| {
+    pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut ModelContext<Workspace>) -> Model<Self> {
+        let this = window.new_view(cx, |cx| {
+            cx.subscribe_in(window, |this: &mut Self, _, _, _| {
                 this.telemetry
                     .report_app_event("welcome page: close".to_string());
             })
@@ -354,24 +354,24 @@ impl WelcomePage {
                 workspace: workspace.weak_handle(),
                 telemetry: workspace.client().telemetry().clone(),
                 _settings_subscription: cx
-                    .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+                    .observe_global_in::<SettingsStore>(window, move |_, window, cx| cx.notify()),
             }
         });
 
         this
     }
 
-    fn section_label(&self, cx: &WindowContext) -> Div {
+    fn section_label(&self, window: &mut Window, cx: &mut AppContext) -> Div {
         div()
             .pl_1()
-            .font_buffer(cx)
-            .text_color(Color::Muted.color(cx))
+            .font_buffer(window, cx)
+            .text_color(Color::Muted.color(window, cx))
     }
 
     fn update_settings<T: Settings>(
         &mut self,
         selection: &ToggleState,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
         callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -401,7 +401,7 @@ impl FocusableView for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
         Some("Welcome".into())
     }
 
@@ -416,13 +416,13 @@ impl Item for WelcomePage {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<View<Self>> {
-        Some(cx.new_view(|cx| WelcomePage {
+        window: &mut Window, cx: &mut ModelContext<Self>,
+    ) -> Option<Model<Self>> {
+        Some(window.new_view(cx, |cx| WelcomePage {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             telemetry: self.telemetry.clone(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+            _settings_subscription: cx.observe_global_in::<SettingsStore>(window, move |_, window, cx| cx.notify()),
         }))
     }
 
