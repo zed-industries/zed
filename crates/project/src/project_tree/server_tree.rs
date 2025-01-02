@@ -15,8 +15,9 @@ use std::{
 
 use collections::HashMap;
 use gpui::{AppContext, Context as _, Model};
-use language::{Attach, LanguageName, LanguageRegistry};
+use language::{Attach, LanguageName};
 use lsp::LanguageServerName;
+use settings::WorktreeId;
 
 use crate::{LanguageServerId, ProjectPath};
 
@@ -43,6 +44,9 @@ impl LanguageServerTreeNode {
             attach,
             path,
         }))
+    }
+    pub(crate) fn server_name(&self) -> &LanguageServerName {
+        &self.0.name
     }
     /// Returns a language server ID for this node if there is one; if a language server has not been started yet
     /// for this path, returns None.
