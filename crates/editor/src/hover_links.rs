@@ -170,7 +170,7 @@ impl Editor {
         cx.spawn_in(window, |editor, mut cx| async move {
             let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);
             let find_references = editor
-                .update(&mut cx, |editor, cx| {
+                .update_in(&mut cx, |editor, window, cx| {
                     if definition_revealed == Navigated::Yes {
                         return None;
                     }
@@ -540,11 +540,8 @@ pub fn show_link_definition(
                             (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
-                    } else if let Some((filename_range, filename)) = cx
-                        .update(|window, cx| {
-                            find_file(&buffer, project.clone(), buffer_position, window, cx)
-                        })
-                        .await
+                    } else if let Some((filename_range, filename)) =
+                        find_file(&buffer, project.clone(), buffer_position, &mut cx).await
                     {
                         let range = maybe!({
                             let start =
@@ -588,7 +585,7 @@ pub fn show_link_definition(
                 )),
             };
 
-            this.update(&mut cx, |editor, cx| {
+            this.update_in(&mut cx, |editor, window, cx| {
                 // Clear any existing highlights
                 editor.clear_highlights::<HoveredLinkState>(window, cx);
                 let Some(hovered_link_state) = editor.hovered_link_state.as_mut() else {

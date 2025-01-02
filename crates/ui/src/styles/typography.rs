@@ -131,7 +131,7 @@ pub enum TextSize {
 
 impl TextSize {
     /// Returns the text size in rems.
-    pub fn rems(self, cx: &mut AppContext) -> Rems {
+    pub fn rems(self, cx: &AppContext) -> Rems {
         let theme_settings = ThemeSettings::get_global(cx);
 
         match self {

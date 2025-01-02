@@ -6,9 +6,10 @@ use crate::{
     Hover, RangeToAnchorExt,
 };
 use gpui::{
-    div, px, AnyElement, AsyncWindowContext, FontWeight, Hsla, InteractiveElement, IntoElement,
-    Model, ModelContext, MouseButton, ParentElement, Pixels, ScrollHandle, Size, Stateful,
-    StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement, Window,
+    div, px, AnyElement, AsyncWindowContext, FocusableView as _, FontWeight, Hsla,
+    InteractiveElement, IntoElement, Model, ModelContext, MouseButton, ParentElement, Pixels,
+    ScrollHandle, Size, Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Task,
+    TextStyleRefinement, Window,
 };
 use itertools::Itertools;
 use language::{Diagnostic, DiagnosticEntry, Language, LanguageRegistry};
@@ -349,7 +350,7 @@ fn show_hover(
                 let mut background_color: Option<Hsla> = None;
 
                 let parsed_content = cx
-                    .new_view(|cx| {
+                    .new_view(|window, cx| {
                         let status_colors = cx.theme().status();
 
                         match local_diagnostic.diagnostic.severity {
@@ -424,7 +425,7 @@ fn show_hover(
             } else {
                 Vec::new()
             };
-            let snapshot = this.update(&mut cx, |this, cx| this.snapshot(window, cx))?;
+            let snapshot = this.update_in(&mut cx, |this, window, cx| this.snapshot(window, cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(hovers_response.len());
             let mut info_popover_tasks = Vec::with_capacity(hovers_response.len());
@@ -475,7 +476,7 @@ fn show_hover(
                 info_popovers.push(info_popover);
             }
 
-            this.update(&mut cx, |editor, cx| {
+            this.update_in(&mut cx, |editor, window, cx| {
                 if hover_highlights.is_empty() {
                     editor.clear_background_highlights::<HoverState>(window, cx);
                 } else {
@@ -543,8 +544,7 @@ async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-    window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut AsyncWindowContext,
 ) -> Option<Model<Markdown>> {
     let fallback_language_name = if let Some(ref l) = language {
         let l = Arc::clone(l);
@@ -566,7 +566,7 @@ async fn parse_blocks(
         .join("\n\n");
 
     let rendered_block = cx
-        .new_view(|cx| {
+        .new_view(|window, cx| {
             let settings = ThemeSettings::get_global(cx);
             let ui_font_family = settings.ui_font.family.clone();
             let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
@@ -593,9 +593,9 @@ async fn parse_blocks(
                     ..Default::default()
                 },
                 rule_color: cx.theme().colors().border,
-                block_quote_border_color: Color::Muted.color(window, cx),
+                block_quote_border_color: Color::Muted.color(cx),
                 block_quote: TextStyleRefinement {
-                    color: Some(Color::Muted.color(window, cx)),
+                    color: Some(Color::Muted.color(cx)),
                     ..Default::default()
                 },
                 link: TextStyleRefinement {
@@ -987,7 +987,7 @@ mod tests {
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
             hover_at(editor, Some(anchor), window, cx)
         });
-        assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
+        assert!(!cx.editor(|editor, _window, _cx| editor.hover_state.visible()));
 
         // After delay, hover should be visible.
         let symbol_range = cx.lsp_range(indoc! {"
@@ -1010,7 +1010,7 @@ mod tests {
             .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         requests.next().await;
 
-        cx.editor(|editor, window, cx| {
+        cx.editor(|editor, _window, cx| {
             assert!(editor.hover_state.visible());
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
@@ -1123,7 +1123,7 @@ mod tests {
                 .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
             hover_at(editor, Some(anchor), window, cx)
         });
-        assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
+        assert!(!cx.editor(|editor, _window, _cx| editor.hover_state.visible()));
 
         // After delay, hover should be visible.
         let symbol_range = cx.lsp_range(indoc! {"
@@ -1608,7 +1608,7 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             let expected_layers = vec![entire_hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor));
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+            assert_eq!(expected_layers, visible_hint_labels(editor, window, cx));
         });
 
         let inlay_range = cx

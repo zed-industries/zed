@@ -1066,8 +1066,7 @@ impl EditorElement {
                 collaboration_hub.deref(),
                 cx,
             ) {
-                let color =
-                    Self::get_participant_color(remote_selection.participant_index, window, cx);
+                let color = Self::get_participant_color(remote_selection.participant_index, cx);
                 add_cursor(remote_selection.selection.head(), color.cursor);
                 if Some(remote_selection.peer_id) == editor.leader_peer_id {
                     skip_local = true;
@@ -2416,7 +2415,7 @@ impl EditorElement {
                                 .on_click(window.listener_for(&self.editor, {
                                     let excerpt_id = prev_excerpt.id;
                                     let direction = ExpandExcerptDirection::Down;
-                                    move |editor, _, cx| {
+                                    move |editor, _, window, cx| {
                                         editor.expand_excerpt(excerpt_id, direction, window, cx);
                                         cx.stop_propagation();
                                     }
@@ -2464,7 +2463,7 @@ impl EditorElement {
                         .hover(|style| style.bg(hover_color))
                         .tooltip({
                             let focus_handle = focus_handle.clone();
-                            move |cx| {
+                            move |window, cx| {
                                 Tooltip::for_action_in(
                                     "Expand Excerpt",
                                     &ExpandExcerpts { lines: 0 },
@@ -2499,7 +2498,7 @@ impl EditorElement {
                                 .on_click(window.listener_for(&self.editor, {
                                     let excerpt_id = prev_excerpt.id;
                                     let direction = ExpandExcerptDirection::Down;
-                                    move |editor, _, cx| {
+                                    move |editor, _, window, cx| {
                                         editor.expand_excerpt(excerpt_id, direction, window, cx);
                                         cx.stop_propagation();
                                     }
@@ -2552,7 +2551,7 @@ impl EditorElement {
                                         .on_click(window.listener_for(&self.editor, {
                                             let excerpt_id = next_excerpt.id;
                                             let direction = ExpandExcerptDirection::Up;
-                                            move |editor, _, cx| {
+                                            move |editor, _, window, cx| {
                                                 editor.expand_excerpt(
                                                     excerpt_id, direction, window, cx,
                                                 );
@@ -2621,7 +2620,7 @@ impl EditorElement {
                                             .on_click(window.listener_for(&self.editor, {
                                                 let excerpt_id = next_excerpt.id;
                                                 let direction = ExpandExcerptDirection::Up;
-                                                move |editor, _, cx| {
+                                                move |editor, _, window, cx| {
                                                     editor.expand_excerpt(
                                                         excerpt_id, direction, window, cx,
                                                     );
@@ -2732,7 +2731,7 @@ impl EditorElement {
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
-                                            move |cx| {
+                                            move |window, cx| {
                                                 Tooltip::for_action_in(
                                                     "Toggle Excerpt Fold",
                                                     &ToggleFold,
@@ -2793,7 +2792,7 @@ impl EditorElement {
                             })
                             .on_mouse_down(MouseButton::Left, |_, window, cx| cx.stop_propagation())
                             .on_click(window.listener_for(&self.editor, {
-                                move |editor, e: &ClickEvent, cx| {
+                                move |editor, e: &ClickEvent, window, cx| {
                                     editor.open_excerpts_common(
                                         Some(jump_data.clone()),
                                         e.down.modifiers.secondary(),
@@ -3840,7 +3839,7 @@ impl EditorElement {
     }
 
     fn paint_background(&self, layout: &EditorLayout, window: &mut Window, cx: &mut AppContext) {
-        window.paint_layer(layout.hitbox.bounds, |window, cx| {
+        window.paint_layer(layout.hitbox.bounds, |window| {
             let scroll_top = layout.position_map.snapshot.scroll_position().y;
             let gutter_bg = cx.theme().colors().editor_gutter_background;
             window.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
@@ -4106,7 +4105,7 @@ impl EditorElement {
         }
 
         let line_height = layout.position_map.line_height;
-        window.paint_layer(layout.gutter_hitbox.bounds, |window, cx| {
+        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
             for (hunk, hitbox) in &layout.display_hunks {
                 let hunk_to_paint = match hunk {
                     DisplayDiffHunk::Folded { .. } => {
@@ -4287,7 +4286,7 @@ impl EditorElement {
 
         let highlight_width = 0.275 * layout.position_map.line_height;
         let highlight_corner_radii = Corners::all(0.05 * layout.position_map.line_height);
-        window.paint_layer(layout.gutter_hitbox.bounds, |window, cx| {
+        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
             for (range, color) in &layout.highlighted_gutter_ranges {
                 let start_row = if range.start.row() < layout.visible_display_row_range.start {
                     layout.visible_display_row_range.start - DisplayRow(1)
@@ -4325,9 +4324,9 @@ impl EditorElement {
             return;
         };
 
-        window.paint_layer(layout.gutter_hitbox.bounds, |window, cx| {
+        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
             for mut blame_element in blamed_display_rows.into_iter() {
-                blame_element.paint(window, window, cx);
+                blame_element.paint(window, cx);
             }
         })
     }
@@ -4371,7 +4370,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> SmallVec<[Range<DisplayPoint>; 32]> {
-        window.paint_layer(layout.text_hitbox.bounds, |window, windcx| {
+        window.paint_layer(layout.text_hitbox.bounds, |window| {
             let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
             let line_end_overshoot = 0.15 * layout.position_map.line_height;
             for (range, color) in &layout.highlighted_ranges {
@@ -4457,7 +4456,7 @@ impl EditorElement {
         // A softer than perfect black
         let redaction_color = gpui::rgb(0x0e1111);
 
-        window.paint_layer(layout.text_hitbox.bounds, |window, cx| {
+        window.paint_layer(layout.text_hitbox.bounds, |window| {
             for range in layout.redacted_ranges.iter() {
                 self.paint_highlighted_range(
                     range.clone(),
@@ -4498,7 +4497,7 @@ impl EditorElement {
             let thumb_bounds = scrollbar_layout.thumb_bounds();
 
             if scrollbar_layout.visible {
-                window.paint_layer(hitbox.bounds, |window, cx| {
+                window.paint_layer(hitbox.bounds, |window| {
                     window.paint_quad(quad(
                         hitbox.bounds,
                         Corners::default(),
@@ -4550,7 +4549,7 @@ impl EditorElement {
                             let x = mouse_position.x;
                             let new_x = event.position.x;
                             if (hitbox.left()..hitbox.right()).contains(&x) {
-                                let mut position = editor.scroll_position(window, cx);
+                                let mut position = editor.scroll_position(cx);
 
                                 position.x += (new_x - x) / text_unit_size;
                                 if position.x < 0.0 {
@@ -4627,7 +4626,7 @@ impl EditorElement {
                                     (visible_range.end - visible_range.start) as u32 / 2,
                                 );
 
-                                let mut position = editor.scroll_position(window, cx);
+                                let mut position = editor.scroll_position(cx);
                                 position.x = top_row as f32;
 
                                 editor.set_scroll_position(position, window, cx);
@@ -4649,7 +4648,7 @@ impl EditorElement {
             let thumb_bounds = scrollbar_layout.thumb_bounds();
 
             if scrollbar_layout.visible {
-                window.paint_layer(hitbox.bounds, |window, cx| {
+                window.paint_layer(hitbox.bounds, |window| {
                     window.paint_quad(quad(
                         hitbox.bounds,
                         Corners::default(),
@@ -4710,7 +4709,7 @@ impl EditorElement {
                             let y = mouse_position.y;
                             let new_y = event.position.y;
                             if (hitbox.top()..hitbox.bottom()).contains(&y) {
-                                let mut position = editor.scroll_position(window, cx);
+                                let mut position = editor.scroll_position(cx);
                                 position.y += (new_y - y) / text_unit_size;
                                 if position.y < 0.0 {
                                     position.y = 0.0;
@@ -4782,7 +4781,7 @@ impl EditorElement {
                                 let top_row = center_row.saturating_sub(
                                     (visible_range.end - visible_range.start) as u32 / 2,
                                 );
-                                let mut position = editor.scroll_position(window, cx);
+                                let mut position = editor.scroll_position(cx);
                                 position.y = top_row as f32;
                                 editor.set_scroll_position(position, window, cx);
                             } else {
@@ -5041,7 +5040,7 @@ impl EditorElement {
         cx: &mut AppContext,
     ) {
         if let Some(mut inline_blame) = layout.inline_blame.take() {
-            window.paint_layer(layout.text_hitbox.bounds, |window, cx| {
+            window.paint_layer(layout.text_hitbox.bounds, |window| {
                 inline_blame.paint(window, cx);
             })
         }
@@ -5529,7 +5528,7 @@ fn render_blame_entry(
         .on_mouse_down(MouseButton::Right, {
             let blame_entry = blame_entry.clone();
             let details = details.clone();
-            move |event, cx| {
+            move |event, window, cx| {
                 deploy_blame_entry_context_menu(
                     &blame_entry,
                     details.as_ref(),
@@ -5551,7 +5550,7 @@ fn render_blame_entry(
                 })
             },
         )
-        .hoverable_tooltip(move |_| tooltip.clone().into())
+        .hoverable_tooltip(move |_, _| tooltip.clone().into())
         .into_any()
 }
 
@@ -5994,7 +5993,7 @@ impl LineWithInvisibles {
                         if let Some((should_render_last, last_end, paint_last)) = last_seen {
                             // Note that we need to make sure that the last one is actually adjacent
                             if !should_render_last && last_end == start {
-                                paint_last(cx);
+                                paint_last(window, cx);
                             }
                         }
                     }
@@ -6451,7 +6450,6 @@ impl Element for EditorElement {
                     let redacted_ranges = self.editor.read(cx).redacted_ranges(
                         start_anchor..end_anchor,
                         &snapshot.display_snapshot,
-                        window,
                         cx,
                     );
 
@@ -7922,7 +7920,7 @@ mod tests {
             .unwrap();
 
         let layouts = cx
-            .update_window(*window, |_, cx| {
+            .update_window(*window, |_, window, cx| {
                 element.layout_line_numbers(
                     None,
                     GutterDimensions {
@@ -8161,7 +8159,7 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
-        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let style = cx.update(|window, cx| editor.read(cx).style().unwrap().clone());
         window
             .update(cx, |editor, window, cx| {
                 editor.set_placeholder_text("hello", window, cx);
@@ -8170,7 +8168,7 @@ mod tests {
                         style: BlockStyle::Fixed,
                         placement: BlockPlacement::Above(Anchor::min()),
                         height: 3,
-                        render: Arc::new(|cx| div().h(3. * window.line_height()).into_any()),
+                        render: Arc::new(|cx| div().h(3. * cx.window.line_height()).into_any()),
                         priority: 0,
                     }],
                     None,
@@ -8389,7 +8387,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
 
-        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let style = cx.update(|window, cx| editor.read(cx).style().unwrap().clone());
         window
             .update(cx, |editor, window, cx| {
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, window, cx);

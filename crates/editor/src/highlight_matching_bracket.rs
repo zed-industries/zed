@@ -1,7 +1,6 @@
-use gpui::ViewContext;
-use language::CursorShape;
-
 use crate::{Editor, RangeToAnchorExt};
+use gpui::{ModelContext, Window};
+use language::CursorShape;
 
 enum MatchingBracketHighlight {}
 

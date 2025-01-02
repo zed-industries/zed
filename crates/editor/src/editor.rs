@@ -13098,8 +13098,7 @@ impl Editor {
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Vec<Range<DisplayPoint>> {
         display_snapshot
             .buffer_snapshot

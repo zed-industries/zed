@@ -1,6 +1,9 @@
 use collections::{HashMap, HashSet};
 use git::diff::DiffHunkStatus;
-use gpui::{Action, AppContext, Corner, CursorStyle, Hsla, Model, MouseButton, Subscription, Task};
+use gpui::{
+    Action, AppContext, Corner, CursorStyle, FocusableView as _, Hsla, Model, MouseButton,
+    Subscription, Task,
+};
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
@@ -12,7 +15,7 @@ use sum_tree::TreeMap;
 use text::OffsetRangeExt;
 use ui::{
     prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
-    ModelContext, ParentElement, PopoverMenu, Styled, Tooltip, VisualContext, Window,
+    ModelContext, ParentElement, PopoverMenu, Styled, Tooltip, Window,
 };
 use util::RangeExt;
 use workspace::Item;
@@ -290,7 +293,7 @@ impl Editor {
             }
 
             editor
-                .update(&mut cx, |editor, cx| {
+                .update_in(&mut cx, |editor, window, cx| {
                     let snapshot = editor.snapshot(window, cx);
                     let mut hunks_to_toggle = hunks_to_toggle.into_iter().fuse().peekable();
                     let mut highlights_to_remove = Vec::with_capacity(editor.diff_map.hunks.len());
@@ -615,7 +618,7 @@ impl Editor {
                     h_flex()
                         .id(cx.block_id)
                         .block_mouse_down()
-                        .h(window.line_height())
+                        .h(cx.window.line_height())
                         .w_full()
                         .border_t_1()
                         .border_color(border_color)
@@ -623,14 +626,16 @@ impl Editor {
                         .child(
                             div()
                                 .id("gutter-strip")
-                                .w(EditorElement::diff_hunk_strip_width(window.line_height()))
+                                .w(EditorElement::diff_hunk_strip_width(
+                                    cx.window.line_height(),
+                                ))
                                 .h_full()
                                 .bg(gutter_color)
                                 .cursor(CursorStyle::PointingHand)
                                 .on_click({
                                     let editor = editor.clone();
                                     let hunk = hunk.clone();
-                                    move |_event, cx| {
+                                    move |_event, window, cx| {
                                         editor.update(cx, |editor, cx| {
                                             editor.toggle_hovered_hunk(&hunk, window, cx);
                                         });
@@ -653,7 +658,7 @@ impl Editor {
                                                     .disabled(!has_multiple_hunks)
                                                     .tooltip({
                                                         let focus_handle = editor.focus_handle(cx);
-                                                        move |cx| {
+                                                        move |window, cx| {
                                                             Tooltip::for_action_in(
                                                                 "Next Hunk",
                                                                 &GoToHunk,
@@ -666,7 +671,7 @@ impl Editor {
                                                     .on_click({
                                                         let editor = editor.clone();
                                                         let hunk = hunk.clone();
-                                                        move |_event, cx| {
+                                                        move |_event, window, cx| {
                                                             editor.update(cx, |editor, cx| {
                                                                 editor.go_to_subsequent_hunk(
                                                                     hunk.multi_buffer_range.end,
@@ -684,7 +689,7 @@ impl Editor {
                                                     .disabled(!has_multiple_hunks)
                                                     .tooltip({
                                                         let focus_handle = editor.focus_handle(cx);
-                                                        move |cx| {
+                                                        move |window, cx| {
                                                             Tooltip::for_action_in(
                                                                 "Previous Hunk",
                                                                 &GoToPrevHunk,
@@ -697,7 +702,7 @@ impl Editor {
                                                     .on_click({
                                                         let editor = editor.clone();
                                                         let hunk = hunk.clone();
-                                                        move |_event, cx| {
+                                                        move |_event, window, cx| {
                                                             editor.update(cx, |editor, cx| {
                                                                 editor.go_to_preceding_hunk(
                                                                     hunk.multi_buffer_range.start,
@@ -715,7 +720,7 @@ impl Editor {
                                                 .icon_size(IconSize::Small)
                                                 .tooltip({
                                                     let focus_handle = editor.focus_handle(cx);
-                                                    move |cx| {
+                                                    move |window, cx| {
                                                         Tooltip::for_action_in(
                                                             "Discard Hunk",
                                                             &RevertSelectedHunks,
@@ -728,7 +733,7 @@ impl Editor {
                                                 .on_click({
                                                     let editor = editor.clone();
                                                     let hunk = hunk.clone();
-                                                    move |_event, cx| {
+                                                    move |_event, window, cx| {
                                                         editor.update(cx, |editor, cx| {
                                                             editor.revert_hunk(
                                                                 hunk.clone(),
@@ -748,7 +753,7 @@ impl Editor {
                                                         .tooltip({
                                                             let focus_handle =
                                                                 editor.focus_handle(cx);
-                                                            move |cx| {
+                                                            move |window, cx| {
                                                                 Tooltip::for_action_in(
                                                                     "Apply Hunk",
                                                                     &ApplyDiffHunk,
@@ -761,7 +766,7 @@ impl Editor {
                                                         .on_click({
                                                             let editor = editor.clone();
                                                             let hunk = hunk.clone();
-                                                            move |_event, cx| {
+                                                            move |_event, window, cx| {
                                                                 editor.update(cx, |editor, cx| {
                                                                     editor
                                                                         .apply_diff_hunks_in_range(
@@ -833,7 +838,7 @@ impl Editor {
                                             .icon_size(IconSize::Small)
                                             .tooltip({
                                                 let focus_handle = editor.focus_handle(cx);
-                                                move |cx| {
+                                                move |window, cx| {
                                                     Tooltip::for_action_in(
                                                         "Collapse Hunk",
                                                         &ToggleHunkDiff,
@@ -846,7 +851,7 @@ impl Editor {
                                             .on_click({
                                                 let editor = editor.clone();
                                                 let hunk = hunk.clone();
-                                                move |_event, cx| {
+                                                move |_event, window, cx| {
                                                     editor.update(cx, |editor, cx| {
                                                         editor
                                                             .toggle_hovered_hunk(&hunk, window, cx);
@@ -886,14 +891,14 @@ impl Editor {
             style: BlockStyle::Flex,
             priority: 0,
             render: Arc::new(move |cx| {
-                let width = EditorElement::diff_hunk_strip_width(window.line_height());
+                let width = EditorElement::diff_hunk_strip_width(cx.window.line_height());
                 let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
 
                 h_flex()
                     .id(cx.block_id)
                     .block_mouse_down()
                     .bg(deleted_hunk_color)
-                    .h(height as f32 * window.line_height())
+                    .h(height as f32 * cx.window.line_height())
                     .w_full()
                     .child(
                         h_flex()
@@ -916,7 +921,7 @@ impl Editor {
                                     .on_mouse_down(MouseButton::Left, {
                                         let editor = editor.clone();
                                         let hunk = hunk.clone();
-                                        move |_event, cx| {
+                                        move |_event, window, cx| {
                                             editor.update(cx, |editor, cx| {
                                                 editor.toggle_hovered_hunk(&hunk, window, cx);
                                             });
@@ -977,7 +982,7 @@ impl Editor {
 
         let new_sync_task = cx.spawn_in(window, move |editor, mut cx| async move {
             editor
-                .update(&mut cx, |editor, cx| {
+                .update_in(&mut cx, |editor, window, cx| {
                     let snapshot = editor.snapshot(window, cx);
                     let mut recalculated_hunks = snapshot
                         .diff_map
@@ -1230,7 +1235,7 @@ fn editor_with_deleted_text(
     cx: &mut ModelContext<Editor>,
 ) -> (u32, Model<Editor>) {
     let parent_editor = cx.view().downgrade();
-    let editor = window.new_view(cx, |cx| {
+    let editor = window.new_view(cx, |window, cx| {
         let multi_buffer =
             cx.new_model(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
         multi_buffer.update(cx, |multi_buffer, cx| {
@@ -1280,7 +1285,7 @@ fn editor_with_deleted_text(
             .register_action::<RevertSelectedHunks>({
                 let hunk = hunk.clone();
                 let parent_editor = parent_editor.clone();
-                move |_, cx| {
+                move |_, window, cx| {
                     parent_editor
                         .update(cx, |editor, cx| {
                             editor.revert_hunk(hunk.clone(), window, cx)
@@ -1292,7 +1297,7 @@ fn editor_with_deleted_text(
         editor
             .register_action::<ToggleHunkDiff>({
                 let hunk = hunk.clone();
-                move |_, cx| {
+                move |_, window, cx| {
                     parent_editor
                         .update(cx, |editor, cx| {
                             editor.toggle_hovered_hunk(&hunk, window, cx);
@@ -1507,8 +1512,8 @@ mod tests {
             multibuffer
         });
 
-        let editor =
-            cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, false, window, cx));
+        let editor = cx
+            .add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, false, window, cx));
         editor
             .update(cx, |editor, window, cx| {
                 for (buffer, diff_base) in [

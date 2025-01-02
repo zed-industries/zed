@@ -83,7 +83,7 @@ impl GoToLine {
         let editor = active_editor.read(cx);
         let last_line = editor.buffer().read(cx).snapshot(cx).max_point().row;
         let scroll_position =
-            active_editor.update(cx, |editor, cx| editor.scroll_position(window, cx));
+            active_editor.update(cx, |editor, cx| editor.scroll_position(cx));
 
         let current_text = format!("{} of {} (column {})", line, last_line + 1, column);
 

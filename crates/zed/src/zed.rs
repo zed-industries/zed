@@ -3175,7 +3175,7 @@ mod tests {
                     let (selections, scroll_position) = editor.update(cx, |editor, cx| {
                         (
                             editor.selections.display_ranges(cx),
-                            editor.scroll_position(window, cx),
+                            editor.scroll_position(cx),
                         )
                     });
                     (

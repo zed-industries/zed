@@ -518,11 +518,7 @@ impl Editor {
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, window, cx);
     }
 
-    pub fn scroll_position(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> gpui::Point<f32> {
+    pub fn scroll_position(&self, cx: &mut ModelContext<Self>) -> gpui::Point<f32> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.scroll_manager.anchor.scroll_position(&display_map)
     }
@@ -590,7 +586,7 @@ impl Editor {
             return;
         }
 
-        let cur_position = self.scroll_position(window, cx);
+        let cur_position = self.scroll_position(cx);
         let Some(visible_line_count) = self.visible_line_count() else {
             return;
         };

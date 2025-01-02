@@ -526,7 +526,7 @@ impl InlineAssistant {
         assist
             .editor
             .update(cx, |editor, cx| {
-                let scroll_top = editor.scroll_position(window, cx).y;
+                let scroll_top = editor.scroll_position(cx).y;
                 let scroll_bottom = scroll_top + editor.visible_line_count().unwrap_or(0.);
                 let prompt_row = editor
                     .row_for_block(decorations.prompt_block_id, window, cx)
@@ -720,7 +720,7 @@ impl InlineAssistant {
         };
 
         editor.update(cx, |editor, cx| {
-            let scroll_position = editor.scroll_position(window, cx);
+            let scroll_position = editor.scroll_position(cx);
             let target_scroll_top = editor
                 .row_for_block(decorations.prompt_block_id, window, cx)
                 .unwrap()
@@ -771,7 +771,7 @@ impl InlineAssistant {
                     let assist = &self.assists[&scroll_lock.assist_id];
                     if let Some(decorations) = assist.decorations.as_ref() {
                         let distance_from_top = editor.update(cx, |editor, cx| {
-                            let scroll_top = editor.scroll_position(window, cx).y;
+                            let scroll_top = editor.scroll_position(cx).y;
                             let prompt_row = editor
                                 .row_for_block(decorations.prompt_block_id, window, cx)
                                 .unwrap()
@@ -1037,7 +1037,7 @@ impl InlineAssistant {
             scroll_target_bottom += editor.vertical_scroll_margin() as f32;
 
             let height_in_lines = editor.visible_line_count().unwrap_or(0.);
-            let scroll_top = editor.scroll_position(window, cx).y;
+            let scroll_top = editor.scroll_position(cx).y;
             let scroll_bottom = scroll_top + height_in_lines;
 
             if scroll_target_top < scroll_top {
@@ -1826,7 +1826,10 @@ impl PromptEditor {
 
     fn unlink(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let prompt = self.prompt(cx);
-        let focus = self.editor.item_focus_handle(cx).contains_focused(window, cx);
+        let focus = self
+            .editor
+            .item_focus_handle(cx)
+            .contains_focused(window, cx);
         self.editor = window.new_view(cx, |cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(
