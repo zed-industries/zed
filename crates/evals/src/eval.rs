@@ -413,7 +413,7 @@ async fn run_eval_project(
     fs: Arc<dyn Fs>,
     cx: &mut AsyncAppContext,
 ) -> Result<(), anyhow::Error> {
-    let mut semantic_index = SemanticDb::new(repo_db_path, embedding_provider, window, cx).await?;
+    let mut semantic_index = SemanticDb::new(repo_db_path, embedding_provider, cx).await?;
 
     let (worktree, _) = project
         .update(cx, |project, cx| {
