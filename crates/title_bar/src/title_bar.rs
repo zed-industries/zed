@@ -15,7 +15,7 @@ use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, ModelContext, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, VisualContext, WeakModel, Window,
+    StatefulInteractiveElement, Styled, Subscription, WeakModel, Window,
 };
 use project::{Project, RepositoryEntry};
 use rpc::proto;
@@ -51,8 +51,10 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        let item = window.new_view(cx, |cx| TitleBar::new("title-bar", workspace, window, cx));
+    cx.observe_new_views(|workspace: &mut Workspace, window, cx| {
+        let item = window.new_view(cx, |window, cx| {
+            TitleBar::new("title-bar", workspace, window, cx)
+        });
         workspace.set_titlebar_item(item.into(), window, cx)
     })
     .detach();
@@ -234,13 +236,13 @@ impl TitleBar {
         let application_menu = match platform_style {
             PlatformStyle::Mac => {
                 if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
-                    Some(window.new_view(ApplicationMenu::new, cx))
+                    Some(window.new_view(cx, ApplicationMenu::new))
                 } else {
                     None
                 }
             }
             PlatformStyle::Linux | PlatformStyle::Windows => {
-                Some(window.new_view(ApplicationMenu::new, cx))
+                Some(window.new_view(cx, ApplicationMenu::new))
             }
         };
 
@@ -570,7 +572,7 @@ impl TitleBar {
                 div()
                     .id("disconnected")
                     .child(Icon::new(IconName::Disconnected).size(IconSize::Small))
-                    .tooltip(|cx| Tooltip::text("Disconnected", window, cx))
+                    .tooltip(|window, cx| Tooltip::text("Disconnected", window, cx))
                     .into_any_element(),
             ),
             client::Status::UpgradeRequired => {

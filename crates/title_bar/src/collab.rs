@@ -127,7 +127,6 @@ impl TitleBar {
                         room,
                         project_id,
                         &current_user,
-                        window,
                         cx,
                     );
 
@@ -159,7 +158,6 @@ impl TitleBar {
                             room,
                             project_id,
                             &current_user,
-                            window,
                             cx,
                         )?;
 
@@ -185,7 +183,9 @@ impl TitleBar {
                                 })
                                 .tooltip({
                                     let login = collaborator.user.github_login.clone();
-                                    move |cx| Tooltip::text(format!("Follow {login}"), window, cx)
+                                    move |window, cx| {
+                                        Tooltip::text(format!("Follow {login}"), window, cx)
+                                    }
                                 }),
                         )
                     }))
@@ -205,8 +205,7 @@ impl TitleBar {
         room: &Room,
         project_id: Option<u64>,
         current_user: &Arc<User>,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &AppContext,
     ) -> Option<Div> {
         if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
             return None;
@@ -242,7 +241,7 @@ impl TitleBar {
                                         AvatarAudioStatusIndicator::new(ui::AudioStatus::Muted)
                                             .tooltip({
                                                 let github_login = user.github_login.clone();
-                                                move |cx| {
+                                                move |window, cx| {
                                                     Tooltip::text(
                                                         format!("{} is muted", github_login),
                                                         window,
@@ -356,7 +355,7 @@ impl TitleBar {
                         .style(ButtonStyle::Subtle)
                         .tooltip(|window, cx| Tooltip::text("Leave call", window, cx))
                         .icon_size(IconSize::Small)
-                        .on_click(move |_, window, cx| {
+                        .on_click(move |_, _window, cx| {
                             ActiveCall::global(cx)
                                 .update(cx, |call, cx| call.hang_up(cx))
                                 .detach_and_log_err(cx);
@@ -396,7 +395,7 @@ impl TitleBar {
                 .icon_size(IconSize::Small)
                 .toggle_state(is_muted)
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-                .on_click(move |_, window, cx| {
+                .on_click(move |_, _window, cx| {
                     toggle_mute(&Default::default(), cx);
                 })
                 .into_any_element(),
