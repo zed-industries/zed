@@ -4,7 +4,7 @@ use editor::Editor;
 use gpui::{AppContext, FocusHandle, Model, View, WeakModel, WeakView};
 use language::Buffer;
 use project::ProjectEntryId;
-use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
+use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
 use crate::context::ContextKind;
@@ -14,7 +14,6 @@ use crate::thread::{Thread, ThreadId};
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 use crate::{AssistantPanel, ToggleContextPicker};
-use settings::Settings;
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
@@ -153,22 +152,18 @@ impl Render for ContextStrip {
                 |parent| {
                     parent.child(
                         h_flex()
-                            .id("no-content-info")
                             .ml_1p5()
                             .gap_2()
-                            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                            .text_size(TextSize::Small.rems(cx))
-                            .text_color(cx.theme().colors().text_muted)
-                            .child("Add Context")
-                            .children(
-                                ui::KeyBinding::for_action_in(
-                                    &ToggleContextPicker,
-                                    &focus_handle,
-                                    cx,
-                                )
-                                .map(|binding| binding.into_any_element()),
+                            .child(
+                                Label::new("Add Context")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
                             )
-                            .opacity(0.5),
+                            .opacity(0.5)
+                            .children(
+                                KeyBinding::for_action_in(&ToggleContextPicker, &focus_handle, cx)
+                                    .map(|binding| binding.into_any_element()),
+                            ),
                     )
                 }
             })
