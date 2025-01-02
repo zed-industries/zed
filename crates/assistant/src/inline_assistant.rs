@@ -1705,7 +1705,7 @@ impl Render for PromptEditor {
 
 impl FocusableView for PromptEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.editor.focus_handle(cx)
+        self.editor.item_focus_handle(cx)
     }
 }
 
@@ -1826,7 +1826,7 @@ impl PromptEditor {
 
     fn unlink(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let prompt = self.prompt(cx);
-        let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
+        let focus = self.editor.item_focus_handle(cx).contains_focused(window, cx);
         self.editor = window.new_view(cx, |cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(
@@ -2153,7 +2153,7 @@ impl PromptEditor {
                     .disabled(disabled || current_index == 0)
                     .shape(IconButtonShape::Square)
                     .tooltip({
-                        let focus_handle = self.editor.focus_handle(cx);
+                        let focus_handle = self.editor.item_focus_handle(cx);
                         move |cx| {
                             window
                                 .new_view(cx, |window, cx| {
@@ -2196,7 +2196,7 @@ impl PromptEditor {
                     .disabled(disabled || current_index == total_models - 1)
                     .shape(IconButtonShape::Square)
                     .tooltip({
-                        let focus_handle = self.editor.focus_handle(cx);
+                        let focus_handle = self.editor.item_focus_handle(cx);
                         move |cx| {
                             window
                                 .new_view(cx, |window, cx| {

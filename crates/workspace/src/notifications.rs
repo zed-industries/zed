@@ -139,7 +139,7 @@ impl Workspace {
     ) {
         self.dismiss_notification_internal(&id, window, cx);
 
-        let notification = build_notification(cx);
+        let notification = build_notification(window, cx);
         cx.subscribe_in(&notification, window, {
             let id = id.clone();
             move |this, _, _: &DismissEvent, window, cx| {
@@ -273,7 +273,7 @@ impl LanguageServerPrompt {
 
     async fn select_option(this: Model<Self>, ix: usize, window: &mut Window, cx: &mut AppContext) {
         util::maybe!(async move {
-            let potential_future = this.update(&mut cx, |this, _| {
+            let potential_future = this.update_in(&mut cx, |this, window, _| {
                 this.request.take().map(|request| request.respond(ix))
             });
 
@@ -282,7 +282,7 @@ impl LanguageServerPrompt {
                 .await
                 .ok_or_else(|| anyhow::anyhow!("Stream already closed"))?;
 
-            this.update(&mut cx, |_, cx| cx.emit(DismissEvent))?;
+            this.update_in(&mut cx, |_, cx| cx.emit(DismissEvent))?;
 
             anyhow::Ok(())
         })
@@ -605,7 +605,7 @@ pub trait NotifyResultExt {
         cx: &mut ModelContext<Workspace>,
     ) -> Option<Self::Ok>;
 
-    fn notify_async_err(self, window: &mut Window, cx: &mut AppContext) -> Option<Self::Ok>;
+    fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
 }
 
 impl<T, E> NotifyResultExt for Result<T, E>
@@ -630,12 +630,12 @@ where
         }
     }
 
-    fn notify_async_err(self, window: &mut Window, cx: &mut AppContext) -> Option<T> {
+    fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {
                 log::error!("{err:?}");
-                cx.update_root(|view, cx| {
+                cx.update_root(|view, window, cx| {
                     if let Ok(workspace) = view.downcast::<Workspace>() {
                         workspace.update(cx, |workspace, cx| workspace.show_error(&err, window, cx))
                     }

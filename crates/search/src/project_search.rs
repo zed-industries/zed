@@ -795,9 +795,9 @@ impl ProjectSearchView {
         subscriptions.push(cx.on_focus_in(&focus_handle, window, |this, window, cx| {
             if this.focus_handle.is_focused(window) {
                 if this.has_matches() {
-                    this.results_editor.focus_handle(cx).focus(window);
+                    this.results_editor.item_focus_handle(cx).focus(window);
                 } else {
-                    this.query_editor.focus_handle(cx).focus(window);
+                    this.query_editor.item_focus_handle(cx).focus(window);
                 }
             }
         }));
@@ -1156,7 +1156,7 @@ impl ProjectSearchView {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.select_all(&SelectAll, window, cx);
         });
-        let editor_handle = self.query_editor.focus_handle(cx);
+        let editor_handle = self.query_editor.item_focus_handle(cx);
         window.focus(&editor_handle);
     }
 
@@ -1194,7 +1194,7 @@ impl ProjectSearchView {
             let cursor = query_editor.selections.newest_anchor().head();
             query_editor.change_selections(None, window, cx, |s| s.select_ranges([cursor..cursor]));
         });
-        let results_handle = self.results_editor.focus_handle(cx);
+        let results_handle = self.results_editor.item_focus_handle(cx);
         window.focus(&results_handle);
     }
 
@@ -1224,7 +1224,7 @@ impl ProjectSearchView {
                     cx,
                 );
             });
-            if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
+            if is_new_search && self.query_editor.item_focus_handle(cx).is_focused(window) {
                 self.focus_results_editor(window, cx);
             }
         }
@@ -1354,7 +1354,7 @@ impl ProjectSearchView {
     }
 
     fn move_focus_to_results(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if !self.results_editor.focus_handle(cx).is_focused(window)
+        if !self.results_editor.item_focus_handle(cx).is_focused(window)
             && !self.model.read(cx).match_ranges.is_empty()
         {
             cx.stop_propagation();
@@ -1411,7 +1411,7 @@ impl ProjectSearchBar {
             search_view.update(cx, |search_view, cx| {
                 if !search_view
                     .replacement_editor
-                    .focus_handle(cx)
+                    .item_focus_handle(cx)
                     .is_focused(window)
                 {
                     cx.stop_propagation();
@@ -1437,7 +1437,7 @@ impl ProjectSearchBar {
     fn focus_search(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.query_editor.focus_handle(cx).focus(window);
+                search_view.query_editor.item_focus_handle(cx).focus(window);
             });
         }
     }
@@ -1470,7 +1470,7 @@ impl ProjectSearchBar {
             let current_index = match views
                 .iter()
                 .enumerate()
-                .find(|(_, view)| view.focus_handle(cx).is_focused(window))
+                .find(|(_, view)| view.item_focus_handle(cx).is_focused(window))
             {
                 Some((index, _)) => index,
                 None => return,
@@ -1481,7 +1481,7 @@ impl ProjectSearchBar {
                 Direction::Prev if current_index == 0 => views.len() - 1,
                 Direction::Prev => (current_index - 1) % views.len(),
             };
-            let next_focus_handle = views[new_index].focus_handle(cx);
+            let next_focus_handle = views[new_index].item_focus_handle(cx);
             window.focus(&next_focus_handle);
             cx.stop_propagation();
         });
@@ -1518,9 +1518,9 @@ impl ProjectSearchBar {
             search.update(cx, |this, cx| {
                 this.replace_enabled = !this.replace_enabled;
                 let editor_to_focus = if this.replace_enabled {
-                    this.replacement_editor.focus_handle(cx)
+                    this.replacement_editor.item_focus_handle(cx)
                 } else {
-                    this.query_editor.focus_handle(cx)
+                    this.query_editor.item_focus_handle(cx)
                 };
                 window.focus(&editor_to_focus);
                 cx.notify();
@@ -1608,7 +1608,7 @@ impl ProjectSearchBar {
                         SearchInputKind::Exclude,
                     ),
                 ] {
-                    if editor.focus_handle(cx).is_focused(window) {
+                    if editor.item_focus_handle(cx).is_focused(window) {
                         let new_query = search_view.model.update(cx, |model, cx| {
                             let project = model.project.clone();
 
@@ -1650,7 +1650,7 @@ impl ProjectSearchBar {
                         SearchInputKind::Exclude,
                     ),
                 ] {
-                    if editor.focus_handle(cx).is_focused(window) {
+                    if editor.item_focus_handle(cx).is_focused(window) {
                         if editor.read(cx).text(cx).is_empty() {
                             if let Some(new_query) = search_view
                                 .model
@@ -2090,7 +2090,7 @@ impl Render for ProjectSearchBar {
 
         if search
             .replacement_editor
-            .focus_handle(cx)
+            .item_focus_handle(cx)
             .is_focused(window)
         {
             key_context.add("in_replace");
@@ -2459,7 +2459,7 @@ pub mod tests {
             .update(cx, |_, window, cx| {
                 search_view.update(window, |search_view, cx| {
                 assert!(
-                    search_view.query_editor.focus_handle(cx).is_focused(cx),
+                    search_view.query_editor.item_focus_handle(cx).is_focused(cx),
                     "Empty search view should be focused after the toggle focus event: no results panel to focus on",
                 );
            });
@@ -2470,7 +2470,7 @@ pub mod tests {
                 search_view.update(window, |search_view, cx| {
                     let query_editor = &search_view.query_editor;
                     assert!(
-                        query_editor.focus_handle(cx).is_focused(cx),
+                        query_editor.item_focus_handle(cx).is_focused(cx),
                         "Search view should be focused after the new search view is activated",
                     );
                     let query_text = query_editor.read(cx).text(cx);
@@ -2511,7 +2511,7 @@ pub mod tests {
                     "Search view for mismatching query should have no results but got '{results_text}'"
                 );
                 assert!(
-                    search_view.query_editor.focus_handle(cx).is_focused(cx),
+                    search_view.query_editor.item_focus_handle(cx).is_focused(cx),
                     "Search view should be focused after mismatching query had been used in search",
                 );
             });
@@ -2527,7 +2527,7 @@ pub mod tests {
         window.update(cx, |_, window, cx| {
             search_view.update(window, |search_view, cx| {
                 assert!(
-                    search_view.query_editor.focus_handle(cx).is_focused(cx),
+                    search_view.query_editor.item_focus_handle(cx).is_focused(cx),
                     "Search view with mismatching query should be focused after the toggle focus event: still no results panel to focus on",
                 );
             });
@@ -2554,7 +2554,7 @@ pub mod tests {
                     "Search view results should match the query"
                 );
                 assert!(
-                    search_view.results_editor.focus_handle(cx).is_focused(cx),
+                    search_view.results_editor.item_focus_handle(cx).is_focused(cx),
                     "Search view with mismatching query should be focused after search results are available",
                 );
             });
@@ -2571,7 +2571,7 @@ pub mod tests {
         window.update(cx, |_, window, cx| {
             search_view.update(window, |search_view, cx| {
                 assert!(
-                    search_view.results_editor.focus_handle(cx).is_focused(cx),
+                    search_view.results_editor.item_focus_handle(cx).is_focused(cx),
                     "Search view with matching query should still have its results editor focused after the toggle focus event",
                 );
             });
@@ -2598,7 +2598,7 @@ pub mod tests {
                     "Results should be unchanged after search view 2nd open in a row"
                 );
                 assert!(
-                    search_view.query_editor.focus_handle(cx).is_focused(cx),
+                    search_view.query_editor.item_focus_handle(cx).is_focused(cx),
                     "Focus should be moved into query editor again after search view 2nd open in a row"
                 );
             });
@@ -2616,7 +2616,7 @@ pub mod tests {
         window.update(cx, |_, window, cx| {
             search_view.update(window, |search_view, cx| {
                 assert!(
-                    search_view.results_editor.focus_handle(cx).is_focused(cx),
+                    search_view.results_editor.item_focus_handle(cx).is_focused(cx),
                     "Search view with matching query should switch focus to the results editor after the toggle focus event",
                 );
             });
@@ -2694,7 +2694,7 @@ pub mod tests {
         window.update(cx, |_, window, cx| {
             search_view.update(window, |search_view, cx| {
                     assert!(
-                        search_view.query_editor.focus_handle(cx).is_focused(cx),
+                        search_view.query_editor.item_focus_handle(cx).is_focused(cx),
                         "Empty search view should be focused after the toggle focus event: no results panel to focus on",
                     );
                 });
@@ -2705,7 +2705,7 @@ pub mod tests {
                 search_view.update(window, |search_view, cx| {
                     let query_editor = &search_view.query_editor;
                     assert!(
-                        query_editor.focus_handle(cx).is_focused(cx),
+                        query_editor.item_focus_handle(cx).is_focused(cx),
                         "Search view should be focused after the new search view is activated",
                     );
                     let query_text = query_editor.read(cx).text(cx);
@@ -2747,7 +2747,7 @@ pub mod tests {
                 "Search view for mismatching query should have no results but got '{results_text}'"
             );
                     assert!(
-                search_view.query_editor.focus_handle(cx).is_focused(cx),
+                search_view.query_editor.item_focus_handle(cx).is_focused(cx),
                 "Search view should be focused after mismatching query had been used in search",
             );
                 });
@@ -2763,7 +2763,7 @@ pub mod tests {
         window.update(cx, |_, window, cx| {
             search_view.update(window, |search_view, cx| {
                     assert!(
-                        search_view.query_editor.focus_handle(cx).is_focused(cx),
+                        search_view.query_editor.item_focus_handle(cx).is_focused(cx),
                         "Search view with mismatching query should be focused after the toggle focus event: still no results panel to focus on",
                     );
                 });
@@ -2790,7 +2790,7 @@ pub mod tests {
                     "Search view results should match the query"
                 );
                 assert!(
-                    search_view.results_editor.focus_handle(cx).is_focused(cx),
+                    search_view.results_editor.item_focus_handle(cx).is_focused(cx),
                     "Search view with mismatching query should be focused after search results are available",
                 );
             })).unwrap();
@@ -2806,7 +2806,7 @@ pub mod tests {
         window.update(cx, |_, window, cx| {
             search_view.update(window, |search_view, cx| {
                     assert!(
-                        search_view.results_editor.focus_handle(cx).is_focused(cx),
+                        search_view.results_editor.item_focus_handle(cx).is_focused(cx),
                         "Search view with matching query should still have its results editor focused after the toggle focus event",
                     );
                 });
@@ -2845,7 +2845,7 @@ pub mod tests {
                         "Results of the first search view should not update too"
                     );
                     assert!(
-                        !search_view.query_editor.focus_handle(cx).is_focused(cx),
+                        !search_view.query_editor.item_focus_handle(cx).is_focused(cx),
                         "Focus should be moved away from the first search view"
                     );
                 });
@@ -2866,7 +2866,7 @@ pub mod tests {
                         "No search results should be in the 2nd view yet, as we did not spawn a search for it"
                     );
                     assert!(
-                        search_view_2.query_editor.focus_handle(cx).is_focused(cx),
+                        search_view_2.query_editor.item_focus_handle(cx).is_focused(cx),
                         "Focus should be moved into query editor of the new window"
                     );
                 });
@@ -2894,7 +2894,7 @@ pub mod tests {
                         "New search view with the updated query should have new search results"
                     );
                     assert!(
-                        search_view_2.results_editor.focus_handle(cx).is_focused(cx),
+                        search_view_2.results_editor.item_focus_handle(cx).is_focused(cx),
                         "Search view with mismatching query should be focused after search results are available",
                     );
                 });
@@ -2912,7 +2912,7 @@ pub mod tests {
         window.update(cx, |_, window, cx| {
             search_view_2.update(window, |search_view_2, cx| {
                     assert!(
-                        search_view_2.results_editor.focus_handle(cx).is_focused(cx),
+                        search_view_2.results_editor.item_focus_handle(cx).is_focused(cx),
                         "Search view with matching query should switch focus to the results editor after the toggle focus event",
                     );
                 });}).unwrap();
@@ -2998,7 +2998,7 @@ pub mod tests {
             .update(cx, |_, window, cx| {
                 search_view.update(window, |search_view, cx| {
                     assert!(
-                        search_view.query_editor.focus_handle(cx).is_focused(cx),
+                        search_view.query_editor.item_focus_handle(cx).is_focused(cx),
                         "On new search in directory, focus should be moved into query editor"
                     );
                     search_view.excluded_files_editor.update(cx, |editor, cx| {

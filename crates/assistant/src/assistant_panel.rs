@@ -4464,7 +4464,7 @@ impl Render for ContextEditor {
 
 impl FocusableView for ContextEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.editor.focus_handle(cx)
+        self.editor.item_focus_handle(cx)
     }
 }
 

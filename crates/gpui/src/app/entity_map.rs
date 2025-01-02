@@ -1,6 +1,4 @@
-use crate::{
-    seal::Sealed, AppContext, Context, Entity, Flatten, ModelContext, VisualContext, Window,
-};
+use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext, VisualContext, Window};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -422,6 +420,20 @@ impl<T: 'static> Model<T> {
         C: Context,
     {
         cx.update_model(self, update)
+    }
+
+    /// Updates the entity referenced by this model with the given function if
+    /// the referenced entity still exists, within a visual context that has a window.
+    /// Returns an error if the entity has been released.
+    pub fn update_in<C, R>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut Window, &mut ModelContext<'_, T>) -> R,
+    ) -> C::Result<R>
+    where
+        C: VisualContext,
+    {
+        cx.update_view(self, update)
     }
 }
 

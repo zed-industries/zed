@@ -148,7 +148,7 @@ impl ProjectDiagnosticsEditor {
                     this.summary = project.read(cx).diagnostic_summary(false, cx);
                     cx.emit(EditorEvent::TitleChanged);
 
-                    if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
+                    if this.editor.item_focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
                         log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
                     } else {
                         log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
@@ -317,12 +317,12 @@ impl ProjectDiagnosticsEditor {
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.focus_handle.is_focused(window) && !self.path_states.is_empty() {
-            self.editor.focus_handle(cx).focus(window)
+            self.editor.item_focus_handle(cx).focus(window)
         }
     }
 
     fn focus_out(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window)
+        if !self.focus_handle.is_focused(window) && !self.editor.item_focus_handle(cx).is_focused(window)
         {
             self.update_stale_excerpts(window, cx);
         }
@@ -649,11 +649,11 @@ impl ProjectDiagnosticsEditor {
         });
 
         if self.path_states.is_empty() {
-            if self.editor.focus_handle(cx).is_focused(window) {
+            if self.editor.item_focus_handle(cx).is_focused(window) {
                 window.focus(&self.focus_handle);
             }
         } else if self.focus_handle.is_focused(window) {
-            let focus_handle = self.editor.focus_handle(cx);
+            let focus_handle = self.editor.item_focus_handle(cx);
             window.focus(&focus_handle);
         }
 

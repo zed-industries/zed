@@ -9,9 +9,10 @@ use editor::actions::{
     SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine,
 };
 use editor::{Editor, EditorSettings};
-use gpui::{Window, ModelContext, Model, 
+use gpui::{
     Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, ParentElement, Render, Styled, Subscription,   WeakModel,
+    InteractiveElement, Model, ModelContext, ParentElement, Render, Styled, Subscription,
+    WeakModel, Window,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
@@ -39,7 +40,8 @@ impl QuickActionBar {
     pub fn new(
         buffer_search_bar: Model<BufferSearchBar>,
         workspace: &Workspace,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let mut this = Self {
             _inlay_hints_enabled_subscription: None,
@@ -51,8 +53,10 @@ impl QuickActionBar {
             workspace: workspace.weak_handle(),
         };
         this.apply_settings(window, cx);
-        cx.observe_global_in::<SettingsStore>(window, |this, window, cx| this.apply_settings(window, cx))
-            .detach();
+        cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
+            this.apply_settings(window, cx)
+        })
+        .detach();
         this
     }
 
@@ -146,7 +150,12 @@ impl Render for QuickActionBar {
                 move |_, cx| {
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
-                            AssistantPanel::inline_assist(workspace, &InlineAssist::default(), window, cx);
+                            AssistantPanel::inline_assist(
+                                workspace,
+                                &InlineAssist::default(),
+                                window,
+                                cx,
+                            );
                         });
                     }
                 }
@@ -154,7 +163,7 @@ impl Render for QuickActionBar {
         );
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
-            let focus = editor.focus_handle(cx);
+            let focus = editor.item_focus_handle(cx);
 
             PopoverMenu::new("editor-selections-dropdown")
                 .trigger(
@@ -164,7 +173,9 @@ impl Render for QuickActionBar {
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_selections_handle.is_deployed())
                         .when(!self.toggle_selections_handle.is_deployed(), |this| {
-                            this.tooltip(|window, cx| Tooltip::text("Selection Controls", window, cx))
+                            this.tooltip(|window, cx| {
+                                Tooltip::text("Selection Controls", window, cx)
+                            })
                         }),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
@@ -234,7 +245,8 @@ impl Render for QuickActionBar {
                                             .update(cx, |editor, cx| {
                                                 editor.toggle_inlay_hints(
                                                     &editor::actions::ToggleInlayHints,
-                                                    window, cx,
+                                                    window,
+                                                    cx,
                                                 );
                                             })
                                             .ok();
@@ -255,7 +267,8 @@ impl Render for QuickActionBar {
                                         .update(cx, |editor, cx| {
                                             editor.toggle_selection_menu(
                                                 &editor::actions::ToggleSelectionMenu,
-                                                window, cx,
+                                                window,
+                                                cx,
                                             )
                                         })
                                         .ok();
@@ -275,7 +288,8 @@ impl Render for QuickActionBar {
                                         .update(cx, |editor, cx| {
                                             editor.toggle_auto_signature_help_menu(
                                                 &editor::actions::ToggleAutoSignatureHelp,
-                                                window, cx,
+                                                window,
+                                                cx,
                                             );
                                         })
                                         .ok();
@@ -297,7 +311,8 @@ impl Render for QuickActionBar {
                                         .update(cx, |editor, cx| {
                                             editor.toggle_git_blame_inline(
                                                 &editor::actions::ToggleGitBlameInline,
-                                                window, cx,
+                                                window,
+                                                cx,
                                             )
                                         })
                                         .ok();
@@ -317,7 +332,8 @@ impl Render for QuickActionBar {
                                         .update(cx, |editor, cx| {
                                             editor.toggle_git_blame(
                                                 &editor::actions::ToggleGitBlame,
-                                                window, cx,
+                                                window,
+                                                cx,
                                             )
                                         })
                                         .ok();
@@ -419,7 +435,8 @@ impl ToolbarItemView for QuickActionBar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> ToolbarItemLocation {
         self.active_item = active_pane_item.map(ItemHandle::boxed_clone);
         if let Some(active_item) = active_pane_item {
@@ -429,18 +446,20 @@ impl ToolbarItemView for QuickActionBar {
                 let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
                 let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
                 self._inlay_hints_enabled_subscription =
-                    Some(cx.observe_in(&editor, window, move |_, editor, window, cx| {
-                        let editor = editor.read(cx);
-                        let new_inlay_hints_enabled = editor.inlay_hints_enabled();
-                        let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
-                        let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
-                            || supports_inlay_hints != new_supports_inlay_hints;
-                        inlay_hints_enabled = new_inlay_hints_enabled;
-                        supports_inlay_hints = new_supports_inlay_hints;
-                        if should_notify {
-                            cx.notify()
-                        }
-                    }));
+                    Some(
+                        cx.observe_in(&editor, window, move |_, editor, window, cx| {
+                            let editor = editor.read(cx);
+                            let new_inlay_hints_enabled = editor.inlay_hints_enabled();
+                            let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
+                            let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
+                                || supports_inlay_hints != new_supports_inlay_hints;
+                            inlay_hints_enabled = new_inlay_hints_enabled;
+                            supports_inlay_hints = new_supports_inlay_hints;
+                            if should_notify {
+                                cx.notify()
+                            }
+                        }),
+                    );
             }
         }
         self.get_toolbar_item_location()

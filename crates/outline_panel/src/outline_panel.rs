@@ -777,7 +777,7 @@ impl OutlinePanel {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("OutlinePanel");
         dispatch_context.add("menu");
-        let identifier = if self.filter_editor.focus_handle(cx).is_focused(window) {
+        let identifier = if self.filter_editor.item_focus_handle(cx).is_focused(window) {
             "editing"
         } else {
             "not_editing"
@@ -834,7 +834,7 @@ impl OutlinePanel {
     }
 
     fn open(&mut self, _: &Open, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if self.filter_editor.focus_handle(cx).is_focused(window) {
+        if self.filter_editor.item_focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
             self.toggle_expanded(&selected_entry, window, cx);
@@ -843,10 +843,10 @@ impl OutlinePanel {
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if self.filter_editor.focus_handle(cx).is_focused(window) {
+        if self.filter_editor.item_focus_handle(cx).is_focused(window) {
             self.focus_handle.focus(window);
         } else {
-            self.filter_editor.focus_handle(cx).focus(window);
+            self.filter_editor.item_focus_handle(cx).focus(window);
         }
 
         if self.context_menu.is_some() {
@@ -861,7 +861,7 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.filter_editor.focus_handle(cx).is_focused(window) {
+        if self.filter_editor.item_focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some((active_editor, selected_entry)) =
             self.active_editor().zip(self.selected_entry().cloned())
@@ -877,7 +877,7 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.filter_editor.focus_handle(cx).is_focused(window) {
+        if self.filter_editor.item_focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some((active_editor, selected_entry)) =
             self.active_editor().zip(self.selected_entry().cloned())
@@ -1023,7 +1023,7 @@ impl OutlinePanel {
                 }
 
                 if change_focus {
-                    active_editor.focus_handle(cx).focus(window);
+                    active_editor.item_focus_handle(cx).focus(window);
                 } else {
                     self.focus_handle.focus(window);
                 }
@@ -4675,7 +4675,7 @@ impl Panel for OutlinePanel {
 
 impl FocusableView for OutlinePanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.filter_editor.focus_handle(cx).clone()
+        self.filter_editor.item_focus_handle(cx).clone()
     }
 }
 

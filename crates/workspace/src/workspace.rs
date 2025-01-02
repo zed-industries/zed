@@ -1025,7 +1025,7 @@ impl Workspace {
 
         let subscriptions = vec![
             cx.observe_window_activation(window, Self::on_window_activation_changed),
-            cx.observe_window_bounds(window, move |this, cx| {
+            cx.observe_window_bounds(window, move |this, window, cx| {
                 if this.bounds_save_task_queued.is_some() {
                     return;
                 }
@@ -1034,9 +1034,9 @@ impl Workspace {
                         .timer(Duration::from_millis(100))
                         .await;
                     this.update(&mut cx, |this, cx| {
-                        if let Some(display) = cx.display() {
+                        if let Some(display) = window.display(cx) {
                             if let Ok(display_uuid) = display.uuid() {
-                                let window_bounds = cx.inner_window_bounds();
+                                let window_bounds = window.inner_window_bounds();
                                 if let Some(database_id) = workspace_id {
                                     cx.background_executor()
                                         .spawn(DB.set_window_open_status(
@@ -1054,26 +1054,26 @@ impl Workspace {
                 }));
                 cx.notify();
             }),
-            cx.observe_window_appearance(window, |_, cx| {
+            cx.observe_window_appearance(window, |_, window, cx| {
                 let window_appearance = cx.appearance();
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
                 ThemeSettings::reload_current_theme(cx);
             }),
-            cx.observe(&left_dock, |this, _, window, cx| {
-                this.serialize_workspace(cx);
+            cx.observe_in(&left_dock, window, |this, _, window, cx| {
+                this.serialize_workspace(window, cx);
                 cx.notify();
             }),
-            cx.observe(&bottom_dock, |this, _, window, cx| {
-                this.serialize_workspace(cx);
+            cx.observe_in(&bottom_dock, window, |this, _, window, cx| {
+                this.serialize_workspace(window, cx);
                 cx.notify();
             }),
-            cx.observe(&right_dock, |this, _, window, cx| {
-                this.serialize_workspace(cx);
+            cx.observe_in(&right_dock, window, |this, _, window, cx| {
+                this.serialize_workspace(window, cx);
                 cx.notify();
             }),
-            cx.on_release(|this, window, cx| {
+            cx.on_release_in(window, |this, window, cx| {
                 this.app_state.workspace_store.update(cx, |store, _| {
                     let window = window.downcast::<Self>().unwrap();
                     store.workspaces.remove(&window);
@@ -1226,8 +1226,8 @@ impl Workspace {
                     .await;
             }
             let window = if let Some(window) = requesting_window {
-                cx.update_window(window.into(), |_, cx| {
-                    window.replace_root_view(cx, |cx| {
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.replace_root_view(cx, |window, cx| {
                         Workspace::new(
                             Some(workspace_id),
                             project_handle.clone(),
@@ -2022,7 +2022,6 @@ impl Workspace {
                             ix,
                             &*item,
                             save_intent,
-                            window,
                             &mut cx,
                         )
                         .await?
@@ -3616,9 +3615,9 @@ impl Workspace {
                 Ok::<_, anyhow::Error>(())
             })??;
             if let Some(view) = response.active_view {
-                Self::add_view_from_leader(this.clone(), leader_id, &view, window, &mut cx).await?;
+                Self::add_view_from_leader(this.clone(), leader_id, &view, &mut cx).await?;
             }
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.leader_updated(leader_id, window, cx)
             })?;
             Ok(())
@@ -3895,8 +3894,7 @@ impl Workspace {
         this: &WeakModel<Self>,
         leader_id: PeerId,
         update: proto::UpdateFollowers,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
             proto::update_followers::Variant::CreateView(view) => {
@@ -3910,7 +3908,7 @@ impl Workspace {
                 })??;
 
                 if should_add_view {
-                    Self::add_view_from_leader(this.clone(), leader_id, &view, window, cx).await?
+                    Self::add_view_from_leader(this.clone(), leader_id, &view, cx).await?
                 }
             }
             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
@@ -3935,8 +3933,7 @@ impl Workspace {
 
                 if should_add_view {
                     if let Some(view) = update_active_view.view {
-                        Self::add_view_from_leader(this.clone(), leader_id, &view, window, cx)
-                            .await?
+                        Self::add_view_from_leader(this.clone(), leader_id, &view, cx).await?
                     }
                 }
             }
@@ -3948,12 +3945,17 @@ impl Workspace {
                     .id
                     .ok_or_else(|| anyhow!("missing update view id"))?;
                 let mut tasks = Vec::new();
-                this.update(cx, |this, cx| {
+                this.update_in(cx, |this, window, cx| {
                     let project = this.project.clone();
                     if let Some(state) = this.follower_states.get(&leader_id) {
                         let view_id = ViewId::from_proto(id.clone())?;
                         if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
-                            tasks.push(item.view.apply_update_proto(&project, variant.clone(), cx));
+                            tasks.push(item.view.apply_update_proto(
+                                &project,
+                                variant.clone(),
+                                window,
+                                cx,
+                            ));
                         }
                     }
                     anyhow::Ok(())
@@ -3961,7 +3963,9 @@ impl Workspace {
                 try_join_all(tasks).await.log_err();
             }
         }
-        this.update(cx, |this, cx| this.leader_updated(leader_id, window, cx))?;
+        this.update_in(cx, |this, window, cx| {
+            this.leader_updated(leader_id, window, cx)
+        })?;
         Ok(())
     }
 
@@ -3969,8 +3973,7 @@ impl Workspace {
         this: WeakModel<Self>,
         leader_id: PeerId,
         view: &proto::View,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         let this = this.upgrade().context("workspace dropped")?;
 
@@ -3987,11 +3990,11 @@ impl Workspace {
                 .context("stopped following")?;
             anyhow::Ok(state.pane().clone())
         })??;
-        let existing_item = pane.update(cx, |pane, cx| {
+        let existing_item = pane.update_in(cx, |pane, window, cx| {
             let client = this.read(cx).client().clone();
             pane.items().find_map(|item| {
                 let item = item.to_followable_item_handle(cx)?;
-                if item.remote_id(&client, cx) == Some(id) {
+                if item.remote_id(&client, window, cx) == Some(id) {
                     Some(item)
                 } else {
                     None
@@ -4006,7 +4009,7 @@ impl Workspace {
                 Err(anyhow!("missing view variant"))?;
             }
 
-            let task = window.update(|_, window, cx| {
+            let task = cx.update(|window, cx| {
                 FollowableViewRegistry::from_state_proto(this.clone(), id, variant, window, cx)
             })?;
 
@@ -4017,11 +4020,11 @@ impl Workspace {
             };
 
             let mut new_item = task.await?;
-            pane.update(cx, |pane, cx| {
+            pane.update_in(cx, |pane, window, cx| {
                 let mut item_to_remove = None;
                 for (ix, item) in pane.items().enumerate() {
                     if let Some(item) = item.to_followable_item_handle(cx) {
-                        match new_item.dedup(item.as_ref(), cx) {
+                        match new_item.dedup(item.as_ref(), window, cx) {
                             Some(item::Dedup::KeepExisting) => {
                                 new_item =
                                     item.boxed_clone().to_followable_item_handle(cx).unwrap();
@@ -4045,9 +4048,9 @@ impl Workspace {
             new_item
         };
 
-        this.update(cx, |this, cx| {
+        this.update_in(cx, |this, window, cx| {
             let state = this.follower_states.get_mut(&leader_id)?;
-            item.set_leader_peer_id(Some(leader_id), cx);
+            item.set_leader_peer_id(Some(leader_id), window, cx);
             state.items_by_leader_view_id.insert(
                 id,
                 FollowerView {
@@ -4069,7 +4072,7 @@ impl Workspace {
             let (active_item, panel_id) = self.active_item_for_followers(window, cx);
 
             if let Some(item) = active_item {
-                if item.focus_handle(cx).contains_focused(window, cx) {
+                if item.item_focus_handle(cx).contains_focused(window, cx) {
                     let leader_id = self
                         .pane_for(&*item)
                         .and_then(|pane| self.leader_for_pane(&pane));
@@ -4408,7 +4411,7 @@ impl Workspace {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
-                this.update(&mut cx, |this, cx| {
+                this.update_in(&mut cx, |this, window, cx| {
                     this.serialize_workspace_internal(window, cx).detach();
                     this._schedule_serialize.take();
                 })
@@ -4565,8 +4568,7 @@ impl Workspace {
     async fn serialize_items(
         this: &WeakModel<Self>,
         items_rx: UnboundedReceiver<Box<dyn SerializableItemHandle>>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         const CHUNK_SIZE: usize = 200;
         const THROTTLE_TIME: Duration = Duration::from_millis(200);
@@ -8697,7 +8699,7 @@ mod tests {
             });
 
             let handle = workspace
-                .update(cx, |workspace, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     let project_path = (worktree_id, "one.png");
                     workspace.open_path(project_path, None, true, window, cx)
                 })
@@ -8711,7 +8713,7 @@ mod tests {
             );
 
             let handle = workspace
-                .update(cx, |workspace, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     let project_path = (worktree_id, "three.txt");
                     workspace.open_path(project_path, None, true, window, cx)
                 })

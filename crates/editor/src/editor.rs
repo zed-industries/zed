@@ -10736,7 +10736,7 @@ impl Editor {
                         window,
                         cx,
                     );
-                    let rename_focus_handle = rename_editor.focus_handle(cx);
+                    let rename_focus_handle = rename_editor.item_focus_handle(cx);
                     window.focus(&rename_focus_handle);
                     let block_id = this.insert_blocks(
                         [BlockProperties {
@@ -10852,7 +10852,7 @@ impl Editor {
         cx: &mut ModelContext<Self>,
     ) -> Option<RenameState> {
         let rename = self.pending_rename.take()?;
-        if rename.editor.focus_handle(cx).is_focused(window) {
+        if rename.editor.item_focus_handle(cx).is_focused(window) {
             window.focus(&self.focus_handle);
         }
 

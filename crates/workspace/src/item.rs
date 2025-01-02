@@ -14,8 +14,8 @@ use client::{
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    Font, HighlightStyle, Model, ModelContext, Pixels, Point, SharedString, Task, WeakModel,
-    Window,
+    Font, HighlightStyle, Model, ModelContext, Pixels, Point, Render, SharedString, Task,
+    WeakModel, Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
@@ -178,7 +178,7 @@ impl TabContentParams {
     }
 }
 
-pub trait Item: FocusableView + EventEmitter<Self::Event> + Sized {
+pub trait Item: FocusableView + EventEmitter<Self::Event> + Render + Sized {
     type Event;
 
     /// Returns the tab contents.
@@ -188,8 +188,8 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> + Sized {
     fn tab_content(
         &self,
         params: TabContentParams,
-        window: &mut Window,
-        cx: &mut AppContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> AnyElement {
         let Some(text) = self.tab_content_text(window, cx) else {
             return gpui::Empty.into_any();
@@ -203,11 +203,11 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> + Sized {
     /// Returns the textual contents of the tab.
     ///
     /// Use this if you don't need to customize the tab contents.
-    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         None
     }
 
-    fn tab_icon(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &AppContext) -> Option<Icon> {
         None
     }
 
@@ -431,7 +431,7 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut AppContext,
         handler: Box<dyn Fn(ItemEvent, &mut Window, &mut AppContext)>,
     ) -> gpui::Subscription;
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+    fn item_focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(
@@ -552,12 +552,13 @@ impl<T: Item> ItemHandle for Model<T> {
         handler: Box<dyn Fn(ItemEvent, &mut Window, &mut AppContext)>,
     ) -> gpui::Subscription {
         window.subscribe(self, cx, move |_, event, window, cx| {
-            T::to_item_events(event, |item_event| handler(item_event, cx));
+            T::to_item_events(event, |item_event| handler(item_event, window, cx));
         })
     }
 
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.focus_handle(cx)
+    // todo! rename back to focus_handle?
+    fn item_focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.item_focus_handle(cx)
     }
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
@@ -753,12 +754,7 @@ impl<T: Item> ItemHandle for Model<T> {
             let mut event_subscription = Some(cx.subscribe_in(
                 self,
                 window,
-                move |workspace,
-                      item: Model<T>,
-                      event,
-                      // todo!: Remove type annotations
-                      window: &mut Window,
-                      cx: &mut AppContext| {
+                move |workspace, item: &Model<T>, event, window, cx| {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item
                         .get(&item.item_id())
@@ -778,7 +774,7 @@ impl<T: Item> ItemHandle for Model<T> {
                             }
                         }
 
-                        if item.focus_handle(cx).contains_focused(window, cx) {
+                        if item.item_focus_handle(cx).contains_focused(window, cx) {
                             item.add_event_to_update_proto(
                                 event,
                                 &mut pending_update.borrow_mut(),
@@ -844,7 +840,7 @@ impl<T: Item> ItemHandle for Model<T> {
             ));
 
             cx.on_blur(
-                &self.focus_handle(cx),
+                &self.item_focus_handle(cx),
                 window,
                 move |workspace, window, cx| {
                     if let Some(item) = weak_item.upgrade() {

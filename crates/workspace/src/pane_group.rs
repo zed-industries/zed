@@ -128,7 +128,7 @@ impl PaneGroup {
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &Model<Pane>,
-        zoomed: Option<&AnyWeakModel>,
+        zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
@@ -236,7 +236,7 @@ impl Member {
         follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &Model<Pane>,
-        zoomed: Option<&AnyWeakModel>,
+        zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
@@ -1205,7 +1205,7 @@ mod element {
                         let flexes = self.flexes.clone();
                         let workspace = self.workspace.clone();
                         let handle_hitbox = handle.hitbox.clone();
-                        move |e: &MouseDownEvent, phase, cx| {
+                        move |e: &MouseDownEvent, phase, window, cx| {
                             if phase.bubble() && handle_hitbox.is_hovered(window) {
                                 dragged_handle.replace(Some(ix));
                                 if e.click_count >= 2 {
@@ -1227,7 +1227,7 @@ mod element {
                         let flexes = self.flexes.clone();
                         let child_bounds = child.bounds;
                         let axis = self.axis;
-                        move |e: &MouseMoveEvent, phase, cx| {
+                        move |e: &MouseMoveEvent, phase, window, cx| {
                             let dragged_handle = dragged_handle.borrow();
                             if phase.bubble() && *dragged_handle == Some(ix) {
                                 Self::compute_resize(

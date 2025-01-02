@@ -112,7 +112,7 @@ impl TerminalPanel {
                 .active_pane
                 .read(cx)
                 .active_item()
-                .map(|item| item.focus_handle(cx))
+                .map(|item| item.item_focus_handle(cx))
                 .unwrap_or(self.focus_handle(cx));
             self.assistant_tab_bar_button = Some(
                 window
@@ -899,7 +899,7 @@ impl TerminalPanel {
                                     .active_item(cx)
                                     .context("retrieving active terminal item in the workspace")
                                     .log_err()?
-                                    .focus_handle(cx)
+                                    .item_focus_handle(cx)
                                     .focus(window);
                                 Some(())
                             })
