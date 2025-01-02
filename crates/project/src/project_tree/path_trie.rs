@@ -89,33 +89,17 @@ impl<Label: Ord> RootPathTrie<Label> {
     }
 
     pub(super) fn remove(&mut self, path: &TriePath) {
-        let mut current = &mut *self;
-        // Tracks how many nodes (starting from the leaf, going upwards) can be removed
-        let mut consecutive_node_chain = 0;
-        for path in path.0.iter() {
-            if current.children.len() > 1 {
-                consecutive_node_chain = 0;
-            } else if current.children.len() == 1 {
-                consecutive_node_chain += 1;
-            }
+        debug_assert_ne!(path.0.len(), 0);
+        let mut current = self;
+        for path in path.0.iter().take(path.0.len().saturating_sub(1)) {
             current = match current.children.get_mut(path) {
                 Some(child) => child,
                 None => return,
             };
         }
-        // Now walk the tree again, this time iterating only up to the root of the consecutive node chain.
-        let consecutive_chain_start = path.0.len() - consecutive_node_chain;
-        let mut current = self;
-        for path in path.0[..consecutive_chain_start].iter() {
-            current = match current.children.get_mut(path) {
-                Some(child) => child,
-                None => unreachable!(),
-            };
+        if let Some(final_entry_name) = path.0.last() {
+            current.children.remove(final_entry_name);
         }
-        current
-            .children
-            .remove(&path.0[consecutive_chain_start])
-            .expect("The removal to succeed");
     }
 }
 
@@ -176,6 +160,29 @@ mod tests {
             ControlFlow::Continue(())
         });
 
+        // One can also pass a path whose prefix is in the tree, but not that path itself.
+        let mut visited_paths = BTreeSet::new();
+        trie.walk(
+            &TriePath::from(Path::new("a/b/c/d/e/f/g")),
+            &mut |path, nodes| {
+                if path.as_ref() == Path::new("a/b/c") {
+                    assert_eq!(
+                        visited_paths,
+                        BTreeSet::from_iter([Arc::from(Path::new("a/"))])
+                    );
+                    assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
+                } else if path.as_ref() == Path::new("a/") {
+                    assert!(visited_paths.is_empty());
+                    assert_eq!(nodes.get(&()), Some(&LabelPresence::KnownAbsent));
+                } else {
+                    panic!("Unknown path");
+                }
+                // Assert that we only ever visit a path once.
+                assert!(visited_paths.insert(path.clone()));
+                ControlFlow::Continue(())
+            },
+        );
+
         // Test breaking from the tree-walk.
         let mut visited_paths = BTreeSet::new();
         trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, nodes| {
@@ -212,13 +219,9 @@ mod tests {
             ControlFlow::Continue(())
         });
         assert_eq!(visited_paths.len(), 1);
-    }
-
-    #[test]
-    fn test_remove() {
-        // let mut trie = RootPathTrie::new();
-        // trie.insert(&TriePath::from(Path::new("a/b/c")), BTreeMap::new());
-        // trie.remove(&TriePath::from(Path::new("a/b/c")));
-        // assert!(trie.lookup(&TriePath::from(Path::new("a/b/c"))).is_none());
+        assert_eq!(
+            visited_paths.into_iter().next().unwrap().as_ref(),
+            Path::new("a/")
+        );
     }
 }
