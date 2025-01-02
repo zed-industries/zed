@@ -22,6 +22,7 @@ use serde_json::{json, Value};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
+use std::env::consts::OS;
 use std::str::FromStr;
 use std::sync::Mutex;
 use std::{
@@ -768,6 +769,14 @@ impl PyLspAdapter {
             .await
             .clone()
     }
+    
+    fn join_binary_path_based_on_os<P: AsRef<Path>>(&self, path: P) -> PathBuf{
+        let binary_path = match OS {
+            "windows" => "Scripts",
+            _  =>"bin"
+        };
+        path.as_ref().join(binary_path)
+    }
 }
 
 #[async_trait(?Send)]
@@ -811,7 +820,7 @@ impl LspAdapter for PyLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
-        let pip_path = venv.join("bin").join("pip3");
+        let pip_path = self.join_binary_path_based_on_os(&venv).join("pip3");
         ensure!(
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
@@ -842,7 +851,7 @@ impl LspAdapter for PyLspAdapter {
                 .success(),
             "pylsp-mypy installation failed"
         );
-        let pylsp = venv.join("bin").join("pylsp");
+        let pylsp = self.join_binary_path_based_on_os(&venv).join("pylsp");
         Ok(LanguageServerBinary {
             path: pylsp,
             env: None,
@@ -856,7 +865,7 @@ impl LspAdapter for PyLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.ok()?;
-        let pylsp = venv.join("bin").join("pylsp");
+        let pylsp = self.join_binary_path_based_on_os(&venv).join("pylsp");
         Some(LanguageServerBinary {
             path: pylsp,
             env: None,
