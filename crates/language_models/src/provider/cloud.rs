@@ -416,7 +416,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                                 .disabled(disabled)
                                 .on_click({
                                     let state = self.state.downgrade();
-                                    move |_, cx| {
+                                    move |_, window, cx| {
                                         state
                                             .update(cx, |state, cx| {
                                                 state.accept_terms_of_service(cx)
@@ -882,7 +882,7 @@ impl ConfigurationView {
                         .disabled(accept_terms_disabled)
                         .on_click({
                             let state = self.state.downgrade();
-                            move |_, cx| {
+                            move |_, window, cx| {
                                 state
                                     .update(cx, |state, cx| state.accept_terms_of_service(cx))
                                     .ok();
