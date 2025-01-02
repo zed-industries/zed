@@ -1477,7 +1477,7 @@ impl Editor {
 
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
         if !self.focus_handle(cx).contains_focused(window, cx)
-            || (self.is_focused(window, cx) || self.mouse_menu_is_focused(window, cx))
+            || (self.is_focused(window) || self.mouse_menu_is_focused(window, cx))
         {
             for addon in self.addons.values() {
                 addon.extend_key_context(&mut key_context, cx)
@@ -4679,7 +4679,7 @@ impl Editor {
         if !user_requested
             && (!self.enable_inline_completions
                 || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
-                || !self.is_focused(window, cx))
+                || !self.is_focused(window))
         {
             self.discard_inline_completion(false, window, cx);
             return None;
@@ -12881,7 +12881,6 @@ impl Editor {
     #[cfg(feature = "test-support")]
     pub fn search_background_highlights(
         &mut self,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Vec<Range<Point>> {
         let snapshot = self.buffer().read(cx).snapshot(cx);
@@ -13859,7 +13858,7 @@ impl Editor {
         window.focus(&self.focus_handle)
     }
 
-    pub fn is_focused(&self, window: &mut Window, cx: &mut AppContext) -> bool {
+    pub fn is_focused(&self, window: &mut Window) -> bool {
         self.focus_handle.is_focused(window)
     }
 

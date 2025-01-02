@@ -1020,7 +1020,7 @@ impl EditorElement {
                 }
 
                 selections.extend(remote_selections.into_values());
-            } else if !editor.is_focused(window, cx) && editor.show_cursor_when_unfocused {
+            } else if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
                 let player = if editor.read_only(cx) {
                     cx.theme().players().read_only()
                 } else {

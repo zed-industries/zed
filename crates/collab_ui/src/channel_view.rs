@@ -364,7 +364,7 @@ impl ChannelView {
                 });
             }
             ChannelBufferEvent::BufferEdited => {
-                if self.editor.read(cx).is_focused(window, cx) {
+                if self.editor.read(cx).is_focused(window) {
                     self.acknowledge_buffer_version(window, cx);
                 } else {
                     self.channel_store.update(cx, |store, cx| {

@@ -970,7 +970,7 @@ impl AssistantPanel {
                 .active_context_editor(cx)
                 .and_then(|editor| {
                     let editor = &editor.read(cx).editor;
-                    if editor.read(cx).is_focused(window, cx) {
+                    if editor.read(cx).is_focused(window) {
                         Some(editor.clone())
                     } else {
                         None

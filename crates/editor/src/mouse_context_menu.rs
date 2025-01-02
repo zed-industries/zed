@@ -119,7 +119,7 @@ pub fn deploy_context_menu(
     window: &mut Window,
     cx: &mut ModelContext<Editor>,
 ) {
-    if !editor.is_focused(window, cx) {
+    if !editor.is_focused(window) {
         editor.focus(window, cx);
     }
 

@@ -20,18 +20,20 @@ type GetSearchBar<T> = for<'a, 'b> fn(
 /// Registers search actions on a div that can be taken out.
 pub struct DivRegistrar<'a, 'b, T: 'static> {
     div: Option<Div>,
-    cx: &'a mut ViewContext<'b, T>,
+    window: &'a Window,
+    cx: &'a mut ModelContext<'b, T>,
     search_getter: GetSearchBar<T>,
 }
 
 impl<'a, 'b, T: 'static> DivRegistrar<'a, 'b, T> {
     pub fn new(
         search_getter: GetSearchBar<T>,
-        window: &mut Window,
-        cx: &mut ModelContext<'b, T>,
+        window: &'a mut Window,
+        cx: &'a mut ModelContext<'b, T>,
     ) -> Self {
         Self {
             div: Some(div()),
+            window,
             cx,
             search_getter,
         }
@@ -48,11 +50,11 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
         let getter = self.search_getter;
         self.div = self.div.take().map(|div| {
             div.on_action(self.cx.listener(move |this, action, window, cx| {
-                let should_notify = (getter)(this, cx)
+                let should_notify = (getter)(this, window, cx)
                     .clone()
                     .map(|search_bar| {
                         search_bar.update(cx, |search_bar, cx| {
-                            callback.execute(search_bar, action, cx)
+                            callback.execute(search_bar, action, window, cx)
                         })
                     })
                     .unwrap_or(false);
@@ -81,7 +83,7 @@ impl SearchActionsRegistrar for Workspace {
                 this.toolbar().update(cx, move |this, cx| {
                     if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
                         let should_notify = search_bar.update(cx, move |search_bar, cx| {
-                            callback.execute(search_bar, action, cx)
+                            callback.execute(search_bar, action, window, cx)
                         });
                         if should_notify {
                             cx.notify();
@@ -124,7 +126,7 @@ impl<A: Action> ActionExecutor<A> for ForDismissed<A> {
         cx: &mut ModelContext<BufferSearchBar>,
     ) -> DidHandleAction {
         if search_bar.is_dismissed() {
-            self.0(search_bar, action, cx);
+            self.0(search_bar, action, window, cx);
             true
         } else {
             false
@@ -151,7 +153,7 @@ impl<A: Action> ActionExecutor<A> for ForDeployed<A> {
         if search_bar.is_dismissed() || search_bar.active_searchable_item.is_none() {
             false
         } else {
-            self.0(search_bar, action, cx);
+            self.0(search_bar, action, window, cx);
             true
         }
     }
@@ -175,7 +177,7 @@ impl<A: Action> ActionExecutor<A> for WithResults<A> {
         cx: &mut ModelContext<BufferSearchBar>,
     ) -> DidHandleAction {
         if search_bar.active_match_index.is_some() {
-            self.0(search_bar, action, cx);
+            self.0(search_bar, action, window, cx);
             true
         } else {
             false

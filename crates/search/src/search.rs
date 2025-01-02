@@ -117,7 +117,7 @@ impl SearchOptions {
             .tooltip({
                 let action = self.to_toggle_action();
                 let label = self.label();
-                move |cx| Tooltip::for_action_in(label, &*action, &focus_handle, window, cx)
+                move |window, cx| Tooltip::for_action_in(label, &*action, &focus_handle, window, cx)
             })
     }
 }
