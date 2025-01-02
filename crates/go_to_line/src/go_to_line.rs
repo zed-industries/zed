@@ -69,7 +69,7 @@ impl GoToLine {
         let line = cursor.row + 1;
         let column = cursor.column + 1;
 
-        let line_editor = window.new_view(cx, |cx| {
+        let line_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text(
                 format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"),
@@ -82,8 +82,7 @@ impl GoToLine {
 
         let editor = active_editor.read(cx);
         let last_line = editor.buffer().read(cx).snapshot(cx).max_point().row;
-        let scroll_position =
-            active_editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        let scroll_position = active_editor.update(cx, |editor, cx| editor.scroll_position(cx));
 
         let current_text = format!("{} of {} (column {})", line, last_line + 1, column);
 
@@ -92,7 +91,7 @@ impl GoToLine {
             active_editor,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
-            _subscriptions: vec![line_editor_change, cx.on_release(Self::release)],
+            _subscriptions: vec![line_editor_change, cx.on_release_in(window, Self::release)],
         }
     }
 
@@ -113,7 +112,7 @@ impl GoToLine {
 
     fn on_line_editor_event(
         &mut self,
-        _: Model<Editor>,
+        _: &Model<Editor>,
         event: &editor::EditorEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -269,7 +268,7 @@ mod tests {
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -280,7 +279,7 @@ mod tests {
             .await
             .unwrap();
         let editor = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
             })
             .await
@@ -364,9 +363,9 @@ mod tests {
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
-        workspace.update(cx, |workspace, cx| {
-            let cursor_position = window.new_view(cx, |_| CursorPosition::new(workspace));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = window.new_view(cx, |_window, cx| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });
@@ -382,7 +381,7 @@ mod tests {
             .await
             .unwrap();
         let editor = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
             })
             .await
@@ -408,7 +407,9 @@ mod tests {
                 "No selections should be initially"
             );
         });
-        editor.update(cx, |editor, cx| editor.select_all(&SelectAll, window, cx));
+        editor.update_in(cx, |editor, window, cx| {
+            editor.select_all(&SelectAll, window, cx)
+        });
         cx.executor().advance_clock(Duration::from_millis(200));
         workspace.update(cx, |workspace, cx| {
             assert_eq!(
@@ -440,7 +441,7 @@ mod tests {
     }
 
     fn highlighted_display_rows(editor: &Model<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
-        editor.update(cx, |editor, cx| {
+        editor.update_in(cx, |editor, window, cx| {
             editor
                 .highlighted_display_rows(window, cx)
                 .into_keys()
