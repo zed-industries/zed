@@ -4925,6 +4925,7 @@ impl Editor {
             Color::Muted
         };
 
+        let position = breakpoint.as_ref().and_then(|bp| bp.active_position);
         let bp_kind = Arc::new(
             breakpoint
                 .map(|bp| bp.kind.clone())
@@ -4961,25 +4962,13 @@ impl Editor {
                         );
                     }))
                     .on_right_click(cx.listener(move |editor, event: &ClickEvent, cx| {
-                        let source = editor
-                            .buffer
-                            .read(cx)
-                            .snapshot(cx)
-                            .breakpoint_anchor(Point::new(row.0, 0u32));
-
-                        let anchor = source.text_anchor;
-
-                        let context_menu =
-                            editor.breakpoint_context_menu(anchor, bp_kind.clone(), row, cx);
-
-                        let clicked_point = event.down.position;
-                        editor.mouse_context_menu = MouseContextMenu::pinned_to_editor(
-                            editor,
-                            source,
-                            clicked_point,
-                            context_menu,
+                        editor.set_breakpoint_context_menu(
+                            row,
+                            position,
+                            bp_kind.clone(),
+                            event.down.position,
                             cx,
-                        )
+                        );
                     })),
             )
         } else {
@@ -5206,24 +5195,13 @@ impl Editor {
                 );
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, cx| {
-                let source = editor
-                    .buffer
-                    .read(cx)
-                    .snapshot(cx)
-                    .breakpoint_anchor(Point::new(row.0, 0u32));
-
-                let clicked_point = event.down.position;
-
-                let context_menu =
-                    editor.breakpoint_context_menu(position, arc_kind2.clone(), row, cx);
-
-                editor.mouse_context_menu = MouseContextMenu::pinned_to_editor(
-                    editor,
-                    source,
-                    clicked_point,
-                    context_menu,
+                editor.set_breakpoint_context_menu(
+                    row,
+                    Some(position),
+                    arc_kind2.clone(),
+                    event.down.position,
                     cx,
-                )
+                );
             }))
     }
 
@@ -5367,6 +5345,7 @@ impl Editor {
             Color::Muted
         };
 
+        let position = breakpoint.as_ref().and_then(|bp| bp.active_position);
         let bp_kind = Arc::new(
             breakpoint
                 .map(|bp| bp.kind)
@@ -5388,24 +5367,13 @@ impl Editor {
                 );
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, cx| {
-                let source = editor
-                    .buffer
-                    .read(cx)
-                    .snapshot(cx)
-                    .breakpoint_anchor(Point::new(row.0, 0u32));
-
-                let anchor = source.text_anchor;
-
-                let context_menu = editor.breakpoint_context_menu(anchor, bp_kind.clone(), row, cx);
-
-                let clicked_point = event.down.position;
-                editor.mouse_context_menu = MouseContextMenu::pinned_to_editor(
-                    editor,
-                    source,
-                    clicked_point,
-                    context_menu,
+                editor.set_breakpoint_context_menu(
+                    row,
+                    position,
+                    bp_kind.clone(),
+                    event.down.position,
                     cx,
-                )
+                );
             }))
     }
 
@@ -6323,7 +6291,31 @@ impl Editor {
         }
     }
 
-    pub fn toggle_breakpoint(&mut self, _: &ToggleBreakpoint, cx: &mut ViewContext<Self>) {
+    fn set_breakpoint_context_menu(
+        &mut self,
+        row: DisplayRow,
+        position: Option<text::Anchor>,
+        kind: Arc<BreakpointKind>,
+        clicked_point: gpui::Point<Pixels>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let source = self
+            .buffer
+            .read(cx)
+            .snapshot(cx)
+            .breakpoint_anchor(Point::new(row.0, 0u32));
+
+        let context_menu =
+            self.breakpoint_context_menu(position.unwrap_or(source.text_anchor), kind, row, cx);
+
+        self.mouse_context_menu =
+            MouseContextMenu::pinned_to_editor(self, source, clicked_point, context_menu, cx);
+    }
+
+    pub(crate) fn breakpoint_at_cursor_head(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(text::Anchor, BreakpointKind)> {
         let cursor_position: Point = self.selections.newest(cx).head();
 
         // We Set the column position to zero so this function interacts correctly
@@ -6339,31 +6331,39 @@ impl Editor {
 
         let project = self.project.clone();
 
-        let found_bp = maybe!({
-            let buffer_id = breakpoint_position.buffer_id?;
-            let buffer =
-                project?.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
-            let (buffer_snapshot, project_path) = (
-                buffer.read(cx).snapshot(),
-                buffer.read(cx).project_path(cx)?,
-            );
+        let buffer_id = breakpoint_position.buffer_id?;
+        let buffer = project?.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
+        let (buffer_snapshot, project_path) = (
+            buffer.read(cx).snapshot(),
+            buffer.read(cx).project_path(cx)?,
+        );
 
-            let row = buffer_snapshot
-                .summary_for_anchor::<Point>(&breakpoint_position)
-                .row;
+        let row = buffer_snapshot
+            .summary_for_anchor::<Point>(&breakpoint_position)
+            .row;
 
-            let bp = self.dap_store.clone()?.read_with(cx, |store, _cx| {
-                store.breakpoint_at_row(row, &project_path, buffer_snapshot)
-            })?;
+        let bp = self.dap_store.clone()?.read_with(cx, |store, _cx| {
+            store.breakpoint_at_row(row, &project_path, buffer_snapshot)
+        })?;
 
-            Some((bp.active_position?, bp.kind))
-        });
+        Some((bp.active_position?, bp.kind))
+    }
 
+    pub fn toggle_breakpoint(&mut self, _: &ToggleBreakpoint, cx: &mut ViewContext<Self>) {
         let edit_action = BreakpointEditAction::Toggle;
 
-        if let Some((anchor, kind)) = found_bp {
+        if let Some((anchor, kind)) = self.breakpoint_at_cursor_head(cx) {
             self.edit_breakpoint_at_anchor(anchor, kind, edit_action, cx);
         } else {
+            let cursor_position: Point = self.selections.newest(cx).head();
+
+            let breakpoint_position = self
+                .snapshot(cx)
+                .display_snapshot
+                .buffer_snapshot
+                .breakpoint_anchor(Point::new(cursor_position.row, 0))
+                .text_anchor;
+
             self.edit_breakpoint_at_anchor(
                 breakpoint_position,
                 BreakpointKind::Standard,
