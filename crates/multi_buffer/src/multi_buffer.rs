@@ -748,7 +748,7 @@ impl MultiBuffer {
         let mut diff_transforms_cursor = snapshot
             .diff_transforms
             .cursor::<(usize, ExcerptOffset)>(&());
-        let mut cursor = snapshot.excerpts.cursor::<usize>(&());
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptOffset>(&());
         for (ix, (range, new_text)) in edits.into_iter().enumerate() {
             let original_indent_column = original_indent_columns.get(ix).copied().unwrap_or(0);
 
@@ -766,9 +766,9 @@ impl MultiBuffer {
                 end_excerpt_offset.value += offset_in_transform;
             }
 
-            cursor.seek_forward(&start_excerpt_offset.value, Bias::Right, &());
+            cursor.seek_forward(&start_excerpt_offset, Bias::Right, &());
             let start_excerpt = cursor.item().expect("start offset out of bounds");
-            let start_overshoot = start_excerpt_offset.value - cursor.start();
+            let start_overshoot = (start_excerpt_offset - *cursor.start()).value;
             let buffer_start = start_excerpt
                 .range
                 .context
@@ -777,12 +777,12 @@ impl MultiBuffer {
                 + start_overshoot;
             edited_excerpt_ids.push(start_excerpt.id);
 
-            cursor.seek_forward(&end_excerpt_offset.value, Bias::Right, &());
-            if cursor.item().is_none() && end_excerpt_offset.value == *cursor.start() {
+            cursor.seek_forward(&end_excerpt_offset, Bias::Right, &());
+            if cursor.item().is_none() && end_excerpt_offset == *cursor.start() {
                 cursor.prev(&());
             }
             let end_excerpt = cursor.item().expect("end offset out of bounds");
-            let end_overshoot = end_excerpt_offset.value - cursor.start();
+            let end_overshoot = (end_excerpt_offset - *cursor.start()).value;
             let buffer_end = end_excerpt
                 .range
                 .context
@@ -833,7 +833,7 @@ impl MultiBuffer {
                         original_indent_column,
                     });
 
-                cursor.seek(&range.start, Bias::Right, &());
+                cursor.seek(&start_excerpt_offset, Bias::Right, &());
                 cursor.next(&());
                 while let Some(excerpt) = cursor.item() {
                     if excerpt.id == end_excerpt.id {
@@ -1518,7 +1518,7 @@ impl MultiBuffer {
         let mut new_excerpts = cursor.slice(&prev_locator, Bias::Right, &());
         prev_locator = cursor.start().unwrap_or(Locator::min_ref()).clone();
 
-        let edit_start = new_excerpts.summary().text.len;
+        let edit_start = ExcerptOffset::new(new_excerpts.summary().text.len);
         new_excerpts.update_last(
             |excerpt| {
                 excerpt.has_trailing_newline = true;
@@ -1564,7 +1564,7 @@ impl MultiBuffer {
             new_excerpt_ids.push(ExcerptIdMapping { id, locator }, &());
         }
 
-        let edit_end = new_excerpts.summary().text.len;
+        let edit_end = ExcerptOffset::new(new_excerpts.summary().text.len);
 
         let suffix = cursor.suffix(&());
         let changed_trailing_excerpt = suffix.is_empty();
@@ -1601,7 +1601,8 @@ impl MultiBuffer {
         let ids = self.excerpt_ids();
         self.buffers.borrow_mut().clear();
         let mut snapshot = self.snapshot.borrow_mut();
-        let prev_len = snapshot.len();
+        let start = ExcerptOffset::new(0);
+        let prev_len = ExcerptOffset::new(snapshot.excerpts.summary().text.len);
         snapshot.excerpts = Default::default();
         snapshot.trailing_excerpt_update_count += 1;
         snapshot.is_dirty = false;
@@ -1611,8 +1612,8 @@ impl MultiBuffer {
         self.sync_diff_hunks(
             snapshot,
             [Edit {
-                old: 0..prev_len,
-                new: 0..0,
+                old: start..prev_len,
+                new: start..start,
             }],
             cx,
         );
@@ -1731,10 +1732,10 @@ impl MultiBuffer {
         cx: &AppContext,
     ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
         let snapshot = self.read(cx);
-        let position = position.to_offset(&snapshot);
+        let offset = position.to_offset(&snapshot);
 
         let mut cursor = snapshot.excerpts.cursor::<usize>(&());
-        cursor.seek(&position, Bias::Right, &());
+        cursor.seek(&offset, Bias::Right, &());
         cursor
             .item()
             .or_else(|| snapshot.excerpts.last())
@@ -1848,7 +1849,9 @@ impl MultiBuffer {
         let mut buffers = self.buffers.borrow_mut();
         let mut snapshot = self.snapshot.borrow_mut();
         let mut new_excerpts = SumTree::default();
-        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>(&());
+        let mut cursor = snapshot
+            .excerpts
+            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
         let mut edits = Vec::new();
         let mut excerpt_ids = ids.iter().copied().peekable();
 
@@ -1890,14 +1893,14 @@ impl MultiBuffer {
 
                 // When removing the last excerpt, remove the trailing newline from
                 // the previous excerpt.
-                if cursor.item().is_none() && old_start > 0 {
-                    old_start -= 1;
+                if cursor.item().is_none() && old_start.value > 0 {
+                    old_start.value -= 1;
                     new_excerpts.update_last(|e| e.has_trailing_newline = false, &());
                 }
 
                 // Push an edit for the removal of this run of excerpts.
                 let old_end = cursor.start().1;
-                let new_start = new_excerpts.summary().text.len;
+                let new_start = ExcerptOffset::new(new_excerpts.summary().text.len);
                 edits.push(Edit {
                     old: old_start..old_end,
                     new: new_start..new_start,
@@ -2267,14 +2270,16 @@ impl MultiBuffer {
         let mut snapshot = self.snapshot.borrow_mut();
         let locator = snapshot.excerpt_locator_for_id(id);
         let mut new_excerpts = SumTree::default();
-        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>(&());
-        let mut edits = Vec::<Edit<usize>>::new();
+        let mut cursor = snapshot
+            .excerpts
+            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
+        let mut edits = Vec::<Edit<ExcerptOffset>>::new();
 
         let prefix = cursor.slice(&Some(locator), Bias::Left, &());
         new_excerpts.append(prefix, &());
 
         let mut excerpt = cursor.item().unwrap().clone();
-        let old_text_len = excerpt.text_summary.len;
+        let old_text_len = ExcerptOffset::new(excerpt.text_summary.len);
 
         excerpt.range.context.start = range.start;
         excerpt.range.context.end = range.end;
@@ -2284,11 +2289,12 @@ impl MultiBuffer {
             .buffer
             .text_summary_for_range(excerpt.range.context.clone());
 
-        let new_start_offset = new_excerpts.summary().text.len;
+        let new_start_offset = ExcerptOffset::new(new_excerpts.summary().text.len);
         let old_start_offset = cursor.start().1;
+        let new_text_len = ExcerptOffset::new(excerpt.text_summary.len);
         let edit = Edit {
             old: old_start_offset..old_start_offset + old_text_len,
-            new: new_start_offset..new_start_offset + excerpt.text_summary.len,
+            new: new_start_offset..new_start_offset + new_text_len,
         };
 
         if let Some(last_edit) = edits.last_mut() {
@@ -2336,15 +2342,17 @@ impl MultiBuffer {
         let ids = ids.into_iter().collect::<Vec<_>>();
         let locators = snapshot.excerpt_locators_for_ids(ids.iter().copied());
         let mut new_excerpts = SumTree::default();
-        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>(&());
-        let mut edits = Vec::<Edit<usize>>::new();
+        let mut cursor = snapshot
+            .excerpts
+            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
+        let mut edits = Vec::<Edit<ExcerptOffset>>::new();
 
         for locator in &locators {
             let prefix = cursor.slice(&Some(locator), Bias::Left, &());
             new_excerpts.append(prefix, &());
 
             let mut excerpt = cursor.item().unwrap().clone();
-            let old_text_len = excerpt.text_summary.len;
+            let old_text_len = ExcerptOffset::new(excerpt.text_summary.len);
 
             let up_line_count = if direction.should_expand_up() {
                 line_count
@@ -2381,11 +2389,12 @@ impl MultiBuffer {
                 .buffer
                 .text_summary_for_range(excerpt.range.context.clone());
 
-            let new_start_offset = new_excerpts.summary().text.len;
+            let new_start_offset = ExcerptOffset::new(new_excerpts.summary().text.len);
             let old_start_offset = cursor.start().1;
+            let new_text_len = ExcerptOffset::new(excerpt.text_summary.len);
             let edit = Edit {
                 old: old_start_offset..old_start_offset + old_text_len,
-                new: new_start_offset..new_start_offset + excerpt.text_summary.len,
+                new: new_start_offset..new_start_offset + new_text_len,
             };
 
             if let Some(last_edit) = edits.last_mut() {
@@ -2468,7 +2477,9 @@ impl MultiBuffer {
 
         let mut edits = Vec::new();
         let mut new_excerpts = SumTree::default();
-        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>(&());
+        let mut cursor = snapshot
+            .excerpts
+            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
 
         for (locator, buffer, buffer_edited) in excerpts_to_edit {
             new_excerpts.append(cursor.slice(&Some(locator), Bias::Left, &()), &());
@@ -2484,14 +2495,18 @@ impl MultiBuffer {
                             old_excerpt.buffer.version(),
                             old_excerpt.range.context.clone(),
                         )
-                        .map(|mut edit| {
+                        .map(|edit| {
                             let excerpt_old_start = cursor.start().1;
-                            let excerpt_new_start = new_excerpts.summary().text.len;
-                            edit.old.start += excerpt_old_start;
-                            edit.old.end += excerpt_old_start;
-                            edit.new.start += excerpt_new_start;
-                            edit.new.end += excerpt_new_start;
-                            edit
+                            let excerpt_new_start =
+                                ExcerptOffset::new(new_excerpts.summary().text.len);
+                            let old_start = excerpt_old_start + ExcerptOffset::new(edit.old.start);
+                            let old_end = excerpt_old_start + ExcerptOffset::new(edit.old.end);
+                            let new_start = excerpt_new_start + ExcerptOffset::new(edit.new.start);
+                            let new_end = excerpt_new_start + ExcerptOffset::new(edit.new.end);
+                            Edit {
+                                old: old_start..old_end,
+                                new: new_start..new_end,
+                            }
                         }),
                 );
 
@@ -2522,22 +2537,14 @@ impl MultiBuffer {
     fn sync_diff_hunks(
         &self,
         snapshot: RefMut<MultiBufferSnapshot>,
-        edits: impl IntoIterator<Item = text::Edit<usize>>,
+        edits: impl IntoIterator<Item = text::Edit<ExcerptOffset>>,
         cx: &AppContext,
     ) {
         self.recompute_expanded_diff_hunks(
             snapshot,
             edits
                 .into_iter()
-                .map(|e| {
-                    (
-                        Edit {
-                            old: ExcerptOffset::new(e.old.start)..ExcerptOffset::new(e.old.end),
-                            new: ExcerptOffset::new(e.new.start)..ExcerptOffset::new(e.new.end),
-                        },
-                        DiffChangeKind::InputEdited,
-                    )
-                })
+                .map(|edit| (edit, DiffChangeKind::InputEdited))
                 .collect(),
             cx,
         );
@@ -2552,7 +2559,7 @@ impl MultiBuffer {
         let mut cursor = snapshot
             .diff_transforms
             .cursor::<(ExcerptOffset, usize)>(&());
-        let mut excerpts_cursor = snapshot.excerpts.cursor::<usize>(&());
+        let mut excerpts_cursor = snapshot.excerpts.cursor::<ExcerptOffset>(&());
         let mut new_transforms = SumTree::default();
         let mut edits = Vec::new();
 
@@ -2571,13 +2578,13 @@ impl MultiBuffer {
                 let edit_old_start = cursor.start().1 + (edit.old.start - cursor.start().0).value;
                 let mut edit_old_end = cursor.start().1 + (edit.old.end - cursor.start().0).value;
 
-                excerpts_cursor.seek(&edit.new.start.value, Bias::Right, &());
+                excerpts_cursor.seek(&edit.new.start, Bias::Right, &());
                 while let Some(excerpt) = excerpts_cursor.item() {
-                    if *excerpts_cursor.start() > edit.new.end.value {
+                    if *excerpts_cursor.start() > edit.new.end {
                         break;
                     }
                     let buffer = &excerpt.buffer;
-                    let excerpt_start = ExcerptOffset::new(*excerpts_cursor.start());
+                    let excerpt_start = *excerpts_cursor.start();
                     let excerpt_buffer_start = excerpt.range.context.start.to_offset(buffer);
                     let buffer_id = excerpt.buffer_id;
                     let diff_state = snapshot.diffs.get(&buffer_id);
@@ -5973,9 +5980,19 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for usize {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for usize {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptOffset {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
+        self.value += summary.text.len;
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for ExcerptOffset {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
-        Ord::cmp(self, &cursor_location.text.len)
+        Ord::cmp(&self.value, &cursor_location.text.len)
     }
 }
 
@@ -6014,6 +6031,16 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Point {
 
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
         *self += summary.text.lines;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptPoint {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
+        self.value += summary.text.lines;
     }
 }
 
