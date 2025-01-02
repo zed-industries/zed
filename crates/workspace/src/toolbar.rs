@@ -215,7 +215,7 @@ impl Toolbar {
             .unwrap_or(false);
 
         for (toolbar_item, current_location) in self.items.iter_mut() {
-            let new_location = toolbar_item.set_active_pane_item(item, cx);
+            let new_location = toolbar_item.set_active_pane_item(item, window, cx);
             if new_location != *current_location {
                 *current_location = new_location;
                 cx.notify();
@@ -230,7 +230,7 @@ impl Toolbar {
         cx: &mut ModelContext<Self>,
     ) {
         for (toolbar_item, _) in self.items.iter_mut() {
-            toolbar_item.focus_changed(focused, cx);
+            toolbar_item.focus_changed(focused, window, cx);
         }
     }
 
@@ -261,7 +261,7 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for Model<T> {
         cx: &mut AppContext,
     ) -> ToolbarItemLocation {
         self.update(cx, |this, cx| {
-            this.set_active_pane_item(active_pane_item, cx)
+            this.set_active_pane_item(active_pane_item, window, cx)
         })
     }
 
