@@ -351,7 +351,7 @@ impl SerializedPaneGroup {
                 let mut items = Vec::new();
                 for child in children {
                     if let Some((new_member, active_pane, new_items)) = child
-                        .deserialize(project, workspace_id, workspace.clone(), window, cx)
+                        .deserialize(project, workspace_id, workspace.clone(), cx)
                         .await
                     {
                         members.push(new_member);
@@ -376,13 +376,13 @@ impl SerializedPaneGroup {
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
-                    .update(cx, |workspace, cx| {
+                    .update_in(cx, |workspace, window, cx| {
                         workspace.add_pane(window, cx).downgrade()
                     })
                     .log_err()?;
                 let active = serialized_pane.active;
                 let new_items = serialized_pane
-                    .deserialize_to(project, &pane, workspace_id, workspace.clone(), window, cx)
+                    .deserialize_to(project, &pane, workspace_id, workspace.clone(), cx)
                     .await
                     .log_err()?;
 
@@ -396,7 +396,7 @@ impl SerializedPaneGroup {
                 } else {
                     let pane = pane.upgrade()?;
                     workspace
-                        .update(cx, |workspace, cx| {
+                        .update_in(cx, |workspace, window, cx| {
                             workspace.force_remove_pane(&pane, &None, window, cx)
                         })
                         .log_err()?;
@@ -429,15 +429,14 @@ impl SerializedPane {
         pane: &WeakModel<Pane>,
         workspace_id: WorkspaceId,
         workspace: WeakModel<Workspace>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut item_tasks = Vec::new();
         let mut active_item_index = None;
         let mut preview_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
-            item_tasks.push(pane.update(cx, |_, cx| {
+            item_tasks.push(pane.update_in(cx, |_, window, cx| {
                 SerializableItemRegistry::deserialize(
                     &item.kind,
                     project,
@@ -462,14 +461,14 @@ impl SerializedPane {
             items.push(item_handle.clone());
 
             if let Some(item_handle) = item_handle {
-                pane.update(cx, |pane, cx| {
+                pane.update_in(cx, |pane, window, cx| {
                     pane.add_item(item_handle.clone(), true, true, None, window, cx);
                 })?;
             }
         }
 
         if let Some(active_item_index) = active_item_index {
-            pane.update(cx, |pane, cx| {
+            pane.update_in(cx, |pane, window, cx| {
                 pane.activate_item(active_item_index, false, false, window, cx);
             })?;
         }
