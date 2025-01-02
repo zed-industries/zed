@@ -117,7 +117,8 @@ where
     if limit == 0 {
         items.truncate(0);
     }
-    if items.len() < limit {
+    if items.len() <= limit {
+        items.sort_by(compare);
         return;
     }
     // When limit is near to items.len() it may be more efficient to sort the whole list and
@@ -752,6 +753,29 @@ mod tests {
 
         extend_sorted(&mut vec, vec![1000, 19, 17, 9, 5], 8, |a, b| b.cmp(a));
         assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
+    }
+
+    #[test]
+    fn test_truncate_to_bottom_n_sorted_by() {
+        let mut vec: Vec<u32> = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 10, &u32::cmp);
+        assert_eq!(vec, &[1, 2, 3, 4, 5]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 5, &u32::cmp);
+        assert_eq!(vec, &[1, 2, 3, 4, 5]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 4, &u32::cmp);
+        assert_eq!(vec, &[1, 2, 3, 4]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 1, &u32::cmp);
+        assert_eq!(vec, &[1]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 0, &u32::cmp);
+        assert!(vec.is_empty());
     }
 
     #[test]
