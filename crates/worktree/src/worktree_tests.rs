@@ -2257,6 +2257,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
         let repo = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
         assert_eq!(repo.path.as_ref(), Path::new("dir1"));
 
+        dbg!("********************************");
         let repo = tree
             .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
             .unwrap();

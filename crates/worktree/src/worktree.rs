@@ -274,8 +274,12 @@ impl WorkDirectory {
         PathKey(self.path.clone())
     }
 
-    // FIXME footgun for nested repos
-    pub fn contains(&self, path: impl AsRef<Path>) -> bool {
+    /// Returns true if the given path is a child of the work directory.
+    ///
+    /// Note that the path may not be a member of this repository, if there
+    /// is a repository in a directory between these two paths
+    /// external .git folder in a parent folder of the project root.
+    pub fn directory_contains(&self, path: impl AsRef<Path>) -> bool {
         let path = path.as_ref();
         path.starts_with(&self.path)
     }
@@ -2501,10 +2505,21 @@ impl Snapshot {
 
     /// Get the repository whose work directory contains the given path.
     pub fn repository_for_path(&self, path: &Path) -> Option<&RepositoryEntry> {
-        self.repositories
-            .iter()
-            .filter(|repo| repo.contains(path))
-            .last()
+        let mut cursor = self.repositories.cursor::<PathProgress>(&());
+        let mut repository = None;
+
+        // Git repositories may contain other git repositories. As a side effect of
+        // lexicographic sorting by path, deeper repositories will be after higher repositories
+        // So, let's loop through every matching repository until we can't find any more to find
+        // the deepest repository that could contain this path.
+        while cursor.seek_forward(&PathTarget::Contains(path), Bias::Left, &())
+            && cursor.item().is_some()
+        {
+            repository = cursor.item();
+            cursor.next(&());
+        }
+
+        repository
     }
 
     /// Given an ordered iterator of entries, returns an iterator of those entries,
@@ -2517,14 +2532,14 @@ impl Snapshot {
         let mut repositories = self.repositories().peekable();
         entries.map(move |entry| {
             while let Some(repository) = containing_repos.last() {
-                if repository.contains(&entry.path) {
+                if repository.directory_contains(&entry.path) {
                     break;
                 } else {
                     containing_repos.pop();
                 }
             }
             while let Some(repository) = repositories.peek() {
-                if repository.contains(&entry.path) {
+                if repository.directory_contains(&entry.path) {
                     containing_repos.push(repositories.next().unwrap());
                 } else {
                     break;
@@ -5791,6 +5806,7 @@ impl<'a> Iterator for Traversal<'a> {
 enum PathTarget<'a> {
     Path(&'a Path),
     Successor(&'a Path),
+    Contains(&'a Path),
 }
 
 impl<'a> PathTarget<'a> {
@@ -5802,6 +5818,13 @@ impl<'a> PathTarget<'a> {
                     Ordering::Greater
                 } else {
                     Ordering::Equal
+                }
+            }
+            PathTarget::Contains(path) => {
+                if dbg!(dbg!(path).starts_with(dbg!(other))) {
+                    Ordering::Equal
+                } else {
+                    Ordering::Greater
                 }
             }
         }
