@@ -45,27 +45,29 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut AppContext) {
                 .spawn(cx, |mut cx| async move {
                     task.await;
                     if let Some(copilot) =
-                        cx.update(|window, cx| Copilot::global(cx)).ok().flatten()
+                        cx.update(|_window, cx| Copilot::global(cx)).ok().flatten()
                     {
                         workspace
-                            .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
-                                Status::Authorized => workspace.show_toast(
-                                    Toast::new(
-                                        NotificationId::unique::<CopilotStartingToast>(),
-                                        "Copilot has started!",
-                                    ),
-                                    window,
-                                    cx,
-                                ),
-                                _ => {
-                                    workspace.dismiss_toast(
-                                        &NotificationId::unique::<CopilotStartingToast>(),
+                            .update_in(&mut cx, |workspace, window, cx| {
+                                match copilot.read(cx).status() {
+                                    Status::Authorized => workspace.show_toast(
+                                        Toast::new(
+                                            NotificationId::unique::<CopilotStartingToast>(),
+                                            "Copilot has started!",
+                                        ),
                                         window,
                                         cx,
-                                    );
-                                    copilot
-                                        .update(cx, |copilot, cx| copilot.sign_in(cx))
-                                        .detach_and_log_err(cx);
+                                    ),
+                                    _ => {
+                                        workspace.dismiss_toast(
+                                            &NotificationId::unique::<CopilotStartingToast>(),
+                                            window,
+                                            cx,
+                                        );
+                                        copilot
+                                            .update(cx, |copilot, cx| copilot.sign_in(cx))
+                                            .detach_and_log_err(cx);
+                                    }
                                 }
                             })
                             .log_err();
@@ -145,7 +147,7 @@ impl CopilotCodeVerification {
             .justify_between()
             .on_mouse_down(gpui::MouseButton::Left, {
                 let user_code = data.user_code.clone();
-                move |_, cx| {
+                move |_, window, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(user_code.clone()));
                     window.refresh();
                 }
@@ -187,7 +189,7 @@ impl CopilotCodeVerification {
                 Button::new("connect-button", connect_button_label)
                     .on_click({
                         let verification_uri = data.verification_uri.clone();
-                        cx.listener(move |this, _, window, cx| {
+                        cx.listener(move |this, _, _window, cx| {
                             cx.open_url(&verification_uri);
                             this.connect_clicked = true;
                         })
