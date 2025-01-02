@@ -256,8 +256,13 @@
     "search_results": true,
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
-    // Whether to show diagnostic indicators in the scrollbar.
-    "diagnostics": true,
+    // Which diagnostic indicator levels to show in the scrollbar:
+    //  - "none" or false: do not show diagnostics
+    //  - "error": show only errors
+    //  - "warning": show only errors and warnings
+    //  - "information": show only errors, warnings, and information
+    //  - "all" or true: show all diagnostics
+    "diagnostics": "all",
     /// Forcefully enable or disable the scrollbar for each axis
     "axes": {
       /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
