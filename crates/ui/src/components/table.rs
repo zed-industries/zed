@@ -54,7 +54,7 @@ impl Table {
             .px_1p5()
             .flex_1()
             .justify_start()
-            .text_ui(window, cx)
+            .text_ui(cx)
             .whitespace_nowrap()
             .text_ellipsis()
             .overflow_hidden()
