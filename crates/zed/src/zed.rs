@@ -356,7 +356,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace.add_panel(channels_panel, cx);
             workspace.add_panel(chat_panel, cx);
             workspace.add_panel(notification_panel, cx);
-            workspace.add_panel(assistant_panel, cx);
+            workspace.add_panel(assistant_panel, cx)
         })?;
 
         let git_ui_enabled = git_ui_feature_flag.await;
@@ -391,7 +391,9 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             } else {
                 workspace.register_action(assistant::AssistantPanel::inline_assist);
             }
-        })
+        })?;
+
+        anyhow::Ok(())
     })
     .detach();
 }
@@ -709,7 +711,7 @@ fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContex
     });
 }
 
-fn about(_: &mut Workspace, _: &zed_actions::About, cx: &mut gpui::ViewContext<Workspace>) {
+fn about(_: &mut Workspace, _: &zed_actions::About, cx: &mut ViewContext<Workspace>) {
     let release_channel = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
     let message = format!("{release_channel} {version}");

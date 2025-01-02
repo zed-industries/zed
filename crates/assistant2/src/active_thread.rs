@@ -4,8 +4,8 @@ use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
     list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
-    ListAlignment, ListState, Model, StyleRefinement, Subscription, TextStyleRefinement, View,
-    WeakView,
+    ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
+    TextStyleRefinement, UnderlineStyle, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -22,7 +22,7 @@ pub struct ActiveThread {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
-    thread: Model<Thread>,
+    pub(crate) thread: Model<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
@@ -140,6 +140,15 @@ impl ActiveThread {
                 background_color: Some(colors.editor_foreground.opacity(0.01)),
                 ..Default::default()
             },
+            link: TextStyleRefinement {
+                background_color: Some(colors.editor_foreground.opacity(0.025)),
+                underline: Some(UnderlineStyle {
+                    color: Some(colors.text_accent.opacity(0.5)),
+                    thickness: px(1.),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -153,6 +162,10 @@ impl ActiveThread {
             )
         });
         self.rendered_messages_by_id.insert(*id, markdown);
+        self.list_state.scroll_to(ListOffset {
+            item_ix: old_len,
+            offset_in_item: Pixels(0.0),
+        });
     }
 
     fn handle_thread_event(

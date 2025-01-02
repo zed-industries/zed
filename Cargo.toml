@@ -363,9 +363,9 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -400,7 +400,7 @@ hyper = "0.14"
 http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
-indexmap = { version = "1.6.2", features = ["serde"] }
+indexmap = { version = "2", features = ["serde"] }
 indoc = "2"
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
@@ -409,7 +409,7 @@ jupyter-websocket-client = { version = "0.8.0" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
-livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="799f10133d93ba2a88642cd480d01ec4da53408c", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev="060964da10574cd9bf06463a53bf6e0769c5c45e", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
@@ -532,12 +532,7 @@ wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
 zstd = "0.11"
-# Custom metal-rs is only needed for "macos-blade" feature of GPUI
-#TODO: switch to crates once these are published:
-# - https://github.com/gfx-rs/metal-rs/pull/335
-# - https://github.com/gfx-rs/metal-rs/pull/336
-# - https://github.com/gfx-rs/metal-rs/pull/337
-metal = { git = "https://github.com/gfx-rs/metal-rs", rev = "ef768ff9d742ae6a0f4e83ddc8031264e7d460c4" }
+metal = "0.30"
 
 [workspace.dependencies.async-stripe]
 git = "https://github.com/zed-industries/async-stripe"

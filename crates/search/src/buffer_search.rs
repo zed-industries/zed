@@ -418,6 +418,7 @@ impl Render for BufferSearchBar {
         v_flex()
             .id("buffer_search")
             .gap_2()
+            .py(px(1.0))
             .track_scroll(&self.scroll_handle)
             .key_context(key_context)
             .capture_action(cx.listener(Self::tab))

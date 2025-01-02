@@ -34,9 +34,9 @@ pub enum Model {
     Gpt4,
     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
     Gpt3_5Turbo,
-    #[serde(alias = "o1-preview", rename = "o1-preview-2024-09-12")]
+    #[serde(alias = "o1-preview", rename = "o1")]
     O1Preview,
-    #[serde(alias = "o1-mini", rename = "o1-mini-2024-09-12")]
+    #[serde(alias = "o1-mini", rename = "o1-mini")]
     O1Mini,
     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
     Claude3_5Sonnet,

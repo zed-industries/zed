@@ -1047,6 +1047,10 @@ impl Panel for DebugPanel {
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
     }
+
+    fn activation_priority(&self) -> u32 {
+        9
+    }
 }
 
 impl Render for DebugPanel {

@@ -176,7 +176,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
 
     fn set_selected_index(&mut self, _ix: usize, _cx: &mut ViewContext<Picker<Self>>) {}
 
-    fn placeholder_text(&self, _cx: &mut ui::WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Enter a URL…".into()
     }
 

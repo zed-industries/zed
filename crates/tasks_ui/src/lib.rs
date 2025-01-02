@@ -108,7 +108,7 @@ pub fn toggle_modal(
     workspace: &mut Workspace,
     reveal_target: Option<RevealTarget>,
     task_type: TaskModal,
-    cx: &mut ViewContext<'_, Workspace>,
+    cx: &mut ViewContext<Workspace>,
 ) -> AsyncTask<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
