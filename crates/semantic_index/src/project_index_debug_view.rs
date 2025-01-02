@@ -260,7 +260,7 @@ impl Render for ProjectIndexDebugView {
                                 .on_click(cx.listener({
                                     let worktree_id = *worktree_id;
                                     let file_path = file_path.clone();
-                                    move |this, _, cx| {
+                                    move |this, _, window, cx| {
                                         this.handle_path_click(
                                             worktree_id,
                                             file_path.clone(),
@@ -298,7 +298,7 @@ impl EventEmitter<()> for ProjectIndexDebugView {}
 impl Item for ProjectIndexDebugView {
     type Event = ();
 
-    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         Some("Project Index (Debug)".into())
     }
 
@@ -311,7 +311,7 @@ impl Item for ProjectIndexDebugView {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |cx| Self::new(self.index.clone(), window, cx)))
+        Some(window.new_view(cx, |window, cx| Self::new(self.index.clone(), window, cx)))
     }
 }
 

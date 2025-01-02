@@ -583,9 +583,7 @@ async fn parse_blocks(
 
             let markdown_style = MarkdownStyle {
                 base_text_style,
-                code_block: StyleRefinement::default()
-                    .my(rems(1.))
-                    .font_buffer(window, cx),
+                code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
                 inline_code: TextStyleRefinement {
                     background_color: Some(cx.theme().colors().background),
                     font_family: Some(buffer_font_family),
