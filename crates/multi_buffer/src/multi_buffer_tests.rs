@@ -2430,9 +2430,10 @@ fn assert_consistent_line_numbers(snapshot: &MultiBufferSnapshot) {
 #[track_caller]
 fn assert_point_translation(snapshot: &MultiBufferSnapshot) {
     let text = Rope::from(snapshot.text());
-    for ix in 0..=text.len() {
-        let point = text.offset_to_point(ix);
-        let anchor = snapshot.anchor_after(ix);
+    let positions = (0..=text.len())
+        .map(|ix| (ix, text.offset_to_point(ix), snapshot.anchor_after(ix)))
+        .collect::<Vec<_>>();
+    for (ix, point, anchor) in positions.iter().cloned() {
         assert_eq!(snapshot.offset_to_point(ix), point, "offset_to_point({ix})");
         assert_eq!(
             snapshot.point_to_offset(point),
@@ -2450,4 +2451,13 @@ fn assert_point_translation(snapshot: &MultiBufferSnapshot) {
             "summary_for_anchor({anchor:?}). text:\n{text}"
         );
     }
+
+    assert_eq!(
+        snapshot.summaries_for_anchors::<usize, _>(positions.iter().map(|p| &p.2)),
+        positions.iter().map(|p| p.0).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        snapshot.summaries_for_anchors::<Point, _>(positions.iter().map(|p| &p.2)),
+        positions.iter().map(|p| p.1).collect::<Vec<_>>()
+    );
 }
