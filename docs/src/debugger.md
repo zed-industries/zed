@@ -29,3 +29,20 @@ To debug a program using Zed you must first create a debug configuration within 
   }
 ]
 ```
+
+## Breakpoints
+
+Zed currently supports these types of breakpoints
+
+- Log Breakpoints: Output a log message instead of stopping at the breakpoint when it's hit
+- Standard Breakpoints: Stop at the breakpoint when it's hit
+
+Standard breakpoints can be toggled by left clicking on the editor gutter or using the Toggle Breakpoint action. Right clicking on a breakpoint, code action symbol, or code runner symbol brings up the breakpoint context menu. That has options for toggling breakpoints and editing log breakpoints.
+
+Log breakpoints can also be edited/added through the edit log breakpoint action
+
+## Starting a Debugger Session
+
+A debugger session can be started by the Start Debugging action or clicking the "Choose Debugger" button in the debugger panel when there are no active sessions.
+
+Zed supports having multiple sessions
