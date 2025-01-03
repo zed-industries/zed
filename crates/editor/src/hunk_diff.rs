@@ -456,16 +456,19 @@ impl Editor {
         range: Range<Anchor>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<()> {
-        let (buffer, range, _) = self
-            .buffer
-            .read(cx)
-            .range_to_buffer_ranges(range, cx)
+        let multi_buffer = self.buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let (excerpt, range) = multi_buffer_snapshot
+            .range_to_buffer_ranges(range)
             .into_iter()
             .next()?;
 
-        buffer.update(cx, |branch_buffer, cx| {
-            branch_buffer.merge_into_base(vec![range], cx);
-        });
+        multi_buffer
+            .buffer(excerpt.buffer_id())
+            .unwrap()
+            .update(cx, |branch_buffer, cx| {
+                branch_buffer.merge_into_base(vec![range], cx);
+            });
 
         if let Some(project) = self.project.clone() {
             self.save(true, project, cx).detach_and_log_err(cx);

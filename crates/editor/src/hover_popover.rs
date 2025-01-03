@@ -266,12 +266,11 @@ fn show_hover(
             // If there's a diagnostic, assign it on the hover state and notify
             let mut local_diagnostic = snapshot
                 .buffer_snapshot
-                .diagnostics_in_range::<_, usize>(anchor..anchor, false)
+                .diagnostics_in_range(anchor..anchor, false)
                 // Find the entry with the most specific range
-                .min_by_key(|entry| entry.range.end - entry.range.start)
-                .map(|entry| DiagnosticEntry {
-                    diagnostic: entry.diagnostic,
-                    range: entry.range.to_anchors(&snapshot.buffer_snapshot),
+                .min_by_key(|entry| {
+                    let range = entry.range.to_offset(&snapshot.buffer_snapshot);
+                    range.end - range.start
                 });
 
             // Pull the primary diagnostic out so we can jump to it if the popover is clicked

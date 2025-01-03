@@ -1667,42 +1667,6 @@ impl MultiBuffer {
         })
     }
 
-    pub fn range_to_buffer_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-        cx: &AppContext,
-    ) -> Vec<(Model<Buffer>, Range<usize>, ExcerptId)> {
-        let snapshot = self.read(cx);
-        let start = range.start.to_offset(&snapshot);
-        let end = range.end.to_offset(&snapshot);
-
-        let mut result = Vec::new();
-        let mut cursor = snapshot.excerpts.cursor::<usize>(&());
-        cursor.seek(&start, Bias::Right, &());
-        if cursor.item().is_none() {
-            cursor.prev(&());
-        }
-
-        while let Some(excerpt) = cursor.item() {
-            if *cursor.start() > end {
-                break;
-            }
-
-            let mut end_before_newline = cursor.end(&());
-            if excerpt.has_trailing_newline {
-                end_before_newline -= 1;
-            }
-            let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let start = excerpt_start + (cmp::max(start, *cursor.start()) - *cursor.start());
-            let end = excerpt_start + (cmp::min(end, end_before_newline) - *cursor.start());
-            let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
-            result.push((buffer, start..end, excerpt.id));
-            cursor.next(&());
-        }
-
-        result
-    }
-
     pub fn remove_excerpts(
         &mut self,
         excerpt_ids: impl IntoIterator<Item = ExcerptId>,
@@ -3914,28 +3878,32 @@ impl MultiBufferSnapshot {
     where
         O: text::FromAnchor + 'a,
     {
-        self.as_singleton()
-            .into_iter()
-            .flat_map(move |(_, _, buffer)| buffer.diagnostic_group(group_id))
+        self.all_excerpts()
+            .flat_map(move |excerpt| excerpt.buffer().diagnostic_group(group_id))
     }
 
-    pub fn diagnostics_in_range<'a, T, O>(
+    pub fn diagnostics_in_range<'a, T>(
         &'a self,
         range: Range<T>,
         reversed: bool,
-    ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
+    ) -> impl Iterator<Item = DiagnosticEntry<Anchor>> + 'a
     where
         T: 'a + ToOffset,
-        O: 'a + text::FromAnchor + Ord,
     {
-        self.as_singleton()
-            .into_iter()
-            .flat_map(move |(_, _, buffer)| {
-                buffer.diagnostics_in_range(
-                    range.start.to_offset(self)..range.end.to_offset(self),
-                    reversed,
-                )
-            })
+        let mut ranges = self.range_to_buffer_ranges(range);
+        if reversed {
+            ranges.reverse();
+        }
+        ranges.into_iter().flat_map(move |(excerpt, range)| {
+            let excerpt_id = excerpt.id();
+            excerpt.buffer().diagnostics_in_range(range, reversed).map(
+                move |DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                    diagnostic,
+                    range: self.anchor_in_excerpt(excerpt_id, range.start).unwrap()
+                        ..self.anchor_in_excerpt(excerpt_id, range.end).unwrap(),
+                },
+            )
+        })
     }
 
     pub fn syntax_ancestor<T: ToOffset>(
@@ -4183,6 +4151,42 @@ impl MultiBufferSnapshot {
 
             Some(subrange_start_anchor..subrange_end_anchor)
         })
+    }
+
+    pub fn range_to_buffer_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Vec<(MultiBufferExcerpt<'_>, Range<usize>)> {
+        let start = range.start.to_offset(self);
+        let end = range.end.to_offset(self);
+
+        let mut result = Vec::new();
+        let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
+        cursor.seek(&start, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+
+        while let Some(excerpt) = cursor.item() {
+            if cursor.start().0 > end {
+                break;
+            }
+
+            let mut end_before_newline = cursor.end(&()).0;
+            if excerpt.has_trailing_newline {
+                end_before_newline -= 1;
+            }
+            let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+            let start = excerpt_start + (cmp::max(start, cursor.start().0) - cursor.start().0);
+            let end = excerpt_start + (cmp::min(end, end_before_newline) - cursor.start().0);
+            result.push((
+                MultiBufferExcerpt::new(&excerpt, *cursor.start()),
+                start..end,
+            ));
+            cursor.next(&());
+        }
+
+        result
     }
 
     /// Returns excerpts overlapping the given ranges. If range spans multiple excerpts returns one range for each excerpt
@@ -4662,6 +4666,10 @@ impl<'a> MultiBufferExcerpt<'a> {
 
     pub fn id(&self) -> ExcerptId {
         self.excerpt.id
+    }
+
+    pub fn buffer_id(&self) -> BufferId {
+        self.excerpt.buffer_id
     }
 
     pub fn start_anchor(&self) -> Anchor {
