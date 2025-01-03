@@ -3759,17 +3759,21 @@ impl MultiBufferSnapshot {
         point: T,
     ) -> Option<(&BufferSnapshot, usize)> {
         let offset = point.to_offset(self);
-        let mut cursor = self.excerpts.cursor::<usize>(&());
-        cursor.seek(&offset, Bias::Right, &());
+        let mut diff_transforms_cursor = self.diff_transforms.cursor::<(usize, ExcerptOffset)>(&());
+        diff_transforms_cursor.seek(&offset, Bias::Right, &());
+        let overshoot = offset - diff_transforms_cursor.start().0;
+        let excerpt_offset = diff_transforms_cursor.start().1 + ExcerptOffset::new(overshoot);
+        let mut cursor = self.excerpts.cursor::<ExcerptOffset>(&());
+        cursor.seek(&excerpt_offset, Bias::Right, &());
         if cursor.item().is_none() {
             cursor.prev(&());
         }
 
-        cursor.item().map(|excerpt| {
-            let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let buffer_point = excerpt_start + offset - *cursor.start();
-            (&excerpt.buffer, buffer_point)
-        })
+        let excerpt = cursor.item()?;
+        let overshoot = (excerpt_offset - *cursor.start()).value;
+        let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+        let buffer_offset = excerpt_start + overshoot;
+        Some((&excerpt.buffer, buffer_offset))
     }
 
     pub fn suggested_indents(
@@ -4575,18 +4579,7 @@ impl MultiBufferSnapshot {
             .map(|excerpt| (excerpt.id, &excerpt.buffer, excerpt.range.clone()))
     }
 
-    pub fn all_excerpts(&self) -> impl Iterator<Item = MultiBufferExcerpt> {
-        let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
-        cursor.next(&());
-        std::iter::from_fn(move || {
-            let excerpt = cursor.item()?;
-            let excerpt = MultiBufferExcerpt::new(excerpt, *cursor.start());
-            cursor.next(&());
-            Some(excerpt)
-        })
-    }
-
-    pub fn excerpts_for_range<T: ToOffset>(
+    fn excerpts_for_range<T: ToOffset>(
         &self,
         range: Range<T>,
     ) -> impl Iterator<Item = MultiBufferExcerpt> + '_ {
@@ -4633,21 +4626,6 @@ impl MultiBufferSnapshot {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(&());
         cursor.seek(start_locator, Bias::Left, &());
         cursor.prev(&());
-        let excerpt = cursor.item()?;
-        let excerpt_offset = cursor.start().text.len;
-        let excerpt_position = cursor.start().text.lines;
-        Some(MultiBufferExcerpt {
-            excerpt,
-            excerpt_offset,
-            excerpt_position,
-        })
-    }
-
-    pub fn excerpt_after(&self, id: ExcerptId) -> Option<MultiBufferExcerpt<'_>> {
-        let start_locator = self.excerpt_locator_for_id(id);
-        let mut cursor = self.excerpts.cursor::<ExcerptSummary>(&());
-        cursor.seek(start_locator, Bias::Left, &());
-        cursor.next(&());
         let excerpt = cursor.item()?;
         let excerpt_offset = cursor.start().text.len;
         let excerpt_position = cursor.start().text.lines;
@@ -6077,9 +6055,6 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<ExcerptId> {
 #[derive(Clone)]
 struct ExcerptDimension<T>(T);
 
-#[derive(Clone)]
-struct OutputDimension<T>(T);
-
 impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptOffset {
     fn zero(_: &()) -> Self {
         ExcerptOffset::new(0)
@@ -6108,11 +6083,15 @@ impl<'a, D: TextDimension + Ord>
     }
 }
 
-impl<'a, D: TextDimension + Ord>
-    sum_tree::SeekTarget<'a, DiffTransformSummary, DiffTransformSummary> for OutputDimension<D>
+impl<'a, D: TextDimension + Default> sum_tree::Dimension<'a, DiffTransformSummary>
+    for ExcerptDimension<D>
 {
-    fn cmp(&self, cursor_location: &DiffTransformSummary, _: &()) -> cmp::Ordering {
-        Ord::cmp(&self.0, &D::from_text_summary(&cursor_location.output))
+    fn zero(_: &()) -> Self {
+        ExcerptDimension(D::default())
+    }
+
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
+        self.0.add_assign(&D::from_text_summary(&summary.input))
     }
 }
 
