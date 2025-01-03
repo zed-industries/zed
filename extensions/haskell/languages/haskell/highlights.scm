@@ -18,8 +18,10 @@
 (integer) @number
 (exp_negation) @number
 (exp_literal (float)) @float
-(char) @character
-(string) @string
+[
+  (char)
+  (string)
+] @string
 
 (con_unit) @symbol  ; unit, as in ()
 
