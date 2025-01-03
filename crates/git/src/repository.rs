@@ -39,6 +39,7 @@ pub trait GitRepository: Send + Sync {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
+    /// Returns the list of git statuses, sorted by path
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
     fn branches(&self) -> Result<Vec<Branch>>;
@@ -445,6 +446,10 @@ impl RepoPath {
         debug_assert!(path.is_relative(), "Repo paths must be relative");
 
         RepoPath(path.into())
+    }
+
+    pub fn to_proto(&self) -> String {
+        self.0.to_string_lossy().to_string()
     }
 }
 

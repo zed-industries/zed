@@ -2925,6 +2925,10 @@ async fn test_git_status_sync(
         assert_eq!(snapshot.status_for_file(file), status);
     }
 
+    // Goal: Full, up to date state syncing.
+    // - Make sure that the state is getting synced across the wire
+    // - Make sure that the database is storing all of the state
+
     // Smoke test status reading
 
     project_local.read_with(cx_a, |project, cx| {

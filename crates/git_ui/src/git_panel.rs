@@ -485,7 +485,7 @@ impl GitPanel {
                     .enumerate()
                 {
                     let index = index_start + i;
-                    let status = entry.git_status;
+                    let status = entry.status;
                     let is_expanded = true; //expanded_entry_ids.binary_search(&entry.id).is_ok();
 
                     let (depth, difference) = Self::calculate_depth_and_difference(entry, entries);
@@ -568,7 +568,7 @@ impl GitPanel {
                 work_directory = Some(worktree::WorkDirectory::clone(repository));
             }
 
-            // TODO use the GitTraversal
+            // FIXME use the GitTraversal
             // let mut visible_worktree_entries = snapshot
             //     .entries(false, 0)
             //     .filter(|entry| !entry.is_external)
@@ -595,7 +595,7 @@ impl GitPanel {
         }
         self.visible_entries.extend(after_update);
 
-        // todo!(): re-implement this
+        // FIXME re-implement this
         // if let Some((worktree_id, entry_id)) = new_selected_entry {
         //     self.selected_item = self.visible_entries.iter().enumerate().find_map(
         //         |(worktree_index, worktree_entries)| {
@@ -628,7 +628,7 @@ impl GitPanel {
                                 .visible_entries
                                 .iter()
                                 .filter_map(|entry| {
-                                    let git_status = entry.git_status;
+                                    let git_status = entry.status;
                                     let entry_hunks = entry.hunks.clone();
                                     let (entry_path, unstaged_changes_task) =
                                         project.update(cx, |project, cx| {
@@ -1036,8 +1036,7 @@ impl GitPanel {
                 this.child(git_status_icon(status))
             })
             .child(
-                // FIXME is it okay to use ix here? do we need a proper ID for git status entries?
-                ListItem::new(("label", ix))
+                ListItem::new(details.path.0.clone())
                     .toggle_state(selected)
                     .child(h_flex().gap_1p5().child(details.display_name.clone()))
                     .on_click(move |e, cx| {

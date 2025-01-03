@@ -2257,7 +2257,6 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
         let repo = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
         assert_eq!(repo.path.as_ref(), Path::new("dir1"));
 
-        dbg!("********************************");
         let repo = tree
             .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
             .unwrap();
@@ -2560,11 +2559,11 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].git_status, GitFileStatus::Modified);
+        assert_eq!(entries[0].status, GitFileStatus::Modified);
         assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
-        assert_eq!(entries[1].git_status, GitFileStatus::Untracked);
+        assert_eq!(entries[1].status, GitFileStatus::Untracked);
         assert_eq!(entries[2].repo_path.as_ref(), Path::new("d.txt"));
-        assert_eq!(entries[2].git_status, GitFileStatus::Deleted);
+        assert_eq!(entries[2].status, GitFileStatus::Deleted);
     });
 
     std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
@@ -2582,14 +2581,14 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 
         std::assert_eq!(entries.len(), 4, "entries: {entries:?}");
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].git_status, GitFileStatus::Modified);
+        assert_eq!(entries[0].status, GitFileStatus::Modified);
         assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
-        assert_eq!(entries[1].git_status, GitFileStatus::Untracked);
+        assert_eq!(entries[1].status, GitFileStatus::Untracked);
         // Status updated
         assert_eq!(entries[2].repo_path.as_ref(), Path::new("c.txt"));
-        assert_eq!(entries[2].git_status, GitFileStatus::Modified);
+        assert_eq!(entries[2].status, GitFileStatus::Modified);
         assert_eq!(entries[3].repo_path.as_ref(), Path::new("d.txt"));
-        assert_eq!(entries[3].git_status, GitFileStatus::Deleted);
+        assert_eq!(entries[3].status, GitFileStatus::Deleted);
     });
 
     git_add("a.txt", &repo);
@@ -2622,7 +2621,7 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
             &entries
         );
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].git_status, GitFileStatus::Deleted);
+        assert_eq!(entries[0].status, GitFileStatus::Deleted);
     });
 }
 
@@ -2866,7 +2865,6 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
         ],
     );
 
-    dbg!("******************************************");
     check_git_statuses(
         &snapshot,
         &[

@@ -275,7 +275,7 @@ impl Database {
                         canonical_path: ActiveValue::set(entry.canonical_path.clone()),
                         is_ignored: ActiveValue::set(entry.is_ignored),
                         is_external: ActiveValue::set(entry.is_external),
-                        git_status: ActiveValue::set(entry.git_status.map(|status| status as i64)),
+                        git_status: ActiveValue::set(None), // TODO remove
                         is_deleted: ActiveValue::set(false),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         is_fifo: ActiveValue::set(entry.is_fifo),
