@@ -55,7 +55,7 @@ impl LanguageModelSelector {
             selected_index: 0,
         };
 
-        let picker = window.new_view(cx, |cx| {
+        let picker = window.new_view(cx, |window, cx| {
             Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
         });
 
@@ -205,7 +205,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 })
                 .await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.delegate.filtered_models = filtered_models;
                 this.delegate.set_selected_index(0, window, cx);
                 cx.notify();
