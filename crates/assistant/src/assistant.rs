@@ -198,7 +198,7 @@ pub fn init(
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
-    
+
     cx.spawn(|mut cx| {
         let client = client.clone();
         async move {
