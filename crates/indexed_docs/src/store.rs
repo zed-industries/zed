@@ -208,7 +208,7 @@ impl IndexedDocsStore {
             let candidates = items
                 .iter()
                 .enumerate()
-                .map(|(ix, item_path)| StringMatchCandidate::new(ix, item_path.clone()))
+                .map(|(ix, item_path)| StringMatchCandidate::new(ix, &item_path))
                 .collect::<Vec<_>>();
 
             let matches = fuzzy::match_strings(

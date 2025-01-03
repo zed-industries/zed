@@ -1193,7 +1193,7 @@ impl Element for Div {
             for (ix, child_layout_id) in request_layout.child_layout_ids.iter().enumerate() {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
-                child_max = child_max.max(&child_bounds.lower_right());
+                child_max = child_max.max(&child_bounds.bottom_right());
                 state.child_bounds.push(child_bounds);
 
                 if let Some(requested) = requested.as_ref() {
@@ -1208,7 +1208,7 @@ impl Element for Div {
             for child_layout_id in &request_layout.child_layout_ids {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
-                child_max = child_max.max(&child_bounds.lower_right());
+                child_max = child_max.max(&child_bounds.bottom_right());
             }
             (child_max - child_min).into()
         };
@@ -1923,6 +1923,7 @@ impl Interactivity {
                 cx.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
                     let hitbox = hitbox.clone();
+                    let source_bounds = hitbox.bounds;
                     let tooltip_id = self.tooltip_id;
                     move |_: &MouseMoveEvent, phase, cx| {
                         let is_hovered =
@@ -1952,6 +1953,8 @@ impl Interactivity {
                                             tooltip: Some(AnyTooltip {
                                                 view: build_tooltip(cx),
                                                 mouse_position: cx.mouse_position(),
+                                                hoverable: tooltip_is_hoverable,
+                                                origin_bounds: source_bounds,
                                             }),
                                             _task: None,
                                         });
@@ -2499,7 +2502,7 @@ impl ScrollAnchor {
         }
     }
     /// Request scroll to this item on the next frame.
-    pub fn scroll_to(&self, cx: &mut WindowContext<'_>) {
+    pub fn scroll_to(&self, cx: &mut WindowContext) {
         let this = self.clone();
 
         cx.on_next_frame(move |_| {

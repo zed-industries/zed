@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::{
-    display_map::{DisplaySnapshot, ToDisplayPoint},
+    display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
     Bias, DisplayPoint, Editor, ToOffset,
@@ -36,6 +36,8 @@ actions!(
         SelectPrevious,
         SelectNextMatch,
         SelectPreviousMatch,
+        SelectSmallerSyntaxNode,
+        SelectLargerSyntaxNode,
         RestoreVisualSelection,
         VisualInsertEndOfLine,
         VisualInsertFirstNonWhiteSpace,
@@ -72,6 +74,24 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &SelectPreviousMatch, cx| {
         vim.select_match(Direction::Prev, cx);
+    });
+
+    Vim::action(editor, cx, |vim, _: &SelectLargerSyntaxNode, cx| {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        for _ in 0..count {
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.select_larger_syntax_node(&Default::default(), cx);
+            });
+        }
+    });
+
+    Vim::action(editor, cx, |vim, _: &SelectSmallerSyntaxNode, cx| {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        for _ in 0..count {
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.select_smaller_syntax_node(&Default::default(), cx);
+            });
+        }
     });
 
     Vim::action(editor, cx, |vim, _: &RestoreVisualSelection, cx| {
@@ -443,8 +463,16 @@ impl Vim {
                                 *selection.end.column_mut() = map.line_len(selection.end.row())
                             } else if vim.mode != Mode::VisualLine {
                                 selection.start = DisplayPoint::new(selection.start.row(), 0);
+                                selection.end =
+                                    map.next_line_boundary(selection.end.to_point(map)).1;
                                 if selection.end.row() == map.max_point().row() {
-                                    selection.end = map.max_point()
+                                    selection.end = map.max_point();
+                                    if selection.start == selection.end {
+                                        let prev_row =
+                                            DisplayRow(selection.start.row().0.saturating_sub(1));
+                                        selection.start =
+                                            DisplayPoint::new(prev_row, map.line_len(prev_row));
+                                    }
                                 } else {
                                     *selection.end.row_mut() += 1;
                                     *selection.end.column_mut() = 0;

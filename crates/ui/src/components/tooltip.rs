@@ -49,6 +49,7 @@ impl Tooltip {
         })
         .into()
     }
+
     pub fn with_meta(
         title: impl Into<SharedString>,
         action: Option<&dyn Action>,
@@ -59,6 +60,22 @@ impl Tooltip {
             title: title.into(),
             meta: Some(meta.into()),
             key_binding: action.and_then(|action| KeyBinding::for_action(action, cx)),
+        })
+        .into()
+    }
+
+    pub fn with_meta_in(
+        title: impl Into<SharedString>,
+        action: Option<&dyn Action>,
+        meta: impl Into<SharedString>,
+        focus_handle: &FocusHandle,
+        cx: &mut WindowContext,
+    ) -> AnyView {
+        cx.new_view(|cx| Self {
+            title: title.into(),
+            meta: Some(meta.into()),
+            key_binding: action
+                .and_then(|action| KeyBinding::for_action_in(action, focus_handle, cx)),
         })
         .into()
     }

@@ -284,6 +284,7 @@ impl<F: Future> LspRequestFuture<F::Output> for LspRequest<F> {
 }
 
 /// Combined capabilities of the server and the adapter.
+#[derive(Debug)]
 pub struct AdapterServerCapabilities {
     // Reported capabilities by the server
     pub server_capabilities: ServerCapabilities,
@@ -443,7 +444,7 @@ impl LanguageServer {
                 let stderr_captures = stderr_capture.clone();
                 cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_captures).log_err())
             })
-            .unwrap_or_else(|| Task::Ready(Some(None)));
+            .unwrap_or_else(|| Task::ready(None));
         let input_task = cx.spawn(|_| async move {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)

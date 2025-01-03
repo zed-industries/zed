@@ -54,7 +54,7 @@ They can also be detected automatically, for example https://zed.dev/blog.
 ## Images
 Images are like links, but with an exclamation mark `!` in front.
 
-```todo!
+```markdown
 ![This is an image](/images/logo.png)
 ```
 

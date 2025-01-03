@@ -15,6 +15,7 @@ use std::str::FromStr;
 
 pub use task_template::{HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates};
 pub use vscode_format::VsCodeTaskFile;
+pub use zed_actions::RevealTarget;
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.
@@ -47,6 +48,8 @@ pub struct SpawnInTerminal {
     pub allow_concurrent_runs: bool,
     /// What to do with the terminal pane and tab, after the command was started.
     pub reveal: RevealStrategy,
+    /// Where to show tasks' terminal output.
+    pub reveal_target: RevealTarget,
     /// What to do with the terminal pane and tab, after the command had finished.
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.

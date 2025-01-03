@@ -68,6 +68,7 @@ snippet.workspace = true
 snippet_provider.workspace = true
 terminal.workspace = true
 text.workspace = true
+toml.workspace = true
 util.workspace = true
 url.workspace = true
 which.workspace = true

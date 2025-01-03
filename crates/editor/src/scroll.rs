@@ -2,7 +2,7 @@ mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
-use crate::editor_settings::ScrollBeyondLastLine;
+use crate::editor_settings::{ScrollBeyondLastLine, ScrollbarAxes};
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -11,7 +11,10 @@ use crate::{
     InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
-use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext};
+use core::fmt::Debug;
+use gpui::{
+    point, px, Along, AppContext, Axis, Entity, Global, Pixels, Task, ViewContext, WindowContext,
+};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
 use settings::Settings;
@@ -60,10 +63,53 @@ impl ScrollAnchor {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Axis {
-    Vertical,
-    Horizontal,
+#[derive(Debug, Clone)]
+pub struct AxisPair<T: Clone> {
+    pub vertical: T,
+    pub horizontal: T,
+}
+
+pub fn axis_pair<T: Clone>(horizontal: T, vertical: T) -> AxisPair<T> {
+    AxisPair {
+        vertical,
+        horizontal,
+    }
+}
+
+impl<T: Clone> AxisPair<T> {
+    pub fn as_xy(&self) -> (&T, &T) {
+        (&self.horizontal, &self.vertical)
+    }
+}
+
+impl<T: Clone> Along for AxisPair<T> {
+    type Unit = T;
+
+    fn along(&self, axis: gpui::Axis) -> Self::Unit {
+        match axis {
+            gpui::Axis::Horizontal => self.horizontal.clone(),
+            gpui::Axis::Vertical => self.vertical.clone(),
+        }
+    }
+
+    fn apply_along(&self, axis: gpui::Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self {
+        match axis {
+            gpui::Axis::Horizontal => Self {
+                horizontal: f(self.horizontal.clone()),
+                vertical: self.vertical.clone(),
+            },
+            gpui::Axis::Vertical => Self {
+                horizontal: self.horizontal.clone(),
+                vertical: f(self.vertical.clone()),
+            },
+        }
+    }
+}
+
+impl From<ScrollbarAxes> for AxisPair<bool> {
+    fn from(value: ScrollbarAxes) -> Self {
+        axis_pair(value.horizontal, value.vertical)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -136,7 +182,7 @@ pub struct ScrollManager {
     last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
-    dragging_scrollbar: bool,
+    dragging_scrollbar: AxisPair<bool>,
     visible_line_count: Option<f32>,
     forbid_vertical_scroll: bool,
 }
@@ -150,7 +196,7 @@ impl ScrollManager {
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
-            dragging_scrollbar: false,
+            dragging_scrollbar: axis_pair(false, false),
             last_autoscroll: None,
             visible_line_count: None,
             forbid_vertical_scroll: false,
@@ -311,15 +357,18 @@ impl ScrollManager {
         self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
     }
 
-    pub fn is_dragging_scrollbar(&self) -> bool {
-        self.dragging_scrollbar
+    pub fn is_dragging_scrollbar(&self, axis: Axis) -> bool {
+        self.dragging_scrollbar.along(axis)
     }
 
-    pub fn set_is_dragging_scrollbar(&mut self, dragging: bool, cx: &mut ViewContext<Editor>) {
-        if dragging != self.dragging_scrollbar {
-            self.dragging_scrollbar = dragging;
-            cx.notify();
-        }
+    pub fn set_is_dragging_scrollbar(
+        &mut self,
+        axis: Axis,
+        dragging: bool,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        self.dragging_scrollbar = self.dragging_scrollbar.apply_along(axis, |_| dragging);
+        cx.notify();
     }
 
     pub fn clamp_scroll_left(&mut self, max: f32) -> bool {

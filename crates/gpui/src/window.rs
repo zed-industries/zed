@@ -3,7 +3,7 @@ use crate::{
     AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Background, Bounds,
     BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, InputHandler,
+    FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler,
     IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent,
     KeystrokeObserver, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
@@ -531,7 +531,6 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
-    pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
@@ -809,7 +808,6 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
-            focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -931,17 +929,11 @@ impl<'a> WindowContext<'a> {
         self.window.removed = true;
     }
 
-    /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
-    /// for elements rendered within this window.
-    pub fn focus_handle(&self) -> FocusHandle {
-        FocusHandle::new(&self.window.focus_handles)
-    }
-
     /// Obtain the currently focused [`FocusHandle`]. If no elements are focused, returns `None`.
     pub fn focused(&self) -> Option<FocusHandle> {
         self.window
             .focus
-            .and_then(|id| FocusHandle::for_id(id, &self.window.focus_handles))
+            .and_then(|id| FocusHandle::for_id(id, &self.app.focus_handles))
     }
 
     /// Move focus to the element associated with the given [`FocusHandle`].
@@ -1005,6 +997,11 @@ impl<'a> WindowContext<'a> {
     /// after it has been closed
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.platform_window.window_bounds()
+    }
+
+    /// Return the `WindowBounds` excluding insets (Wayland and X11)
+    pub fn inner_window_bounds(&self) -> WindowBounds {
+        self.window.platform_window.inner_window_bounds()
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -1589,6 +1586,19 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
+        // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
+        // Ensure it's not stuck around in such cases.
+        let invalidate_tooltip = !tooltip_request
+            .tooltip
+            .origin_bounds
+            .contains(&self.mouse_position())
+            && (!tooltip_request.tooltip.hoverable
+                || !tooltip_bounds.contains(&self.mouse_position()));
+        if invalidate_tooltip {
+            return None;
+        }
+
         self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
 
         self.window.tooltip_bounds = Some(TooltipBounds {
@@ -1756,17 +1766,12 @@ impl<'a> WindowContext<'a> {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        if let Some(element_states) = window
-            .rendered_frame
-            .accessed_element_states
-            .get(range.start.accessed_element_states_index..range.end.accessed_element_states_index)
-        {
-            window.next_frame.accessed_element_states.extend(
-                element_states
-                    .iter()
-                    .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
-            );
-        }
+        window.next_frame.accessed_element_states.extend(
+            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+        );
 
         window
             .text_system
@@ -2281,9 +2286,7 @@ impl<'a> WindowContext<'a> {
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         for shadow in shadows {
-            let mut shadow_bounds = bounds;
-            shadow_bounds.origin += shadow.offset;
-            shadow_bounds.dilate(shadow.spread_radius);
+            let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
             self.window.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
@@ -3023,7 +3026,7 @@ impl<'a> WindowContext<'a> {
                         let event = FocusOutEvent {
                             blurred: WeakFocusHandle {
                                 id: blurred_id,
-                                handles: Arc::downgrade(&cx.window.focus_handles),
+                                handles: Arc::downgrade(&cx.app.focus_handles),
                             },
                         };
                         listener(event, cx)
@@ -3818,7 +3821,7 @@ impl<'a> WindowContext<'a> {
 
     /// Read information about the GPU backing this window.
     /// Currently returns None on Mac and Windows.
-    pub fn gpu_specs(&self) -> Option<GPUSpecs> {
+    pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.window.platform_window.gpu_specs()
     }
 }
@@ -4441,7 +4444,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                             let event = FocusOutEvent {
                                 blurred: WeakFocusHandle {
                                     id: blurred_id,
-                                    handles: Arc::downgrade(&cx.window.focus_handles),
+                                    handles: Arc::downgrade(&cx.app.focus_handles),
                                 },
                             };
                             listener(view, event, cx)
