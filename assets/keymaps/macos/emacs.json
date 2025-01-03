@@ -5,8 +5,7 @@
 [
   {
     "bindings": {
-      "ctrl-g": "menu::Cancel",
-      "ctrl-x ctrl-c": "zed::Quit"
+      "ctrl-g": "menu::Cancel"
     }
   },
   {
@@ -58,9 +57,10 @@
   {
     "context": "Workspace && !Terminal",
     "bindings": {
-      "ctrl-x 5 0": "workspace::CloseWindow", // kill-window
-      "ctrl-x 5 2": "workspace::NewWindow", // new-window
-      "ctrl-x o": "workspace::ActivateNextPane", // other-pane
+      "ctrl-x ctrl-c": "zed::Quit", // save-buffers-kill-terminal
+      "ctrl-x 5 0": "workspace::CloseWindow", // delete-frame
+      "ctrl-x 5 2": "workspace::NewWindow", // make-frame-command
+      "ctrl-x o": "workspace::ActivateNextPane", // other-window
       "ctrl-x k": "pane::CloseActiveItem", // kill-buffer
       "ctrl-x 0": "pane::CloseActiveItem", // delete-window
       "ctrl-x 1": "pane::CloseInactiveItems", // delete-other-windows
