@@ -56,10 +56,13 @@ impl ContextStore {
         })
     }
 
-    pub fn contains_thread(&self, thread_id: &ThreadId) -> bool {
-        self.context.iter().any(|probe| match probe.kind {
-            ContextKind::Thread(ref probe_thread_id) => probe_thread_id == thread_id,
-            ContextKind::File(_) | ContextKind::Directory | ContextKind::FetchedUrl => false,
-        })
+    pub fn id_for_thread(&self, thread_id: &ThreadId) -> Option<ContextId> {
+        self.context
+            .iter()
+            .find(|probe| match probe.kind {
+                ContextKind::Thread(ref probe_thread_id) => probe_thread_id == thread_id,
+                ContextKind::File(_) | ContextKind::Directory | ContextKind::FetchedUrl => false,
+            })
+            .map(|context| context.id)
     }
 }

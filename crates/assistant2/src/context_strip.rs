@@ -95,7 +95,8 @@ impl ContextStrip {
         if self
             .context_store
             .read(cx)
-            .contains_thread(active_thread.id())
+            .id_for_thread(active_thread.id())
+            .is_some()
         {
             return None;
         }

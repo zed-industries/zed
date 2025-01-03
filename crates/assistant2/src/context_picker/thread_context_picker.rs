@@ -169,11 +169,17 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 
         self.context_store
             .update(cx, |context_store, cx| {
-                context_store.insert_context(
-                    ContextKind::Thread(thread.read(cx).id().clone()),
-                    entry.summary.clone(),
-                    thread.read(cx).text(),
-                );
+                let thread = thread.read(cx);
+
+                if let Some(context_id) = context_store.id_for_thread(&thread.id()) {
+                    context_store.remove_context(&context_id);
+                } else {
+                    context_store.insert_context(
+                        ContextKind::Thread(thread.id().clone()),
+                        entry.summary.clone(),
+                        thread.text(),
+                    );
+                }
             })
             .ok();
 
@@ -196,15 +202,22 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
+
+        let added = self.context_store.upgrade().map_or(false, |ctx_store| {
+            ctx_store.read(cx).id_for_thread(&thread.id).is_some()
+        });
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(Label::new(thread.summary.clone())),
+                .child(Label::new(thread.summary.clone()))
+                .when(added, |el| {
+                    el.end_slot(Label::new("Added").size(LabelSize::XSmall))
+                }),
         )
     }
 }
