@@ -4,16 +4,17 @@ mod point;
 mod point_utf16;
 mod unclipped;
 
-use chunk::{Chunk, ChunkSlice};
+use chunk::Chunk;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
-    ops::{AddAssign, Range},
+    ops::{self, AddAssign, Range},
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
 
+pub use chunk::ChunkSlice;
 pub use offset_utf16::OffsetUtf16;
 pub use point::Point;
 pub use point_utf16::PointUtf16;
@@ -1069,7 +1070,7 @@ impl sum_tree::Summary for TextSummary {
     }
 }
 
-impl std::ops::Add<Self> for TextSummary {
+impl ops::Add<Self> for TextSummary {
     type Output = Self;
 
     fn add(mut self, rhs: Self) -> Self::Output {
@@ -1078,7 +1079,7 @@ impl std::ops::Add<Self> for TextSummary {
     }
 }
 
-impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
+impl<'a> ops::AddAssign<&'a Self> for TextSummary {
     fn add_assign(&mut self, other: &'a Self) {
         let joined_chars = self.last_line_chars + other.first_line_chars;
         if joined_chars > self.longest_row_chars {
@@ -1108,13 +1109,13 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
     }
 }
 
-impl std::ops::AddAssign<Self> for TextSummary {
+impl ops::AddAssign<Self> for TextSummary {
     fn add_assign(&mut self, other: Self) {
         *self += &other;
     }
 }
 
-pub trait TextDimension: 'static + for<'a> Dimension<'a, ChunkSummary> {
+pub trait TextDimension: 'static + Clone + Default + for<'a> Dimension<'a, ChunkSummary> {
     fn from_text_summary(summary: &TextSummary) -> Self;
     fn from_chunk(chunk: ChunkSlice) -> Self;
     fn add_assign(&mut self, other: &Self);
@@ -1258,6 +1259,114 @@ impl TextDimension for PointUtf16 {
 
     fn add_assign(&mut self, other: &Self) {
         *self += other;
+    }
+}
+
+/// A pair of text dimensions in which only the first dimension is used for comparison,
+/// but both dimensions are updated during addition and subtraction.
+#[derive(Clone, Copy, Debug)]
+pub struct DimensionPair<K, V> {
+    pub key: K,
+    pub value: Option<V>,
+}
+
+impl<K: Default, V: Default> Default for DimensionPair<K, V> {
+    fn default() -> Self {
+        Self {
+            key: Default::default(),
+            value: Some(Default::default()),
+        }
+    }
+}
+
+impl<K, V> cmp::Ord for DimensionPair<K, V>
+where
+    K: cmp::Ord,
+{
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
+impl<K, V> cmp::PartialOrd for DimensionPair<K, V>
+where
+    K: cmp::PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        self.key.partial_cmp(&other.key)
+    }
+}
+
+impl<K, V> cmp::PartialEq for DimensionPair<K, V>
+where
+    K: cmp::PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.key.eq(&other.key)
+    }
+}
+
+impl<K, V> ops::Sub for DimensionPair<K, V>
+where
+    K: ops::Sub<K, Output = K>,
+    V: ops::Sub<V, Output = V>,
+{
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self {
+            key: self.key - rhs.key,
+            value: self.value.zip(rhs.value).map(|(a, b)| a - b),
+        }
+    }
+}
+
+impl<K, V> cmp::Eq for DimensionPair<K, V> where K: cmp::Eq {}
+
+impl<'a, K, V> sum_tree::Dimension<'a, ChunkSummary> for DimensionPair<K, V>
+where
+    K: sum_tree::Dimension<'a, ChunkSummary>,
+    V: sum_tree::Dimension<'a, ChunkSummary>,
+{
+    fn zero(_cx: &()) -> Self {
+        Self {
+            key: K::zero(_cx),
+            value: Some(V::zero(_cx)),
+        }
+    }
+
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _cx: &()) {
+        self.key.add_summary(summary, _cx);
+        if let Some(value) = &mut self.value {
+            value.add_summary(summary, _cx);
+        }
+    }
+}
+
+impl<K, V> TextDimension for DimensionPair<K, V>
+where
+    K: TextDimension,
+    V: TextDimension,
+{
+    fn add_assign(&mut self, other: &Self) {
+        self.key.add_assign(&other.key);
+        if let Some((value, other_value)) = self.value.as_mut().zip(other.value.as_ref()) {
+            value.add_assign(other_value);
+        }
+    }
+
+    fn from_chunk(chunk: ChunkSlice) -> Self {
+        Self {
+            key: K::from_chunk(chunk),
+            value: Some(V::from_chunk(chunk)),
+        }
+    }
+
+    fn from_text_summary(summary: &TextSummary) -> Self {
+        Self {
+            key: K::from_text_summary(summary),
+            value: Some(V::from_text_summary(summary)),
+        }
     }
 }
 

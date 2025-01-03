@@ -22,6 +22,7 @@ use language::{
     TransactionId, Unclipped,
 };
 use project::buffer_store::BufferChangeSet;
+use rope::DimensionPair;
 use smallvec::SmallVec;
 use std::{
     any::type_name,
@@ -3394,60 +3395,6 @@ impl MultiBufferSnapshot {
         self.excerpts.summary().widest_line_number + 1
     }
 
-    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        let mut cursor = self.cursor();
-        cursor.seek(&offset);
-        if let Some(region) = cursor.region() {
-            let overshoot = offset - region.range.start;
-            let buffer_offset = region.buffer_range.start + overshoot;
-            let clipped_buffer_offset = region.buffer.clip_offset(buffer_offset, bias);
-            region.range.start + (clipped_buffer_offset - region.buffer_range.start)
-        } else {
-            self.len()
-        }
-    }
-
-    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        let mut cursor = self.cursor();
-        cursor.seek(&point);
-        if let Some(region) = cursor.region() {
-            let overshoot = point - region.range.start;
-            let buffer_point = region.buffer_range.start + overshoot;
-            let clipped_buffer_point = region.buffer.clip_point(buffer_point, bias);
-            region.range.start + (clipped_buffer_point - region.buffer_range.start)
-        } else {
-            self.max_point()
-        }
-    }
-
-    pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
-        let mut cursor = self.cursor();
-        cursor.seek(&offset);
-        if let Some(region) = cursor.region() {
-            let overshoot = offset - region.range.start;
-            let buffer_offset = region.buffer_range.start + overshoot;
-            let clipped_buffer_point = region.buffer.clip_offset_utf16(buffer_offset, bias);
-            region.range.start + (clipped_buffer_point - region.buffer_range.start)
-        } else {
-            self.text_summary().len_utf16
-        }
-    }
-
-    pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
-        let mut cursor = self.cursor();
-        cursor.seek(&point.0);
-        if let Some(region) = cursor.region() {
-            let overshoot = point.0 - region.range.start;
-            let buffer_point = region.buffer_range.start + overshoot;
-            let clipped_buffer_point = region
-                .buffer
-                .clip_point_utf16(Unclipped(buffer_point), bias);
-            region.range.start + (clipped_buffer_point - region.buffer_range.start)
-        } else {
-            self.text_summary().lines_utf16()
-        }
-    }
-
     pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> MultiBufferBytes {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpts = self.excerpts.cursor::<usize>(&());
@@ -3525,220 +3472,101 @@ impl MultiBufferSnapshot {
         chunks
     }
 
+    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.clip_dimension(offset, bias, text::BufferSnapshot::clip_offset)
+    }
+
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.clip_dimension(point, bias, text::BufferSnapshot::clip_point)
+    }
+
+    pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
+        self.clip_dimension(offset, bias, text::BufferSnapshot::clip_offset_utf16)
+    }
+
+    pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
+        self.clip_dimension(point.0, bias, |buffer, point, bias| {
+            buffer.clip_point_utf16(Unclipped(point), bias)
+        })
+    }
+
     pub fn offset_to_point(&self, offset: usize) -> Point {
-        let mut diff_transforms_cursor = self
-            .diff_transforms
-            .cursor::<((usize, Point), (ExcerptOffset, ExcerptPoint))>(&());
-        diff_transforms_cursor.seek(&offset, Bias::Right, &());
-        let offset_in_diff_transform = offset - diff_transforms_cursor.start().0 .0;
-        let diff_transform_start_point = diff_transforms_cursor.start().0 .1;
-
-        match diff_transforms_cursor.item() {
-            Some(DiffTransform::DeletedHunk {
-                buffer_id,
-                base_text_byte_range,
-                summary,
-                ..
-            }) => {
-                let text_buffer = &self.diffs.get(buffer_id).unwrap().base_text;
-                let hunk_start_offset = base_text_byte_range.start;
-                let hunk_start_point = text_buffer.offset_to_point(hunk_start_offset);
-                let buffer_offset =
-                    text_buffer.offset_to_point(hunk_start_offset + offset_in_diff_transform);
-                let point_in_hunk = (buffer_offset - hunk_start_point).min(summary.lines);
-                return diff_transform_start_point + point_in_hunk;
-            }
-
-            Some(DiffTransform::BufferContent { summary, .. }) => {
-                let excerpt_offset = diff_transforms_cursor.start().1 .0
-                    + ExcerptOffset::new(offset_in_diff_transform);
-                let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
-                cursor.seek(&excerpt_offset.value, Bias::Right, &());
-                let offset_in_excerpt = excerpt_offset.value - cursor.start().0;
-                let Some(excerpt) = cursor.item() else {
-                    return self.max_point();
-                };
-
-                let text_buffer = &excerpt.buffer;
-                let excerpt_start_offset = excerpt.range.context.start.to_offset(&excerpt.buffer);
-                let excerpt_start_point = text_buffer.offset_to_point(excerpt_start_offset);
-                let buffer_point =
-                    text_buffer.offset_to_point(excerpt_start_offset + offset_in_excerpt);
-                let point_in_excerpt =
-                    (buffer_point - excerpt_start_point).min(excerpt.text_summary.lines);
-                let excerpt_point = ExcerptPoint::wrap(cursor.start().1 + point_in_excerpt);
-                let point_in_diff_transform = (excerpt_point - diff_transforms_cursor.start().1 .1)
-                    .value
-                    .min(summary.lines);
-                return diff_transform_start_point + point_in_diff_transform;
-            }
-
-            None => self.max_point(),
-        }
+        self.convert_dimension(offset, text::BufferSnapshot::offset_to_point)
     }
 
     pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
-        if let Some((_, _, buffer)) = self.as_singleton() {
-            return buffer.offset_to_point_utf16(offset);
-        }
-
-        let mut cursor = self.excerpts.cursor::<(usize, PointUtf16)>(&());
-        cursor.seek(&offset, Bias::Right, &());
-        if let Some(excerpt) = cursor.item() {
-            let (start_offset, start_point) = cursor.start();
-            let overshoot = offset - start_offset;
-            let excerpt_start_offset = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let excerpt_start_point = excerpt.range.context.start.to_point_utf16(&excerpt.buffer);
-            let buffer_point = excerpt
-                .buffer
-                .offset_to_point_utf16(excerpt_start_offset + overshoot);
-            *start_point + (buffer_point - excerpt_start_point)
-        } else {
-            self.excerpts.summary().text.lines_utf16()
-        }
+        self.convert_dimension(offset, text::BufferSnapshot::offset_to_point_utf16)
     }
 
     pub fn point_to_point_utf16(&self, point: Point) -> PointUtf16 {
-        if let Some((_, _, buffer)) = self.as_singleton() {
-            return buffer.point_to_point_utf16(point);
-        }
-
-        let mut cursor = self.excerpts.cursor::<(Point, PointUtf16)>(&());
-        cursor.seek(&point, Bias::Right, &());
-        if let Some(excerpt) = cursor.item() {
-            let (start_offset, start_point) = cursor.start();
-            let overshoot = point - start_offset;
-            let excerpt_start_point = excerpt.range.context.start.to_point(&excerpt.buffer);
-            let excerpt_start_point_utf16 =
-                excerpt.range.context.start.to_point_utf16(&excerpt.buffer);
-            let buffer_point = excerpt
-                .buffer
-                .point_to_point_utf16(excerpt_start_point + overshoot);
-            *start_point + (buffer_point - excerpt_start_point_utf16)
-        } else {
-            self.excerpts.summary().text.lines_utf16()
-        }
+        self.convert_dimension(point, text::BufferSnapshot::point_to_point_utf16)
     }
 
     pub fn point_to_offset(&self, point: Point) -> usize {
-        let mut diff_transforms_cursor = self
-            .diff_transforms
-            .cursor::<((Point, usize), (ExcerptPoint, ExcerptOffset))>(&());
-        diff_transforms_cursor.seek(&point, Bias::Right, &());
-        let point_in_diff_transform = point - diff_transforms_cursor.start().0 .0;
-        let diff_transform_start_offset = diff_transforms_cursor.start().0 .1;
-
-        match diff_transforms_cursor.item() {
-            Some(DiffTransform::DeletedHunk {
-                buffer_id,
-                base_text_byte_range,
-                summary,
-                ..
-            }) => {
-                let text_buffer = &self.diffs.get(buffer_id).unwrap().base_text;
-                let hunk_start_offset = base_text_byte_range.start;
-                let hunk_start_point = text_buffer.offset_to_point(hunk_start_offset);
-                let buffer_offset =
-                    text_buffer.point_to_offset(hunk_start_point + point_in_diff_transform);
-                let offset_in_hunk = (buffer_offset - hunk_start_offset).min(summary.len);
-                return diff_transform_start_offset + offset_in_hunk;
-            }
-
-            Some(DiffTransform::BufferContent { summary, .. }) => {
-                let excerpt_point = diff_transforms_cursor.start().1 .0
-                    + ExcerptPoint::wrap(point_in_diff_transform);
-                let mut cursor = self.excerpts.cursor::<(Point, usize)>(&());
-                cursor.seek(&excerpt_point.value, Bias::Right, &());
-                let point_in_excerpt = excerpt_point.value - cursor.start().0;
-                let Some(excerpt) = cursor.item() else {
-                    return self.len();
-                };
-
-                let text_buffer = &excerpt.buffer;
-                let excerpt_start_offset = excerpt.range.context.start.to_offset(&excerpt.buffer);
-                let excerpt_start_point = text_buffer.offset_to_point(excerpt_start_offset);
-                let buffer_offset =
-                    text_buffer.point_to_offset(excerpt_start_point + point_in_excerpt);
-                let offset_in_excerpt =
-                    (buffer_offset - excerpt_start_offset).min(excerpt.text_summary.len);
-                let excerpt_offset = ExcerptOffset::new(cursor.start().1 + offset_in_excerpt);
-                let offset_in_diff_transform = (excerpt_offset
-                    - diff_transforms_cursor.start().1 .1)
-                    .value
-                    .min(summary.len);
-                return diff_transform_start_offset + offset_in_diff_transform;
-            }
-
-            None => self.len(),
-        }
+        self.convert_dimension(point, text::BufferSnapshot::point_to_offset)
     }
 
-    pub fn offset_utf16_to_offset(&self, offset_utf16: OffsetUtf16) -> usize {
-        if let Some((_, _, buffer)) = self.as_singleton() {
-            return buffer.offset_utf16_to_offset(offset_utf16);
-        }
-
-        let mut cursor = self.excerpts.cursor::<(OffsetUtf16, usize)>(&());
-        cursor.seek(&offset_utf16, Bias::Right, &());
-        if let Some(excerpt) = cursor.item() {
-            let (start_offset_utf16, start_offset) = cursor.start();
-            let overshoot = offset_utf16 - start_offset_utf16;
-            let excerpt_start_offset = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let excerpt_start_offset_utf16 =
-                excerpt.buffer.offset_to_offset_utf16(excerpt_start_offset);
-            let buffer_offset = excerpt
-                .buffer
-                .offset_utf16_to_offset(excerpt_start_offset_utf16 + overshoot);
-            *start_offset + (buffer_offset - excerpt_start_offset)
-        } else {
-            self.excerpts.summary().text.len
-        }
+    pub fn offset_utf16_to_offset(&self, offset: OffsetUtf16) -> usize {
+        self.convert_dimension(offset, text::BufferSnapshot::offset_utf16_to_offset)
     }
 
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
-        if let Some((_, _, buffer)) = self.as_singleton() {
-            return buffer.offset_to_offset_utf16(offset);
-        }
-
-        let mut cursor = self.excerpts.cursor::<(usize, OffsetUtf16)>(&());
-        cursor.seek(&offset, Bias::Right, &());
-        if let Some(excerpt) = cursor.item() {
-            let (start_offset, start_offset_utf16) = cursor.start();
-            let overshoot = offset - start_offset;
-            let excerpt_start_offset_utf16 =
-                excerpt.range.context.start.to_offset_utf16(&excerpt.buffer);
-            let excerpt_start_offset = excerpt
-                .buffer
-                .offset_utf16_to_offset(excerpt_start_offset_utf16);
-            let buffer_offset_utf16 = excerpt
-                .buffer
-                .offset_to_offset_utf16(excerpt_start_offset + overshoot);
-            *start_offset_utf16 + (buffer_offset_utf16 - excerpt_start_offset_utf16)
-        } else {
-            self.excerpts.summary().text.len_utf16
-        }
+        self.convert_dimension(offset, text::BufferSnapshot::offset_to_offset_utf16)
     }
 
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
-        if let Some((_, _, buffer)) = self.as_singleton() {
-            return buffer.point_utf16_to_offset(point);
-        }
+        self.convert_dimension(point, text::BufferSnapshot::point_utf16_to_offset)
+    }
 
-        let mut cursor = self.excerpts.cursor::<(PointUtf16, usize)>(&());
-        cursor.seek(&point, Bias::Right, &());
-        if let Some(excerpt) = cursor.item() {
-            let (start_point, start_offset) = cursor.start();
-            let overshoot = point - start_point;
-            let excerpt_start_offset = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let excerpt_start_point = excerpt
-                .buffer
-                .offset_to_point_utf16(excerpt.range.context.start.to_offset(&excerpt.buffer));
-            let buffer_offset = excerpt
-                .buffer
-                .point_utf16_to_offset(excerpt_start_point + overshoot);
-            *start_offset + (buffer_offset - excerpt_start_offset)
+    fn clip_dimension<D>(
+        &self,
+        position: D,
+        bias: Bias,
+        clip_buffer_position: fn(&text::BufferSnapshot, D, Bias) -> D,
+    ) -> D
+    where
+        D: TextDimension + Copy + Sub<D, Output = D> + Ord,
+    {
+        let mut cursor = self.cursor();
+        cursor.seek(&position);
+        if let Some(region) = cursor.region() {
+            let overshoot = position - region.range.start;
+            let mut buffer_position = region.buffer_range.start;
+            buffer_position.add_assign(&overshoot);
+            let clipped_buffer_position =
+                clip_buffer_position(&region.buffer, buffer_position, bias);
+            let mut position = region.range.start;
+            position.add_assign(&(clipped_buffer_position - region.buffer_range.start));
+            position
         } else {
-            self.excerpts.summary().text.len
+            D::from_text_summary(&self.text_summary())
+        }
+    }
+
+    fn convert_dimension<D1, D2>(
+        &self,
+        key: D1,
+        convert_buffer_dimension: fn(&text::BufferSnapshot, D1) -> D2,
+    ) -> D2
+    where
+        D1: TextDimension + Copy + Ord + Sub<D1, Output = D1>,
+        D2: TextDimension + Copy + Ord + Sub<D2, Output = D2>,
+    {
+        let mut cursor = self.cursor::<DimensionPair<D1, D2>>();
+        cursor.seek(&DimensionPair { key, value: None });
+        if let Some(region) = cursor.region() {
+            let start_key = region.range.start.key;
+            let start_value = region.range.start.value.unwrap();
+            let buffer_start_key = region.buffer_range.start.key;
+            let buffer_start_value = region.buffer_range.start.value.unwrap();
+            let mut buffer_key = buffer_start_key;
+            buffer_key.add_assign(&(key - start_key));
+            let buffer_value = convert_buffer_dimension(&region.buffer, buffer_key);
+            let mut result = start_value;
+            result.add_assign(&(buffer_value - buffer_start_value));
+            result
+        } else {
+            D2::from_text_summary(&self.text_summary())
         }
     }
 
@@ -3747,21 +3575,12 @@ impl MultiBufferSnapshot {
         point: T,
     ) -> Option<(&BufferSnapshot, usize)> {
         let offset = point.to_offset(self);
-        let mut diff_transforms_cursor = self.diff_transforms.cursor::<(usize, ExcerptOffset)>(&());
-        diff_transforms_cursor.seek(&offset, Bias::Right, &());
-        let overshoot = offset - diff_transforms_cursor.start().0;
-        let excerpt_offset = diff_transforms_cursor.start().1 + ExcerptOffset::new(overshoot);
-        let mut cursor = self.excerpts.cursor::<ExcerptOffset>(&());
-        cursor.seek(&excerpt_offset, Bias::Right, &());
-        if cursor.item().is_none() {
-            cursor.prev(&());
-        }
-
-        let excerpt = cursor.item()?;
-        let overshoot = (excerpt_offset - *cursor.start()).value;
-        let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
-        let buffer_offset = excerpt_start + overshoot;
-        Some((&excerpt.buffer, buffer_offset))
+        let mut cursor = self.cursor::<usize>();
+        cursor.seek(&offset);
+        let region = cursor.region()?;
+        let overshoot = offset - region.range.start;
+        let buffer_offset = region.buffer_range.start + overshoot;
+        Some((region.buffer, buffer_offset))
     }
 
     pub fn suggested_indents(
@@ -5339,29 +5158,19 @@ impl MultiBufferSnapshot {
 
 impl<'a, D> MultiBufferCursor<'a, D>
 where
-    D: TextDimension + Default + Ord + Clone + Copy + Sub<D, Output = D>,
+    D: TextDimension + Ord + Copy + Sub<D, Output = D>,
 {
     fn seek(&mut self, position: &D) {
         self.diff_transforms
-            .seek(&OutputDimension(position.clone()), Bias::Right, &());
-        let overshoot = position.clone() - self.diff_transforms.start().0.clone().0;
-        let mut excerpt_position = self.diff_transforms.start().1 .0.clone();
+            .seek(&OutputDimension(*position), Bias::Right, &());
+        let overshoot = *position - self.diff_transforms.start().0 .0;
+        let mut excerpt_position = self.diff_transforms.start().1 .0;
         excerpt_position.add_assign(&overshoot);
         self.excerpts
             .seek(&ExcerptDimension(excerpt_position), Bias::Right, &());
     }
 
-    fn seek_forward(&mut self, position: &D) {
-        self.diff_transforms
-            .seek_forward(&OutputDimension(position.clone()), Bias::Right, &());
-        let overshoot = position.clone() - self.diff_transforms.start().0.clone().0;
-        let mut excerpt_position = self.diff_transforms.start().1 .0.clone();
-        excerpt_position.add_assign(&overshoot);
-        self.excerpts
-            .seek_forward(&ExcerptDimension(excerpt_position), Bias::Right, &());
-    }
-
-    fn region(&self) -> Option<MultiBufferRegion<D>> {
+    fn region(&self) -> Option<MultiBufferRegion<'a, D>> {
         match self.diff_transforms.item()? {
             DiffTransform::DeletedHunk {
                 buffer_id,
