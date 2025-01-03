@@ -993,7 +993,10 @@ pub(crate) struct FocusedBlock {
 
 #[derive(Clone)]
 enum JumpData {
-    MultiBufferRow(MultiBufferRow),
+    MultiBufferRow {
+        row: MultiBufferRow,
+        line_offset_from_top: u32,
+    },
     MultiBufferPoint {
         excerpt_id: ExcerptId,
         position: Point,
@@ -12487,7 +12490,10 @@ impl Editor {
                     );
                 }
             }
-            Some(JumpData::MultiBufferRow(row)) => {
+            Some(JumpData::MultiBufferRow {
+                row,
+                line_offset_from_top,
+            }) => {
                 let point = MultiBufferPoint::new(row.0, 0);
                 if let Some((buffer, buffer_point, _)) =
                     self.buffer.read(cx).point_to_buffer_point(point, cx)
@@ -12495,7 +12501,7 @@ impl Editor {
                     let buffer_offset = buffer.read(cx).point_to_offset(buffer_point);
                     new_selections_by_buffer
                         .entry(buffer)
-                        .or_insert((Vec::new(), None))
+                        .or_insert((Vec::new(), Some(*line_offset_from_top)))
                         .0
                         .push(buffer_offset..buffer_offset)
                 }

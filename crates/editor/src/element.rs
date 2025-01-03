@@ -599,8 +599,15 @@ impl EditorElement {
                 .row;
             if let Some((_, Some(hitbox))) = line_numbers.get(&MultiBufferRow(multi_buffer_row)) {
                 if hitbox.contains(&event.position) {
+                    let scroll_position_row =
+                        position_map.scroll_pixel_position.y / position_map.line_height;
+                    let line_offset_from_top = display_row - scroll_position_row as u32;
+
                     editor.open_excerpts_common(
-                        Some(JumpData::MultiBufferRow(MultiBufferRow(multi_buffer_row))),
+                        Some(JumpData::MultiBufferRow {
+                            row: MultiBufferRow(multi_buffer_row),
+                            line_offset_from_top,
+                        }),
                         modifiers.alt,
                         cx,
                     );
