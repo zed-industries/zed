@@ -23,7 +23,7 @@ use workspace::{DismissDecision, ModalView};
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(OutlineView::register).detach();
     zed_actions::outline::TOGGLE_OUTLINE
-        .set(|view, cx| {
+        .set(|view, window, cx| {
             let Ok(view) = view.downcast::<Editor>() else {
                 return;
             };
@@ -106,7 +106,7 @@ impl OutlineView {
         cx: &mut ModelContext<Self>,
     ) -> OutlineView {
         let delegate = OutlineViewDelegate::new(cx.view().downgrade(), outline, editor, window, cx);
-        let picker = window.new_view(cx, |cx| {
+        let picker = window.new_view(cx, |window, cx| {
             Picker::uniform_list(delegate, window, cx).max_height(Some(vh(0.75, window, cx)))
         });
         OutlineView { picker }
@@ -138,9 +138,7 @@ impl OutlineViewDelegate {
             last_query: Default::default(),
             matches: Default::default(),
             selected_match_index: 0,
-            prev_scroll_position: Some(
-                editor.update(cx, |editor, cx| editor.scroll_position(window, cx)),
-            ),
+            prev_scroll_position: Some(editor.update(cx, |editor, cx| editor.scroll_position(cx))),
             active_editor: editor,
             outline,
         }
@@ -325,7 +323,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 .toggle_state(selected)
                 .child(
                     div()
-                        .text_ui(window, cx)
+                        .text_ui(cx)
                         .pl(rems(outline_item.depth as f32))
                         .child(render_item(outline_item, mat.ranges(), cx)),
                 ),
@@ -402,7 +400,7 @@ mod tests {
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -413,7 +411,7 @@ mod tests {
             .await
             .unwrap();
         let editor = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
             })
             .await
@@ -536,7 +534,7 @@ mod tests {
     }
 
     fn highlighted_display_rows(editor: &Model<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
-        editor.update(cx, |editor, cx| {
+        editor.update_in(cx, |editor, window, cx| {
             editor
                 .highlighted_display_rows(window, cx)
                 .into_keys()
