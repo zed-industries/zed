@@ -125,7 +125,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             let workspace = self.workspace.clone();
             cx.spawn_in(window, |_, mut cx| async move {
                 let buffer = buffer.await?;
-                workspace.update(&mut cx, |workspace, cx| {
+                workspace.update_in(&mut cx, |workspace, window, cx| {
                     let position = buffer
                         .read(cx)
                         .clip_point_utf16(symbol.range.start, Bias::Left);
@@ -184,7 +184,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         cx.spawn_in(window, |this, mut cx| async move {
             let symbols = symbols.await.log_err();
             if let Some(symbols) = symbols {
-                this.update(&mut cx, |this, cx| {
+                this.update_in(&mut cx, |this, window, cx| {
                     let delegate = &mut this.delegate;
                     let project = delegate.project.read(cx);
                     let (visible_match_candidates, external_match_candidates) = symbols
@@ -352,10 +352,10 @@ mod tests {
         );
 
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // Create the project symbols view.
-        let symbols = cx.new_view(|cx| {
+        let symbols = cx.new_view(|window, cx| {
             Picker::uniform_list(
                 ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
                 window,
@@ -366,7 +366,7 @@ mod tests {
         // Spawn multiples updates before the first update completes,
         // such that in the end, there are no matches. Testing for regression:
         // https://github.com/zed-industries/zed/issues/861
-        symbols.update(cx, |p, cx| {
+        symbols.update_in(cx, |p, window, cx| {
             p.update_matches("o".to_string(), window, cx);
             p.update_matches("on".to_string(), window, cx);
             p.update_matches("onex".to_string(), window, cx);
@@ -378,7 +378,7 @@ mod tests {
         });
 
         // Spawn more updates such that in the end, there are matches.
-        symbols.update(cx, |p, cx| {
+        symbols.update_in(cx, |p, window, cx| {
             p.update_matches("one".to_string(), window, cx);
             p.update_matches("on".to_string(), window, cx);
         });
@@ -392,7 +392,7 @@ mod tests {
         });
 
         // Spawn more updates such that in the end, there are again no matches.
-        symbols.update(cx, |p, cx| {
+        symbols.update_in(cx, |p, window, cx| {
             p.update_matches("o".to_string(), window, cx);
             p.update_matches("".to_string(), window, cx);
         });
