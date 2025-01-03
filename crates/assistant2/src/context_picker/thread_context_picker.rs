@@ -169,25 +169,11 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 
         self.context_store
             .update(cx, |context_store, cx| {
-                let text = thread.update(cx, |thread, _cx| {
-                    let mut text = String::new();
-
-                    for message in thread.messages() {
-                        text.push_str(match message.role {
-                            language_model::Role::User => "User:",
-                            language_model::Role::Assistant => "Assistant:",
-                            language_model::Role::System => "System:",
-                        });
-                        text.push('\n');
-
-                        text.push_str(&message.text);
-                        text.push('\n');
-                    }
-
-                    text
-                });
-
-                context_store.insert_context(ContextKind::Thread, entry.summary.clone(), text);
+                context_store.insert_context(
+                    ContextKind::Thread(thread.read(cx).id().clone()),
+                    entry.summary.clone(),
+                    thread.read(cx).text(),
+                );
             })
             .ok();
 

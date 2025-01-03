@@ -731,6 +731,10 @@ impl Panel for NotificationPanel {
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
     }
+
+    fn activation_priority(&self) -> u32 {
+        8
+    }
 }
 
 pub struct NotificationToast {

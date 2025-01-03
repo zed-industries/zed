@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{
     list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
     ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, View, WeakView,
+    TextStyleRefinement, UnderlineStyle, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -22,7 +22,7 @@ pub struct ActiveThread {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
-    thread: Model<Thread>,
+    pub(crate) thread: Model<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
@@ -138,6 +138,15 @@ impl ActiveThread {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_size: Some(buffer_font_size.into()),
                 background_color: Some(colors.editor_foreground.opacity(0.01)),
+                ..Default::default()
+            },
+            link: TextStyleRefinement {
+                background_color: Some(colors.editor_foreground.opacity(0.025)),
+                underline: Some(UnderlineStyle {
+                    color: Some(colors.text_accent.opacity(0.5)),
+                    thickness: px(1.),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             ..Default::default()
@@ -274,12 +283,11 @@ impl ActiveThread {
                     .when_some(context, |parent, context| {
                         if !context.is_empty() {
                             parent.child(
-                                h_flex()
-                                    .flex_wrap()
-                                    .gap_1()
-                                    .px_1p5()
-                                    .pb_1p5()
-                                    .children(context.iter().map(|c| ContextPill::new(c.clone()))),
+                                h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                                    context
+                                        .iter()
+                                        .map(|context| ContextPill::new(context.clone())),
+                                ),
                             )
                         } else {
                             parent

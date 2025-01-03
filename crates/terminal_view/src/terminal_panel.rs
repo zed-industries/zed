@@ -1393,6 +1393,10 @@ impl Panel for TerminalPanel {
     fn pane(&self) -> Option<View<Pane>> {
         Some(self.active_pane.clone())
     }
+
+    fn activation_priority(&self) -> u32 {
+        1
+    }
 }
 
 struct InlineAssistTabBarButton {

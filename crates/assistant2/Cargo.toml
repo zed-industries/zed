@@ -50,7 +50,6 @@ parking_lot.workspace = true
 picker.workspace = true
 project.workspace = true
 proto.workspace = true
-release_channel.workspace = true
 rope.workspace = true
 schemars.workspace = true
 serde.workspace = true

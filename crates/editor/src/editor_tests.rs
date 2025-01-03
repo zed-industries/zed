@@ -11260,7 +11260,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::LANGUAGE.into()),
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
     update_test_language_settings(cx, |settings| {
         settings.defaults.prettier = Some(PrettierSettings {
@@ -14730,6 +14730,62 @@ fn test_inline_completion_text_with_deletions(cx: &mut TestAppContext) {
             })
             .unwrap();
     }
+}
+
+#[gpui::test]
+async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    cx.set_state(indoc! {"
+        struct Fˇoo {}
+    "});
+
+    cx.update_editor(|editor, cx| {
+        let highlight_range = Point::new(0, 7)..Point::new(0, 10);
+        let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
+        editor.highlight_background::<DocumentHighlightRead>(
+            &[highlight_range],
+            |c| c.editor_document_highlight_read_background,
+            cx,
+        );
+    });
+
+    cx.update_editor(|e, cx| e.rename(&Rename, cx))
+        .expect("Rename was not started")
+        .await
+        .expect("Rename failed");
+    let mut rename_handler =
+        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+            let edit = lsp::TextEdit {
+                range: lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 10,
+                    },
+                },
+                new_text: "FooRenamed".to_string(),
+            };
+            Ok(Some(lsp::WorkspaceEdit::new(
+                // Specify the same edit twice
+                std::collections::HashMap::from_iter(Some((url, vec![edit.clone(), edit]))),
+            )))
+        });
+    cx.update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
+        .expect("Confirm rename was not started")
+        .await
+        .expect("Confirm rename failed");
+    rename_handler.next().await.unwrap();
+    cx.run_until_parked();
+
+    // Despite two edits, only one is actually applied as those are identical
+    cx.assert_editor_state(indoc! {"
+        struct FooRenamedˇ {}
+    "});
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

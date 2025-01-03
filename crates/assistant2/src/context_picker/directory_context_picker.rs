@@ -1,19 +1,18 @@
-// TODO: Remove this when we finish the implementation.
-#![allow(unused)]
-
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, WorktreeId};
+use project::{PathMatchCandidateSet, ProjectPath, Worktree, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context::ContextKind;
+use crate::context_picker::file_context_picker::codeblock_fence_for_path;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 
@@ -193,14 +192,61 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
+            let worktree = project.update(&mut cx, |project, cx| {
+                project
+                    .worktree_for_id(worktree_id, cx)
+                    .ok_or_else(|| anyhow!("no worktree found for {worktree_id:?}"))
+            })??;
+
+            let files = worktree.update(&mut cx, |worktree, _cx| {
+                collect_files_in_path(worktree, &path)
+            })?;
+
+            let open_buffer_tasks = project.update(&mut cx, |project, cx| {
+                files
+                    .into_iter()
+                    .map(|file_path| {
+                        project.open_buffer(
+                            ProjectPath {
+                                worktree_id,
+                                path: file_path.clone(),
+                            },
+                            cx,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+
+            let open_all_buffers_tasks = cx.background_executor().spawn(async move {
+                let mut buffers = Vec::with_capacity(open_buffer_tasks.len());
+
+                for open_buffer_task in open_buffer_tasks {
+                    let buffer = open_buffer_task.await?;
+
+                    buffers.push(buffer);
+                }
+
+                anyhow::Ok(buffers)
+            });
+
+            let buffers = open_all_buffers_tasks.await?;
+
             this.update(&mut cx, |this, cx| {
                 let mut text = String::new();
 
-                // TODO: Add the files from the selected directory.
+                for buffer in buffers {
+                    text.push_str(&codeblock_fence_for_path(Some(&path), None));
+                    text.push_str(&buffer.read(cx).text());
+                    if !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+
+                    text.push_str("```\n");
+                }
 
                 this.delegate
                     .context_store
-                    .update(cx, |context_store, cx| {
+                    .update(cx, |context_store, _cx| {
                         context_store.insert_context(
                             ContextKind::Directory,
                             path.to_string_lossy().to_string(),
@@ -246,4 +292,18 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 .child(h_flex().gap_2().child(Label::new(directory_name))),
         )
     }
+}
+
+fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
+    let mut files = Vec::new();
+
+    for entry in worktree.child_entries(path) {
+        if entry.is_dir() {
+            files.extend(collect_files_in_path(worktree, &entry.path));
+        } else if entry.is_file() {
+            files.push(entry.path.clone());
+        }
+    }
+
+    files
 }
