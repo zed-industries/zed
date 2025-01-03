@@ -306,6 +306,10 @@ pub async fn parse_markdown_block(
 
             Event::SoftBreak => text.push(' '),
 
+            Event::InlineHtml(inline_html) => {
+                text.push_str(&inline_html);
+            }
+
             _ => {}
         }
     }
