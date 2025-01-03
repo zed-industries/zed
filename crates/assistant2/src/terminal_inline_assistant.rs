@@ -13,7 +13,6 @@ use editor::{actions::SelectAll, MultiBuffer};
 use fs::Fs;
 use gpui::{
     AppContext, Context, FocusableView, Global, Model, Subscription, UpdateGlobal, WeakModel,
-    WeakModel,
 };
 use language::Buffer;
 use language_model::{
@@ -412,12 +411,12 @@ impl TerminalInlineAssist {
             workspace: workspace.clone(),
             context_store,
             _subscriptions: vec![
-                cx.subscribe(&prompt_editor, |prompt_editor, event, cx| {
+                window.subscribe(&prompt_editor, cx, |prompt_editor, event, window, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| {
                         this.handle_prompt_editor_event(prompt_editor, event, window, cx)
                     })
                 }),
-                cx.subscribe(&codegen, move |codegen, event, cx| {
+                window.subscribe(&codegen, cx, move |codegen, event, window, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| match event {
                         CodegenEvent::Finished => {
                             let assist = if let Some(assist) = this.assists.get(&assist_id) {

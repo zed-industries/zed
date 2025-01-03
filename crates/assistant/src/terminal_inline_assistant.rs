@@ -444,16 +444,12 @@ impl TerminalInlineAssist {
             workspace: workspace.clone(),
             include_context,
             _subscriptions: vec![
-                cx.subscribe_in(
-                    &prompt_editor,
-                    window,
-                    |prompt_editor, event, window, cx| {
-                        TerminalInlineAssistant::update_global(cx, |this, cx| {
-                            this.handle_prompt_editor_event(prompt_editor, event, window, cx)
-                        })
-                    },
-                ),
-                cx.subscribe_in(&codegen, window, move |codegen, event, window, cx| {
+                window.subscribe(&prompt_editor, cx, |prompt_editor, event, window, cx| {
+                    TerminalInlineAssistant::update_global(cx, |this, cx| {
+                        this.handle_prompt_editor_event(prompt_editor, event, window, cx)
+                    })
+                }),
+                window.subscribe(&codegen, cx, move |codegen, event, window, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| match event {
                         CodegenEvent::Finished => {
                             let assist = if let Some(assist) = this.assists.get(&assist_id) {

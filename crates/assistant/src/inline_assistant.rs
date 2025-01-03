@@ -1370,12 +1370,12 @@ impl EditorInlineAssists {
                         })
                     }
                 }),
-                cx.observe_in(editor, window, move |editor, window, cx| {
+                window.observe(editor, cx, move |editor, window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
                         this.handle_editor_change(editor, window, cx)
                     })
                 }),
-                cx.subscribe_in(editor, window, move |editor, event, window, cx| {
+                window.subscribe(editor, cx, move |editor, event, window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
                         this.handle_editor_event(editor, event, window, cx)
                     })
@@ -2455,12 +2455,16 @@ impl InlineAssist {
                         this.handle_prompt_editor_focus_out(assist_id, window, cx)
                     })
                 }),
-                cx.subscribe_in(prompt_editor, window, |prompt_editor, event, window, cx| {
-                    InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_event(prompt_editor, event, window, cx)
-                    })
-                }),
-                cx.observe_in(&codegen, window, {
+                window.subscribe(
+                    prompt_editor,
+                    cx,
+                    move |prompt_editor, event, window, cx| {
+                        InlineAssistant::update_global(cx, |this, cx| {
+                            this.handle_prompt_editor_event(prompt_editor, event, window, cx)
+                        })
+                    },
+                ),
+                window.observe(&codegen, cx, {
                     let editor = editor.downgrade();
                     move |_, window, cx| {
                         if let Some(editor) = editor.upgrade() {
@@ -2476,7 +2480,7 @@ impl InlineAssist {
                         }
                     }
                 }),
-                cx.subscribe_in(&codegen, window, move |codegen, event, window, cx| {
+                window.subscribe(&codegen, cx, move |codegen, event, window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| match event {
                         CodegenEvent::Undone => this.finish_assist(assist_id, false, window, cx),
                         CodegenEvent::Finished => {

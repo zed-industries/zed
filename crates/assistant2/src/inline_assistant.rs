@@ -49,7 +49,7 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
-    cx.observe_new_views(|_workspace: &mut Workspace, cx| {
+    cx.observe_new_views(|_workspace: &mut Workspace, window, cx| {
         let workspace = cx.view().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, window, cx)
@@ -1351,7 +1351,7 @@ impl InlineAssistant {
                     ))
                     .unwrap();
 
-                let deleted_lines_editor = window.new_view(cx, |cx| {
+                let deleted_lines_editor = window.new_view(cx, |window, cx| {
                     let multi_buffer = cx.new_model(|_| {
                         MultiBuffer::without_headers(language::Capability::ReadOnly)
                     });
@@ -1399,7 +1399,7 @@ impl InlineAssistant {
                             .block_mouse_down()
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
-                            .h(height as f32 * window.line_height())
+                            .h(height as f32 * cx.window.line_height())
                             .pl(cx.gutter_dimensions.full_width())
                             .child(deleted_lines_editor.clone())
                             .into_any_element()
@@ -1478,7 +1478,7 @@ impl EditorInlineAssists {
                 async move {
                     while let Ok(()) = highlight_updates_rx.changed().await {
                         let editor = editor.upgrade().context("editor was dropped")?;
-                        cx.update_global(|assistant: &mut InlineAssistant, cx| {
+                        cx.update_global(|assistant: &mut InlineAssistant, window, cx| {
                             assistant.update_editor_highlights(&editor, window, cx);
                         })?;
                     }
@@ -1486,47 +1486,43 @@ impl EditorInlineAssists {
                 }
             }),
             _subscriptions: vec![
-                cx.observe_release(editor, {
+                cx.observe_release_in(editor, window, {
                     let editor = editor.downgrade();
-                    |_, cx| {
+                    |_, window, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
                             this.handle_editor_release(editor, window, cx);
                         })
                     }
                 }),
-                cx.observe(editor, move |editor, cx| {
+                window.observe(editor, cx, move |editor, window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
                         this.handle_editor_change(editor, window, cx)
                     })
                 }),
-                cx.subscribe(editor, move |editor, event, cx| {
+                window.subscribe(editor, cx, move |editor, event, window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
                         this.handle_editor_event(editor, event, window, cx)
                     })
                 }),
                 editor.update(cx, |editor, cx| {
                     let editor_handle = cx.view().downgrade();
-                    editor.register_action(
-                        move |_: &editor::actions::Newline, cx: &mut WindowContext| {
-                            InlineAssistant::update_global(cx, |this, cx| {
-                                if let Some(editor) = editor_handle.upgrade() {
-                                    this.handle_editor_newline(editor, window, cx)
-                                }
-                            })
-                        },
-                    )
+                    editor.register_action(move |_: &editor::actions::Newline, window, cx| {
+                        InlineAssistant::update_global(cx, |this, cx| {
+                            if let Some(editor) = editor_handle.upgrade() {
+                                this.handle_editor_newline(editor, window, cx)
+                            }
+                        })
+                    })
                 }),
                 editor.update(cx, |editor, cx| {
                     let editor_handle = cx.view().downgrade();
-                    editor.register_action(
-                        move |_: &editor::actions::Cancel, cx: &mut WindowContext| {
-                            InlineAssistant::update_global(cx, |this, cx| {
-                                if let Some(editor) = editor_handle.upgrade() {
-                                    this.handle_editor_cancel(editor, window, cx)
-                                }
-                            })
-                        },
-                    )
+                    editor.register_action(move |_: &editor::actions::Cancel, window, cx| {
+                        InlineAssistant::update_global(cx, |this, cx| {
+                            if let Some(editor) = editor_handle.upgrade() {
+                                this.handle_editor_cancel(editor, window, cx)
+                            }
+                        })
+                    })
                 }),
             ],
         }
@@ -1610,24 +1606,24 @@ impl InlineAssist {
             codegen: codegen.clone(),
             workspace: workspace.clone(),
             _subscriptions: vec![
-                cx.on_focus_in(&prompt_editor_focus_handle, move |window, cx| {
+                window.on_focus_in(&prompt_editor_focus_handle, cx, move |window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
                         this.handle_prompt_editor_focus_in(assist_id, window, cx)
                     })
                 }),
-                cx.on_focus_out(&prompt_editor_focus_handle, move |_, cx| {
+                window.on_focus_out(&prompt_editor_focus_handle, cx, move |_, window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
                         this.handle_prompt_editor_focus_out(assist_id, window, cx)
                     })
                 }),
-                cx.subscribe(prompt_editor, |prompt_editor, event, cx| {
+                window.subscribe(prompt_editor, cx, |prompt_editor, event, window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
                         this.handle_prompt_editor_event(prompt_editor, event, window, cx)
                     })
                 }),
-                cx.observe(&codegen, {
+                window.observe(&codegen, cx, {
                     let editor = editor.downgrade();
-                    move |_, cx| {
+                    move |_, window, cx| {
                         if let Some(editor) = editor.upgrade() {
                             InlineAssistant::update_global(cx, |this, cx| {
                                 if let Some(editor_assists) =
@@ -1641,7 +1637,7 @@ impl InlineAssist {
                         }
                     }
                 }),
-                cx.subscribe(&codegen, move |codegen, event, cx| {
+                window.subscribe(&codegen, cx, move |codegen, event, window, cx| {
                     InlineAssistant::update_global(cx, |this, cx| match event {
                         CodegenEvent::Undone => this.finish_assist(assist_id, false, window, cx),
                         CodegenEvent::Finished => {
@@ -1802,7 +1798,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                 })?
                 .context("invalid range")?;
 
-            cx.update_global(|assistant: &mut InlineAssistant, cx| {
+            cx.update_global(|assistant: &mut InlineAssistant, window, cx| {
                 let assist_id = assistant.suggest_assist(
                     &editor,
                     range,

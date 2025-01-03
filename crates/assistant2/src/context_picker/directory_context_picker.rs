@@ -36,7 +36,7 @@ impl DirectoryContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
+        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
@@ -210,7 +210,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
         let confirm_behavior = self.confirm_behavior;
         cx.spawn_in(window, |this, mut cx| async move {
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 let mut text = String::new();
 
                 // TODO: Add the files from the selected directory.

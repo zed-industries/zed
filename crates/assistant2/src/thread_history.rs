@@ -144,7 +144,7 @@ impl RenderOnce for PastThread {
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
                                 let id = id.clone();
-                                move |_event, cx| {
+                                move |_event, window, cx| {
                                     assistant_panel
                                         .update(cx, |this, cx| {
                                             this.delete_thread(&id, window, cx);
@@ -157,7 +157,7 @@ impl RenderOnce for PastThread {
             .on_click({
                 let assistant_panel = self.assistant_panel.clone();
                 let id = id.clone();
-                move |_event, cx| {
+                move |_event, window, cx| {
                     assistant_panel
                         .update(cx, |this, cx| {
                             this.open_thread(&id, window, cx);

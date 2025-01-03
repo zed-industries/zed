@@ -73,7 +73,7 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
-        cx.spawn(|mut cx| async move {
+        window.spawn(cx, |mut cx| async move {
             let tools = Arc::new(ToolWorkingSet::default());
             let thread_store = workspace
                 .update(&mut cx, |workspace, cx| {
@@ -82,10 +82,8 @@ impl AssistantPanel {
                 })?
                 .await?;
 
-            workspace.update(&mut cx, |workspace, cx| {
-                window.new_view(cx, |cx| {
-                    Self::new(workspace, thread_store, tools, window, cx)
-                })
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                cx.new_model(|cx| Self::new(workspace, thread_store, tools, window, cx))
             })
         })
     }
@@ -109,7 +107,7 @@ impl AssistantPanel {
             fs: fs.clone(),
             language_registry: language_registry.clone(),
             thread_store: thread_store.clone(),
-            thread: window.new_view(cx, |cx| {
+            thread: window.new_view(cx, |window, cx| {
                 ActiveThread::new(
                     thread.clone(),
                     workspace.clone(),
@@ -119,7 +117,7 @@ impl AssistantPanel {
                     cx,
                 )
             }),
-            message_editor: window.new_view(cx, |cx| {
+            message_editor: window.new_view(cx, |window, cx| {
                 MessageEditor::new(
                     fs.clone(),
                     workspace,
@@ -134,7 +132,7 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
-            history: window.new_view(cx, |cx| {
+            history: window.new_view(cx, |window, cx| {
                 ThreadHistory::new(weak_self, thread_store, window, cx)
             }),
             width: None,
@@ -156,7 +154,7 @@ impl AssistantPanel {
             .update(cx, |this, cx| this.create_thread(cx));
 
         self.active_view = ActiveView::Thread;
-        self.thread = window.new_view(cx, |cx| {
+        self.thread = window.new_view(cx, |window, cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.workspace.clone(),
@@ -166,7 +164,7 @@ impl AssistantPanel {
                 cx,
             )
         });
-        self.message_editor = window.new_view(cx, |cx| {
+        self.message_editor = window.new_view(cx, |window, cx| {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -199,7 +197,7 @@ impl AssistantPanel {
         };
 
         self.active_view = ActiveView::Thread;
-        self.thread = window.new_view(cx, |cx| {
+        self.thread = window.new_view(cx, |window, cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.workspace.clone(),
@@ -209,7 +207,7 @@ impl AssistantPanel {
                 cx,
             )
         });
-        self.message_editor = window.new_view(cx, |cx| {
+        self.message_editor = window.new_view(cx, |window, cx| {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -249,7 +247,7 @@ impl Panel for AssistantPanel {
         "AssistantPanel2"
     }
 
-    fn position(&self, _window: &mut Window, _cx: &mut AppContext) -> DockPosition {
+    fn position(&self, _window: &Window, _cx: &AppContext) -> DockPosition {
         DockPosition::Right
     }
 
@@ -277,7 +275,7 @@ impl Panel for AssistantPanel {
         );
     }
 
-    fn size(&self, window: &mut Window, cx: &mut AppContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         let settings = AssistantSettings::get_global(cx);
         match self.position(window, cx) {
             DockPosition::Left | DockPosition::Right => {
@@ -301,11 +299,11 @@ impl Panel for AssistantPanel {
         Some(proto::PanelId::AssistantPanel)
     }
 
-    fn icon(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<IconName> {
+    fn icon(&self, _window: &Window, _cx: &AppContext) -> Option<IconName> {
         Some(IconName::ZedAssistant2)
     }
 
-    fn icon_tooltip(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _cx: &AppContext) -> Option<&'static str> {
         Some("Assistant Panel")
     }
 
@@ -345,7 +343,7 @@ impl AssistantPanel {
                             .style(ButtonStyle::Subtle)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     Tooltip::for_action_in(
                                         "New Thread",
                                         &NewThread,
@@ -365,7 +363,7 @@ impl AssistantPanel {
                             .style(ButtonStyle::Subtle)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     Tooltip::for_action_in(
                                         "Open History",
                                         &OpenHistory,
@@ -404,7 +402,7 @@ impl AssistantPanel {
                 .into_any_element();
         }
 
-        self.thread.clone().into_any()
+        self.thread.clone().into_any_element()
     }
 
     fn render_thread_empty_state(

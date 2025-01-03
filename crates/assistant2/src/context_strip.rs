@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use gpui::{FocusHandle, Model, WeakModel, WeakModel};
+use gpui::{FocusHandle, Model, WeakModel};
 use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
@@ -30,7 +30,7 @@ impl ContextStrip {
     ) -> Self {
         Self {
             context_store: context_store.clone(),
-            context_picker: window.new_view(cx, |cx| {
+            context_picker: window.new_view(cx, |window, cx| {
                 ContextPicker::new(
                     workspace.clone(),
                     thread_store.clone(),

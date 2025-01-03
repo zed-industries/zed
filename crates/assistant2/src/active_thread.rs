@@ -41,7 +41,7 @@ impl ActiveThread {
     ) -> Self {
         let subscriptions = vec![
             cx.observe(&thread, |_, _, cx| cx.notify()),
-            cx.subscribe(&thread, Self::handle_thread_event),
+            cx.subscribe_in(&thread, window, Self::handle_thread_event),
         ];
 
         let mut this = Self {
@@ -150,7 +150,7 @@ impl ActiveThread {
             ..Default::default()
         };
 
-        let markdown = window.new_view(cx, |cx| {
+        let markdown = window.new_view(cx, |window, cx| {
             Markdown::new(
                 text,
                 markdown_style,
@@ -169,7 +169,7 @@ impl ActiveThread {
 
     fn handle_thread_event(
         &mut self,
-        _: Model<Thread>,
+        _: &Model<Thread>,
         event: &ThreadEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -211,7 +211,7 @@ impl ActiveThread {
 
                 for tool_use in pending_tool_uses {
                     if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                        let task = tool.run(tool_use.input, self.workspace.clone(), cx);
+                        let task = tool.run(tool_use.input, self.workspace.clone(), window, cx);
 
                         self.thread.update(cx, |thread, cx| {
                             thread.insert_tool_output(
@@ -284,7 +284,7 @@ impl ActiveThread {
                                     ),
                             ),
                     )
-                    .child(div().p_2p5().text_ui(window, cx).child(markdown.clone()))
+                    .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
                     .when_some(context, |parent, context| {
                         if !context.is_empty() {
                             parent.child(

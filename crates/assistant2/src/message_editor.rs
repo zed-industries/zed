@@ -50,14 +50,14 @@ impl MessageEditor {
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
-        let editor = window.new_view(cx, |cx| {
+        let editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::auto_height(10, window, cx);
             editor.set_placeholder_text("Ask anything…", window, cx);
             editor.set_show_indent_guides(false, window, cx);
 
             editor
         });
-        let inline_context_picker = window.new_view(cx, |cx| {
+        let inline_context_picker = window.new_view(cx, |window, cx| {
             ContextPicker::new(
                 workspace.clone(),
                 Some(thread_store.clone()),
@@ -68,9 +68,10 @@ impl MessageEditor {
             )
         });
         let subscriptions = vec![
-            cx.subscribe(&editor, Self::handle_editor_event),
-            cx.subscribe(
+            cx.subscribe_in(&editor, window, Self::handle_editor_event),
+            cx.subscribe_in(
                 &inline_context_picker,
+                window,
                 Self::handle_inline_context_picker_event,
             ),
         ];
@@ -79,7 +80,7 @@ impl MessageEditor {
             thread,
             editor: editor.clone(),
             context_store: context_store.clone(),
-            context_strip: window.new_view(cx, |cx| {
+            context_strip: window.new_view(cx, |window, cx| {
                 ContextStrip::new(
                     context_store,
                     workspace.clone(),
@@ -93,7 +94,7 @@ impl MessageEditor {
             context_picker_menu_handle,
             inline_context_picker,
             inline_context_picker_menu_handle,
-            model_selector: window.new_view(cx, |cx| {
+            model_selector: window.new_view(cx, |window, cx| {
                 AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), window, cx)
             }),
             model_selector_menu_handle,
@@ -174,7 +175,7 @@ impl MessageEditor {
 
     fn handle_editor_event(
         &mut self,
-        editor: Model<Editor>,
+        editor: &Model<Editor>,
         event: &EditorEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -199,7 +200,7 @@ impl MessageEditor {
 
     fn handle_inline_context_picker_event(
         &mut self,
-        _inline_context_picker: Model<ContextPicker>,
+        _inline_context_picker: &Model<ContextPicker>,
         _event: &DismissEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,

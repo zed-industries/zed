@@ -34,7 +34,7 @@ impl FetchContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
+        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
@@ -214,7 +214,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         cx.spawn_in(window, |this, mut cx| async move {
             let text = Self::build_message(http_client, &url).await?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {

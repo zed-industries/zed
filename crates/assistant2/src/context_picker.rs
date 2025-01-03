@@ -92,7 +92,7 @@ impl ContextPicker {
             selected_ix: 0,
         };
 
-        let picker = window.new_view(cx, |cx| {
+        let picker = window.new_view(cx, |window, cx| {
             Picker::nonsearchable_uniform_list(delegate, window, cx)
                 .max_height(Some(rems(20.).into()))
         });
@@ -201,53 +201,57 @@ impl PickerDelegate for ContextPickerDelegate {
                 .update(cx, |this, cx| {
                     match entry.kind {
                         ContextKind::File => {
-                            this.mode = ContextPickerMode::File(window.new_view(cx, |cx| {
-                                FileContextPicker::new(
-                                    self.context_picker.clone(),
-                                    self.workspace.clone(),
-                                    self.context_store.clone(),
-                                    self.confirm_behavior,
-                                    window,
-                                    cx,
-                                )
-                            }));
-                        }
-                        ContextKind::Directory => {
-                            this.mode = ContextPickerMode::Directory(window.new_view(cx, |cx| {
-                                DirectoryContextPicker::new(
-                                    self.context_picker.clone(),
-                                    self.workspace.clone(),
-                                    self.context_store.clone(),
-                                    self.confirm_behavior,
-                                    window,
-                                    cx,
-                                )
-                            }));
-                        }
-                        ContextKind::FetchedUrl => {
-                            this.mode = ContextPickerMode::Fetch(window.new_view(cx, |cx| {
-                                FetchContextPicker::new(
-                                    self.context_picker.clone(),
-                                    self.workspace.clone(),
-                                    self.context_store.clone(),
-                                    self.confirm_behavior,
-                                    window,
-                                    cx,
-                                )
-                            }));
-                        }
-                        ContextKind::Thread => {
-                            if let Some(thread_store) = self.thread_store.as_ref() {
-                                this.mode = ContextPickerMode::Thread(window.new_view(cx, |cx| {
-                                    ThreadContextPicker::new(
-                                        thread_store.clone(),
+                            this.mode =
+                                ContextPickerMode::File(window.new_view(cx, |window, cx| {
+                                    FileContextPicker::new(
                                         self.context_picker.clone(),
+                                        self.workspace.clone(),
                                         self.context_store.clone(),
                                         self.confirm_behavior,
                                         window,
                                         cx,
                                     )
                                 }));
+                        }
+                        ContextKind::Directory => {
+                            this.mode =
+                                ContextPickerMode::Directory(window.new_view(cx, |window, cx| {
+                                    DirectoryContextPicker::new(
+                                        self.context_picker.clone(),
+                                        self.workspace.clone(),
+                                        self.context_store.clone(),
+                                        self.confirm_behavior,
+                                        window,
+                                        cx,
+                                    )
+                                }));
+                        }
+                        ContextKind::FetchedUrl => {
+                            this.mode =
+                                ContextPickerMode::Fetch(window.new_view(cx, |window, cx| {
+                                    FetchContextPicker::new(
+                                        self.context_picker.clone(),
+                                        self.workspace.clone(),
+                                        self.context_store.clone(),
+                                        self.confirm_behavior,
+                                        window,
+                                        cx,
+                                    )
+                                }));
+                        }
+                        ContextKind::Thread => {
+                            if let Some(thread_store) = self.thread_store.as_ref() {
+                                this.mode =
+                                    ContextPickerMode::Thread(window.new_view(cx, |window, cx| {
+                                        ThreadContextPicker::new(
+                                            thread_store.clone(),
+                                            self.context_picker.clone(),
+                                            self.context_store.clone(),
+                                            self.confirm_behavior,
+                                            window,
+                                            cx,
+                                        )
+                                    }));
                             }
                         }
                     }

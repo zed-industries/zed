@@ -30,7 +30,7 @@ impl ThreadContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
+        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
 
         ThreadContextPicker { picker }
     }

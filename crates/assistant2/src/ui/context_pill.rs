@@ -60,7 +60,7 @@ impl RenderOnce for ContextPill {
                         .icon_size(IconSize::XSmall)
                         .on_click({
                             let on_remove = on_remove.clone();
-                            move |event, cx| on_remove(event, cx)
+                            move |event, window, cx| on_remove(event, window, cx)
                         }),
                 )
             })

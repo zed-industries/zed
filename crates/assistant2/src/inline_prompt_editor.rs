@@ -231,7 +231,7 @@ impl<T: 'static> PromptEditor<T> {
     pub fn unlink(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let prompt = self.prompt(cx);
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
-        self.editor = window.new_view(cx, |cx| {
+        self.editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(
                 language::language_settings::SoftWrap::EditorWidth,
@@ -291,7 +291,7 @@ impl<T: 'static> PromptEditor<T> {
 
     fn handle_prompt_editor_events(
         &mut self,
-        _: Model<Editor>,
+        _: &Model<Editor>,
         event: &EditorEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -451,7 +451,7 @@ impl<T: 'static> PromptEditor<T> {
                     .icon(IconName::Return)
                     .icon_size(IconSize::XSmall)
                     .icon_color(Color::Muted)
-                    .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::StartRequested)))
                     .into_any_element()]
             }
             CodegenStatus::Pending => vec![IconButton::new("stop", IconName::Stop)
@@ -466,7 +466,7 @@ impl<T: 'static> PromptEditor<T> {
                         cx,
                     )
                 })
-                .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::StopRequested)))
                 .into_any_element()],
             CodegenStatus::Done | CodegenStatus::Error(_) => {
                 let has_error = matches!(codegen_status, CodegenStatus::Error(_));
@@ -483,7 +483,7 @@ impl<T: 'static> PromptEditor<T> {
                                 cx,
                             )
                         })
-                        .on_click(cx.listener(|_, _, cx| {
+                        .on_click(cx.listener(|_, _, _, cx| {
                             cx.emit(PromptEditorEvent::StartRequested);
                         }))
                         .into_any_element()]
@@ -505,7 +505,7 @@ impl<T: 'static> PromptEditor<T> {
                             IconButton::new("confirm", IconName::Play)
                                 .icon_color(Color::Info)
                                 .shape(IconButtonShape::Square)
-                                .tooltip(|cx| {
+                                .tooltip(|window, cx| {
                                     Tooltip::for_action(
                                         "Execute Generated Command",
                                         &menu::SecondaryConfirm,
@@ -513,7 +513,7 @@ impl<T: 'static> PromptEditor<T> {
                                         cx,
                                     )
                                 })
-                                .on_click(cx.listener(|_, _, cx| {
+                                .on_click(cx.listener(|_, _, _, cx| {
                                     cx.emit(PromptEditorEvent::ConfirmRequested { execute: true });
                                 }))
                                 .into_any_element(),
@@ -569,8 +569,8 @@ impl<T: 'static> PromptEditor<T> {
     fn render_cycle_controls(
         &self,
         codegen: &BufferCodegen,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        window: &Window,
+        cx: &ModelContext<Self>,
     ) -> AnyElement {
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
@@ -611,7 +611,7 @@ impl<T: 'static> PromptEditor<T> {
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
-                        move |cx| {
+                        move |window, cx| {
                             window
                                 .new_view(cx, |window, cx| {
                                     let mut tooltip = Tooltip::new("Previous Alternative")
@@ -653,7 +653,7 @@ impl<T: 'static> PromptEditor<T> {
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
-                        move |cx| {
+                        move |window, cx| {
                             window
                                 .new_view(cx, |window, cx| {
                                     let mut tooltip = Tooltip::new("Next Alternative").key_binding(
@@ -827,7 +827,7 @@ impl PromptEditor<BufferCodegen> {
             gutter_dimensions,
         };
 
-        let prompt_editor = window.new_view(cx, |cx| {
+        let prompt_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
                     max_lines: Self::MAX_LINES as usize,
@@ -855,7 +855,7 @@ impl PromptEditor<BufferCodegen> {
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
-            context_strip: window.new_view(cx, |cx| {
+            context_strip: window.new_view(cx, |window, cx| {
                 ContextStrip::new(
                     context_store,
                     workspace.clone(),
@@ -867,7 +867,7 @@ impl PromptEditor<BufferCodegen> {
                 )
             }),
             context_picker_menu_handle,
-            model_selector: window.new_view(cx, |cx| {
+            model_selector: window.new_view(cx, |window, cx| {
                 AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), window, cx)
             }),
             model_selector_menu_handle,
@@ -978,7 +978,7 @@ impl PromptEditor<TerminalCodegen> {
             height_in_lines: 1,
         };
 
-        let prompt_editor = window.new_view(cx, |cx| {
+        let prompt_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
                     max_lines: Self::MAX_LINES as usize,
@@ -1002,7 +1002,7 @@ impl PromptEditor<TerminalCodegen> {
 
         let mut this = Self {
             editor: prompt_editor.clone(),
-            context_strip: window.new_view(cx, |cx| {
+            context_strip: window.new_view(cx, |window, cx| {
                 ContextStrip::new(
                     context_store,
                     workspace.clone(),
@@ -1014,7 +1014,7 @@ impl PromptEditor<TerminalCodegen> {
                 )
             }),
             context_picker_menu_handle,
-            model_selector: window.new_view(cx, |cx| {
+            model_selector: window.new_view(cx, |window, cx| {
                 AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), window, cx)
             }),
             model_selector_menu_handle,
