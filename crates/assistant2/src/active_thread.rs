@@ -3,8 +3,9 @@ use std::sync::Arc;
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, AnyElement, AppContext, Empty, ListAlignment, ListState, Model, StyleRefinement,
-    Subscription, TextStyleRefinement, View, WeakView,
+    list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
+    ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
+    TextStyleRefinement, UnderlineStyle, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -21,7 +22,7 @@ pub struct ActiveThread {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
-    thread: Model<Thread>,
+    pub(crate) thread: Model<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
@@ -89,10 +90,11 @@ impl ActiveThread {
         self.list_state.splice(old_len..old_len, 1);
 
         let theme_settings = ThemeSettings::get_global(cx);
+        let colors = cx.theme().colors();
         let ui_font_size = TextSize::Default.rems(cx);
-        let buffer_font_size = theme_settings.buffer_font_size;
-
+        let buffer_font_size = TextSize::Small.rems(cx);
         let mut text_style = cx.text_style();
+
         text_style.refine(&TextStyleRefinement {
             font_family: Some(theme_settings.ui_font.family.clone()),
             font_size: Some(ui_font_size.into()),
@@ -105,6 +107,26 @@ impl ActiveThread {
             syntax: cx.theme().syntax().clone(),
             selection_background_color: cx.theme().players().local().selection,
             code_block: StyleRefinement {
+                margin: EdgesRefinement {
+                    top: Some(Length::Definite(rems(1.0).into())),
+                    left: Some(Length::Definite(rems(0.).into())),
+                    right: Some(Length::Definite(rems(0.).into())),
+                    bottom: Some(Length::Definite(rems(1.).into())),
+                },
+                padding: EdgesRefinement {
+                    top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                    bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                },
+                background: Some(colors.editor_foreground.opacity(0.01).into()),
+                border_color: Some(colors.border_variant.opacity(0.3)),
+                border_widths: EdgesRefinement {
+                    top: Some(AbsoluteLength::Pixels(Pixels(1.0))),
+                    left: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                    right: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                    bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                },
                 text: Some(TextStyleRefinement {
                     font_family: Some(theme_settings.buffer_font.family.clone()),
                     font_size: Some(buffer_font_size.into()),
@@ -114,8 +136,17 @@ impl ActiveThread {
             },
             inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
-                font_size: Some(ui_font_size.into()),
-                background_color: Some(cx.theme().colors().editor_background),
+                font_size: Some(buffer_font_size.into()),
+                background_color: Some(colors.editor_foreground.opacity(0.01)),
+                ..Default::default()
+            },
+            link: TextStyleRefinement {
+                background_color: Some(colors.editor_foreground.opacity(0.025)),
+                underline: Some(UnderlineStyle {
+                    color: Some(colors.text_accent.opacity(0.5)),
+                    thickness: px(1.),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             ..Default::default()
@@ -131,6 +162,10 @@ impl ActiveThread {
             )
         });
         self.rendered_messages_by_id.insert(*id, markdown);
+        self.list_state.scroll_to(ListOffset {
+            item_ix: old_len,
+            offset_in_item: Pixels(0.0),
+        });
     }
 
     fn handle_thread_event(
@@ -204,6 +239,7 @@ impl ActiveThread {
         };
 
         let context = self.thread.read(cx).context_for_message(message_id);
+        let colors = cx.theme().colors();
 
         let (role_icon, role_name, role_color) = match message.role {
             Role::User => (IconName::Person, "You", Color::Muted),
@@ -218,16 +254,16 @@ impl ActiveThread {
             .child(
                 v_flex()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().editor_background)
+                    .border_color(colors.border_variant)
+                    .bg(colors.editor_background)
                     .rounded_md()
                     .child(
                         h_flex()
-                            .justify_between()
-                            .py_1()
-                            .px_2()
+                            .py_1p5()
+                            .px_2p5()
                             .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
+                            .border_color(colors.border_variant)
+                            .justify_between()
                             .child(
                                 h_flex()
                                     .gap_1p5()
@@ -243,15 +279,19 @@ impl ActiveThread {
                                     ),
                             ),
                     )
-                    .child(v_flex().px_2().py_1().text_ui(cx).child(markdown.clone()))
+                    .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
                     .when_some(context, |parent, context| {
-                        parent.child(
-                            h_flex().flex_wrap().gap_2().p_1p5().children(
-                                context
-                                    .iter()
-                                    .map(|context| ContextPill::new(context.clone())),
-                            ),
-                        )
+                        if !context.is_empty() {
+                            parent.child(
+                                h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                                    context
+                                        .iter()
+                                        .map(|context| ContextPill::new(context.clone())),
+                                ),
+                            )
+                        } else {
+                            parent
+                        }
                     }),
             )
             .into_any()

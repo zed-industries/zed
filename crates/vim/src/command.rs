@@ -13,13 +13,12 @@ use editor::{
     display_map::ToDisplayPoint,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_actions, Action, AppContext, Global, ViewContext};
+use gpui::{actions, impl_actions, Action, AppContext, Global, ViewContext, WindowContext};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
 use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
-use ui::WindowContext;
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, SaveIntent};
 

@@ -4,55 +4,70 @@
 // from the command palette.
 [
   {
-    "context": "Editor",
     "bindings": {
-      "ctrl-g": "editor::Cancel",
-      "ctrl-shift-g": "go_to_line::Toggle",
-      //"ctrl-space": "editor::SetMark",
-      "ctrl-x u": "editor::Undo",
-      "ctrl-x ctrl-u": "editor::Redo",
-      "ctrl-f": "editor::MoveRight",
-      "ctrl-b": "editor::MoveLeft",
-      "ctrl-n": "editor::MoveDown",
-      "ctrl-p": "editor::MoveUp",
-      "home": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false }],
-      "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }],
-      "ctrl-a": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false }],
-      "ctrl-e": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }],
-      "alt-f": "editor::MoveToNextSubwordEnd",
-      "alt-b": "editor::MoveToPreviousSubwordStart",
-      "ctrl-d": "editor::Delete",
-      "alt-d": "editor::DeleteToNextWordEnd",
-      "ctrl-k": "editor::CutToEndOfLine",
-      "ctrl-w": "editor::Cut",
-      "alt-w": "editor::Copy",
-      "ctrl-y": "editor::Paste",
-      "ctrl-_": "editor::Undo",
-      "ctrl-v": "editor::MovePageDown",
-      "alt-v": "editor::MovePageUp",
-      "ctrl-x ]": "editor::MoveToEnd",
-      "ctrl-x [": "editor::MoveToBeginning",
-      "ctrl-l": "editor::ScrollCursorCenterTopBottom",
-      "ctrl-s": "buffer_search::Deploy",
-      "ctrl-x ctrl-f": "file_finder::Toggle",
-      "ctrl-shift-r": "editor::Rename"
+      "ctrl-g": "menu::Cancel"
     }
   },
   {
-    "context": "Workspace",
+    "context": "Editor",
     "bindings": {
-      "ctrl-x k": "pane::CloseActiveItem",
-      "ctrl-x ctrl-c": "workspace::CloseWindow",
-      "ctrl-x o": "workspace::ActivateNextPane",
-      "ctrl-x b": "tab_switcher::Toggle",
-      "ctrl-x 0": "pane::CloseActiveItem",
-      "ctrl-x 1": "pane::CloseInactiveItems",
-      "ctrl-x 2": "pane::SplitVertical",
-      "ctrl-x ctrl-f": "file_finder::Toggle",
-      "ctrl-x ctrl-s": "workspace::Save",
-      "ctrl-x ctrl-w": "workspace::SaveAs",
-      "ctrl-x s": "workspace::SaveAll",
-      "shift shift": "file_finder::Toggle"
+      "ctrl-g": "editor::Cancel",
+      "ctrl-x b": "tab_switcher::Toggle", // switch-to-buffer
+      "alt-g g": "go_to_line::Toggle", // goto-line
+      "alt-g alt-g": "go_to_line::Toggle", // goto-line
+      //"ctrl-space": "editor::SetMark",
+      "ctrl-f": "editor::MoveRight", // forward-char
+      "ctrl-b": "editor::MoveLeft", // backward-char
+      "ctrl-n": "editor::MoveDown", // next-line
+      "ctrl-p": "editor::MoveUp", // previous-line
+      "home": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false }], // move-beginning-of-line
+      "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
+      "ctrl-a": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false }], // move-beginning-of-line
+      "ctrl-e": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
+      "alt-f": "editor::MoveToNextSubwordEnd", // forward-word
+      "alt-b": "editor::MoveToPreviousSubwordStart", // backward-word
+      "alt-u": "editor::ConvertToUpperCase", // upcase-word
+      "alt-l": "editor::ConvertToLowerCase", // downcase-word
+      "alt-c": "editor::ConvertToUpperCamelCase", // capitalize-word
+      "alt-;": ["editor::ToggleComments", { "advance_downwards": false }],
+      "ctrl-x ctrl-;": "editor::ToggleComments",
+      "alt-.": "editor::GoToDefinition", // xref-find-definitions
+      "alt-,": "pane::GoBack", // xref-pop-marker-stack
+      "ctrl-x h": "editor::SelectAll", // mark-whole-buffer
+      "ctrl-d": "editor::Delete", // delete-char
+      "alt-d": "editor::DeleteToNextWordEnd", // kill-word
+      "ctrl-k": "editor::KillRingCut", // kill-line
+      "ctrl-w": "editor::Cut", // kill-region
+      "alt-w": "editor::Copy", // kill-ring-save
+      "ctrl-y": "editor::KillRingYank", // yank
+      "ctrl-_": "editor::Undo", // undo
+      "ctrl-/": "editor::Undo", // undo
+      "ctrl-x u": "editor::Undo", // undo
+      "ctrl-v": "editor::MovePageDown", // scroll-up
+      "alt-v": "editor::MovePageUp", // scroll-down
+      "ctrl-x [": "editor::MoveToBeginning", // beginning-of-buffer
+      "ctrl-x ]": "editor::MoveToEnd", // end-of-buffer
+      "alt-<": "editor::MoveToBeginning", // beginning-of-buffer
+      "alt->": "editor::MoveToEnd", // end-of-buffer
+      "ctrl-l": "editor::ScrollCursorCenterTopBottom", // recenter-top-bottom
+      "ctrl-s": "buffer_search::Deploy", // isearch-forward
+      "alt-^": "editor::JoinLines" // join-line
+    }
+  },
+  {
+    "context": "Workspace && !Terminal",
+    "bindings": {
+      "ctrl-x ctrl-c": "workspace::CloseWindow", // kill-emacs
+      "ctrl-x o": "workspace::ActivateNextPane", // other-window
+      "ctrl-x k": "pane::CloseActiveItem", // kill-buffer
+      "ctrl-x 0": "pane::CloseActiveItem", // delete-window
+      "ctrl-x 1": "pane::CloseInactiveItems", // delete-other-windows
+      "ctrl-x 2": "pane::SplitDown", // split-window-below
+      "ctrl-x 3": "pane::SplitRight", // split-window-right
+      "ctrl-x ctrl-f": "file_finder::Toggle", // find-file
+      "ctrl-x ctrl-s": "workspace::Save", // save-buffer
+      "ctrl-x ctrl-w": "workspace::SaveAs", // write-file
+      "ctrl-x s": "workspace::SaveAll" // save-some-buffers
     }
   },
   {

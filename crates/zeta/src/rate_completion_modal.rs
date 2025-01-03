@@ -269,6 +269,7 @@ impl RateCompletionModal {
                 let mut editor = Editor::multi_line(cx);
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_show_line_numbers(false, cx);
+                editor.set_show_scrollbars(false, cx);
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_runnables(false, cx);

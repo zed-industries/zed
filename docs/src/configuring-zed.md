@@ -534,7 +534,7 @@ List of `string` values
   "git_diff": true,
   "search_results": true,
   "selected_symbol": true,
-  "diagnostics": true,
+  "diagnostics": "all",
   "axes": {
     "horizontal": true,
     "vertical": true,
@@ -624,13 +624,51 @@ List of `string` values
 
 ### Diagnostics
 
-- Description: Whether to show diagnostic indicators in the scrollbar.
+- Description: Which diagnostic indicators to show in the scrollbar.
 - Setting: `diagnostics`
-- Default: `true`
+- Default: `all`
 
 **Options**
 
-`boolean` values
+1. Show all diagnostics:
+
+```json
+{
+  "diagnostics": "all"
+}
+```
+
+2. Do not show any diagnostics:
+
+```json
+{
+  "diagnostics": "none"
+}
+```
+
+3. Show only errors:
+
+```json
+{
+  "diagnostics": "error"
+}
+```
+
+4. Show only errors and warnings:
+
+```json
+{
+  "diagnostics": "warning"
+}
+```
+
+5. Show only errors, warnings, and information:
+
+```json
+{
+  "diagnostics": "information"
+}
+```
 
 ### Axes
 
@@ -1637,6 +1675,7 @@ Or to set a `socks5` proxy:
 2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
 4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
+5. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
 
 ## Wrap Guides (Vertical Rulers)
 

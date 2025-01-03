@@ -160,6 +160,7 @@ fn init_panic_hook() {
                 option_env!("ZED_COMMIT_SHA").unwrap_or(&env!("ZED_PKG_VERSION"))
             ),
             release_channel: release_channel::RELEASE_CHANNEL.display_name().into(),
+            target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
             architecture: env::consts::ARCH.into(),

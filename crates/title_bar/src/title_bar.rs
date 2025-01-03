@@ -134,18 +134,19 @@ impl Render for TitleBar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .when_some(self.application_menu.clone(), |this, menu| {
-                                let is_any_menu_deployed = menu.read(cx).is_any_deployed();
-                                this.child(menu).when(!is_any_menu_deployed, |this| {
-                                    this.children(self.render_project_host(cx))
-                                        .child(self.render_project_name(cx))
-                                        .children(self.render_project_branch(cx))
-                                })
-                            })
-                            .when(self.application_menu.is_none(), |this| {
-                                this.children(self.render_project_host(cx))
-                                    .child(self.render_project_name(cx))
-                                    .children(self.render_project_branch(cx))
+                            .map(|title_bar| {
+                                let mut render_project_items = true;
+                                title_bar
+                                    .when_some(self.application_menu.clone(), |title_bar, menu| {
+                                        render_project_items = !menu.read(cx).is_any_deployed();
+                                        title_bar.child(menu)
+                                    })
+                                    .when(render_project_items, |title_bar| {
+                                        title_bar
+                                            .children(self.render_project_host(cx))
+                                            .child(self.render_project_name(cx))
+                                            .children(self.render_project_branch(cx))
+                                    })
                             })
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
                     )

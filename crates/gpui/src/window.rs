@@ -1586,6 +1586,19 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
+        // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
+        // Ensure it's not stuck around in such cases.
+        let invalidate_tooltip = !tooltip_request
+            .tooltip
+            .origin_bounds
+            .contains(&self.mouse_position())
+            && (!tooltip_request.tooltip.hoverable
+                || !tooltip_bounds.contains(&self.mouse_position()));
+        if invalidate_tooltip {
+            return None;
+        }
+
         self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
 
         self.window.tooltip_bounds = Some(TooltipBounds {
@@ -1753,17 +1766,12 @@ impl<'a> WindowContext<'a> {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        if let Some(element_states) = window
-            .rendered_frame
-            .accessed_element_states
-            .get(range.start.accessed_element_states_index..range.end.accessed_element_states_index)
-        {
-            window.next_frame.accessed_element_states.extend(
-                element_states
-                    .iter()
-                    .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
-            );
-        }
+        window.next_frame.accessed_element_states.extend(
+            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+        );
 
         window
             .text_system
