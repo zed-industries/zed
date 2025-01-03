@@ -7,10 +7,10 @@ use editor::{
 };
 use git::{diff::DiffHunk, repository::GitFileStatus};
 use gpui::{
-    actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
-    CursorStyle, EventEmitter, FocusHandle, FocusableView, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent,
-    MouseButton, ScrollStrategy, Stateful, Task, UniformListScrollHandle, WeakModel,
+    actions, prelude::*, uniform_list, Action, AppContext, ClickEvent, CursorStyle, EventEmitter,
+    FocusHandle, FocusableView, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    Model, Modifiers, ModifiersChangedEvent, MouseButton, ScrollStrategy, Stateful, Task,
+    UniformListScrollHandle, WeakModel,
 };
 use language::{Buffer, BufferRow, OffsetRangeExt};
 use menu::{SelectNext, SelectPrev};
@@ -150,7 +150,9 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
-        cx.spawn(|mut cx| async move { workspace.update(&mut cx, Self::new) })
+        window.spawn(cx, |mut cx| async move {
+            workspace.update_in(&mut cx, Self::new)
+        })
     }
 
     pub fn new(
@@ -208,7 +210,7 @@ impl GitPanel {
                 expanded_dir_ids: Default::default(),
 
                 width: Some(px(360.)),
-                scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
+                scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(&cx.view()),
                 scroll_handle,
                 selected_item: None,
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
@@ -532,7 +534,7 @@ impl GitPanel {
                         depth,
                         index,
                     };
-                    callback(entry.id, details, cx);
+                    callback(entry.id, details, window, cx);
                 }
             }
             ix = end_ix;
@@ -763,7 +765,7 @@ impl GitPanel {
             {
                 buffer_update_task.await;
                 git_panel
-                    .update(&mut cx, |git_panel, cx| {
+                    .update_in(&mut cx, |git_panel, window, cx| {
                         if let Some(diff_editor) = git_panel.git_diff_editor.as_ref() {
                             diff_editor.update(cx, |editor, cx| {
                                 for change_set in change_sets {
@@ -825,12 +827,7 @@ impl GitPanel {
                 h_flex()
                     .gap_2()
                     .child(Checkbox::new("all-changes", true.into()).disabled(true))
-                    .child(
-                        div()
-                            .text_buffer(window, cx)
-                            .text_ui_sm(window, cx)
-                            .child(changes_string),
-                    ),
+                    .child(div().text_buffer(cx).text_ui_sm(cx).child(changes_string)),
             )
             .child(div().flex_grow())
             .child(
@@ -912,8 +909,8 @@ impl GitPanel {
                 .py_2p5()
                 .px_3()
                 .bg(cx.theme().colors().editor_background)
-                .font_buffer(window, cx)
-                .text_ui_sm(window, cx)
+                .font_buffer(cx)
+                .text_ui_sm(cx)
                 .text_color(cx.theme().colors().text_muted)
                 .child("Add a message")
                 .gap_1()
@@ -944,9 +941,9 @@ impl GitPanel {
                 v_flex()
                     .gap_3()
                     .child("No changes to commit")
-                    .text_ui_sm(window, cx)
+                    .text_ui_sm(cx)
                     .mx_auto()
-                    .text_color(Color::Placeholder.color(window, cx)),
+                    .text_color(Color::Placeholder.color(cx)),
             )
     }
 
@@ -1016,7 +1013,7 @@ impl GitPanel {
             .overflow_hidden()
             .child(
                 uniform_list(cx.view().clone(), "entries", item_count, {
-                    move |git_panel, range, cx| {
+                    move |git_panel, range, window, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
                         git_panel.for_each_visible_entry(
                             range,
@@ -1065,8 +1062,8 @@ impl GitPanel {
             .pr(px(4.))
             .items_center()
             .gap_2()
-            .font_buffer(window, cx)
-            .text_ui_sm(window, cx)
+            .font_buffer(cx)
+            .text_ui_sm(cx)
             .when(!details.is_dir(), |this| {
                 this.child(Checkbox::new(checkbox_id, is_staged))
             })
@@ -1113,7 +1110,7 @@ impl GitPanel {
             }
 
             let Some(editor) = workspace
-                .update(&mut cx, |workspace, cx| {
+                .update_in(&mut cx, |workspace, window, cx| {
                     let git_diff_editor = workspace
                         .items_of_type::<Editor>(cx)
                         .find(|editor| &diff_editor == editor);
@@ -1156,7 +1153,7 @@ impl GitPanel {
                     .or_else(|| first_hunk.buffer_range.end.buffer_id)
                 {
                     editor
-                        .update(&mut cx, |editor, cx| {
+                        .update_in(&mut cx, |editor, window, cx| {
                             let multi_buffer = editor.buffer().read(cx);
                             let buffer = multi_buffer.buffer(buffer_id)?;
                             let buffer_snapshot = buffer.read(cx).snapshot();
@@ -1238,7 +1235,7 @@ impl Render for GitPanel {
             }))
             .size_full()
             .overflow_hidden()
-            .font_buffer(window, cx)
+            .font_buffer(cx)
             .py_1()
             .bg(ElevationIndex::Surface.bg(window, cx))
             .child(self.render_panel_header(window, cx))
@@ -1268,7 +1265,7 @@ impl Panel for GitPanel {
         "GitPanel"
     }
 
-    fn position(&self, window: &mut Window, cx: &mut AppContext) -> DockPosition {
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
         GitPanelSettings::get_global(cx).dock
     }
 
@@ -1289,7 +1286,7 @@ impl Panel for GitPanel {
         );
     }
 
-    fn size(&self, window: &mut Window, cx: &mut AppContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| GitPanelSettings::get_global(cx).default_width)
     }
@@ -1300,11 +1297,11 @@ impl Panel for GitPanel {
         cx.notify();
     }
 
-    fn icon(&self, window: &mut Window, cx: &mut AppContext) -> Option<ui::IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName> {
         Some(ui::IconName::GitBranch).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 
-    fn icon_tooltip(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _cx: &AppContext) -> Option<&'static str> {
         Some("Git Panel")
     }
 
