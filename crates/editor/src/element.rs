@@ -599,8 +599,15 @@ impl EditorElement {
                 .row;
             if let Some((_, Some(hitbox))) = line_numbers.get(&MultiBufferRow(multi_buffer_row)) {
                 if hitbox.contains(&event.position) {
+                    let scroll_position_row =
+                        position_map.scroll_pixel_position.y / position_map.line_height;
+                    let line_offset_from_top = display_row - scroll_position_row as u32;
+
                     editor.open_excerpts_common(
-                        Some(JumpData::MultiBufferRow(MultiBufferRow(multi_buffer_row))),
+                        Some(JumpData::MultiBufferRow {
+                            row: MultiBufferRow(multi_buffer_row),
+                            line_offset_from_top,
+                        }),
                         modifiers.alt,
                         cx,
                     );
@@ -2959,7 +2966,12 @@ impl EditorElement {
         selected_buffer_ids: &Vec<BufferId>,
         cx: &mut WindowContext,
     ) -> AnyElement {
-        let jump_data = header_jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt);
+        let jump_data = header_jump_data(
+            snapshot,
+            DisplayRow(scroll_position as u32),
+            FILE_HEADER_HEIGHT + MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+            excerpt,
+        );
 
         let editor_bg_color = cx.theme().colors().editor_background;
 
@@ -5121,13 +5133,12 @@ fn header_jump_data(
     let offset_from_excerpt_start = if jump_anchor == excerpt_start {
         0
     } else {
-        let excerpt_start_row = language::ToPoint::to_point(&jump_anchor, buffer).row;
+        let excerpt_start_row = language::ToPoint::to_point(&excerpt_start, buffer).row;
         jump_position.row - excerpt_start_row
     };
 
-    let line_offset_from_top = block_row_start.0
-        + height
-        + offset_from_excerpt_start.saturating_sub(
+    let line_offset_from_top = (block_row_start.0 + height + offset_from_excerpt_start)
+        .saturating_sub(
             snapshot
                 .scroll_anchor
                 .scroll_position(&snapshot.display_snapshot)
