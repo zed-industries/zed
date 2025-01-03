@@ -169,7 +169,7 @@ impl ProjectDiagnosticsEditor {
         .detach();
 
         let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
-        let editor = window.new_view(cx, |cx| {
+        let editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::for_multibuffer(
                 excerpts.clone(),
                 Some(project_handle.clone()),
@@ -248,7 +248,7 @@ impl ProjectDiagnosticsEditor {
                     .await
                     .log_err()
                 {
-                    this.update(&mut cx, |this, cx| {
+                    this.update_in(&mut cx, |this, window, cx| {
                         this.update_excerpts(path, language_server_id, buffer, window, cx);
                     })?;
                 }
@@ -290,7 +290,7 @@ impl ProjectDiagnosticsEditor {
                 None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
             };
 
-            let diagnostics = window.new_view(cx, |cx| {
+            let diagnostics = window.new_view(cx, |window, cx| {
                 ProjectDiagnosticsEditor::new(
                     workspace.project().clone(),
                     include_warnings,
@@ -322,7 +322,8 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn focus_out(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if !self.focus_handle.is_focused(window) && !self.editor.item_focus_handle(cx).is_focused(window)
+        if !self.focus_handle.is_focused(window)
+            && !self.editor.item_focus_handle(cx).is_focused(window)
         {
             self.update_stale_excerpts(window, cx);
         }
@@ -719,8 +720,8 @@ impl Item for ProjectDiagnosticsEditor {
     fn tab_content(
         &self,
         params: TabContentParams,
-        _window: &mut Window,
-        _: &mut AppContext,
+        _window: &Window,
+        _: &AppContext,
     ) -> AnyElement {
         h_flex()
             .gap_1()
@@ -796,7 +797,7 @@ impl Item for ProjectDiagnosticsEditor {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |cx| {
+        Some(window.new_view(cx, |window, cx| {
             ProjectDiagnosticsEditor::new(
                 self.project.clone(),
                 self.include_warnings,
@@ -915,7 +916,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             .child(
                 h_flex()
                     .block_mouse_down()
-                    .h(2. * window.line_height())
+                    .h(2. * cx.window.line_height())
                     .pl_10()
                     .pr_5()
                     .w_full()
@@ -926,8 +927,10 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                             .gap_3()
                             .map(|stack| {
                                 stack.child(
-                                    svg().size(window.text_style().font_size).flex_none().map(
-                                        |icon| {
+                                    svg()
+                                        .size(cx.window.text_style().font_size)
+                                        .flex_none()
+                                        .map(|icon| {
                                             if diagnostic.severity == DiagnosticSeverity::ERROR {
                                                 icon.path(IconName::XCircle.path())
                                                     .text_color(Color::Error.color(cx))
@@ -935,8 +938,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                                 icon.path(IconName::Warning.path())
                                                     .text_color(Color::Warning.color(cx))
                                             }
-                                        },
-                                    ),
+                                        }),
                                 )
                             })
                             .child(
@@ -944,7 +946,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                     .gap_1()
                                     .child(
                                         StyledText::new(message.clone()).with_highlights(
-                                            &window.text_style(),
+                                            &cx.window.text_style(),
                                             code_ranges
                                                 .iter()
                                                 .map(|range| (range.clone(), highlight_style)),

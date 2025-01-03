@@ -61,7 +61,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     let language_server_id = LanguageServerId(0);
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
@@ -150,7 +150,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     // Open the project diagnostics view while there are already diagnostics.
-    let view = window.build_view(cx, |cx| {
+    let view = window.build_view(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -478,11 +478,11 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let server_id_2 = LanguageServerId(101);
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
-    let view = window.build_view(cx, |cx| {
+    let view = window.build_view(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -756,11 +756,11 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
-    let mutated_view = window.build_view(cx, |cx| {
+    let mutated_view = window.build_view(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -771,11 +771,11 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         )
     });
 
-    workspace.update(cx, |workspace, cx| {
+    workspace.update_in(cx, |workspace, window, cx| {
         workspace.add_item_to_center(Box::new(mutated_view.clone()), window, cx);
     });
-    mutated_view.update(window, |view, cx| {
-        assert!(view.focus_handle.is_focused(cx));
+    mutated_view.update_in(cx, |view, window, _cx| {
+        assert!(view.focus_handle.is_focused(window));
     });
 
     let mut next_group_id = 0;
@@ -861,11 +861,13 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 
     log::info!("updating mutated diagnostics view");
-    mutated_view.update(cx, |view, cx| view.update_stale_excerpts(window, cx));
+    mutated_view.update_in(cx, |view, window, cx| {
+        view.update_stale_excerpts(window, cx)
+    });
     cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");
-    let reference_view = window.build_view(cx, |cx| {
+    let reference_view = window.build_view(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -907,7 +909,7 @@ fn init_test(cx: &mut TestAppContext) {
         workspace::init_settings(cx);
         Project::init_settings(cx);
         crate::init(cx);
-        editor::init(window, cx);
+        editor::init(cx);
     });
 }
 
@@ -1051,54 +1053,59 @@ fn editor_blocks(
     cx: &mut VisualTestContext,
 ) -> Vec<(DisplayRow, SharedString)> {
     let mut blocks = Vec::new();
-    cx.draw(gpui::Point::default(), AvailableSpace::min_size(), |cx| {
-        editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            blocks.extend(
-                snapshot
-                    .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
-                    .filter_map(|(row, block)| {
-                        let block_id = block.id();
-                        let name: SharedString = match block {
-                            Block::Custom(block) => {
-                                let mut element = block.render(&mut BlockContext {
-                                    context: cx,
-                                    anchor_x: px(0.),
-                                    gutter_dimensions: &GutterDimensions::default(),
-                                    line_height: px(0.),
-                                    em_width: px(0.),
-                                    max_width: px(0.),
-                                    block_id,
-                                    selected: false,
-                                    editor_style: &editor::EditorStyle::default(),
-                                });
-                                let element = element.downcast_mut::<Stateful<Div>>().unwrap();
-                                element
-                                    .interactivity()
-                                    .element_id
-                                    .clone()?
-                                    .try_into()
-                                    .ok()?
-                            }
-
-                            Block::FoldedBuffer { .. } => FILE_HEADER.into(),
-                            Block::ExcerptBoundary {
-                                starts_new_buffer, ..
-                            } => {
-                                if *starts_new_buffer {
-                                    FILE_HEADER.into()
-                                } else {
-                                    EXCERPT_HEADER.into()
+    cx.draw(
+        gpui::Point::default(),
+        AvailableSpace::min_size(),
+        |window, cx| {
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                blocks.extend(
+                    snapshot
+                        .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
+                        .filter_map(|(row, block)| {
+                            let block_id = block.id();
+                            let name: SharedString = match block {
+                                Block::Custom(block) => {
+                                    let mut element = block.render(&mut BlockContext {
+                                        context: cx,
+                                        window,
+                                        anchor_x: px(0.),
+                                        gutter_dimensions: &GutterDimensions::default(),
+                                        line_height: px(0.),
+                                        em_width: px(0.),
+                                        max_width: px(0.),
+                                        block_id,
+                                        selected: false,
+                                        editor_style: &editor::EditorStyle::default(),
+                                    });
+                                    let element = element.downcast_mut::<Stateful<Div>>().unwrap();
+                                    element
+                                        .interactivity()
+                                        .element_id
+                                        .clone()?
+                                        .try_into()
+                                        .ok()?
                                 }
-                            }
-                        };
 
-                        Some((row, name))
-                    }),
-            )
-        });
+                                Block::FoldedBuffer { .. } => FILE_HEADER.into(),
+                                Block::ExcerptBoundary {
+                                    starts_new_buffer, ..
+                                } => {
+                                    if *starts_new_buffer {
+                                        FILE_HEADER.into()
+                                    } else {
+                                        EXCERPT_HEADER.into()
+                                    }
+                                }
+                            };
 
-        div().into_any()
-    });
+                            Some((row, name))
+                        }),
+                )
+            });
+
+            div().into_any()
+        },
+    );
     blocks
 }
