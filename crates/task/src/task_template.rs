@@ -570,7 +570,7 @@ mod tests {
                 spawn_in_terminal.label,
                 format!(
                     "test label for 1234 and …{}",
-                    &long_value[..=MAX_DISPLAY_VARIABLE_LENGTH]
+                    &long_value[long_value.len() - MAX_DISPLAY_VARIABLE_LENGTH..]
                 ),
                 "Human-readable label should have long substitutions trimmed"
             );

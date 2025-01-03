@@ -1961,6 +1961,10 @@ impl Pane {
             self.pinned_tab_count += 1;
             let id = self.item_for_index(ix)?.item_id();
 
+            if self.is_active_preview_item(id) {
+                self.set_preview_item_id(None, cx);
+            }
+
             self.workspace
                 .update(cx, |_, cx| {
                     cx.defer(move |_, cx| move_item(&pane, &pane, id, destination_index, cx));
