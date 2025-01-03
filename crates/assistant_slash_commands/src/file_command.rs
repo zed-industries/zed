@@ -597,8 +597,6 @@ mod test {
 
     #[gpui::test]
     async fn test_file_exact_matching(cx: &mut TestAppContext) {
-        use std::path::MAIN_SEPARATOR_STR;
-
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -620,52 +618,29 @@ mod test {
 
         let project = Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let result_1 = cx.update(|cx| {
-            collect_files(
-                project.clone(),
-                &[format!("root{}dir", MAIN_SEPARATOR_STR)],
-                cx,
-            )
-        });
+        let result_1 =
+            cx.update(|cx| collect_files(project.clone(), &[to_file_path("root/dir")], cx));
         let result_1 = SlashCommandOutput::from_event_stream(result_1.boxed())
             .await
             .unwrap();
 
-        assert!(result_1
-            .text
-            .starts_with(&format!("root{}dir", MAIN_SEPARATOR_STR)));
+        assert!(result_1.text.starts_with(&to_file_path("root/dir",)));
         // 4 files + 2 directories
         assert_eq!(result_1.sections.len(), 6);
 
-        let result_2 = cx.update(|cx| {
-            collect_files(
-                project.clone(),
-                &[format!(
-                    "root{}dir{}",
-                    MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-                )],
-                cx,
-            )
-        });
+        let result_2 =
+            cx.update(|cx| collect_files(project.clone(), &[to_file_path("root/dir/")], cx));
         let result_2 = SlashCommandOutput::from_event_stream(result_2.boxed())
             .await
             .unwrap();
 
         assert_eq!(result_1, result_2);
 
-        let result = cx.update(|cx| {
-            collect_files(
-                project.clone(),
-                &[format!("root{}dir*", MAIN_SEPARATOR_STR)],
-                cx,
-            )
-            .boxed()
-        });
+        let result = cx
+            .update(|cx| collect_files(project.clone(), &[to_file_path("root/dir*")], cx).boxed());
         let result = SlashCommandOutput::from_event_stream(result).await.unwrap();
 
-        assert!(result
-            .text
-            .starts_with(&format!("root{}dir", MAIN_SEPARATOR_STR)));
+        assert!(result.text.starts_with(&to_file_path("root/dir",)));
         // 5 files + 2 directories
         assert_eq!(result.sections.len(), 7);
 
@@ -675,8 +650,6 @@ mod test {
 
     #[gpui::test]
     async fn test_file_sub_directory_rendering(cx: &mut TestAppContext) {
-        use std::path::MAIN_SEPARATOR_STR;
-
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -708,40 +681,28 @@ mod test {
 
         let project = Project::test(fs, ["/zed".as_ref()], cx).await;
 
-        let result = cx.update(|cx| {
-            collect_files(
-                project.clone(),
-                &[format!(
-                    "zed{}assets{}themes",
-                    MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-                )],
-                cx,
-            )
-        });
+        let result = cx
+            .update(|cx| collect_files(project.clone(), &[to_file_path("zed/assets/themes")], cx));
         let result = SlashCommandOutput::from_event_stream(result.boxed())
             .await
             .unwrap();
 
         // Sanity check
-        assert!(result.text.starts_with(&format!(
-            "zed{}assets{}themes\n",
-            MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-        )));
+        assert!(result
+            .text
+            .starts_with(&to_file_path("zed/assets/themes\n",)));
         assert_eq!(result.sections.len(), 7);
 
         // Ensure that full file paths are included in the real output
-        assert!(result.text.contains(&format!(
-            "zed{}assets{}themes{}andromeda{}LICENSE",
-            MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-        )));
-        assert!(result.text.contains(&format!(
-            "zed{}assets{}themes{}ayu{}LICENSE",
-            MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-        )));
-        assert!(result.text.contains(&format!(
-            "zed{}assets{}themes{}summercamp{}LICENSE",
-            MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-        )));
+        assert!(result
+            .text
+            .contains(&to_file_path("zed/assets/themes/andromeda/LICENSE",)));
+        assert!(result
+            .text
+            .contains(&to_file_path("zed/assets/themes/ayu/LICENSE",)));
+        assert!(result
+            .text
+            .contains(&to_file_path("zed/assets/themes/summercamp/LICENSE",)));
 
         assert_eq!(result.sections[5].label, "summercamp");
 
@@ -750,24 +711,15 @@ mod test {
         assert_eq!(result.sections[3].label, "ayu");
         assert_eq!(
             result.sections[0].label,
-            format!(
-                "zed{}assets{}themes{}andromeda{}LICENSE",
-                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-            )
+            to_file_path("zed/assets/themes/andromeda/LICENSE",)
         );
         assert_eq!(
             result.sections[2].label,
-            format!(
-                "zed{}assets{}themes{}ayu{}LICENSE",
-                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-            )
+            to_file_path("zed/assets/themes/ayu/LICENSE",)
         );
         assert_eq!(
             result.sections[4].label,
-            format!(
-                "zed{}assets{}themes{}summercamp{}LICENSE",
-                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-            )
+            to_file_path("zed/assets/themes/summercamp/LICENSE",)
         );
 
         // Ensure that the project lasts until after the last await
@@ -776,8 +728,6 @@ mod test {
 
     #[gpui::test]
     async fn test_file_deep_sub_directory_rendering(cx: &mut TestAppContext) {
-        use std::path::MAIN_SEPARATOR_STR;
-
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -804,73 +754,37 @@ mod test {
 
         let project = Project::test(fs, ["/zed".as_ref()], cx).await;
 
-        let result = cx.update(|cx| {
-            collect_files(
-                project.clone(),
-                &[format!(
-                    "zed{}assets{}themes",
-                    MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-                )],
-                cx,
-            )
-        });
+        let result = cx
+            .update(|cx| collect_files(project.clone(), &[to_file_path("zed/assets/themes")], cx));
         let result = SlashCommandOutput::from_event_stream(result.boxed())
             .await
             .unwrap();
 
-        assert!(result.text.starts_with(&format!(
-            "zed{}assets{}themes\n",
-            MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-        )));
+        assert!(result
+            .text
+            .starts_with(&to_file_path("zed/assets/themes\n",)));
         assert_eq!(
             result.sections[0].label,
-            format!(
-                "zed{}assets{}themes{}LICENSE",
-                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-            )
+            to_file_path("zed/assets/themes/LICENSE",)
         );
         assert_eq!(
             result.sections[1].label,
-            format!(
-                "zed{}assets{}themes{}summercamp{}LICENSE",
-                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-            )
+            to_file_path("zed/assets/themes/summercamp/LICENSE",)
         );
         assert_eq!(
             result.sections[2].label,
-            format!(
-                "zed{}assets{}themes{}summercamp{}subdir{}LICENSE",
-                MAIN_SEPARATOR_STR,
-                MAIN_SEPARATOR_STR,
-                MAIN_SEPARATOR_STR,
-                MAIN_SEPARATOR_STR,
-                MAIN_SEPARATOR_STR
-            )
+            to_file_path("zed/assets/themes/summercamp/subdir/LICENSE",)
         );
         assert_eq!(
             result.sections[3].label,
-            format!(
-                "zed{}assets{}themes{}summercamp{}subdir{}subsubdir{}LICENSE",
-                MAIN_SEPARATOR_STR,
-                MAIN_SEPARATOR_STR,
-                MAIN_SEPARATOR_STR,
-                MAIN_SEPARATOR_STR,
-                MAIN_SEPARATOR_STR,
-                MAIN_SEPARATOR_STR
-            )
+            to_file_path("zed/assets/themes/summercamp/subdir/subsubdir/LICENSE",)
         );
         assert_eq!(result.sections[4].label, "subsubdir");
         assert_eq!(result.sections[5].label, "subdir");
         assert_eq!(result.sections[6].label, "summercamp");
-        assert_eq!(
-            result.sections[7].label,
-            format!(
-                "zed{}assets{}themes",
-                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
-            )
-        );
+        assert_eq!(result.sections[7].label, to_file_path("zed/assets/themes",));
 
-        assert_eq!(result.text, "zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n");
+        assert_eq!(result.text, to_file_path("zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n"));
 
         // Ensure that the project lasts until after the last await
         drop(project);
