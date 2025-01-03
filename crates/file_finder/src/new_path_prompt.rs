@@ -140,7 +140,7 @@ impl Match {
             for (range, style) in highlight_ranges(
                 &whole_path.to_string_lossy(),
                 &path_match.positions,
-                gpui::HighlightStyle::color(Color::Accent.color(window, cx)),
+                gpui::HighlightStyle::color(Color::Accent.color(cx)),
             ) {
                 highlights.push((range.start + offset..range.end + offset, style))
             }
@@ -161,7 +161,7 @@ impl Match {
                 };
                 highlights.push((
                     offset..offset + suffix.as_bytes().len(),
-                    HighlightStyle::color(color.color(window, cx)),
+                    HighlightStyle::color(color.color(cx)),
                 ));
                 offset += suffix.as_bytes().len();
                 if entry.is_some_and(|e| e.is_dir()) {
@@ -171,14 +171,14 @@ impl Match {
                     text.push_str(dir_indicator);
                     highlights.push((
                         offset..offset + dir_indicator.bytes().len(),
-                        HighlightStyle::color(Color::Muted.color(window, cx)),
+                        HighlightStyle::color(Color::Muted.color(cx)),
                     ));
                 }
             } else {
                 text.push_str(dir_indicator);
                 highlights.push((
                     offset..offset + dir_indicator.bytes().len(),
-                    HighlightStyle::color(Color::Muted.color(window, cx)),
+                    HighlightStyle::color(Color::Muted.color(cx)),
                 ))
             }
         } else if let Some(suffix) = &self.suffix {
@@ -191,15 +191,15 @@ impl Match {
             if existing_prefix_len > 0 {
                 highlights.push((
                     offset..offset + existing_prefix_len,
-                    HighlightStyle::color(Color::Accent.color(window, cx)),
+                    HighlightStyle::color(Color::Accent.color(cx)),
                 ));
             }
             highlights.push((
                 offset + existing_prefix_len..offset + suffix.as_bytes().len(),
                 HighlightStyle::color(if self.entry(project, window, cx).is_some() {
-                    Color::Conflict.color(window, cx)
+                    Color::Conflict.color(cx)
                 } else {
-                    Color::Created.color(window, cx)
+                    Color::Created.color(cx)
                 }),
             ));
             offset += suffix.as_bytes().len();
@@ -207,7 +207,7 @@ impl Match {
                 text.push_str(dir_indicator);
                 highlights.push((
                     offset..offset + dir_indicator.bytes().len(),
-                    HighlightStyle::color(Color::Muted.color(window, cx)),
+                    HighlightStyle::color(Color::Muted.color(cx)),
                 ));
             }
         }
