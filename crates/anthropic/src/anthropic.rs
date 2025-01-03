@@ -163,7 +163,7 @@ impl Model {
             );
         }
 
-        headers.join(",").to_string()
+        headers.join(",")
     }
 
     pub fn tool_model_id(&self) -> &str {
