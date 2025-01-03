@@ -2925,12 +2925,6 @@ async fn test_git_status_sync(
         assert_eq!(snapshot.status_for_file(file), status);
     }
 
-    // Goal: Full, up to date state syncing.
-    // - Make sure that the state is getting synced across the wire
-    // - Make sure that the database is storing all of the state
-
-    // Smoke test status reading
-
     project_local.read_with(cx_a, |project, cx| {
         assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
         assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
@@ -6673,6 +6667,10 @@ async fn test_remote_git_branches(
     client_a
         .fs()
         .insert_branches(Path::new("/project/.git"), &branches);
+    let branches_set = branches
+        .into_iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
 
     let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
     let project_id = active_call_a
@@ -6694,10 +6692,10 @@ async fn test_remote_git_branches(
 
     let branches_b = branches_b
         .into_iter()
-        .map(|branch| branch.name)
-        .collect::<Vec<_>>();
+        .map(|branch| branch.name.to_string())
+        .collect::<HashSet<_>>();
 
-    assert_eq!(&branches_b, &branches);
+    assert_eq!(branches_b, branches_set);
 
     cx_b.update(|cx| {
         project_b.update(cx, |project, cx| {

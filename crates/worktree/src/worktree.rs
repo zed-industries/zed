@@ -439,6 +439,7 @@ struct BackgroundScannerState {
 pub struct LocalRepositoryEntry {
     pub(crate) work_directory: WorkDirectory,
     pub(crate) git_dir_scan_id: usize,
+    pub(crate) status_scan_id: usize,
     pub(crate) repo_ptr: Arc<dyn GitRepository>,
     /// Absolute path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
@@ -1363,6 +1364,7 @@ impl LocalWorktree {
         let mut changes = Vec::new();
         let mut old_repos = old_snapshot.git_repositories.iter().peekable();
         let mut new_repos = new_snapshot.git_repositories.iter().peekable();
+
         loop {
             match (new_repos.peek().map(clone), old_repos.peek().map(clone)) {
                 (Some((new_entry_id, new_repo)), Some((old_entry_id, old_repo))) => {
@@ -1379,7 +1381,9 @@ impl LocalWorktree {
                             new_repos.next();
                         }
                         Ordering::Equal => {
-                            if new_repo.git_dir_scan_id != old_repo.git_dir_scan_id {
+                            if new_repo.git_dir_scan_id != old_repo.git_dir_scan_id
+                                || new_repo.status_scan_id != old_repo.status_scan_id
+                            {
                                 if let Some(entry) = new_snapshot.entry_for_id(new_entry_id) {
                                     let old_repo = old_snapshot
                                         .repositories
@@ -3251,7 +3255,7 @@ impl BackgroundScannerState {
 
         self.snapshot.repositories.insert_or_replace(
             RepositoryEntry {
-                work_directory_id: work_dir_id.into(),
+                work_directory_id: work_dir_id,
                 work_directory: work_directory.clone(),
                 branch: repository.branch_name().map(Into::into),
                 statuses_by_path: Default::default(),
@@ -3262,6 +3266,7 @@ impl BackgroundScannerState {
         let local_repository = LocalRepositoryEntry {
             work_directory: work_directory.clone(),
             git_dir_scan_id: 0,
+            status_scan_id: 0,
             repo_ptr: repository.clone(),
             dot_git_dir_abs_path: actual_dot_git_dir_abs_path,
             dot_git_worktree_abs_path,
@@ -3609,6 +3614,7 @@ pub enum PathChange {
     Loaded,
 }
 
+#[derive(Debug)]
 pub struct GitRepositoryChange {
     /// The previous state of the repository, if it already existed.
     pub old_repository: Option<RepositoryEntry>,
@@ -4815,15 +4821,27 @@ impl BackgroundScanner {
                     changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                 }
 
-                state.snapshot.repositories.update(
+                let work_directory_id = state.snapshot.repositories.update(
                     &work_directory.path_key(),
                     &(),
                     move |repository_entry| {
                         repository_entry
                             .statuses_by_path
                             .edit(changed_path_statuses, &());
+                        repository_entry.work_directory_id
                     },
                 );
+
+                // This breaks it in another way
+                if let Some(work_directory_id) = work_directory_id {
+                    let scan_id = state.snapshot.scan_id;
+                    state.snapshot.git_repositories.update(
+                        &work_directory_id,
+                        |local_repository_entry| {
+                            local_repository_entry.status_scan_id = scan_id;
+                        },
+                    );
+                }
             }
         }
 
@@ -5104,10 +5122,10 @@ impl BackgroundScanner {
                         let branch = local_repository.repo_ptr.branch_name();
                         local_repository.repo_ptr.reload_index();
 
-                        state
-                            .snapshot
-                            .git_repositories
-                            .update(&entry_id, |entry| entry.git_dir_scan_id = scan_id);
+                        state.snapshot.git_repositories.update(&entry_id, |entry| {
+                            entry.git_dir_scan_id = scan_id;
+                            entry.status_scan_id = scan_id;
+                        });
                         state.snapshot.snapshot.repositories.update(
                             &PathKey(work_dir.clone()),
                             &(),
@@ -5238,7 +5256,7 @@ impl BackgroundScanner {
 
         util::extend_sorted(
             &mut state.changed_paths,
-            changed_paths.into_iter(),
+            changed_paths,
             usize::MAX,
             Ord::cmp,
         );
@@ -5640,7 +5658,7 @@ impl<'a> GitEntryRef<'a> {
     pub fn to_owned(&self) -> GitEntry {
         GitEntry {
             entry: self.entry.clone(),
-            git_status: self.git_status.clone(),
+            git_status: self.git_status,
         }
     }
 }
@@ -5669,7 +5687,7 @@ impl GitEntry {
     pub fn to_ref(&self) -> GitEntryRef {
         GitEntryRef {
             entry: &self.entry,
-            git_status: self.git_status.clone(),
+            git_status: self.git_status,
         }
     }
 }
@@ -5682,7 +5700,7 @@ impl Deref for GitEntry {
     }
 }
 
-impl<'a> AsRef<Entry> for GitEntry {
+impl AsRef<Entry> for GitEntry {
     fn as_ref(&self) -> &Entry {
         &self.entry
     }

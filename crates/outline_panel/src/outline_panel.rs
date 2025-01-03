@@ -2602,7 +2602,7 @@ impl OutlinePanel {
                                     }
                                     new_worktree_entries
                                         .entry(worktree_id)
-                                        .or_insert_with(|| HashMap::default())
+                                        .or_insert_with(HashMap::default)
                                         .extend(entries_to_add);
                                 }
                                 None => {
@@ -2876,10 +2876,14 @@ impl OutlinePanel {
                 .iter()
                 .find(|fs_entry| match fs_entry {
                     FsEntry::Directory(..) => false,
-                    FsEntry::File(FsEntryFile { buffer_id, .. })
-                    | FsEntry::ExternalFile(FsEntryExternalFile { buffer_id, .. }) => {
-                        buffer_id == buffer_id
-                    }
+                    FsEntry::File(FsEntryFile {
+                        buffer_id: other_buffer_id,
+                        ..
+                    })
+                    | FsEntry::ExternalFile(FsEntryExternalFile {
+                        buffer_id: other_buffer_id,
+                        ..
+                    }) => buffer_id == *other_buffer_id,
                 })
                 .cloned()
                 .map(PanelEntry::Fs);
