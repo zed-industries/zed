@@ -770,11 +770,11 @@ impl PyLspAdapter {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-const BINARY_DIR: &str = "bin";
-
-#[cfg(target_os = "windows")]
-const BINARY_DIR: &str = "Scripts";
+const BINARY_DIR: &str = if cfg!(target_os = "windows") {
+    "Scripts"
+} else {
+    "bin"
+};
 
 #[async_trait(?Send)]
 impl LspAdapter for PyLspAdapter {
