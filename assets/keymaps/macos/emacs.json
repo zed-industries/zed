@@ -5,7 +5,8 @@
 [
   {
     "bindings": {
-      "ctrl-g": "menu::Cancel"
+      "ctrl-g": "menu::Cancel",
+      "ctrl-x ctrl-c": "zed::Quit"
     }
   },
   {
@@ -57,8 +58,9 @@
   {
     "context": "Workspace && !Terminal",
     "bindings": {
-      "ctrl-x ctrl-c": "workspace::CloseWindow", // kill-emacs
-      "ctrl-x o": "workspace::ActivateNextPane", // other-window
+      "ctrl-x 5 0": "workspace::CloseWindow", // kill-window
+      "ctrl-x 5 2": "workspace::NewWindow", // new-window
+      "ctrl-x o": "workspace::ActivateNextPane", // other-pane
       "ctrl-x k": "pane::CloseActiveItem", // kill-buffer
       "ctrl-x 0": "pane::CloseActiveItem", // delete-window
       "ctrl-x 1": "pane::CloseInactiveItems", // delete-other-windows
