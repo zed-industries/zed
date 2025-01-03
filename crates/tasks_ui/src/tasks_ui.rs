@@ -47,7 +47,7 @@ pub fn init(cx: &mut AppContext) {
                             cx.spawn_in(window, |workspace, mut cx| async move {
                                 let task_context = context_task.await;
                                 workspace
-                                    .update(&mut cx, |workspace, cx| {
+                                    .update_in(&mut cx, |workspace, window, cx| {
                                         schedule_task(
                                             workspace,
                                             task_source_kind,
@@ -127,7 +127,7 @@ fn toggle_modal(
         cx.spawn_in(window, |workspace, mut cx| async move {
             let task_context = context_task.await;
             workspace
-                .update(&mut cx, |workspace, cx| {
+                .update_in(&mut cx, |workspace, window, cx| {
                     workspace.toggle_modal(window, cx, |window, cx| {
                         TasksModal::new(
                             task_store.clone(),
@@ -155,8 +155,9 @@ fn spawn_task_with_name(
     cx: &mut ModelContext<Workspace>,
 ) -> AsyncTask<anyhow::Result<()>> {
     cx.spawn_in(window, |workspace, mut cx| async move {
-        let context_task =
-            workspace.update(&mut cx, |workspace, cx| task_context(workspace, window, cx))?;
+        let context_task = workspace.update_in(&mut cx, |workspace, window, cx| {
+            task_context(workspace, window, cx)
+        })?;
         let task_context = context_task.await;
         let tasks = workspace.update(&mut cx, |workspace, cx| {
             let Some(task_inventory) = workspace
@@ -169,7 +170,7 @@ fn spawn_task_with_name(
             else {
                 return Vec::new();
             };
-            let (worktree, location) = active_item_selection_properties(workspace, window, cx);
+            let (worktree, location) = active_item_selection_properties(workspace, cx);
             let (file, language) = location
                 .map(|location| {
                     let buffer = location.buffer.read(cx);
@@ -185,7 +186,7 @@ fn spawn_task_with_name(
         })?;
 
         let did_spawn = workspace
-            .update(&mut cx, |workspace, cx| {
+            .update_in(&mut cx, |workspace, window, cx| {
                 let (task_source_kind, mut target_task) =
                     tasks.into_iter().find(|(_, task)| task.label == name)?;
                 if let Some(overrides) = &overrides {
@@ -207,7 +208,7 @@ fn spawn_task_with_name(
             .is_some();
         if !did_spawn {
             workspace
-                .update(&mut cx, |workspace, cx| {
+                .update_in(&mut cx, |workspace, window, cx| {
                     spawn_task_or_modal(
                         workspace,
                         &Spawn::ViaModal {
@@ -226,7 +227,6 @@ fn spawn_task_with_name(
 
 fn active_item_selection_properties(
     workspace: &Workspace,
-    window: &mut Window,
     cx: &mut AppContext,
 ) -> (Option<WorktreeId>, Option<Location>) {
     let active_item = workspace.active_item(cx);
@@ -340,7 +340,7 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let buffer1 = workspace
             .update(cx, |this, cx| {
@@ -352,8 +352,8 @@ mod tests {
         buffer1.update(cx, |this, cx| {
             this.set_language(Some(typescript_language), cx)
         });
-        let editor1 =
-            cx.new_view(|cx| Editor::for_buffer(buffer1, Some(project.clone()), window, cx));
+        let editor1 = cx
+            .new_view(|window, cx| Editor::for_buffer(buffer1, Some(project.clone()), window, cx));
         let buffer2 = workspace
             .update(cx, |this, cx| {
                 this.project().update(cx, |this, cx| {
@@ -363,10 +363,11 @@ mod tests {
             .await
             .unwrap();
         buffer2.update(cx, |this, cx| this.set_language(Some(rust_language), cx));
-        let editor2 = cx.new_view(|cx| Editor::for_buffer(buffer2, Some(project), window, cx));
+        let editor2 =
+            cx.new_view(|window, cx| Editor::for_buffer(buffer2, Some(project), window, cx));
 
         let first_context = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.add_item_to_center(Box::new(editor1.clone()), window, cx);
                 workspace.add_item_to_center(Box::new(editor2.clone()), window, cx);
                 assert_eq!(
@@ -395,7 +396,7 @@ mod tests {
         );
 
         // And now, let's select an identifier.
-        editor2.update(cx, |editor, cx| {
+        editor2.update_in(cx, |editor, window, cx| {
             editor.change_selections(None, window, cx, |selections| {
                 selections.select_ranges([14..18])
             })
@@ -403,7 +404,9 @@ mod tests {
 
         assert_eq!(
             workspace
-                .update(cx, |workspace, cx| { task_context(workspace, window, cx) })
+                .update_in(cx, |workspace, window, cx| {
+                    task_context(workspace, window, cx)
+                })
                 .await,
             TaskContext {
                 cwd: Some("/dir".into()),
@@ -425,7 +428,7 @@ mod tests {
 
         assert_eq!(
             workspace
-                .update(cx, |workspace, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     // Now, let's switch the active item to .ts file.
                     workspace.activate_item(&editor1, true, true, window, cx);
                     task_context(workspace, window, cx)
@@ -454,8 +457,8 @@ mod tests {
             let state = AppState::test(cx);
             file_icons::init((), cx);
             language::init(cx);
-            crate::init(window, cx);
-            editor::init(window, cx);
+            crate::init(cx);
+            editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
             TaskStore::init(None);

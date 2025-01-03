@@ -5,15 +5,15 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
     InteractiveElement, Model, ModelContext, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, VisualContext, WeakModel, Window,
+    Subscription, Task, WeakModel, Window,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
 use task::{ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
 use ui::{
-    div, h_flex, v_flex, ActiveTheme, AppContext, Button, ButtonCommon, ButtonSize, Clickable,
-    Color, FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
-    KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, Window,
+    div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
+    FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
+    KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
 };
 use util::ResultExt;
 use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
@@ -128,14 +128,14 @@ impl TasksModal {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = window.new_view(cx, |cx| {
+        let picker = window.new_view(cx, |window, cx| {
             Picker::uniform_list(
                 TasksModalDelegate::new(task_store, task_context, task_overrides, workspace),
                 window,
                 cx,
             )
         });
-        let _subscription = cx.subscribe_in(&picker, window, |_, _, _, window, cx| {
+        let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
         });
         Self {
@@ -206,7 +206,7 @@ impl PickerDelegate for TasksModalDelegate {
                         None => {
                             let Ok((worktree, location)) =
                                 picker.delegate.workspace.update(cx, |workspace, cx| {
-                                    active_item_selection_properties(workspace, window, cx)
+                                    active_item_selection_properties(workspace, cx)
                                 })
                             else {
                                 return Vec::new();
@@ -325,7 +325,7 @@ impl PickerDelegate for TasksModalDelegate {
         cx.emit(DismissEvent);
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>) {
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>) {
         cx.emit(DismissEvent);
     }
 
@@ -656,7 +656,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -672,7 +673,7 @@ mod tests {
         drop(tasks_picker);
 
         let _ = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(PathBuf::from("/dir/a.ts"), true, window, cx)
             })
             .await
@@ -821,7 +822,7 @@ mod tests {
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -836,7 +837,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         let _ = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from("/dir/file_with.odd_extension"),
                     true,
@@ -863,7 +864,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         let second_item = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from("/dir/file_without_extension"),
                     true,
@@ -874,8 +875,10 @@ mod tests {
             .await
             .unwrap();
 
-        let editor = cx.update(|cx| second_item.act_as::<Editor>(cx)).unwrap();
-        editor.update(cx, |editor, cx| {
+        let editor = cx
+            .update(|_window, cx| second_item.act_as::<Editor>(cx))
+            .unwrap();
+        editor.update_in(cx, |editor, window, cx| {
             editor.change_selections(None, window, cx, |s| {
                 s.select_ranges(Some(Point::new(1, 2)..Point::new(1, 5)))
             })
@@ -968,10 +971,10 @@ mod tests {
             ));
         });
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let _ts_file_1 = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(PathBuf::from("/dir/a1.ts"), true, window, cx)
             })
             .await
@@ -1007,7 +1010,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         let _ts_file_2 = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, window, cx)
             })
             .await
@@ -1030,7 +1033,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         let _rs_file = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(PathBuf::from("/dir/b.rs"), true, window, cx)
             })
             .await
@@ -1045,7 +1048,7 @@ mod tests {
         cx.dispatch_action(CloseInactiveTabsAndPanes::default());
         emulate_task_schedule(tasks_picker, &project, "Rust task", cx);
         let _ts_file_2 = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, window, cx)
             })
             .await
