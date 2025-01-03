@@ -3774,7 +3774,7 @@ impl GitStatuses {
             Some(GitFileStatus::Conflict)
         } else if self.modified > 0 {
             Some(GitFileStatus::Modified)
-        } else if self.added > 0 {
+        } else if self.added > 0 || self.untracked > 0 {
             Some(GitFileStatus::Added)
         } else {
             None
