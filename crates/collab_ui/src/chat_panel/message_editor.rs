@@ -236,7 +236,7 @@ impl MessageEditor {
 
     fn on_buffer_event(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer: &Model<Buffer>,
         event: &language::BufferEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -247,7 +247,7 @@ impl MessageEditor {
                 cx.background_executor()
                     .timer(MENTIONS_DEBOUNCE_INTERVAL)
                     .await;
-                Self::find_mentions(this, buffer, window, cx).await;
+                Self::find_mentions(this, buffer, cx).await;
             }));
         }
     }
@@ -297,8 +297,7 @@ impl MessageEditor {
     }
 
     async fn resolve_completions_for_candidates(
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: &AsyncWindowContext,
         query: &str,
         candidates: &[StringMatchCandidate],
         range: Range<Anchor>,
@@ -466,8 +465,7 @@ impl MessageEditor {
     async fn find_mentions(
         this: WeakModel<MessageEditor>,
         buffer: BufferSnapshot,
-        window: &mut Window,
-        cx: &mut AppContext,
+        mut cx: AsyncWindowContext,
     ) {
         let (buffer, ranges) = cx
             .background_executor()
@@ -477,7 +475,7 @@ impl MessageEditor {
             })
             .await;
 
-        this.update(&mut cx, |this, cx| {
+        this.update_in(&mut cx, |this, window, cx| {
             let mut anchor_ranges = Vec::new();
             let mut mentioned_user_ids = Vec::new();
             let mut text = String::new();

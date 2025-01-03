@@ -36,7 +36,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                         .log_err()
                     {
                         let window = cx
-                            .open_window(options, |cx| {
+                            .open_window(options, |window, cx| {
                                 window.new_view(cx, |_, _| {
                                     IncomingCallNotification::new(
                                         incoming_call.clone(),
@@ -119,11 +119,11 @@ impl Render for IncomingCallNotification {
                 self.state.call.calling_user.avatar_uri.clone(),
                 Button::new("accept", "Accept").on_click({
                     let state = self.state.clone();
-                    move |_, cx| state.respond(true, cx)
+                    move |_, _, cx| state.respond(true, cx)
                 }),
                 Button::new("decline", "Decline").on_click({
                     let state = self.state.clone();
-                    move |_, cx| state.respond(false, cx)
+                    move |_, _, cx| state.respond(false, cx)
                 }),
             )
             .child(v_flex().overflow_hidden().child(Label::new(format!(

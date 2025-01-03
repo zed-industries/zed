@@ -66,7 +66,7 @@ impl ChannelView {
         );
         window.spawn(cx, |mut cx| async move {
             let channel_view = channel_view.await?;
-            pane.update(&mut cx, |pane, cx| {
+            pane.update_in(&mut cx, |pane, window, cx| {
                 telemetry::event!(
                     "Channel Notes Opened",
                     channel_id,
@@ -93,7 +93,7 @@ impl ChannelView {
         window.spawn(cx, |mut cx| async move {
             let channel_view = channel_view.await?;
 
-            pane.update(&mut cx, |pane, cx| {
+            pane.update_in(&mut cx, |pane, window, cx| {
                 let buffer_id = channel_view.read(cx).channel_buffer.read(cx).remote_id(cx);
 
                 let existing_view = pane
@@ -180,7 +180,7 @@ impl ChannelView {
                 })
             })?;
 
-            cx.new_view(|cx| {
+            cx.new_view(|window, cx| {
                 let mut this = Self::new(
                     project,
                     weak_workspace,
@@ -205,7 +205,7 @@ impl ChannelView {
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
         let this = cx.view().downgrade();
-        let editor = window.new_view(cx, |cx| {
+        let editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::for_buffer(buffer, None, window, cx);
             editor.set_collaboration_hub(Box::new(ChannelBufferCollaborationHub(
                 channel_buffer.clone(),
@@ -347,7 +347,7 @@ impl ChannelView {
 
     fn handle_channel_buffer_event(
         &mut self,
-        _: Model<ChannelBuffer>,
+        _: &Model<ChannelBuffer>,
         event: &ChannelBufferEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -437,7 +437,7 @@ impl Item for ChannelView {
         }
     }
 
-    fn tab_icon(&self, window: &mut Window, cx: &mut AppContext) -> Option<Icon> {
+    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
         let channel = self.channel(cx)?;
         let icon = match channel.visibility {
             ChannelVisibility::Public => IconName::Public,
@@ -450,8 +450,8 @@ impl Item for ChannelView {
     fn tab_content(
         &self,
         params: TabContentParams,
-        window: &mut Window,
-        cx: &mut AppContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> gpui::AnyElement {
         let (channel_name, status) = if let Some(channel) = self.channel(cx) {
             let status = match (
@@ -495,7 +495,7 @@ impl Item for ChannelView {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
-        Some(window.new_view(cx, |cx| {
+        Some(window.new_view(cx, |window, cx| {
             Self::new(
                 self.project.clone(),
                 self.workspace.clone(),
@@ -559,11 +559,7 @@ impl FollowableItem for ChannelView {
         self.remote_id
     }
 
-    fn to_state_proto(
-        &self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<proto::view::Variant> {
+    fn to_state_proto(&self, window: &Window, cx: &AppContext) -> Option<proto::view::Variant> {
         let channel_buffer = self.channel_buffer.read(cx);
         if !channel_buffer.is_connected() {
             return None;
@@ -602,7 +598,7 @@ impl FollowableItem for ChannelView {
         Some(window.spawn(cx, |mut cx| async move {
             let this = open.await?;
 
-            let task = this.update(&mut cx, |this, cx| {
+            let task = this.update_in(&mut cx, |this, window, cx| {
                 this.remote_id = Some(remote_id);
 
                 if let Some(state) = state.editor {
@@ -638,8 +634,8 @@ impl FollowableItem for ChannelView {
         &self,
         event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> bool {
         self.editor
             .read(cx)
@@ -669,7 +665,7 @@ impl FollowableItem for ChannelView {
         })
     }
 
-    fn is_project_item(&self, _window: &mut Window, _cx: &mut AppContext) -> bool {
+    fn is_project_item(&self, _window: &Window, _cx: &AppContext) -> bool {
         false
     }
 
@@ -677,7 +673,7 @@ impl FollowableItem for ChannelView {
         Editor::to_follow_event(event)
     }
 
-    fn dedup(&self, existing: &Self, window: &mut Window, cx: &mut AppContext) -> Option<Dedup> {
+    fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<Dedup> {
         let existing = existing.channel_buffer.read(cx);
         if self.channel_buffer.read(cx).channel_id == existing.channel_id {
             if existing.is_connected() {

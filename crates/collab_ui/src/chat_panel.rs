@@ -37,7 +37,7 @@ const MESSAGE_LOADING_THRESHOLD: usize = 50;
 const CHAT_PANEL_KEY: &str = "ChatPanel";
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+    cx.observe_new_views(|workspace: &mut Workspace, window, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ChatPanel>(window, cx);
         });
@@ -85,12 +85,12 @@ impl ChatPanel {
         let user_store = workspace.app_state().user_store.clone();
         let languages = workspace.app_state().languages.clone();
 
-        let input_editor = window.new_view(cx, |cx| {
+        let input_editor = window.new_view(cx, |window, cx| {
             MessageEditor::new(
                 languages.clone(),
                 user_store.clone(),
                 None,
-                window.new_view(cx, |cx| Editor::auto_height(4, window, cx)),
+                window.new_view(cx, |window, cx| Editor::auto_height(4, window, cx)),
                 window,
                 cx,
             )
@@ -98,8 +98,11 @@ impl ChatPanel {
 
         window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
             let view = cx.view().downgrade();
-            let message_list =
-                ListState::new(0, gpui::ListAlignment::Bottom, px(1000.), move |ix, cx| {
+            let message_list = ListState::new(
+                0,
+                gpui::ListAlignment::Bottom,
+                px(1000.),
+                move |ix, window, cx| {
                     if let Some(view) = view.upgrade() {
                         view.update(cx, |view, cx| {
                             view.render_message(ix, window, cx).into_any_element()
@@ -107,7 +110,8 @@ impl ChatPanel {
                     } else {
                         div().into_any()
                     }
-                });
+                },
+            );
 
             message_list.set_scroll_handler(cx.listener(
                 |this, event: &ListScrollEvent, window, cx| {
@@ -199,7 +203,7 @@ impl ChatPanel {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
-        cx.spawn(|mut cx| async move {
+        window.spawn(cx, |mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
                 .background_executor()
                 .spawn(async move { KEY_VALUE_STORE.read_kvp(CHAT_PANEL_KEY) })
@@ -212,7 +216,7 @@ impl ChatPanel {
                 None
             };
 
-            workspace.update(&mut cx, |workspace, cx| {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
                 let panel = Self::new(workspace, window, cx);
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
@@ -263,7 +267,7 @@ impl ChatPanel {
 
     fn channel_did_change(
         &mut self,
-        _: Model<ChannelChat>,
+        _: &Model<ChannelChat>,
         event: &ChannelChatEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -327,7 +331,7 @@ impl ChatPanel {
             None => {
                 return div().child(
                     h_flex()
-                        .text_ui_xs(window, cx)
+                        .text_ui_xs(cx)
                         .my_0p5()
                         .px_0p5()
                         .gap_x_1()
@@ -362,7 +366,7 @@ impl ChatPanel {
         div().child(
             h_flex()
                 .id(message_element_id)
-                .text_ui_xs(window, cx)
+                .text_ui_xs(cx)
                 .my_0p5()
                 .px_0p5()
                 .gap_x_1()
@@ -385,7 +389,7 @@ impl ChatPanel {
                     ),
                 )
                 .cursor(CursorStyle::PointingHand)
-                .tooltip(|cx| Tooltip::text("Go to message", window, cx))
+                .tooltip(|window, cx| Tooltip::text("Go to message", window, cx))
                 .on_click(cx.listener(move |chat_panel, _, window, cx| {
                     if let Some(channel_id) = current_channel_id {
                         chat_panel
@@ -513,7 +517,7 @@ impl ChatPanel {
                             this.child(
                                 h_flex()
                                     .gap_2()
-                                    .text_ui_sm(window, cx)
+                                    .text_ui_sm(cx)
                                     .child(
                                         Avatar::new(message.sender.avatar_uri.clone())
                                             .size(rems(1.)),
@@ -550,7 +554,7 @@ impl ChatPanel {
                         el.child(
                             v_flex()
                                 .w_full()
-                                .text_ui_sm(window, cx)
+                                .text_ui_sm(cx)
                                 .id(element_id)
                                 .child(text.element("body".into(), window, cx)),
                         )
@@ -573,7 +577,7 @@ impl ChatPanel {
                                 div()
                                     .px_1()
                                     .rounded_md()
-                                    .text_ui_xs(window, cx)
+                                    .text_ui_xs(cx)
                                     .bg(cx.theme().colors().background)
                                     .child("New messages"),
                             )
@@ -650,7 +654,7 @@ impl ChatPanel {
                                         })
                                     })),
                             )
-                            .tooltip(|cx| Tooltip::text("Reply", window, cx)),
+                            .tooltip(|window, cx| Tooltip::text("Reply", window, cx)),
                     ),
                 )
             })
@@ -696,7 +700,7 @@ impl ChatPanel {
                                             })
                                         })),
                                 )
-                                .tooltip(|cx| Tooltip::text("Edit", window, cx)),
+                                .tooltip(|window, cx| Tooltip::text("Edit", window, cx)),
                         ),
                     )
                 })
@@ -726,7 +730,7 @@ impl ChatPanel {
                                     }),
                             )
                             .id("more")
-                            .tooltip(|cx| Tooltip::text("More", window, cx)),
+                            .tooltip(|window, cx| Tooltip::text("More", window, cx)),
                     ),
                 )
             })
@@ -895,7 +899,7 @@ impl ChatPanel {
         cx.spawn_in(window, |this, mut cx| async move {
             let chat = open_chat.await?;
             let highlight_message_id = scroll_to_message_id;
-            let scroll_to_message_id = this.update(&mut cx, |this, cx| {
+            let scroll_to_message_id = this.update_in(&mut cx, |this, window, cx| {
                 this.set_active_chat(chat.clone(), window, cx);
 
                 scroll_to_message_id.or(this.last_acknowledged_message_id)
@@ -908,15 +912,13 @@ impl ChatPanel {
                 {
                     this.update(&mut cx, |this, cx| {
                         if let Some(highlight_message_id) = highlight_message_id {
-                            let task = cx.spawn_in(window, {
-                                |this, mut cx| async move {
-                                    cx.background_executor().timer(Duration::from_secs(2)).await;
-                                    this.update(&mut cx, |this, cx| {
-                                        this.highlighted_message.take();
-                                        cx.notify();
-                                    })
-                                    .ok();
-                                }
+                            let task = cx.spawn(|this, mut cx| async move {
+                                cx.background_executor().timer(Duration::from_secs(2)).await;
+                                this.update(&mut cx, |this, cx| {
+                                    this.highlighted_message.take();
+                                    cx.notify();
+                                })
+                                .ok();
                             });
 
                             this.highlighted_message = Some((highlight_message_id, task));
@@ -1038,7 +1040,7 @@ impl Render for ChatPanel {
                 el.child(
                     h_flex()
                         .px_2()
-                        .text_ui_xs(window, cx)
+                        .text_ui_xs(cx)
                         .justify_between()
                         .border_t_1()
                         .border_color(cx.theme().colors().border)
@@ -1147,7 +1149,7 @@ impl FocusableView for ChatPanel {
 }
 
 impl Panel for ChatPanel {
-    fn position(&self, window: &mut Window, cx: &mut AppContext) -> DockPosition {
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
         ChatPanelSettings::get_global(cx).dock
     }
 
@@ -1168,7 +1170,7 @@ impl Panel for ChatPanel {
         );
     }
 
-    fn size(&self, window: &mut Window, cx: &mut AppContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| ChatPanelSettings::get_global(cx).default_width)
     }
@@ -1190,7 +1192,7 @@ impl Panel for ChatPanel {
         "ChatPanel"
     }
 
-    fn icon(&self, window: &mut Window, cx: &mut AppContext) -> Option<ui::IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName> {
         match ChatPanelSettings::get_global(cx).button {
             ChatPanelButton::Never => None,
             ChatPanelButton::Always => Some(ui::IconName::MessageBubbles),
@@ -1202,7 +1204,7 @@ impl Panel for ChatPanel {
         }
     }
 
-    fn icon_tooltip(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _cx: &AppContext) -> Option<&'static str> {
         Some("Chat Panel")
     }
 
@@ -1210,7 +1212,7 @@ impl Panel for ChatPanel {
         Box::new(ToggleFocus)
     }
 
-    fn starts_open(&self, window: &mut Window, cx: &mut AppContext) -> bool {
+    fn starts_open(&self, window: &Window, cx: &AppContext) -> bool {
         ActiveCall::global(cx)
             .read(cx)
             .room()

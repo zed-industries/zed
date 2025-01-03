@@ -34,7 +34,7 @@ impl ParentElement for CollabNotification {
 impl RenderOnce for CollabNotification {
     fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
-            .text_ui(window, cx)
+            .text_ui(cx)
             .justify_between()
             .size_full()
             .overflow_hidden()

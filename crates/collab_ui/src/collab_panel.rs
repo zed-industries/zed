@@ -63,7 +63,7 @@ struct ChannelMoveClipboard {
 const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<CollabPanel>(window, cx);
         });
@@ -196,8 +196,8 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
-        window.new_view(cx, |cx| {
-            let filter_editor = window.new_view(cx, |cx| {
+        window.new_view(cx, |window, cx| {
+            let filter_editor = window.new_view(cx, |window, cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text("Filter...", window, cx);
                 editor
@@ -224,7 +224,7 @@ impl CollabPanel {
             )
             .detach();
 
-            let channel_name_editor = window.new_view(Editor::single_line, cx);
+            let channel_name_editor = window.new_view(cx, Editor::single_line);
 
             cx.subscribe_in(
                 &channel_name_editor,
@@ -245,14 +245,18 @@ impl CollabPanel {
             .detach();
 
             let view = cx.view().downgrade();
-            let list_state =
-                ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
+            let list_state = ListState::new(
+                0,
+                gpui::ListAlignment::Top,
+                px(1000.),
+                move |ix, window, cx| {
                     if let Some(view) = view.upgrade() {
                         view.update(cx, |view, cx| view.render_list_entry(ix, window, cx))
                     } else {
                         div().into_any()
                     }
-                });
+                },
+            );
 
             let mut this = Self {
                 width: None,
@@ -321,8 +325,7 @@ impl CollabPanel {
 
     pub async fn load(
         workspace: WeakModel<Workspace>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Model<Self>> {
         let serialized_panel = cx
             .background_executor()
@@ -336,7 +339,7 @@ impl CollabPanel {
             .log_err()
             .flatten();
 
-        workspace.update(&mut cx, |workspace, cx| {
+        workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = CollabPanel::new(workspace, window, cx);
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
@@ -1362,7 +1365,7 @@ impl CollabPanel {
                 };
                 context_menu = context_menu.entry(label, None, {
                     let this = this.clone();
-                    move |cx| {
+                    move |window, cx| {
                         this.update(cx, |this, cx| {
                             this.call(user_id, window, cx);
                         });
@@ -1372,7 +1375,7 @@ impl CollabPanel {
 
             context_menu.entry("Remove Contact", None, {
                 let this = this.clone();
-                move |cx| {
+                move |window, cx| {
                     this.update(cx, |this, cx| {
                         this.remove_contact(
                             contact.user.id,
@@ -1592,7 +1595,7 @@ impl CollabPanel {
                     if location.is_none() {
                         cx.spawn_in(window, |this, mut cx| async move {
                             let channel_id = create.await?;
-                            this.update(&mut cx, |this, cx| {
+                            this.update_in(&mut cx, |this, window, cx| {
                                 this.show_channel_modal(
                                     channel_id,
                                     channel_modal::Mode::InviteMembers,
@@ -1976,7 +1979,7 @@ impl CollabPanel {
         let channel_store = self.channel_store.clone();
 
         cx.spawn_in(window, |_, mut cx| async move {
-            workspace.update(&mut cx, |workspace, cx| {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
                     ChannelModal::new(
                         user_store.clone(),
@@ -2051,7 +2054,8 @@ impl CollabPanel {
                         .update(&mut cx, |channels, _| channels.remove_channel(channel_id))?
                         .await
                         .notify_async_err(&mut cx);
-                    this.update(&mut cx, |_, cx| cx.focus_self(window)).ok();
+                    this.update_in(&mut cx, |_, window, cx| cx.focus_self(window))
+                        .ok();
                 }
                 anyhow::Ok(())
             })
@@ -2491,7 +2495,7 @@ impl CollabPanel {
                                 .visible_on_hover("")
                                 .on_click(cx.listener({
                                     let contact = contact.clone();
-                                    move |this, event: &ClickEvent, cx| {
+                                    move |this, event: &ClickEvent, window, cx| {
                                         this.deploy_contact_context_menu(
                                             event.down.position,
                                             contact.clone(),
@@ -2505,7 +2509,7 @@ impl CollabPanel {
             )
             .on_secondary_mouse_down(cx.listener({
                 let contact = contact.clone();
-                move |this, event: &MouseDownEvent, cx| {
+                move |this, event: &MouseDownEvent, window, cx| {
                     this.deploy_contact_context_menu(event.position, contact.clone(), window, cx);
                 }
             }))
@@ -2563,26 +2567,26 @@ impl CollabPanel {
         let controls = if is_incoming {
             vec![
                 IconButton::new("decline-contact", IconName::Close)
-                    .on_click(cx.listener(move |this, _, cx| {
-                        this.respond_to_contact_request(user_id, false, cx);
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.respond_to_contact_request(user_id, false, window, cx);
                     }))
                     .icon_color(color)
-                    .tooltip(|cx| Tooltip::text("Decline invite", window, cx)),
+                    .tooltip(|window, cx| Tooltip::text("Decline invite", window, cx)),
                 IconButton::new("accept-contact", IconName::Check)
-                    .on_click(cx.listener(move |this, _, cx| {
-                        this.respond_to_contact_request(user_id, true, cx);
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.respond_to_contact_request(user_id, true, window, cx);
                     }))
                     .icon_color(color)
-                    .tooltip(|cx| Tooltip::text("Accept invite", window, cx)),
+                    .tooltip(|window, cx| Tooltip::text("Accept invite", window, cx)),
             ]
         } else {
             let github_login = github_login.clone();
             vec![IconButton::new("remove_contact", IconName::Close)
-                .on_click(cx.listener(move |this, _, cx| {
-                    this.remove_contact(user_id, &github_login, cx);
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.remove_contact(user_id, &github_login, window, cx);
                 }))
                 .icon_color(color)
-                .tooltip(|cx| Tooltip::text("Cancel invite", window, cx))]
+                .tooltip(|window, cx| Tooltip::text("Cancel invite", window, cx))]
         };
 
         ListItem::new(github_login.clone())
@@ -2738,7 +2742,7 @@ impl CollabPanel {
                 })
             })
             .drag_over::<Channel>({
-                move |style, dragged_channel: &Channel, cx| {
+                move |style, dragged_channel: &Channel, _window, cx| {
                     if dragged_channel.root_id() == root_id {
                         style.bg(cx.theme().colors().ghost_element_hover)
                     } else {
@@ -2856,7 +2860,7 @@ impl CollabPanel {
             )
             .tooltip({
                 let channel_store = self.channel_store.clone();
-                move |cx| {
+                move |window, cx| {
                     window
                         .new_view(cx, |_, _| JoinChannelTooltip {
                             channel_store: channel_store.clone(),
@@ -2978,7 +2982,7 @@ impl Render for CollabPanel {
 impl EventEmitter<PanelEvent> for CollabPanel {}
 
 impl Panel for CollabPanel {
-    fn position(&self, window: &mut Window, cx: &mut AppContext) -> DockPosition {
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
         CollaborationPanelSettings::get_global(cx).dock
     }
 
@@ -2999,7 +3003,7 @@ impl Panel for CollabPanel {
         );
     }
 
-    fn size(&self, window: &mut Window, cx: &mut AppContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| CollaborationPanelSettings::get_global(cx).default_width)
     }
@@ -3010,13 +3014,13 @@ impl Panel for CollabPanel {
         cx.notify();
     }
 
-    fn icon(&self, window: &mut Window, cx: &mut AppContext) -> Option<ui::IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName> {
         CollaborationPanelSettings::get_global(cx)
             .button
             .then_some(ui::IconName::UserGroup)
     }
 
-    fn icon_tooltip(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _cx: &AppContext) -> Option<&'static str> {
         Some("Collab Panel")
     }
 

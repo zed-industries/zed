@@ -43,7 +43,7 @@ impl ChannelModal {
         cx.observe_in(&channel_store, window, |_, _, window, cx| cx.notify())
             .detach();
         let channel_modal = cx.view().downgrade();
-        let picker = window.new_view(cx, |cx| {
+        let picker = window.new_view(cx, |window, cx| {
             Picker::uniform_list(
                 ChannelModalDelegate {
                     channel_modal,
@@ -497,7 +497,7 @@ impl ChannelModalDelegate {
         });
         cx.spawn_in(window, |picker, mut cx| async move {
             update.await?;
-            picker.update(&mut cx, |picker, cx| {
+            picker.update_in(&mut cx, |picker, window, cx| {
                 let this = &mut picker.delegate;
                 if let Some(member) = this.members.iter_mut().find(|m| m.user.id == user_id) {
                     member.role = new_role;
@@ -521,7 +521,7 @@ impl ChannelModalDelegate {
         });
         cx.spawn_in(window, |picker, mut cx| async move {
             update.await?;
-            picker.update(&mut cx, |picker, cx| {
+            picker.update_in(&mut cx, |picker, window, cx| {
                 let this = &mut picker.delegate;
                 if let Some(ix) = this.members.iter_mut().position(|m| m.user.id == user_id) {
                     this.members.remove(ix);
@@ -633,7 +633,7 @@ impl ChannelModalDelegate {
             menu = menu.separator();
             menu = menu.entry("Remove from Channel", None, {
                 let picker = picker.clone();
-                move |cx| {
+                move |window, cx| {
                     picker.update(cx, |picker, cx| {
                         picker.delegate.remove_member(user_id, window, cx);
                     })
