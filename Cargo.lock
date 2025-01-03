@@ -245,7 +245,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum 0.25.0",
+ "strum",
  "thiserror 1.0.69",
  "util",
 ]
@@ -435,7 +435,7 @@ dependencies = [
  "similar",
  "smallvec",
  "smol",
- "strum 0.25.0",
+ "strum",
  "telemetry_events",
  "terminal",
  "terminal_view",
@@ -2715,7 +2715,7 @@ dependencies = [
  "settings",
  "sha2",
  "sqlx",
- "strum 0.25.0",
+ "strum",
  "subtle",
  "supermaven_api",
  "telemetry_events",
@@ -2993,7 +2993,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "strum 0.25.0",
+ "strum",
  "task",
  "theme",
  "ui",
@@ -5273,7 +5273,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum 0.25.0",
+ "strum",
 ]
 
 [[package]]
@@ -5373,7 +5373,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "smol",
- "strum 0.25.0",
+ "strum",
  "sum_tree",
  "taffy",
  "thiserror 1.0.69",
@@ -6237,7 +6237,7 @@ dependencies = [
  "paths",
  "pretty_assertions",
  "serde",
- "strum 0.25.0",
+ "strum",
  "util",
 ]
 
@@ -6763,7 +6763,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "strum 0.25.0",
+ "strum",
  "ui",
  "util",
 ]
@@ -6809,7 +6809,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "strum 0.25.0",
+ "strum",
  "telemetry_events",
  "theme",
  "thiserror 1.0.69",
@@ -8466,7 +8466,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum 0.25.0",
+ "strum",
 ]
 
 [[package]]
@@ -10880,7 +10880,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "strum 0.25.0",
+ "strum",
  "tracing",
  "util",
  "zstd",
@@ -11302,7 +11302,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "strum 0.26.3",
+ "strum",
  "thiserror 1.0.69",
  "time",
  "tracing",
@@ -12358,7 +12358,7 @@ dependencies = [
  "settings",
  "simplelog",
  "story",
- "strum 0.25.0",
+ "strum",
  "theme",
  "title_bar",
  "ui",
@@ -12418,26 +12418,20 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
-version = "0.25.0"
+version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
+checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
  "strum_macros",
 ]
 
 [[package]]
-name = "strum"
-version = "0.26.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
-
-[[package]]
 name = "strum_macros"
-version = "0.25.3"
+version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23dc1fa9ac9c169a78ba62f0b841814b7abae11bdd047b9c58f893439e309ea0"
+checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "rustversion",
@@ -13025,7 +13019,7 @@ dependencies = [
  "serde_json_lenient",
  "serde_repr",
  "settings",
- "strum 0.25.0",
+ "strum",
  "util",
  "uuid",
 ]
@@ -13057,7 +13051,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "simplelog",
- "strum 0.25.0",
+ "strum",
  "theme",
  "vscode_theme",
 ]
@@ -13988,7 +13982,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
- "strum 0.25.0",
+ "strum",
  "theme",
  "ui_macros",
  "windows 0.58.0",
@@ -15808,7 +15802,7 @@ dependencies = [
  "settings",
  "smallvec",
  "sqlez",
- "strum 0.25.0",
+ "strum",
  "task",
  "tempfile",
  "theme",
