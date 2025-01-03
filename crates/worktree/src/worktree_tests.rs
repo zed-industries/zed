@@ -12,7 +12,13 @@ use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use serde_json::json;
 use settings::{Settings, SettingsStore};
-use std::{env, fmt::Write, mem, path::Path, sync::Arc};
+use std::{
+    env,
+    fmt::Write,
+    mem,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::{test::temp_tree, ResultExt};
 
 #[gpui::test]
@@ -532,14 +538,20 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 1);
     });
 
+    let path = PathBuf::from("/root/one/node_modules/c/lib");
+
     // No work happens when files and directories change within an unloaded directory.
     let prev_fs_call_count = fs.read_dir_call_count() + fs.metadata_call_count();
-    fs.create_dir("/root/one/node_modules/c/lib".as_ref())
-        .await
-        .unwrap();
+    // When we open a directory, we check each ancestor whether it's a git
+    // repository. That means we have an fs.metadata call per ancestor that we
+    // need to subtract here.
+    let ancestors = path.ancestors().count();
+
+    fs.create_dir(path.as_ref()).await.unwrap();
     cx.executor().run_until_parked();
+
     assert_eq!(
-        fs.read_dir_call_count() + fs.metadata_call_count() - prev_fs_call_count,
+        fs.read_dir_call_count() + fs.metadata_call_count() - prev_fs_call_count - ancestors,
         0
     );
 }
@@ -879,6 +891,211 @@ async fn test_write_file(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = temp_tree(json!({
+        ".gitignore": "**/target\n/node_modules\ntop_level.txt\n",
+        "target": {
+            "index": "blah2"
+        },
+        "node_modules": {
+            ".DS_Store": "",
+            "prettier": {
+                "package.json": "{}",
+            },
+        },
+        "src": {
+            ".DS_Store": "",
+            "foo": {
+                "foo.rs": "mod another;\n",
+                "another.rs": "// another",
+            },
+            "bar": {
+                "bar.rs": "// bar",
+            },
+            "lib.rs": "mod foo;\nmod bar;\n",
+        },
+        "top_level.txt": "top level file",
+        ".DS_Store": "",
+    }));
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
+                project_settings.file_scan_exclusions = Some(vec![]);
+                project_settings.file_scan_inclusions = Some(vec![
+                    "node_modules/**/package.json".to_string(),
+                    "**/.DS_Store".to_string(),
+                ]);
+            });
+        });
+    });
+
+    let tree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::default()),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+    tree.read_with(cx, |tree, _| {
+        // Assert that file_scan_inclusions overrides  file_scan_exclusions.
+        check_worktree_entries(
+            tree,
+            &[],
+            &["target", "node_modules"],
+            &["src/lib.rs", "src/bar/bar.rs", ".gitignore"],
+            &[
+                "node_modules/prettier/package.json",
+                ".DS_Store",
+                "node_modules/.DS_Store",
+                "src/.DS_Store",
+            ],
+        )
+    });
+}
+
+#[gpui::test]
+async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = temp_tree(json!({
+        ".gitignore": "**/target\n/node_modules\n",
+        "target": {
+            "index": "blah2"
+        },
+        "node_modules": {
+            ".DS_Store": "",
+            "prettier": {
+                "package.json": "{}",
+            },
+        },
+        "src": {
+            ".DS_Store": "",
+            "foo": {
+                "foo.rs": "mod another;\n",
+                "another.rs": "// another",
+            },
+        },
+        ".DS_Store": "",
+    }));
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
+                project_settings.file_scan_exclusions = Some(vec!["**/.DS_Store".to_string()]);
+                project_settings.file_scan_inclusions = Some(vec!["**/.DS_Store".to_string()]);
+            });
+        });
+    });
+
+    let tree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::default()),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+    tree.read_with(cx, |tree, _| {
+        // Assert that file_scan_inclusions overrides  file_scan_exclusions.
+        check_worktree_entries(
+            tree,
+            &[".DS_Store, src/.DS_Store"],
+            &["target", "node_modules"],
+            &["src/foo/another.rs", "src/foo/foo.rs", ".gitignore"],
+            &[],
+        )
+    });
+}
+
+#[gpui::test]
+async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = temp_tree(json!({
+        ".gitignore": "**/target\n/node_modules/\n",
+        "target": {
+            "index": "blah2"
+        },
+        "node_modules": {
+            ".DS_Store": "",
+            "prettier": {
+                "package.json": "{}",
+            },
+        },
+        "src": {
+            ".DS_Store": "",
+            "foo": {
+                "foo.rs": "mod another;\n",
+                "another.rs": "// another",
+            },
+        },
+        ".DS_Store": "",
+    }));
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
+                project_settings.file_scan_exclusions = Some(vec![]);
+                project_settings.file_scan_inclusions = Some(vec!["node_modules/**".to_string()]);
+            });
+        });
+    });
+    let tree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::default()),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree
+            .entry_for_path("node_modules")
+            .is_some_and(|f| f.is_always_included));
+        assert!(tree
+            .entry_for_path("node_modules/prettier/package.json")
+            .is_some_and(|f| f.is_always_included));
+    });
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
+                project_settings.file_scan_exclusions = Some(vec![]);
+                project_settings.file_scan_inclusions = Some(vec![]);
+            });
+        });
+    });
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree
+            .entry_for_path("node_modules")
+            .is_some_and(|f| !f.is_always_included));
+        assert!(tree
+            .entry_for_path("node_modules/prettier/package.json")
+            .is_some_and(|f| !f.is_always_included));
+    });
+}
+
+#[gpui::test]
 async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -939,6 +1156,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
             ],
             &["target", "node_modules"],
             &["src/lib.rs", "src/bar/bar.rs", ".gitignore"],
+            &[],
         )
     });
 
@@ -970,6 +1188,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
                 "src/.DS_Store",
                 ".DS_Store",
             ],
+            &[],
         )
     });
 }
@@ -1051,6 +1270,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
                 "src/bar/bar.rs",
                 ".gitignore",
             ],
+            &[],
         )
     });
 
@@ -1111,6 +1331,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
                 "src/new_file",
                 ".gitignore",
             ],
+            &[],
         )
     });
 }
@@ -1140,14 +1361,14 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
         .await;
     tree.flush_fs_events(cx).await;
     tree.read_with(cx, |tree, _| {
-        check_worktree_entries(tree, &[], &["HEAD", "foo"], &[])
+        check_worktree_entries(tree, &[], &["HEAD", "foo"], &[], &[])
     });
 
     std::fs::write(dot_git_worktree_dir.join("new_file"), "new file contents")
         .unwrap_or_else(|e| panic!("Failed to create in {dot_git_worktree_dir:?} a new file: {e}"));
     tree.flush_fs_events(cx).await;
     tree.read_with(cx, |tree, _| {
-        check_worktree_entries(tree, &[], &["HEAD", "foo", "new_file"], &[])
+        check_worktree_entries(tree, &[], &["HEAD", "foo", "new_file"], &[], &[])
     });
 }
 
@@ -1180,8 +1401,12 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         let snapshot = Arc::new(Mutex::new(tree.snapshot()));
         tree.observe_updates(0, cx, {
             let snapshot = snapshot.clone();
+            let settings = tree.settings().clone();
             move |update| {
-                snapshot.lock().apply_remote_update(update).unwrap();
+                snapshot
+                    .lock()
+                    .apply_remote_update(update, &settings.file_scan_inclusions)
+                    .unwrap();
                 async { true }
             }
         });
@@ -1474,12 +1699,14 @@ async fn test_random_worktree_operations_during_initial_scan(
         snapshot
     });
 
+    let settings = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().settings());
+
     for (i, snapshot) in snapshots.into_iter().enumerate().rev() {
         let mut updated_snapshot = snapshot.clone();
         for update in updates.lock().iter() {
             if update.scan_id >= updated_snapshot.scan_id() as u64 {
                 updated_snapshot
-                    .apply_remote_update(update.clone())
+                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
                     .unwrap();
             }
         }
@@ -1610,10 +1837,14 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         );
     }
 
+    let settings = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().settings());
+
     for (i, mut prev_snapshot) in snapshots.into_iter().enumerate().rev() {
         for update in updates.lock().iter() {
             if update.scan_id >= prev_snapshot.scan_id() as u64 {
-                prev_snapshot.apply_remote_update(update.clone()).unwrap();
+                prev_snapshot
+                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
+                    .unwrap();
             }
         }
 
@@ -2481,6 +2712,29 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/", json!({".env": "PRIVATE=secret\n"}))
+        .await;
+    let tree = Worktree::local(
+        Path::new("/.env"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.read_with(cx, |tree, _| {
+        let entry = tree.entry_for_path("").unwrap();
+        assert!(entry.is_private);
+    });
+}
+
 #[track_caller]
 fn check_propagated_statuses(
     snapshot: &Snapshot,
@@ -2588,6 +2842,7 @@ fn check_worktree_entries(
     expected_excluded_paths: &[&str],
     expected_ignored_paths: &[&str],
     expected_tracked_paths: &[&str],
+    expected_included_paths: &[&str],
 ) {
     for path in expected_excluded_paths {
         let entry = tree.entry_for_path(path);
@@ -2610,8 +2865,17 @@ fn check_worktree_entries(
             .entry_for_path(path)
             .unwrap_or_else(|| panic!("Missing entry for expected tracked path '{path}'"));
         assert!(
-            !entry.is_ignored,
+            !entry.is_ignored || entry.is_always_included,
             "expected path '{path}' to be tracked, but got entry: {entry:?}",
+        );
+    }
+    for path in expected_included_paths {
+        let entry = tree
+            .entry_for_path(path)
+            .unwrap_or_else(|| panic!("Missing entry for expected included path '{path}'"));
+        assert!(
+            entry.is_always_included,
+            "expected path '{path}' to always be included, but got entry: {entry:?}",
         );
     }
 }

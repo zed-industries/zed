@@ -15,6 +15,7 @@ use std::str::FromStr;
 
 pub use task_template::{HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates};
 pub use vscode_format::VsCodeTaskFile;
+pub use zed_actions::RevealTarget;
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.
@@ -47,10 +48,16 @@ pub struct SpawnInTerminal {
     pub allow_concurrent_runs: bool,
     /// What to do with the terminal pane and tab, after the command was started.
     pub reveal: RevealStrategy,
+    /// Where to show tasks' terminal output.
+    pub reveal_target: RevealTarget,
     /// What to do with the terminal pane and tab, after the command had finished.
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.
     pub shell: Shell,
+    /// Whether to show the task summary line in the task output (sucess/failure).
+    pub show_summary: bool,
+    /// Whether to show the command line in the task output.
+    pub show_command: bool,
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.
@@ -130,6 +137,10 @@ impl VariableName {
     /// Generates a `$VARIABLE`-like string value to be used in templates.
     pub fn template_value(&self) -> String {
         format!("${self}")
+    }
+    /// Generates a `"$VARIABLE"`-like string, to be used instead of `Self::template_value` when expanded value could contain spaces or special characters.
+    pub fn template_value_with_whitespace(&self) -> String {
+        format!("\"${self}\"")
     }
 }
 

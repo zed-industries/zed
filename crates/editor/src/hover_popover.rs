@@ -23,7 +23,6 @@ use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, window_is_transparent, Scrollbar, ScrollbarState};
 use util::TryFutureExt;
-pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
@@ -131,10 +130,12 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
             hide_hover(editor, cx);
         }
 
+        let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+
         let task = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()
-                    .timer(Duration::from_millis(HOVER_DELAY_MILLIS))
+                    .timer(Duration::from_millis(hover_popover_delay))
                     .await;
                 this.update(&mut cx, |this, _| {
                     this.hover_state.diagnostic_popover = None;
@@ -236,6 +237,8 @@ fn show_hover(
         }
     }
 
+    let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+
     let task = cx.spawn(|this, mut cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
@@ -245,7 +248,7 @@ fn show_hover(
                 // Construct delay task to wait for later
                 let total_delay = Some(
                     cx.background_executor()
-                        .timer(Duration::from_millis(HOVER_DELAY_MILLIS)),
+                        .timer(Duration::from_millis(hover_popover_delay)),
                 );
 
                 cx.background_executor()
@@ -263,12 +266,11 @@ fn show_hover(
             // If there's a diagnostic, assign it on the hover state and notify
             let mut local_diagnostic = snapshot
                 .buffer_snapshot
-                .diagnostics_in_range::<_, usize>(anchor..anchor, false)
+                .diagnostics_in_range(anchor..anchor, false)
                 // Find the entry with the most specific range
-                .min_by_key(|entry| entry.range.end - entry.range.start)
-                .map(|entry| DiagnosticEntry {
-                    diagnostic: entry.diagnostic,
-                    range: entry.range.to_anchors(&snapshot.buffer_snapshot),
+                .min_by_key(|entry| {
+                    let range = entry.range.to_offset(&snapshot.buffer_snapshot);
+                    range.end - range.start
                 });
 
             // Pull the primary diagnostic out so we can jump to it if the popover is clicked
@@ -359,6 +361,7 @@ fn show_hover(
                         let mut base_text_style = cx.text_style();
                         base_text_style.refine(&TextStyleRefinement {
                             font_family: Some(settings.ui_font.family.clone()),
+                            font_fallbacks: settings.ui_font.fallbacks.clone(),
                             font_size: Some(settings.ui_font_size.into()),
                             color: Some(cx.theme().colors().editor_foreground),
                             background_color: Some(gpui::transparent_black()),
@@ -378,7 +381,7 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(text, markdown_style.clone(), None, cx, None)
+                        Markdown::new_text(text, markdown_style.clone(), None, None, cx)
                     })
                     .ok();
 
@@ -425,7 +428,7 @@ fn show_hover(
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot;
-                        let offset_range = snapshot.range_for_syntax_ancestor(anchor..anchor)?;
+                        let offset_range = snapshot.syntax_ancestor(anchor..anchor)?.1;
                         Some(
                             snapshot.anchor_before(offset_range.start)
                                 ..snapshot.anchor_after(offset_range.end),
@@ -547,11 +550,14 @@ async fn parse_blocks(
         .new_view(|cx| {
             let settings = ThemeSettings::get_global(cx);
             let ui_font_family = settings.ui_font.family.clone();
+            let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
             let buffer_font_family = settings.buffer_font.family.clone();
+            let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
 
             let mut base_text_style = cx.text_style();
             base_text_style.refine(&TextStyleRefinement {
                 font_family: Some(ui_font_family.clone()),
+                font_fallbacks: ui_font_fallbacks,
                 color: Some(cx.theme().colors().editor_foreground),
                 ..Default::default()
             });
@@ -562,6 +568,7 @@ async fn parse_blocks(
                 inline_code: TextStyleRefinement {
                     background_color: Some(cx.theme().colors().background),
                     font_family: Some(buffer_font_family),
+                    font_fallbacks: buffer_font_fallbacks,
                     ..Default::default()
                 },
                 rule_color: cx.theme().colors().border,
@@ -593,8 +600,8 @@ async fn parse_blocks(
                 combined_text,
                 markdown_style.clone(),
                 Some(language_registry.clone()),
-                cx,
                 fallback_language_name,
+                cx,
             )
         })
         .ok();
@@ -851,6 +858,7 @@ mod tests {
         InlayId, PointForPosition,
     };
     use collections::BTreeSet;
+    use gpui::AppContext;
     use indoc::indoc;
     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
@@ -859,6 +867,10 @@ mod tests {
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;
     use text::Bias;
+
+    fn get_hover_popover_delay(cx: &gpui::TestAppContext) -> u64 {
+        cx.read(|cx: &AppContext| -> u64 { EditorSettings::get_global(cx).hover_popover_delay })
+    }
 
     impl InfoPopover {
         fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
@@ -884,7 +896,6 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         init_test(cx, |_| {});
-        const HOVER_DELAY_MILLIS: u64 = 350;
 
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
@@ -958,7 +969,7 @@ mod tests {
                 }))
             });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         requests.next().await;
 
         cx.editor(|editor, cx| {
@@ -1037,7 +1048,7 @@ mod tests {
             hover_at(editor, Some(anchor), cx)
         });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         request.next().await;
 
         // verify that the information popover is no longer visible
@@ -1091,7 +1102,7 @@ mod tests {
                 }))
             });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         requests.next().await;
 
         cx.editor(|editor, cx| {
@@ -1127,7 +1138,7 @@ mod tests {
             hover_at(editor, Some(anchor), cx)
         });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         request.next().await;
         cx.editor(|editor, _| {
             assert!(!editor.hover_state.visible());
@@ -1389,7 +1400,7 @@ mod tests {
             }))
         });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
 
         cx.background_executor.run_until_parked();
         cx.editor(|Editor { hover_state, .. }, _| {
@@ -1677,7 +1688,7 @@ mod tests {
             );
         });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             let hover_state = &editor.hover_state;
@@ -1731,7 +1742,7 @@ mod tests {
             );
         });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             let hover_state = &editor.hover_state;

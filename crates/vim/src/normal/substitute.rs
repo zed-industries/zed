@@ -9,7 +9,7 @@ actions!(vim, [Substitute, SubstituteLine]);
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Substitute, cx| {
         vim.start_recording(cx);
-        let count = vim.take_count(cx);
+        let count = Vim::take_count(cx);
         vim.substitute(count, vim.mode == Mode::VisualLine, cx);
     });
 
@@ -18,7 +18,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         if matches!(vim.mode, Mode::VisualBlock | Mode::Visual) {
             vim.switch_mode(Mode::VisualLine, false, cx)
         }
-        let count = vim.take_count(cx);
+        let count = Vim::take_count(cx);
         vim.substitute(count, true, cx)
     });
 }

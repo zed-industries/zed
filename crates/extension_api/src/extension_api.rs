@@ -28,7 +28,7 @@ pub use wit::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
+    KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree,
 };
 
 // Undocumented WIT re-exports.
@@ -130,7 +130,11 @@ pub trait Extension: Send + Sync {
     }
 
     /// Returns the command used to start a context server.
-    fn context_server_command(&mut self, _context_server_id: &ContextServerId) -> Result<Command> {
+    fn context_server_command(
+        &mut self,
+        _context_server_id: &ContextServerId,
+        _project: &Project,
+    ) -> Result<Command> {
         Err("`context_server_command` not implemented".to_string())
     }
 
@@ -275,9 +279,12 @@ impl wit::Guest for Component {
         extension().run_slash_command(command, args, worktree)
     }
 
-    fn context_server_command(context_server_id: String) -> Result<wit::Command> {
+    fn context_server_command(
+        context_server_id: String,
+        project: &Project,
+    ) -> Result<wit::Command> {
         let context_server_id = ContextServerId(context_server_id);
-        extension().context_server_command(&context_server_id)
+        extension().context_server_command(&context_server_id, project)
     }
 
     fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {

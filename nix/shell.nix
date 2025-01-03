@@ -1,51 +1,57 @@
-{pkgs ? import <nixpkgs> {}}: let
-  stdenv = pkgs.stdenvAdapters.useMoldLinker pkgs.llvmPackages_18.stdenv;
+{
+  pkgs ? import <nixpkgs> { },
+}:
+let
+  inherit (pkgs) lib;
 in
-  if pkgs.stdenv.isDarwin
-  then
-    # See https://github.com/NixOS/nixpkgs/issues/320084
-    throw "zed: nix dev-shell isn't supported on darwin yet."
-  else let
-    buildInputs = with pkgs; [
-      curl
-      fontconfig
-      freetype
-      libgit2
-      openssl
-      sqlite
-      zlib
-      zstd
-      alsa-lib
-      libxkbcommon
-      wayland
-      xorg.libxcb
-      vulkan-loader
-      rustToolchain
+pkgs.mkShell rec {
+  packages = [
+    pkgs.clang
+    pkgs.curl
+    pkgs.cmake
+    pkgs.perl
+    pkgs.pkg-config
+    pkgs.protobuf
+    pkgs.rustPlatform.bindgenHook
+    pkgs.rust-analyzer
+  ];
+
+  buildInputs =
+    [
+      pkgs.curl
+      pkgs.fontconfig
+      pkgs.freetype
+      pkgs.libgit2
+      pkgs.openssl
+      pkgs.sqlite
+      pkgs.zlib
+      pkgs.zstd
+      pkgs.rustToolchain
+    ]
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+      pkgs.alsa-lib
+      pkgs.libxkbcommon
+    ]
+    ++ lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.apple-sdk_15;
+
+  # We set SDKROOT and DEVELOPER_DIR to the Xcode ones instead of the nixpkgs ones,
+  # because we need Swift 6.0 and nixpkgs doesn't have it.
+  # Xcode is required for development anyways
+  shellHook =
+    ''
+      export LD_LIBRARY_PATH="${lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
+      export PROTOC="${pkgs.protobuf}/bin/protoc"
+    ''
+    + lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+      export SDKROOT="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
+      export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer";
+    '';
+
+  FONTCONFIG_FILE = pkgs.makeFontsConf {
+    fontDirectories = [
+      "./assets/fonts/zed-mono"
+      "./assets/fonts/zed-sans"
     ];
-  in
-    pkgs.mkShell.override {inherit stdenv;} {
-      nativeBuildInputs = with pkgs; [
-        clang
-        curl
-        cmake
-        perl
-        pkg-config
-        protobuf
-        rustPlatform.bindgenHook
-      ];
-
-      inherit buildInputs;
-
-      shellHook = ''
-        export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
-        export PROTOC="${pkgs.protobuf}/bin/protoc"
-      '';
-
-      FONTCONFIG_FILE = pkgs.makeFontsConf {
-        fontDirectories = [
-          "./assets/fonts/zed-mono"
-          "./assets/fonts/zed-sans"
-        ];
-      };
-      ZSTD_SYS_USE_PKG_CONFIG = true;
-    }
+  };
+  ZSTD_SYS_USE_PKG_CONFIG = true;
+}

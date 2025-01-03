@@ -17,7 +17,7 @@ On your local machine, Zed runs its UI, talks to language models, uses Tree-sitt
 ## Setup
 
 1. Download and install the latest [Zed](https://zed.dev/releases). You need at least Zed v0.159.
-1. Open the remote projects dialogue with <kbd>cmd-shift-p remote</kbd> or <kbd>cmd-control-o</kbd>.
+1. Use {#kb projects::OpenRemote} to open the "Remote Projects" dialog.
 1. Click "Connect New Server" and enter the command you use to SSH into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
 1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, Zed will download the server on the remote host and start it.
 1. Once the Zed server is running, you will be prompted to choose a path to open on the remote server.
@@ -35,7 +35,7 @@ The remote machine must be able to run Zed's server. The following platforms sho
 
 ## Configuration
 
-The list of remote servers is stored in your settings file {#kb zed::OpenSettings}. You can edit this list using the Remote Projects dialogue {#kb projects::OpenRemote}, which provides some robustness - for example it checks that the connection can be established before writing it to the settings file.
+The list of remote servers is stored in your settings file {#kb zed::OpenSettings}. You can edit this list using the Remote Projects dialog {#kb projects::OpenRemote}, which provides some robustness - for example it checks that the connection can be established before writing it to the settings file.
 
 ```json
 {
@@ -125,13 +125,13 @@ Each connection tries to run the development server in proxy mode. This mode wil
 
 In the case that reconnecting fails, the daemon will not be re-used. That said, unsaved changes are by default persisted locally, so that you do not lose work. You can always reconnect to the project at a later date and Zed will restore unsaved changes.
 
-If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/zed-industries/zed/issues/new) or reach out in the #remoting-feedback channel in the [Zed Discord](https://discord.gg/zed-community).
+If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/zed-industries/zed/issues/new) or reach out in the #remoting-feedback channel in the [Zed Discord](https://zed.dev/community-links).
 
 ## Supported SSH Options
 
 Under the hood, Zed shells out to the `ssh` binary to connect to the remote server. We create one SSH control master per project, and use then use that to multiplex SSH connections for the Zed protocol itself, any terminals you open and tasks you run. We read settings from your SSH config file, but if you want to specify additional options to the SSH control master you can configure Zed to set them.
 
-When typing in the "Connect New Server" dialogue, you can use bash-style quoting to pass options containing a space. Once you have created a server it will be added to the `"ssh_connections": []` array in your settings file. You can edit the settings file directly to make changes to SSH connections.
+When typing in the "Connect New Server" dialog, you can use bash-style quoting to pass options containing a space. Once you have created a server it will be added to the `"ssh_connections": []` array in your settings file. You can edit the settings file directly to make changes to SSH connections.
 
 Supported options:
 
@@ -152,4 +152,4 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 ## Feedback
 
-Please join the #remoting-feedback channel in the [Zed Discord](https://discord.gg/zed-community).
+Please join the #remoting-feedback channel in the [Zed Discord](https://zed.dev/community-links).

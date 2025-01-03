@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -73,6 +73,7 @@ impl TypeScriptLspAdapter {
     const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("typescript-language-server");
+    const PACKAGE_NAME: &str = "typescript";
     pub fn new(node: NodeRuntime) -> Self {
         TypeScriptLspAdapter { node }
     }
@@ -114,6 +115,36 @@ impl LspAdapter for TypeScriptLspAdapter {
         }) as Box<_>)
     }
 
+    async fn check_if_version_installed(
+        &self,
+        version: &(dyn 'static + Send + Any),
+        container_dir: &PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let version = version.downcast_ref::<TypeScriptVersions>().unwrap();
+        let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(
+                Self::PACKAGE_NAME,
+                &server_path,
+                &container_dir,
+                version.typescript_version.as_str(),
+            )
+            .await;
+
+        if should_install_language_server {
+            None
+        } else {
+            Some(LanguageServerBinary {
+                path: self.node.binary_path().await.ok()?,
+                env: None,
+                arguments: typescript_server_binary_arguments(&server_path),
+            })
+        }
+    }
+
     async fn fetch_server_binary(
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
@@ -122,32 +153,22 @@ impl LspAdapter for TypeScriptLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
-        let package_name = "typescript";
 
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(
-                package_name,
-                &server_path,
+        self.node
+            .npm_install_packages(
                 &container_dir,
-                latest_version.typescript_version.as_str(),
+                &[
+                    (
+                        Self::PACKAGE_NAME,
+                        latest_version.typescript_version.as_str(),
+                    ),
+                    (
+                        "typescript-language-server",
+                        latest_version.server_version.as_str(),
+                    ),
+                ],
             )
-            .await;
-
-        if should_install_language_server {
-            self.node
-                .npm_install_packages(
-                    &container_dir,
-                    &[
-                        (package_name, latest_version.typescript_version.as_str()),
-                        (
-                            "typescript-language-server",
-                            latest_version.server_version.as_str(),
-                        ),
-                    ],
-                )
-                .await?;
-        }
+            .await?;
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
@@ -412,7 +433,7 @@ impl LspAdapter for EsLintLspAdapter {
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let url = build_asset_url(
-            "microsoft/vscode-eslint",
+            "zed-industries/vscode-eslint",
             Self::CURRENT_VERSION_TAG_NAME,
             Self::GITHUB_ASSET_KIND,
         )?;
@@ -445,14 +466,35 @@ impl LspAdapter for EsLintLspAdapter {
                 AssetKind::TarGz => {
                     let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                     let archive = Archive::new(decompressed_bytes);
-                    archive.unpack(&destination_path).await?;
+                    archive.unpack(&destination_path).await.with_context(|| {
+                        format!("extracting {} to {:?}", version.url, destination_path)
+                    })?;
+                }
+                AssetKind::Gz => {
+                    let mut decompressed_bytes =
+                        GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let mut file =
+                        fs::File::create(&destination_path).await.with_context(|| {
+                            format!(
+                                "creating a file {:?} for a download from {}",
+                                destination_path, version.url,
+                            )
+                        })?;
+                    futures::io::copy(&mut decompressed_bytes, &mut file)
+                        .await
+                        .with_context(|| {
+                            format!("extracting {} to {:?}", version.url, destination_path)
+                        })?;
                 }
                 AssetKind::Zip => {
                     node_runtime::extract_zip(
                         &destination_path,
                         BufReader::new(response.body_mut()),
                     )
-                    .await?;
+                    .await
+                    .with_context(|| {
+                        format!("unzipping {} to {:?}", version.url, destination_path)
+                    })?;
                 }
             }
 

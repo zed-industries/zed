@@ -10,7 +10,7 @@ actions!(vim, [Rewrap]);
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Rewrap, cx| {
         vim.record_current_action(cx);
-        vim.take_count(cx);
+        Vim::take_count(cx);
         vim.store_visual_marks(cx);
         vim.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {

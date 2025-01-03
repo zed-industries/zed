@@ -9,6 +9,7 @@ use collections::HashSet;
 use reqwest::StatusCode;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{str::FromStr, sync::Arc, time::Duration};
 use stripe::{
     BillingPortalSession, CreateBillingPortalSession, CreateBillingPortalSessionFlowData,
@@ -19,6 +20,7 @@ use stripe::{
 };
 use util::ResultExt;
 
+use crate::api::events::SnowflakeRow;
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::{ResultExt as _, Server};
 use crate::{
@@ -100,6 +102,9 @@ async fn update_billing_preferences(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
+    let max_monthly_llm_usage_spending_in_cents =
+        body.max_monthly_llm_usage_spending_in_cents.max(0);
+
     let billing_preferences =
         if let Some(_billing_preferences) = app.db.get_billing_preferences(user.id).await? {
             app.db
@@ -107,7 +112,7 @@ async fn update_billing_preferences(
                     user.id,
                     &UpdateBillingPreferencesParams {
                         max_monthly_llm_usage_spending_in_cents: ActiveValue::set(
-                            body.max_monthly_llm_usage_spending_in_cents,
+                            max_monthly_llm_usage_spending_in_cents,
                         ),
                     },
                 )
@@ -117,12 +122,25 @@ async fn update_billing_preferences(
                 .create_billing_preferences(
                     user.id,
                     &crate::db::CreateBillingPreferencesParams {
-                        max_monthly_llm_usage_spending_in_cents: body
-                            .max_monthly_llm_usage_spending_in_cents,
+                        max_monthly_llm_usage_spending_in_cents,
                     },
                 )
                 .await?
         };
+
+    SnowflakeRow::new(
+        "Spend Limit Updated",
+        user.metrics_id,
+        user.admin,
+        None,
+        json!({
+            "user_id": user.id,
+            "max_monthly_llm_usage_spending_in_cents": billing_preferences.max_monthly_llm_usage_spending_in_cents,
+        }),
+    )
+    .write(&app.kinesis_client, &app.config.kinesis_stream)
+    .await
+    .log_err();
 
     rpc_server.refresh_llm_tokens_for_user(user.id).await;
 

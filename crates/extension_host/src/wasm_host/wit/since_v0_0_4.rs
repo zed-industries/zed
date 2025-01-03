@@ -2,7 +2,7 @@ use super::latest;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
-use language::LspAdapterDelegate;
+use extension::WorktreeDelegate;
 use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
@@ -20,7 +20,7 @@ wasmtime::component::bindgen!({
     },
 });
 
-pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
+pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
@@ -71,7 +71,7 @@ impl From<Command> for latest::Command {
 impl HostWorktree for WasmState {
     async fn read_text_file(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
         path: String,
     ) -> wasmtime::Result<Result<String, String>> {
         latest::HostWorktree::read_text_file(self, delegate, path).await
@@ -79,14 +79,14 @@ impl HostWorktree for WasmState {
 
     async fn shell_env(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> wasmtime::Result<EnvVars> {
         latest::HostWorktree::shell_env(self, delegate).await
     }
 
     async fn which(
         &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
         binary_name: String,
     ) -> wasmtime::Result<Option<String>> {
         latest::HostWorktree::which(self, delegate, binary_name).await

@@ -31,6 +31,47 @@ pub struct EditorLspTestContext {
     pub buffer_lsp_url: lsp::Url,
 }
 
+pub(crate) fn rust_lang() -> Arc<Language> {
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        indents: Some(Cow::from(indoc! {r#"
+            [
+                ((where_clause) _ @end)
+                (field_expression)
+                (call_expression)
+                (assignment_expression)
+                (let_declaration)
+                (let_chain)
+                (await_expression)
+            ] @indent
+
+            (_ "[" "]" @end) @indent
+            (_ "<" ">" @end) @indent
+            (_ "{" "}" @end) @indent
+            (_ "(" ")" @end) @indent"#})),
+        brackets: Some(Cow::from(indoc! {r#"
+            ("(" @open ")" @close)
+            ("[" @open "]" @close)
+            ("{" @open "}" @close)
+            ("<" @open ">" @close)
+            ("\"" @open "\"" @close)
+            (closure_parameters "|" @open "|" @close)"#})),
+        ..Default::default()
+    })
+    .expect("Could not parse queries");
+    Arc::new(language)
+}
 impl EditorLspTestContext {
     pub async fn new(
         language: Language,
@@ -72,7 +113,15 @@ impl EditorLspTestContext {
         app_state
             .fs
             .as_fake()
-            .insert_tree(root, json!({ "dir": { file_name.clone(): "" }}))
+            .insert_tree(
+                root,
+                json!({
+                    ".git": {},
+                    "dir": {
+                        file_name.clone(): ""
+                    }
+                }),
+            )
             .await;
 
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
@@ -119,46 +168,7 @@ impl EditorLspTestContext {
         capabilities: lsp::ServerCapabilities,
         cx: &mut gpui::TestAppContext,
     ) -> EditorLspTestContext {
-        let language = Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_queries(LanguageQueries {
-            indents: Some(Cow::from(indoc! {r#"
-                [
-                    ((where_clause) _ @end)
-                    (field_expression)
-                    (call_expression)
-                    (assignment_expression)
-                    (let_declaration)
-                    (let_chain)
-                    (await_expression)
-                ] @indent
-
-                (_ "[" "]" @end) @indent
-                (_ "<" ">" @end) @indent
-                (_ "{" "}" @end) @indent
-                (_ "(" ")" @end) @indent"#})),
-            brackets: Some(Cow::from(indoc! {r#"
-                ("(" @open ")" @close)
-                ("[" @open "]" @close)
-                ("{" @open "}" @close)
-                ("<" @open ">" @close)
-                ("\"" @open "\"" @close)
-                (closure_parameters "|" @open "|" @close)"#})),
-            ..Default::default()
-        })
-        .expect("Could not parse queries");
-
-        Self::new(language, capabilities, cx).await
+        Self::new(Arc::into_inner(rust_lang()).unwrap(), capabilities, cx).await
     }
 
     pub async fn new_typescript(
@@ -234,7 +244,16 @@ impl EditorLspTestContext {
                 ..Default::default()
             },
             Some(tree_sitter_html::language()),
-        );
+        )
+        .with_queries(LanguageQueries {
+            brackets: Some(Cow::from(indoc! {r#"
+                ("<" @open "/>" @close)
+                ("</" @open ">" @close)
+                ("<" @open ">" @close)
+                ("\"" @open "\"" @close)"#})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries");
         Self::new(language, Default::default(), cx).await
     }
 

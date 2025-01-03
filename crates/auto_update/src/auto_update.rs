@@ -1,27 +1,19 @@
-mod update_notification;
-
 use anyhow::{anyhow, Context, Result};
 use client::{Client, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
-use editor::{Editor, MultiBuffer};
 use gpui::{
     actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
-    SemanticVersion, SharedString, Task, View, ViewContext, VisualContext, WindowContext,
+    SemanticVersion, Task, WindowContext,
 };
-
-use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
-use paths::remote_servers_dir;
-use schemars::JsonSchema;
-use serde::Deserialize;
-use serde_derive::Serialize;
-use smol::{fs, io::AsyncReadExt};
-
-use settings::{Settings, SettingsSources, SettingsStore};
-use smol::{fs::File, process::Command};
-
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
-use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
+use paths::remote_servers_dir;
+use release_channel::{AppCommitSha, ReleaseChannel};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsSources, SettingsStore};
+use smol::{fs, io::AsyncReadExt};
+use smol::{fs::File, process::Command};
 use std::{
     env::{
         self,
@@ -32,24 +24,13 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use update_notification::UpdateNotification;
-use util::ResultExt;
 use which::which;
-use workspace::notifications::NotificationId;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
-actions!(
-    auto_update,
-    [
-        Check,
-        DismissErrorMessage,
-        ViewReleaseNotes,
-        ViewReleaseNotesLocally
-    ]
-);
+actions!(auto_update, [Check, DismissErrorMessage, ViewReleaseNotes,]);
 
 #[derive(Serialize)]
 struct UpdateRequestBody {
@@ -146,12 +127,6 @@ struct GlobalAutoUpdate(Option<Model<AutoUpdater>>);
 
 impl Global for GlobalAutoUpdate {}
 
-#[derive(Deserialize)]
-struct ReleaseNotesBody {
-    title: String,
-    release_notes: String,
-}
-
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     AutoUpdateSetting::register(cx);
 
@@ -160,10 +135,6 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
 
         workspace.register_action(|_, action, cx| {
             view_release_notes(action, cx);
-        });
-
-        workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, cx| {
-            view_release_notes_locally(workspace, cx);
         });
     })
     .detach();
@@ -264,121 +235,6 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
     None
 }
 
-fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-    let release_channel = ReleaseChannel::global(cx);
-
-    let url = match release_channel {
-        ReleaseChannel::Nightly => Some("https://github.com/zed-industries/zed/commits/nightly/"),
-        ReleaseChannel::Dev => Some("https://github.com/zed-industries/zed/commits/main/"),
-        _ => None,
-    };
-
-    if let Some(url) = url {
-        cx.open_url(url);
-        return;
-    }
-
-    let version = AppVersion::global(cx).to_string();
-
-    let client = client::Client::global(cx).http_client();
-    let url = client.build_url(&format!(
-        "/api/release_notes/v2/{}/{}",
-        release_channel.dev_name(),
-        version
-    ));
-
-    let markdown = workspace
-        .app_state()
-        .languages
-        .language_for_name("Markdown");
-
-    workspace
-        .with_local_workspace(cx, move |_, cx| {
-            cx.spawn(|workspace, mut cx| async move {
-                let markdown = markdown.await.log_err();
-                let response = client.get(&url, Default::default(), true).await;
-                let Some(mut response) = response.log_err() else {
-                    return;
-                };
-
-                let mut body = Vec::new();
-                response.body_mut().read_to_end(&mut body).await.ok();
-
-                let body: serde_json::Result<ReleaseNotesBody> =
-                    serde_json::from_slice(body.as_slice());
-
-                if let Ok(body) = body {
-                    workspace
-                        .update(&mut cx, |workspace, cx| {
-                            let project = workspace.project().clone();
-                            let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", markdown, cx)
-                            });
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.edit([(0..0, body.release_notes)], None, cx)
-                            });
-                            let language_registry = project.read(cx).languages().clone();
-
-                            let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-
-                            let tab_description = SharedString::from(body.title.to_string());
-                            let editor = cx.new_view(|cx| {
-                                Editor::for_multibuffer(buffer, Some(project), true, cx)
-                            });
-                            let workspace_handle = workspace.weak_handle();
-                            let view: View<MarkdownPreviewView> = MarkdownPreviewView::new(
-                                MarkdownPreviewMode::Default,
-                                editor,
-                                workspace_handle,
-                                language_registry,
-                                Some(tab_description),
-                                cx,
-                            );
-                            workspace.add_item_to_active_pane(
-                                Box::new(view.clone()),
-                                None,
-                                true,
-                                cx,
-                            );
-                            cx.notify();
-                        })
-                        .log_err();
-                }
-            })
-            .detach();
-        })
-        .detach();
-}
-
-pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
-    let updater = AutoUpdater::get(cx)?;
-    let version = updater.read(cx).current_version;
-    let should_show_notification = updater.read(cx).should_show_update_notification(cx);
-
-    cx.spawn(|workspace, mut cx| async move {
-        let should_show_notification = should_show_notification.await?;
-        if should_show_notification {
-            workspace.update(&mut cx, |workspace, cx| {
-                let workspace_handle = workspace.weak_handle();
-                workspace.show_notification(
-                    NotificationId::unique::<UpdateNotification>(),
-                    cx,
-                    |cx| cx.new_view(|_| UpdateNotification::new(version, workspace_handle)),
-                );
-                updater.update(cx, |updater, cx| {
-                    updater
-                        .set_should_show_update_notification(false, cx)
-                        .detach_and_log_err(cx);
-                });
-            })?;
-        }
-        anyhow::Ok(())
-    })
-    .detach();
-
-    None
-}
-
 impl AutoUpdater {
     pub fn get(cx: &mut AppContext) -> Option<Model<Self>> {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
@@ -421,6 +277,10 @@ impl AutoUpdater {
             })
             .ok()
         }));
+    }
+
+    pub fn current_version(&self) -> SemanticVersion {
+        self.current_version
     }
 
     pub fn status(&self) -> AutoUpdateStatus {
@@ -646,7 +506,7 @@ impl AutoUpdater {
         Ok(())
     }
 
-    fn set_should_show_update_notification(
+    pub fn set_should_show_update_notification(
         &self,
         should_show: bool,
         cx: &AppContext,
@@ -668,7 +528,7 @@ impl AutoUpdater {
         })
     }
 
-    fn should_show_update_notification(&self, cx: &AppContext) -> Task<Result<bool>> {
+    pub fn should_show_update_notification(&self, cx: &AppContext) -> Task<Result<bool>> {
         cx.background_executor().spawn(async move {
             Ok(KEY_VALUE_STORE
                 .read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?

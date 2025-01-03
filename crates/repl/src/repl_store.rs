@@ -1,17 +1,19 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use client::telemetry::Telemetry;
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
 };
+use jupyter_websocket_client::RemoteServer;
 use language::Language;
 use project::{Fs, Project, WorktreeId};
 use settings::{Settings, SettingsStore};
 
-use crate::kernels::{local_kernel_specifications, python_env_kernel_specifications};
+use crate::kernels::{
+    list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
+};
 use crate::{JupyterSettings, KernelSpecification, Session};
 
 struct GlobalReplStore(Model<ReplStore>);
@@ -25,15 +27,14 @@ pub struct ReplStore {
     kernel_specifications: Vec<KernelSpecification>,
     selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
-    telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ReplStore {
     const NAMESPACE: &'static str = "repl";
 
-    pub(crate) fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
-        let store = cx.new_model(move |cx| Self::new(fs, telemetry, cx));
+    pub(crate) fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+        let store = cx.new_model(move |cx| Self::new(fs, cx));
 
         store
             .update(cx, |store, cx| store.refresh_kernelspecs(cx))
@@ -46,14 +47,13 @@ impl ReplStore {
         cx.global::<GlobalReplStore>().0.clone()
     }
 
-    pub fn new(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
             this.set_enabled(JupyterSettings::enabled(cx), cx);
         })];
 
         let this = Self {
             fs,
-            telemetry,
             enabled: JupyterSettings::enabled(cx),
             sessions: HashMap::default(),
             kernel_specifications: Vec::new(),
@@ -67,10 +67,6 @@ impl ReplStore {
 
     pub fn fs(&self) -> &Arc<dyn Fs> {
         &self.fs
-    }
-
-    pub fn telemetry(&self) -> &Arc<Telemetry> {
-        &self.telemetry
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -141,21 +137,63 @@ impl ReplStore {
         })
     }
 
+    fn get_remote_kernel_specifications(
+        &self,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<Result<Vec<KernelSpecification>>>> {
+        match (
+            std::env::var("JUPYTER_SERVER"),
+            std::env::var("JUPYTER_TOKEN"),
+        ) {
+            (Ok(server), Ok(token)) => {
+                let remote_server = RemoteServer {
+                    base_url: server,
+                    token,
+                };
+                let http_client = cx.http_client();
+                Some(cx.spawn(|_, _| async move {
+                    list_remote_kernelspecs(remote_server, http_client)
+                        .await
+                        .map(|specs| specs.into_iter().map(KernelSpecification::Remote).collect())
+                }))
+            }
+            _ => None,
+        }
+    }
+
     pub fn refresh_kernelspecs(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
 
-        cx.spawn(|this, mut cx| async move {
-            let local_kernel_specifications = local_kernel_specifications.await?;
+        let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
 
-            let mut kernel_options = Vec::new();
-            for kernel_specification in local_kernel_specifications {
-                kernel_options.push(KernelSpecification::Jupyter(kernel_specification));
+        let all_specs = cx.background_executor().spawn(async move {
+            let mut all_specs = local_kernel_specifications
+                .await?
+                .into_iter()
+                .map(KernelSpecification::Jupyter)
+                .collect::<Vec<_>>();
+
+            if let Some(remote_task) = remote_kernel_specifications {
+                if let Ok(remote_specs) = remote_task.await {
+                    all_specs.extend(remote_specs);
+                }
             }
 
-            this.update(&mut cx, |this, cx| {
-                this.kernel_specifications = kernel_options;
-                cx.notify();
-            })
+            anyhow::Ok(all_specs)
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            let all_specs = all_specs.await;
+
+            if let Ok(specs) = all_specs {
+                this.update(&mut cx, |this, cx| {
+                    this.kernel_specifications = specs;
+                    cx.notify();
+                })
+                .ok();
+            }
+
+            anyhow::Ok(())
         })
     }
 
@@ -224,8 +262,9 @@ impl ReplStore {
                     runtime_specification.kernelspec.language.to_lowercase()
                         == language_at_cursor.code_fence_block_name().to_lowercase()
                 }
-                KernelSpecification::Remote(_) => {
-                    unimplemented!()
+                KernelSpecification::Remote(remote_spec) => {
+                    remote_spec.kernelspec.language.to_lowercase()
+                        == language_at_cursor.code_fence_block_name().to_lowercase()
                 }
             })
             .cloned()

@@ -5,7 +5,6 @@ pub mod assistant_settings;
 mod context;
 pub mod context_store;
 mod inline_assistant;
-mod model_selector;
 mod patch;
 mod prompt_library;
 mod prompts;
@@ -15,15 +14,12 @@ pub mod slash_command_settings;
 mod slash_command_working_set;
 mod streaming_diff;
 mod terminal_inline_assistant;
-mod tool_working_set;
-mod tools;
 
+use crate::slash_command::project_command::ProjectSlashCommandFeatureFlag;
 pub use crate::slash_command_working_set::{SlashCommandId, SlashCommandWorkingSet};
-pub use crate::tool_working_set::{ToolId, ToolWorkingSet};
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
-use assistant_tool::ToolRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
@@ -32,18 +28,16 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::impl_actions;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
-use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
-pub(crate) use model_selector::*;
 pub use patch::*;
 pub use prompts::PromptBuilder;
 use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore};
 use slash_command::search_command::SearchSlashCommandFeatureFlag;
 use slash_command::{
     auto_command, cargo_workspace_command, default_command, delta_command, diagnostics_command,
@@ -205,33 +199,32 @@ pub fn init(
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
 
-    // TODO: remove this when 0.148.0 is released.
-    if AssistantSettings::get_global(cx).using_outdated_settings_version {
-        update_settings_file::<AssistantSettings>(fs.clone(), cx, {
-            let fs = fs.clone();
-            |content, cx| {
-                content.update_file(fs, cx);
-            }
-        });
-    }
+    cx.spawn(|mut cx| {
+        let client = client.clone();
+        async move {
+            let is_search_slash_command_enabled = cx
+                .update(|cx| cx.wait_for_flag::<SearchSlashCommandFeatureFlag>())?
+                .await;
+            let is_project_slash_command_enabled = cx
+                .update(|cx| cx.wait_for_flag::<ProjectSlashCommandFeatureFlag>())?
+                .await;
 
-    if cx.has_flag::<SearchSlashCommandFeatureFlag>() {
-        cx.spawn(|mut cx| {
-            let client = client.clone();
-            async move {
-                let embedding_provider = CloudEmbeddingProvider::new(client.clone());
-                let semantic_index = SemanticDb::new(
-                    paths::embeddings_dir().join("semantic-index-db.0.mdb"),
-                    Arc::new(embedding_provider),
-                    &mut cx,
-                )
-                .await?;
-
-                cx.update(|cx| cx.set_global(semantic_index))
+            if !is_search_slash_command_enabled && !is_project_slash_command_enabled {
+                return Ok(());
             }
-        })
-        .detach();
-    }
+
+            let embedding_provider = CloudEmbeddingProvider::new(client.clone());
+            let semantic_index = SemanticDb::new(
+                paths::embeddings_dir().join("semantic-index-db.0.mdb"),
+                Arc::new(embedding_provider),
+                &mut cx,
+            )
+            .await?;
+
+            cx.update(|cx| cx.set_global(semantic_index))
+        }
+    })
+    .detach();
 
     context_store::init(&client.clone().into());
     prompt_library::init(cx);
@@ -239,7 +232,7 @@ pub fn init(
     assistant_slash_command::init(cx);
     assistant_tool::init(cx);
     assistant_panel::init(cx);
-    context_servers::init(cx);
+    context_server::init(cx);
 
     let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {
         fs: fs.clone(),
@@ -252,7 +245,6 @@ pub fn init(
     .map(Arc::new)
     .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
     register_slash_commands(Some(prompt_builder.clone()), cx);
-    register_tools(cx);
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
@@ -265,7 +257,7 @@ pub fn init(
         client.telemetry().clone(),
         cx,
     );
-    IndexedDocsRegistry::init_global(cx);
+    indexed_docs::init(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(Assistant::NAMESPACE);
@@ -340,8 +332,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, false);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
-    slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
-    slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+    slash_command_registry.register_command(fetch_command::FetchSlashCommand, true);
 
     if let Some(prompt_builder) = prompt_builder {
         cx.observe_flag::<project_command::ProjectSlashCommandFeatureFlag, _>({
@@ -414,11 +405,6 @@ fn update_slash_commands_from_settings(cx: &mut AppContext) {
         slash_command_registry
             .unregister_command(cargo_workspace_command::CargoWorkspaceSlashCommand);
     }
-}
-
-fn register_tools(cx: &mut AppContext) {
-    let tool_registry = ToolRegistry::global(cx);
-    tool_registry.register_tool(tools::now_tool::NowTool);
 }
 
 pub fn humanize_token_count(count: usize) -> String {

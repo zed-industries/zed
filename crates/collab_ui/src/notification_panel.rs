@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
-use ui::{h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label, Tooltip};
+use ui::{
+    h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip,
+};
 use util::{ResultExt, TryFutureExt};
 use workspace::notifications::NotificationId;
 use workspace::{
@@ -588,7 +590,7 @@ impl Render for NotificationPanel {
                     .px_2()
                     .py_1()
                     // Match the height of the tab bar so they line up.
-                    .h(rems(ui::Tab::CONTAINER_HEIGHT_IN_REMS))
+                    .h(Tab::container_height(cx))
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(Label::new("Notifications"))
@@ -660,7 +662,7 @@ impl Panel for NotificationPanel {
         "NotificationPanel"
     }
 
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         NotificationPanelSettings::get_global(cx).dock
     }
 
@@ -676,7 +678,7 @@ impl Panel for NotificationPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| NotificationPanelSettings::get_global(cx).default_width)
     }
@@ -700,7 +702,7 @@ impl Panel for NotificationPanel {
         }
     }
 
-    fn icon(&self, cx: &gpui::WindowContext) -> Option<IconName> {
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
         let show_button = NotificationPanelSettings::get_global(cx).button;
         if !show_button {
             return None;
@@ -728,6 +730,10 @@ impl Panel for NotificationPanel {
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
+    }
+
+    fn activation_priority(&self) -> u32 {
+        8
     }
 }
 

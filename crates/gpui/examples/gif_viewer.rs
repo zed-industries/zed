@@ -1,6 +1,4 @@
-use gpui::{
-    div, img, prelude::*, App, AppContext, ImageSource, Render, ViewContext, WindowOptions,
-};
+use gpui::{div, img, prelude::*, App, AppContext, Render, ViewContext, WindowOptions};
 use std::path::PathBuf;
 
 struct GifViewer {
@@ -16,7 +14,7 @@ impl GifViewer {
 impl Render for GifViewer {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().size_full().child(
-            img(ImageSource::File(self.gif_path.clone().into()))
+            img(self.gif_path.clone())
                 .size_full()
                 .object_fit(gpui::ObjectFit::Contain)
                 .id("gif"),
