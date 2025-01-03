@@ -249,8 +249,9 @@
 
 ; Literals
 
+(character) @string
+
 ([
-  (character)
   (string)
   (multiline_string)
 ] @string

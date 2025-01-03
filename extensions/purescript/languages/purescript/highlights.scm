@@ -18,8 +18,8 @@
 (integer) @number
 (exp_negation) @number
 (exp_literal (number)) @float
+(char) @string
 [
-  (char)
   (string)
   (triple_quote_string)
 ] @string
