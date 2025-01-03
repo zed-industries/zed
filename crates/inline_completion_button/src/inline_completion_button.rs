@@ -266,11 +266,11 @@ impl InlineCompletionButton {
             menu.entry("Sign In", None, copilot::initiate_sign_in)
                 .entry("Disable Copilot", None, {
                     let fs = fs.clone();
-                    move |cx| hide_copilot(fs.clone(), cx)
+                    move |_window, cx| hide_copilot(fs.clone(), cx)
                 })
                 .entry("Use Supermaven", None, {
                     let fs = fs.clone();
-                    move |cx| {
+                    move |_window, cx| {
                         set_completion_provider(
                             fs.clone(),
                             cx,
@@ -329,7 +329,6 @@ impl InlineCompletionButton {
                                     configure_disabled_globs(
                                         workspace,
                                         path_enabled.then_some(path.clone()),
-                                        window,
                                         cx,
                                     )
                                 })
@@ -457,11 +456,10 @@ impl SupermavenButtonStatus {
 async fn configure_disabled_globs(
     workspace: WeakModel<Workspace>,
     path_to_disable: Option<Arc<Path>>,
-    window: &mut Window,
-    cx: &mut AppContext,
+    mut cx: AsyncWindowContext,
 ) -> Result<()> {
     let settings_editor = workspace
-        .update(&mut cx, |_, cx| {
+        .update_in(&mut cx, |_, window, cx| {
             create_and_open_local_file(paths::settings_file(), window, cx, || {
                 settings::initial_user_settings_content().as_ref().into()
             })
@@ -470,40 +468,42 @@ async fn configure_disabled_globs(
         .downcast::<Editor>()
         .unwrap();
 
-    settings_editor.downgrade().update(&mut cx, |item, cx| {
-        let text = item.buffer().read(cx).snapshot(cx).text();
+    settings_editor
+        .downgrade()
+        .update_in(&mut cx, |item, window, cx| {
+            let text = item.buffer().read(cx).snapshot(cx).text();
 
-        let settings = cx.global::<SettingsStore>();
-        let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-            let copilot = file.inline_completions.get_or_insert_with(Default::default);
-            let globs = copilot.disabled_globs.get_or_insert_with(|| {
-                settings
-                    .get::<AllLanguageSettings>(None)
-                    .inline_completions
-                    .disabled_globs
-                    .iter()
-                    .map(|glob| glob.glob().to_string())
-                    .collect()
+            let settings = cx.global::<SettingsStore>();
+            let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
+                let copilot = file.inline_completions.get_or_insert_with(Default::default);
+                let globs = copilot.disabled_globs.get_or_insert_with(|| {
+                    settings
+                        .get::<AllLanguageSettings>(None)
+                        .inline_completions
+                        .disabled_globs
+                        .iter()
+                        .map(|glob| glob.glob().to_string())
+                        .collect()
+                });
+
+                if let Some(path_to_disable) = &path_to_disable {
+                    globs.push(path_to_disable.to_string_lossy().into_owned());
+                } else {
+                    globs.clear();
+                }
             });
 
-            if let Some(path_to_disable) = &path_to_disable {
-                globs.push(path_to_disable.to_string_lossy().into_owned());
-            } else {
-                globs.clear();
-            }
-        });
+            if !edits.is_empty() {
+                item.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
+                    selections.select_ranges(edits.iter().map(|e| e.0.clone()));
+                });
 
-        if !edits.is_empty() {
-            item.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
-                selections.select_ranges(edits.iter().map(|e| e.0.clone()));
-            });
-
-            // When *enabling* a path, don't actually perform an edit, just select the range.
-            if path_to_disable.is_some() {
-                item.edit(edits.iter().cloned(), window, cx);
+                // When *enabling* a path, don't actually perform an edit, just select the range.
+                if path_to_disable.is_some() {
+                    item.edit(edits.iter().cloned(), window, cx);
+                }
             }
-        }
-    })?;
+        })?;
 
     anyhow::Ok(())
 }
