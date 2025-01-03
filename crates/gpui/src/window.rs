@@ -6898,7 +6898,7 @@ impl Window {
     }
 
     /// Returns all available actions for the focused element.
-    pub fn available_actions(&self, cx: &mut AppContext) -> Vec<Box<dyn Action>> {
+    pub fn available_actions(&self, cx: &AppContext) -> Vec<Box<dyn Action>> {
         let node_id = self
             .focus
             .and_then(|focus_id| {

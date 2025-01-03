@@ -107,7 +107,7 @@ impl CommandPalette {
         let delegate =
             CommandPaletteDelegate::new(cx.view().downgrade(), commands, previous_focus_handle);
 
-        let picker = window.new_view(cx, |cx| {
+        let picker = window.new_view(cx, |window, cx| {
             let picker = Picker::uniform_list(delegate, window, cx);
             picker.set_query(query, window, cx);
             picker
@@ -331,7 +331,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             };
 
             picker
-                .update(&mut cx, |picker, cx| {
+                .update_in(&mut cx, |picker, window, cx| {
                     picker
                         .delegate
                         .matches_updated(query, commands, matches, window, cx)
@@ -515,15 +515,15 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let editor = cx.new_view(|cx| {
+        let editor = cx.new_view(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_text("abc", window, cx);
             editor
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
             editor.update(cx, |editor, cx| editor.focus(window, cx))
         });
@@ -560,7 +560,7 @@ mod tests {
         });
 
         // Add namespace filter, and redeploy the palette
-        cx.update(|cx| {
+        cx.update(|_window, cx| {
             CommandPaletteFilter::update_global(cx, |filter, _| {
                 filter.hide_namespace("editor");
             });
@@ -586,15 +586,15 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let editor = cx.new_view(|cx| {
+        let editor = cx.new_view(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_text("abc", window, cx);
             editor
         });
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
             editor.update(cx, |editor, cx| editor.focus(window, cx))
         });
@@ -622,14 +622,14 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         cx.simulate_keystrokes("cmd-n");
 
         let editor = workspace.update(cx, |workspace, cx| {
             workspace.active_item_as::<Editor>(cx).unwrap()
         });
-        editor.update(cx, |editor, cx| {
+        editor.update_in(cx, |editor, window, cx| {
             editor.set_text("1\n2\n3\n4\n5\n6\n", window, cx)
         });
 
@@ -643,8 +643,8 @@ mod tests {
 
         cx.simulate_keystrokes("3 enter");
 
-        editor.update(window, |editor, cx| {
-            assert!(editor.focus_handle(cx).is_focused(cx));
+        editor.update_in(cx, |editor, window, cx| {
+            assert!(editor.focus_handle(cx).is_focused(window));
             assert_eq!(
                 editor.selections.last::<Point>(cx).range().start,
                 Point::new(2, 0)
