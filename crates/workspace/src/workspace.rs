@@ -3053,9 +3053,9 @@ impl Workspace {
     }
 
     fn set_active_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) {
+        self.last_active_center_pane = Some(self.active_pane.downgrade());
         self.active_pane = pane.clone();
         self.active_item_path_changed(cx);
-        self.last_active_center_pane = Some(pane.downgrade());
     }
 
     fn handle_panel_focused(&mut self, cx: &mut ViewContext<Self>) {
