@@ -238,28 +238,6 @@ trait AnySettingValue: 'static + Send + Sync {
     ) -> RootSchema;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ImageFileSizeUnitType {
-    Binary,
-    Decimal,
-}
-
-impl Settings for ImageFileSizeUnitType {
-    const KEY: Option<&'static str> = Some("image_file_unit_type");
-    type FileContent = Self;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        sources.json_merge().or_else(|_| Ok(Self::Binary))
-    }
-}
-
-impl Default for ImageFileSizeUnitType {
-    fn default() -> Self {
-        ImageFileSizeUnitType::Binary
-    }
-}
-
 struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {

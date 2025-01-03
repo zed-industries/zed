@@ -1,7 +1,6 @@
 pub mod image_info;
 
 use std::path::PathBuf;
-
 use anyhow::Context as _;
 use editor::items::entry_git_aware_label_color;
 use gpui::{

@@ -26,3 +26,6 @@ util.workspace = true
 image.workspace = true
 workspace.workspace = true
 fs.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_derive.workspace = true

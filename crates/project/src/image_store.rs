@@ -48,15 +48,20 @@ pub enum ImageStoreEvent {
 
 impl EventEmitter<ImageStoreEvent> for ImageStore {}
 
+#[derive(Clone)]
+pub struct ImageItemMeta {
+    pub width: u32,
+    pub height: u32,
+    pub file_size: u64,
+    pub color_type: &'static str,
+}
+
 pub struct ImageItem {
     pub id: ImageId,
     pub file: Arc<dyn File>,
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-    pub file_size: Option<u64>,
-    pub color_type: Option<&'static str>,
+    pub image_meta: Option<ImageItemMeta>,
 }
 
 fn image_color_type_description(color_type: ColorType) -> &'static str {
@@ -80,35 +85,46 @@ impl ImageItem {
         project: &Project,
         cx: &AppContext,
         fs: Arc<dyn fs::Fs>,
-    ) -> Result<(u32, u32, u64, &'static str), String> {
+    ) -> Result<ImageItemMeta, String> {
         let worktree = project
             .worktree_for_id(image.project_path(cx).worktree_id, cx)
             .ok_or_else(|| "Could not find worktree for image".to_string())?;
         let worktree_root = worktree.read(cx).abs_path();
-
         let path = if image.path().is_absolute() {
             image.path().to_path_buf()
         } else {
             worktree_root.join(image.path())
         };
-
         if !path.exists() {
             return Err(format!("File does not exist at path: {:?}", path));
         }
+        let path_clone = path.to_path_buf();
+        let img = smol::unblock(move || image::open(&path_clone))
+            .await
+            .map_err(|e| format!("Failed to open image: {}", e))?;
 
-        let img = image::open(&path).map_err(|e| format!("Failed to open image: {}", e))?;
-        let dimensions = img.dimensions();
-        let img_color_type = image_color_type_description(img.color());
+        let (width, height, color_type) =
+            smol::unblock(move || -> Result<(u32, u32, &'static str), String> {
+                let dimensions = img.dimensions();
+                let img_color_type = image_color_type_description(img.color());
+                Ok((dimensions.0, dimensions.1, img_color_type))
+            })
+            .await
+            .map_err(|e| format!("Failed to process image: {}", e))?;
 
         let file_metadata = fs
             .metadata(path.as_path())
             .await
             .map_err(|e| format!("Cannot access image data: {}", e))?
             .ok_or_else(|| "No metadata found".to_string())?;
-
         let file_size = file_metadata.len;
 
-        Ok((dimensions.0, dimensions.1, file_size, img_color_type))
+        Ok(ImageItemMeta {
+            width,
+            height,
+            file_size,
+            color_type,
+        })
     }
 
     pub fn project_path(&self, cx: &AppContext) -> ProjectPath {
@@ -127,14 +143,10 @@ impl ImageItem {
         project: &Project,
         cx: &AppContext,
         fs: Arc<dyn fs::Fs>,
-    ) -> Result<(u32, u32, u64, &'static str), String> {
+    ) -> Result<ImageItemMeta, String> {
         match Self::image_info(self, project, cx, fs).await {
             Ok(metadata) => {
-                self.width = Some(metadata.0);
-                self.height = Some(metadata.1);
-                self.file_size = Some(metadata.2);
-                self.color_type = Some(metadata.3);
-
+                self.image_meta = Some(metadata.clone());
                 Ok(metadata)
             }
             Err(err) => {
@@ -236,10 +248,7 @@ impl ProjectItem for ImageItem {
                         cx,
                         fs.clone(),
                     )) {
-                        image.width = Some(metadata.0);
-                        image.height = Some(metadata.1);
-                        image.file_size = Some(metadata.2);
-                        image.color_type = Some(metadata.3);
+                        image.image_meta = Some(metadata)
                     }
                 }) {
                     // image metadata should be avialable now
@@ -496,10 +505,11 @@ impl ImageStoreImpl for Model<LocalImageStore> {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
-                width: None,
-                file_size: None,
-                height: None,
-                color_type: None,
+                // width: None,
+                // file_size: None,
+                // height: None,
+                // color_type: None,
+                image_meta: None,
                 reload_task: None,
             })?;
 

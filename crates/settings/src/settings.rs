@@ -16,7 +16,7 @@ pub use key_equivalents::*;
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
 pub use settings_store::{
-    parse_json_with_comments, ImageFileSizeUnitType, InvalidSettingsError,
+    parse_json_with_comments, InvalidSettingsError,
     LocalSettingsKind, Settings, SettingsLocation, SettingsSources, SettingsStore,
 };
 
@@ -66,8 +66,6 @@ pub fn init(cx: &mut AppContext) {
         .set_default_settings(&default_settings(), cx)
         .unwrap();
     cx.set_global(settings);
-
-    ImageFileSizeUnitType::register(cx);
 }
 
 pub fn default_settings() -> Cow<'static, str> {
