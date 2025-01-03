@@ -23,10 +23,10 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
             register_backward_compatible_actions(editor, window, cx);
 
             let editor_handle = cx.view().downgrade();
-            cx.subscribe(window, {
+            cx.on_release({
                 let editor_handle = editor_handle.clone();
                 let editors = editors.clone();
-                move |_, _, _| {
+                move |_, _| {
                     editors.borrow_mut().remove(&editor_handle);
                 }
             })

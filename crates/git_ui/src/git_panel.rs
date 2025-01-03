@@ -7,10 +7,10 @@ use editor::{
 };
 use git::{diff::DiffHunk, repository::GitFileStatus};
 use gpui::{
-    actions, prelude::*, uniform_list, Action, AppContext, ClickEvent, CursorStyle, EventEmitter,
-    FocusHandle, FocusableView, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    Model, Modifiers, ModifiersChangedEvent, MouseButton, ScrollStrategy, Stateful, Task,
-    UniformListScrollHandle, WeakModel,
+    actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
+    CursorStyle, EventEmitter, FocusHandle, FocusableView, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent,
+    MouseButton, ScrollStrategy, Stateful, Task, UniformListScrollHandle, WeakModel,
 };
 use language::{Buffer, BufferRow, OffsetRangeExt};
 use menu::{SelectNext, SelectPrev};
@@ -147,12 +147,9 @@ impl WorktreeEntries {
 impl GitPanel {
     pub fn load(
         workspace: WeakModel<Workspace>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: AsyncWindowContext,
     ) -> Task<Result<Model<Self>>> {
-        window.spawn(cx, |mut cx| async move {
-            workspace.update_in(&mut cx, Self::new)
-        })
+        cx.spawn(|mut cx| async move { workspace.update_in(&mut cx, Self::new) })
     }
 
     pub fn new(

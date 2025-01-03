@@ -501,8 +501,7 @@ impl ProjectPanel {
 
     pub async fn load(
         workspace: WeakModel<Workspace>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        mut cx: AsyncWindowContext,
     ) -> Result<Model<Self>> {
         let serialized_panel = cx
             .background_executor()
@@ -516,7 +515,7 @@ impl ProjectPanel {
             .log_err()
             .flatten();
 
-        workspace.update(cx, |workspace, cx| {
+        workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = ProjectPanel::new(workspace, window, cx);
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {

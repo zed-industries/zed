@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use gpui::ElementId;
-use gpui::{Model, percentage, Animation, AnimationExt, AnyElement, Transformation, };
+use gpui::{percentage, Animation, AnimationExt, AnyElement, Model, Transformation};
 use picker::Picker;
 use repl::{
     components::{KernelPickerDelegate, KernelSelector},
@@ -32,7 +32,11 @@ struct ReplMenuState {
 }
 
 impl QuickActionBar {
-    pub fn render_repl_menu(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
+    pub fn render_repl_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<AnyElement> {
         if !JupyterSettings::enabled(cx) {
             return None;
         }
@@ -140,7 +144,7 @@ impl QuickActionBar {
                         },
                         {
                             let editor = editor.clone();
-                            move |cx| {
+                            move |window, cx| {
                                 repl::run(editor.clone(), true, window, cx).log_err();
                             }
                         },
@@ -154,7 +158,7 @@ impl QuickActionBar {
                         },
                         {
                             let editor = editor.clone();
-                            move |cx| {
+                            move |window, cx| {
                                 repl::interrupt(editor.clone(), window, cx);
                             }
                         },
@@ -168,7 +172,7 @@ impl QuickActionBar {
                         },
                         {
                             let editor = editor.clone();
-                            move |cx| {
+                            move |window, cx| {
                                 repl::clear_outputs(editor.clone(), window, cx);
                             }
                         },
@@ -183,7 +187,7 @@ impl QuickActionBar {
                         },
                         {
                             let editor = editor.clone();
-                            move |cx| {
+                            move |window, cx| {
                                 repl::shutdown(editor.clone(), window, cx);
                             }
                         },
@@ -197,7 +201,7 @@ impl QuickActionBar {
                         },
                         {
                             let editor = editor.clone();
-                            move |cx| {
+                            move |window, cx| {
                                 repl::restart(editor.clone(), window, cx);
                             }
                         },
@@ -256,7 +260,8 @@ impl QuickActionBar {
     pub fn render_repl_launch_menu(
         &self,
         kernel_specification: KernelSpecification,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<AnyElement> {
         let tooltip: SharedString =
             SharedString::from(format!("Start REPL for {}", kernel_specification.name()));
@@ -270,13 +275,19 @@ impl QuickActionBar {
                         .icon_color(Color::Muted)
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |window, cx| Tooltip::text(tooltip.clone(), window, cx))
-                        .on_click(|_, window, cx| window.dispatch_action(Box::new(repl::Run {}), cx)),
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(repl::Run {}), cx)
+                        }),
                 )
                 .into_any_element(),
         )
     }
 
-    pub fn render_kernel_selector(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    pub fn render_kernel_selector(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let editor = if let Some(editor) = self.active_editor() {
             editor
         } else {
@@ -302,7 +313,7 @@ impl QuickActionBar {
             PopoverMenuHandle::default();
         KernelSelector::new(
             {
-                Box::new(move |kernelspec, cx| {
+                Box::new(move |kernelspec, window, cx| {
                     repl::assign_kernelspec(kernelspec, editor.downgrade(), window, cx).ok();
                 })
             },
@@ -348,7 +359,8 @@ impl QuickActionBar {
     pub fn render_repl_setup(
         &self,
         language: &str,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<AnyElement> {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
         Some(
@@ -370,7 +382,11 @@ impl QuickActionBar {
     }
 }
 
-fn session_state(session: Model<Session>, window: &mut Window, cx: &mut AppContext) -> ReplMenuState {
+fn session_state(
+    session: Model<Session>,
+    window: &mut Window,
+    cx: &mut AppContext,
+) -> ReplMenuState {
     let session = session.read(cx);
 
     let kernel_name = session.kernel_specification.name();

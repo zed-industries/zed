@@ -133,12 +133,12 @@ pub fn initialize_workspace(
     prompt_builder: Arc<PromptBuilder>,
     cx: &mut AppContext,
 ) {
-    cx.observe_new_views(move |workspace: &mut Workspace, cx| {
+    cx.observe_new_views(move |workspace: &mut Workspace, window, cx| {
         let workspace_handle = cx.view().clone();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, window, cx);
         cx.subscribe_in(&workspace_handle, window, {
-            move |workspace, _, event, cx| match event {
+            move |workspace, _, event, window, cx| match event {
                 workspace::Event::PaneAdded(pane) => {
                     initialize_pane(workspace, &pane, window, cx);
                 }
@@ -160,7 +160,7 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, window, cx);
         }
 
-        let inline_completion_button = window.new_view(cx, |cx| {
+        let inline_completion_button = window.new_view(cx, |window, cx| {
             inline_completion_button::InlineCompletionButton::new(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
@@ -169,7 +169,7 @@ pub fn initialize_workspace(
             )
         });
 
-        let diagnostic_summary = window.new_view(cx, |cx| {
+        let diagnostic_summary = window.new_view(cx, |window, cx| {
             diagnostics::items::DiagnosticIndicator::new(workspace, window, cx)
         });
         let activity_indicator = activity_indicator::ActivityIndicator::new(
@@ -178,14 +178,14 @@ pub fn initialize_workspace(
             window,
             cx,
         );
-        let active_buffer_language = window.new_view(cx, |_| {
+        let active_buffer_language = window.new_view(cx, |_, _| {
             language_selector::ActiveBufferLanguage::new(workspace)
         });
-        let active_toolchain_language = window.new_view(cx, |cx| {
+        let active_toolchain_language = window.new_view(cx, |window, cx| {
             toolchain_selector::ActiveToolchain::new(workspace, window, cx)
         });
-        let vim_mode_indicator = window.new_view(vim::ModeIndicator::new, cx);
-        let cursor_position = window.new_view(cx, |_| {
+        let vim_mode_indicator = window.new_view(cx, vim::ModeIndicator::new);
+        let cursor_position = window.new_view(cx, |_, _| {
             go_to_line::cursor_position::CursorPosition::new(workspace)
         });
         workspace.status_bar().update(cx, |status_bar, cx| {
@@ -198,7 +198,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(cursor_position, window, cx);
         });
 
-        auto_update_ui::notify_of_any_new_update_in(window, cx);
+        auto_update_ui::notify_of_any_new_update(window, cx);
 
         let handle = cx.view().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -325,7 +325,7 @@ fn initialize_panels(
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
-            colab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+            collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let chat_panel =
             collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
         let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
@@ -353,7 +353,7 @@ fn initialize_panels(
             assistant_panel,
         )?;
 
-        workspace_handle.update(&mut cx, |workspace, cx| {
+        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
             workspace.add_panel(project_panel, window, cx);
             workspace.add_panel(outline_panel, window, cx);
             workspace.add_panel(terminal_panel, window, cx);
@@ -369,7 +369,7 @@ fn initialize_panels(
         } else {
             None
         };
-        workspace_handle.update(&mut cx, |workspace, cx| {
+        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
             if let Some(git_panel) = git_panel {
                 workspace.add_panel(git_panel, window, cx);
             }
@@ -385,7 +385,7 @@ fn initialize_panels(
         } else {
             None
         };
-        workspace_handle.update(&mut cx, |workspace, cx| {
+        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
             if let Some(assistant2_panel) = assistant2_panel {
                 workspace.add_panel(assistant2_panel, window, cx);
             }
@@ -450,7 +450,7 @@ fn register_actions(
                 };
 
                 if let Some(task) = this
-                    .update(&mut cx, |this, cx| {
+                    .update_in(&mut cx, |this, window, cx| {
                         if this.project().read(cx).is_local() {
                             this.open_workspace_for_paths(false, paths, window, cx)
                         } else {
@@ -498,7 +498,7 @@ fn register_actions(
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, |workspace, mut cx| async move {
                 register_zed_scheme(&cx).await?;
-                workspace.update(&mut cx, |workspace, cx| {
+                workspace.update_in(&mut cx, |workspace, window, cx| {
                     struct RegisterZedScheme;
 
                     workspace.show_toast(
@@ -674,7 +674,7 @@ fn register_actions(
         )
         .register_action({
             let app_state = Arc::downgrade(&app_state);
-            move |_, _: &NewWindow, cx| {
+            move |_, _: &NewWindow, window, cx| {
                 if let Some(app_state) = app_state.upgrade() {
                     open_new(
                         Default::default(),
@@ -690,7 +690,7 @@ fn register_actions(
         })
         .register_action({
             let app_state = Arc::downgrade(&app_state);
-            move |_, _: &NewFile, cx| {
+            move |_, _: &NewFile, window, cx| {
                 if let Some(app_state) = app_state.upgrade() {
                     open_new(
                         Default::default(),
@@ -706,7 +706,7 @@ fn register_actions(
         });
     if workspace.project().read(cx).is_via_ssh() {
         workspace.register_action({
-            move |workspace, _: &OpenServerSettings, cx| {
+            move |workspace, _: &OpenServerSettings, window, cx| {
                 let open_server_settings = workspace
                     .project()
                     .update(cx, |project, cx| project.open_server_settings(cx));
@@ -715,7 +715,7 @@ fn register_actions(
                     let buffer = open_server_settings.await?;
 
                     workspace
-                        .update(&mut cx, |workspace, cx| {
+                        .update_in(&mut cx, |workspace, window, cx| {
                             workspace.open_path(
                                 buffer
                                     .read(cx)
@@ -745,29 +745,30 @@ fn initialize_pane(
 ) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
-            let multibuffer_hint = window.new_view(cx, |_| MultibufferHint::new());
+            let multibuffer_hint = window.new_view(cx, |_, _| MultibufferHint::new());
             toolbar.add_item(multibuffer_hint, window, cx);
-            let breadcrumbs = window.new_view(cx, |_| Breadcrumbs::new());
+            let breadcrumbs = window.new_view(cx, |_, _| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, window, cx);
-            let buffer_search_bar = window.new_view(search::BufferSearchBar::new, cx);
+            let buffer_search_bar = window.new_view(cx, search::BufferSearchBar::new);
             toolbar.add_item(buffer_search_bar.clone(), window, cx);
 
-            let proposed_change_bar = window.new_view(cx, |_| ProposedChangesEditorToolbar::new());
+            let proposed_change_bar =
+                window.new_view(cx, |_, _| ProposedChangesEditorToolbar::new());
             toolbar.add_item(proposed_change_bar, window, cx);
-            let quick_action_bar = window.new_view(cx, |cx| {
+            let quick_action_bar = window.new_view(cx, |window, cx| {
                 QuickActionBar::new(buffer_search_bar, workspace, window, cx)
             });
             toolbar.add_item(quick_action_bar, window, cx);
             let diagnostic_editor_controls =
-                window.new_view(cx, |_| diagnostics::ToolbarControls::new());
+                window.new_view(cx, |_, _| diagnostics::ToolbarControls::new());
             toolbar.add_item(diagnostic_editor_controls, window, cx);
-            let project_search_bar = window.new_view(cx, |_| ProjectSearchBar::new());
+            let project_search_bar = window.new_view(cx, |_, _| ProjectSearchBar::new());
             toolbar.add_item(project_search_bar, window, cx);
             let lsp_log_item =
-                window.new_view(cx, |_| language_tools::LspLogToolbarItemView::new());
+                window.new_view(cx, |_, _| language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, window, cx);
             let syntax_tree_item =
-                window.new_view(cx, |_| language_tools::SyntaxTreeToolbarItemView::new());
+                window.new_view(cx, |_, _| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
         })
     });
@@ -819,7 +820,7 @@ fn install_cli(
             .await
             .context("error creating CLI symlink")?;
 
-        workspace.update(&mut cx, |workspace, cx| {
+        workspace.update_in(&mut cx, |workspace, window, cx| {
             struct InstalledZedCli;
 
             workspace.show_toast(
@@ -930,7 +931,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelC
                 };
 
                 workspace
-                    .update(&mut cx, |workspace, cx| {
+                    .update_in(&mut cx, |workspace, window, cx| {
                         let Some(log) = log else {
                             struct OpenLogError;
 
@@ -939,7 +940,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelC
                                 window,
                                 cx,
                                 |window, cx| {
-                                    window.new_view(cx, |_| {
+                                    window.new_view(cx, |_, _| {
                                         MessageNotification::new(format!(
                                             "Unable to access/open log file at path {:?}",
                                             paths::log_file().as_path()
@@ -957,7 +958,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelC
                         let buffer = cx.new_model(|cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
                         });
-                        let editor = window.new_view(cx, |cx| {
+                        let editor = window.new_view(cx, |window, cx| {
                             let mut editor =
                                 Editor::for_multibuffer(buffer, Some(project), true, window, cx);
                             editor.set_breadcrumb_header(format!(
@@ -1167,7 +1168,7 @@ fn open_local_file(
             }
 
             let editor = workspace
-                .update(&mut cx, |workspace, cx| {
+                .update_in(&mut cx, |workspace, window, cx| {
                     workspace.open_path((tree_id, settings_relative_path), None, true, window, cx)
                 })?
                 .await?
@@ -1198,7 +1199,7 @@ fn open_local_file(
             window,
             cx,
             |window, cx| {
-                window.new_view(cx, |_| {
+                window.new_view(cx, |_, _| {
                     MessageNotification::new("This project has no folders open.")
                 })
             },
@@ -1235,14 +1236,14 @@ fn open_telemetry_log_file(
             let content = format!("{}\n{}", header, log_suffix);
             let json = app_state.languages.language_for_name("JSON").await.log_err();
 
-            workspace.update(&mut cx, |workspace, cx| {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
                 let project = workspace.project().clone();
                 let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json, cx));
                 let buffer = cx.new_model(|cx| {
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item_to_active_pane(
-                    Box::new(window.new_view(cx, |cx| {
+                    Box::new(window.new_view(cx, |window, cx| {
                         let mut editor = Editor::for_multibuffer(buffer, Some(project), true, window, cx);
                         editor.set_breadcrumb_header("Telemetry Log".into());
                         editor
@@ -1271,7 +1272,7 @@ fn open_bundled_file(
     cx.spawn_in(window, |workspace, mut cx| async move {
         let language = language.await.log_err();
         workspace
-            .update(&mut cx, |workspace, cx| {
+            .update_in(&mut cx, |workspace, window, cx| {
                 workspace.with_local_workspace(window, cx, |workspace, window, cx| {
                     let project = workspace.project();
                     let buffer = project.update(cx, move |project, cx| {
@@ -1281,7 +1282,7 @@ fn open_bundled_file(
                         MultiBuffer::singleton(buffer, cx).with_title(title.into())
                     });
                     workspace.add_item_to_active_pane(
-                        Box::new(window.new_view(cx, |cx| {
+                        Box::new(window.new_view(cx, |window, cx| {
                             let mut editor = Editor::for_multibuffer(
                                 buffer,
                                 Some(project.clone()),
@@ -1313,7 +1314,7 @@ fn open_settings_file(
 ) {
     cx.spawn_in(window, |workspace, mut cx| async move {
         let (worktree_creation_task, settings_open_task) = workspace
-            .update(&mut cx, |workspace, cx| {
+            .update_in(&mut cx, |workspace, window, cx| {
                 workspace.with_local_workspace(window, cx, move |workspace, window, cx| {
                     let worktree_creation_task = workspace.project().update(cx, |project, cx| {
                         // Set up a dedicated worktree for settings, since
@@ -1466,14 +1467,14 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         workspace_1
-            .update_in(window, |workspace, window, cx| {
+            .update(cx, |workspace, window, cx| {
                 assert_eq!(workspace.worktrees(cx).count(), 2);
                 assert!(workspace.left_dock().read(cx).is_open());
                 assert!(workspace
                     .active_pane()
                     .read(cx)
                     .focus_handle(cx)
-                    .is_focused(cx));
+                    .is_focused(window));
             })
             .unwrap();
 
@@ -1512,7 +1513,7 @@ mod tests {
             .update(|cx| cx.windows()[0].downcast::<Workspace>())
             .unwrap();
         workspace_1
-            .update_in(window, |workspace, window, cx| {
+            .update(cx, |workspace, window, cx| {
                 assert_eq!(
                     workspace
                         .worktrees(cx)
@@ -1521,7 +1522,7 @@ mod tests {
                     &[Path::new("/root/e").into()]
                 );
                 assert!(workspace.left_dock().read(cx).is_open());
-                assert!(workspace.active_pane().focus_handle(cx).is_focused(cx));
+                assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
             })
             .unwrap();
     }
@@ -1625,7 +1626,7 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
         let window2 = cx.update(|cx| cx.active_window().unwrap());
         assert!(window1 != window2);
-        cx.update_window(window1, |_, cx| window.activate_window())
+        cx.update_window(window1, |_, window, cx| window.activate_window())
             .unwrap();
 
         cx.update(|cx| {
@@ -1976,7 +1977,7 @@ mod tests {
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
-        let window = cx.add_window(|cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -2359,7 +2360,7 @@ mod tests {
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
-        let window = cx.add_window(|cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
         let initial_entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -2457,7 +2458,7 @@ mod tests {
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
-        let window = cx.add_window(|cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
         // Open a file within an existing worktree.
@@ -2523,7 +2524,7 @@ mod tests {
             project.languages().add(markdown_language());
             project.languages().add(rust_lang());
         });
-        let window = cx.add_window(|cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let worktree = cx.update(|cx| window.read(cx).unwrap().worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
@@ -2661,7 +2662,7 @@ mod tests {
             project.languages().add(rust_lang());
             project.languages().add(markdown_language());
         });
-        let window = cx.add_window(|cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
 
         // Create a new untitled buffer
         cx.dispatch_action(window.into(), NewFile);
@@ -2732,7 +2733,7 @@ mod tests {
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
-        let window = cx.add_window(|cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
@@ -2828,7 +2829,8 @@ mod tests {
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
-        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace
             .read_with(cx, |workspace, _| workspace.active_pane().clone())
             .unwrap();
@@ -3211,7 +3213,7 @@ mod tests {
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
-        let workspace = cx.add_window(|cx| Workspace::test_new(project, window, cx));
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace
             .read_with(cx, |workspace, _| workspace.active_pane().clone())
             .unwrap();
@@ -3304,28 +3306,28 @@ mod tests {
         // Reopen all the closed items, ensuring they are reopened in the same order
         // in which they were closed.
         workspace
-            .update_in(window, cx, Workspace::reopen_closed_item)
+            .update(cx, Workspace::reopen_closed_item)
             .unwrap()
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         workspace
-            .update_in(window, cx, Workspace::reopen_closed_item)
+            .update(cx, Workspace::reopen_closed_item)
             .unwrap()
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
         workspace
-            .update_in(window, cx, Workspace::reopen_closed_item)
+            .update(cx, Workspace::reopen_closed_item)
             .unwrap()
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         workspace
-            .update_in(window, cx, Workspace::reopen_closed_item)
+            .update(cx, Workspace::reopen_closed_item)
             .unwrap()
             .await
             .unwrap();
@@ -3333,7 +3335,7 @@ mod tests {
 
         // Reopening past the last closed item is a no-op.
         workspace
-            .update_in(window, cx, Workspace::reopen_closed_item)
+            .update(cx, Workspace::reopen_closed_item)
             .unwrap()
             .await
             .unwrap();
@@ -3444,7 +3446,8 @@ mod tests {
         let executor = cx.executor();
         let app_state = init_keymap_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         actions!(test1, [A, B]);
         // From the Atom keymap
@@ -3550,7 +3553,8 @@ mod tests {
         let executor = cx.executor();
         let app_state = init_keymap_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         actions!(test2, [A, B]);
         // From the Atom keymap

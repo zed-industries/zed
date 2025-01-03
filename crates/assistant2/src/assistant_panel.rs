@@ -70,10 +70,9 @@ pub struct AssistantPanel {
 impl AssistantPanel {
     pub fn load(
         workspace: WeakModel<Workspace>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: AsyncWindowContext,
     ) -> Task<Result<Model<Self>>> {
-        window.spawn(cx, |mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let tools = Arc::new(ToolWorkingSet::default());
             let thread_store = workspace
                 .update(&mut cx, |workspace, cx| {

@@ -621,7 +621,7 @@ fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
             .update(cx, |workspace, window, cx| match &error {
                 Some(error) => {
                     workspace.show_notification(id.clone(), window, cx, |window, cx| {
-                        window.new_view(cx, |_| {
+                        window.new_view(cx, |_, _| {
                             MessageNotification::new(format!("Invalid keymap file\n{error}"))
                                 .with_click_message("Open keymap file")
                                 .on_click(|window, cx| {
@@ -653,7 +653,7 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                             // Local settings will be displayed by the projects
                         } else {
                             workspace.show_notification(id.clone(), window, cx, |window, cx| {
-                                window.new_view(cx, |_| {
+                                window.new_view(cx, |_, _| {
                                     MessageNotification::new(format!(
                                         "Invalid user settings file\n{error}"
                                     ))
@@ -752,7 +752,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                 let mut promises = Vec::new();
                 for (channel_id, heading) in request.open_channel_notes {
-                    promises.push(cx.update_window(workspace_window.into(), |_, cx| {
+                    promises.push(cx.update_window(workspace_window.into(), |_, window, cx| {
                         ChannelView::open(
                             client::ChannelId(channel_id),
                             heading,

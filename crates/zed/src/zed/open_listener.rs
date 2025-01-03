@@ -472,7 +472,7 @@ async fn open_local_workspace(
                     if paths_with_position.is_empty() {
                         let (done_tx, done_rx) = oneshot::channel();
                         let _subscription = workspace.update(cx, |_, window, cx| {
-                            cx.subscribe_in(window, move |_, _, _, _| {
+                            cx.on_release(move |_, _| {
                                 let _ = done_tx.send(());
                             })
                         });

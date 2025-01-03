@@ -200,10 +200,9 @@ impl ChatPanel {
 
     pub fn load(
         workspace: WeakModel<Workspace>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: AsyncWindowContext,
     ) -> Task<Result<Model<Self>>> {
-        window.spawn(cx, |mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
                 .background_executor()
                 .spawn(async move { KEY_VALUE_STORE.read_kvp(CHAT_PANEL_KEY) })

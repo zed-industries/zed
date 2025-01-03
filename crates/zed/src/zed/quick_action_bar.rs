@@ -129,7 +129,7 @@ impl Render for QuickActionBar {
                 "Buffer Search",
                 {
                     let buffer_search_bar = self.buffer_search_bar.clone();
-                    move |_, cx| {
+                    move |_, window, cx| {
                         buffer_search_bar.update(cx, |search_bar, cx| {
                             search_bar.toggle(&buffer_search::Deploy::find(), window, cx)
                         });
@@ -147,7 +147,7 @@ impl Render for QuickActionBar {
             "Inline Assist",
             {
                 let workspace = self.workspace.clone();
-                move |_, cx| {
+                move |_, window, cx| {
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
                             AssistantPanel::inline_assist(
@@ -240,7 +240,7 @@ impl Render for QuickActionBar {
                                 Some(editor::actions::ToggleInlayHints.boxed_clone()),
                                 {
                                     let editor = editor.clone();
-                                    move |cx| {
+                                    move |window, cx| {
                                         editor
                                             .update(cx, |editor, cx| {
                                                 editor.toggle_inlay_hints(
@@ -262,7 +262,7 @@ impl Render for QuickActionBar {
                             Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
                             {
                                 let editor = editor.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     editor
                                         .update(cx, |editor, cx| {
                                             editor.toggle_selection_menu(
@@ -283,7 +283,7 @@ impl Render for QuickActionBar {
                             Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
                             {
                                 let editor = editor.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     editor
                                         .update(cx, |editor, cx| {
                                             editor.toggle_auto_signature_help_menu(
@@ -306,7 +306,7 @@ impl Render for QuickActionBar {
                             Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
                             {
                                 let editor = editor.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     editor
                                         .update(cx, |editor, cx| {
                                             editor.toggle_git_blame_inline(
@@ -327,7 +327,7 @@ impl Render for QuickActionBar {
                             Some(editor::actions::ToggleGitBlame.boxed_clone()),
                             {
                                 let editor = editor.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     editor
                                         .update(cx, |editor, cx| {
                                             editor.toggle_git_blame(
@@ -349,7 +349,7 @@ impl Render for QuickActionBar {
                             IconPosition::Start,
                             None,
                             {
-                                move |cx| {
+                                move |window, cx| {
                                     let new_value = !vim_mode_enabled;
                                     VimModeSetting::override_global(VimModeSetting(new_value), cx);
                                     window.refresh();
@@ -427,7 +427,7 @@ impl RenderOnce for QuickActionBarButton {
             .tooltip(move |window, cx| {
                 Tooltip::for_action_in(tooltip.clone(), &*action, &self.focus_handle, window, cx)
             })
-            .on_click(move |event, window, cx| (self.on_click)(event, cx))
+            .on_click(move |event, window, cx| (self.on_click)(event, window, cx))
     }
 }
 
