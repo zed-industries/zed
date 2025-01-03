@@ -2433,22 +2433,46 @@ fn assert_point_translation(snapshot: &MultiBufferSnapshot) {
     let positions = (0..=text.len())
         .map(|ix| (ix, text.offset_to_point(ix), snapshot.anchor_after(ix)))
         .collect::<Vec<_>>();
-    for (ix, point, anchor) in positions.iter().cloned() {
-        assert_eq!(snapshot.offset_to_point(ix), point, "offset_to_point({ix})");
+    for (offset, point, anchor) in positions.iter().cloned() {
+        assert_eq!(
+            snapshot.offset_to_point(offset),
+            point,
+            "offset_to_point({offset})"
+        );
         assert_eq!(
             snapshot.point_to_offset(point),
-            ix,
+            offset,
             "point_to_offset({point:?})"
         );
         assert_eq!(
             snapshot.summary_for_anchor::<usize>(&anchor),
-            ix,
+            offset,
             "summary_for_anchor({anchor:?}). text:\n{text}"
         );
         assert_eq!(
             snapshot.summary_for_anchor::<Point>(&anchor),
             point,
             "summary_for_anchor({anchor:?}). text:\n{text}"
+        );
+        assert_eq!(
+            snapshot.clip_offset(offset, Bias::Left),
+            offset,
+            "clip_offset({offset:?}, Left)"
+        );
+        assert_eq!(
+            snapshot.clip_offset(offset, Bias::Right),
+            offset,
+            "clip_offset({offset:?}, Right)"
+        );
+        assert_eq!(
+            snapshot.clip_point(point, Bias::Left),
+            point,
+            "clip_point({point:?}, Left)"
+        );
+        assert_eq!(
+            snapshot.clip_point(point, Bias::Right),
+            point,
+            "clip_point({point:?}, Right)"
         );
     }
 
