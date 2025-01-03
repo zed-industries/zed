@@ -1069,6 +1069,17 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
 
+    #[cfg(not(target_os = "windows"))]
+    fn to_path_buf(path: &str) -> PathBuf {
+        PathBuf::from(path)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn to_path_buf(path: &str) -> PathBuf {
+        let path = path.replace("/root", "C:/");
+        PathBuf::from(path)
+    }
+
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
         let (copilot, mut lsp) = Copilot::fake(cx);
@@ -1130,7 +1141,7 @@ mod tests {
         buffer_1.update(cx, |buffer, cx| {
             buffer.file_updated(
                 Arc::new(File {
-                    abs_path: "/root/child/buffer-1".into(),
+                    abs_path: to_path_buf("/root/child/buffer-1"),
                     path: Path::new("child/buffer-1").into(),
                 }),
                 cx,
@@ -1143,7 +1154,7 @@ mod tests {
                 text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri),
             }
         );
-        let buffer_1_uri = lsp::Url::from_file_path("/root/child/buffer-1").unwrap();
+        let buffer_1_uri = lsp::Url::from_file_path(to_path_buf("/root/child/buffer-1")).unwrap();
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,
