@@ -5125,9 +5125,8 @@ fn header_jump_data(
         jump_position.row - excerpt_start_row
     };
 
-    let line_offset_from_top = block_row_start.0
-        + height
-        + offset_from_excerpt_start.saturating_sub(
+    let line_offset_from_top = (block_row_start.0 + height + offset_from_excerpt_start)
+        .saturating_sub(
             snapshot
                 .scroll_anchor
                 .scroll_position(&snapshot.display_snapshot)
