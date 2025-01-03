@@ -147,12 +147,7 @@ impl ProposedChangesEditor {
         })
     }
 
-    pub fn set_title(
-        &mut self,
-        title: SharedString,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_title(&mut self, title: SharedString, cx: &mut ModelContext<Self>) {
         self.title = title;
         cx.notify();
     }

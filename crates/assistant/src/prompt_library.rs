@@ -11,8 +11,8 @@ use futures::{
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, point, size, transparent_black, Action, AppContext, BackgroundExecutor, Bounds,
-    EventEmitter, Global, Model, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
-    TitlebarOptions, UpdateGlobal, WindowBounds, WindowHandle, WindowOptions,
+    EventEmitter, FocusableView, Global, Model, PromptLevel, ReadGlobal, Subscription, Task,
+    TextStyle, TitlebarOptions, UpdateGlobal, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{
     types::{SerdeBincode, SerdeJson, Str},
@@ -215,7 +215,7 @@ impl PickerDelegate for PromptPickerDelegate {
                 })
                 .await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.delegate.matches = matches;
                 this.delegate.set_selected_index(selected_index, window, cx);
                 cx.notify();
@@ -351,7 +351,7 @@ impl PromptLibrary {
             matches: Vec::new(),
         };
 
-        let picker = window.new_view(cx, |cx| {
+        let picker = window.new_view(cx, |window, cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .modal(false)
                 .max_height(None);
@@ -364,14 +364,14 @@ impl PromptLibrary {
             prompt_editors: HashMap::default(),
             active_prompt_id: None,
             pending_load: Task::ready(()),
-            _subscriptions: vec![cx.subscribe(&picker, Self::handle_picker_event)],
+            _subscriptions: vec![cx.subscribe_in(&picker, window, Self::handle_picker_event)],
             picker,
         }
     }
 
     fn handle_picker_event(
         &mut self,
-        _: Model<Picker<PromptPickerDelegate>>,
+        _: &Model<Picker<PromptPickerDelegate>>,
         event: &PromptPickerEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -408,7 +408,7 @@ impl PromptLibrary {
             .update(cx, |picker, cx| picker.refresh(window, cx));
         cx.spawn_in(window, |this, mut cx| async move {
             save.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.load_prompt(prompt_id, true, window, cx)
             })
         })
@@ -466,7 +466,7 @@ impl PromptLibrary {
                                 .save(prompt_id, title, prompt_metadata.default, body)
                                 .await
                                 .log_err();
-                            this.update(&mut cx, |this, cx| {
+                            this.update_in(&mut cx, |this, window, cx| {
                                 this.picker
                                     .update(cx, |picker, cx| picker.refresh(window, cx));
                                 cx.notify();
@@ -549,7 +549,7 @@ impl PromptLibrary {
                 let markdown = language_registry.language_for_name("Markdown").await;
                 this.update_in(&mut cx, |this, window, cx| match prompt {
                     Ok(prompt) => {
-                        let title_editor = window.new_view(cx, |cx| {
+                        let title_editor = window.new_view(cx, |window, cx| {
                             let mut editor = Editor::auto_width(window, cx);
                             editor.set_placeholder_text("Untitled", window, cx);
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), window, cx);
@@ -688,7 +688,7 @@ impl PromptLibrary {
 
             cx.spawn_in(window, |this, mut cx| async move {
                 if confirmation.await.ok() == Some(0) {
-                    this.update(&mut cx, |this, cx| {
+                    this.update_in(&mut cx, |this, window, cx| {
                         if this.active_prompt_id == Some(prompt_id) {
                             this.set_active_prompt(None, window, cx);
                         }
@@ -744,7 +744,7 @@ impl PromptLibrary {
                 .update(cx, |picker, cx| picker.refresh(window, cx));
             cx.spawn_in(window, |this, mut cx| async move {
                 save.await?;
-                this.update(&mut cx, |prompt_library, cx| {
+                this.update_in(&mut cx, |prompt_library, window, cx| {
                     prompt_library.load_prompt(new_id, true, window, cx)
                 })
             })
@@ -834,7 +834,7 @@ impl PromptLibrary {
     fn handle_prompt_title_editor_event(
         &mut self,
         prompt_id: PromptId,
-        title_editor: Model<Editor>,
+        title_editor: &Model<Editor>,
         event: &EditorEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -859,7 +859,7 @@ impl PromptLibrary {
     fn handle_prompt_body_editor_event(
         &mut self,
         prompt_id: PromptId,
-        body_editor: Model<Editor>,
+        body_editor: &Model<Editor>,
         event: &EditorEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,

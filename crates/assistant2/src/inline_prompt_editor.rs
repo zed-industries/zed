@@ -265,7 +265,7 @@ impl<T: 'static> PromptEditor<T> {
             PromptEditorMode::Terminal { .. } => "Generate",
         };
 
-        let assistant_panel_keybinding = ui::text_for_action(&crate::ToggleFocus, window, cx)
+        let assistant_panel_keybinding = ui::text_for_action(&crate::ToggleFocus, window)
             .map(|keybinding| format!("{keybinding} to chat ― "))
             .unwrap_or_default();
 

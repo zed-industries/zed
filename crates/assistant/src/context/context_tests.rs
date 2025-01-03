@@ -35,7 +35,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToOffset};
-use ui::{AppContext, IconName, Window};
+use ui::{IconName, Window};
 use unindent::Unindent;
 use util::{
     test::{generate_marked_text, marked_text_ranges},

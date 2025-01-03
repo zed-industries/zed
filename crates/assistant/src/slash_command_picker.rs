@@ -114,7 +114,7 @@ impl PickerDelegate for SlashCommandDelegate {
                 })
                 .await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.delegate.filtered_commands = filtered_commands;
                 this.delegate.set_selected_index(0, window, cx);
                 cx.notify();
@@ -165,7 +165,7 @@ impl PickerDelegate for SlashCommandDelegate {
                         .ok();
                 }
                 SlashCommandEntry::Advert { on_confirm, .. } => {
-                    on_confirm(cx);
+                    on_confirm(window, cx);
                 }
             }
             cx.emit(DismissEvent);
@@ -195,7 +195,7 @@ impl PickerDelegate for SlashCommandDelegate {
                     .toggle_state(selected)
                     .tooltip({
                         let description = info.description.clone();
-                        move |cx| {
+                        move |window, cx| {
                             window
                                 .new_view(cx, |_, _| Tooltip::new(description.clone()))
                                 .into()
@@ -212,7 +212,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                 h_flex()
                                     .gap_1p5()
                                     .child(Icon::new(info.icon).size(IconSize::XSmall))
-                                    .child(div().font_buffer(window, cx).child({
+                                    .child(div().font_buffer(cx).child({
                                         let mut label = format!("{}", info.name);
                                         if let Some(args) = info.args.as_ref().filter(|_| selected)
                                         {
@@ -223,7 +223,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                     .children(info.args.clone().filter(|_| !selected).map(
                                         |args| {
                                             div()
-                                                .font_buffer(window, cx)
+                                                .font_buffer(cx)
                                                 .child(
                                                     Label::new(args)
                                                         .single_line()
@@ -249,7 +249,7 @@ impl PickerDelegate for SlashCommandDelegate {
                     .inset(true)
                     .spacing(ListItemSpacing::Dense)
                     .toggle_state(selected)
-                    .child(renderer(cx)),
+                    .child(renderer(window, cx)),
             ),
         }
     }
@@ -279,13 +279,13 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             })
             .chain([SlashCommandEntry::Advert {
                 name: "create-your-command".into(),
-                renderer: |cx| {
+                renderer: |window, cx| {
                     v_flex()
                         .w_full()
                         .child(
                             h_flex()
                                 .w_full()
-                                .font_buffer(window, cx)
+                                .font_buffer(cx)
                                 .items_center()
                                 .justify_between()
                                 .child(
@@ -294,7 +294,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                                         .gap_1p5()
                                         .child(Icon::new(IconName::Plus).size(IconSize::XSmall))
                                         .child(
-                                            div().font_buffer(window, cx).child(
+                                            div().font_buffer(cx).child(
                                                 Label::new("create-your-command")
                                                     .size(LabelSize::Small),
                                             ),
@@ -313,7 +313,9 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                         )
                         .into_any_element()
                 },
-                on_confirm: |cx| cx.open_url("https://zed.dev/docs/extensions/slash-commands"),
+                on_confirm: |window, cx| {
+                    cx.open_url("https://zed.dev/docs/extensions/slash-commands")
+                },
             }])
             .collect::<Vec<_>>();
 

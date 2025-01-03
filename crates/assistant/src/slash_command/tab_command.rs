@@ -176,7 +176,7 @@ fn tab_items_for_queries(
         let mut open_buffers =
             workspace
                 .context("no workspace")?
-                .update(&mut cx, |workspace, cx| {
+                .update_in(&mut cx, |workspace, window, cx| {
                     if strict_match && empty_query {
                         let snapshot = active_item_buffer(workspace, window, cx)?;
                         let full_path = snapshot.resolve_file_path(cx, true);

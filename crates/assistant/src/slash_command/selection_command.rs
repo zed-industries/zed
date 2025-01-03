@@ -9,7 +9,7 @@ use gpui::{AppContext, Task, WeakModel};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use ui::{AppContext, IconName, SharedString, Window};
+use ui::{IconName, SharedString, Window};
 use workspace::Workspace;
 
 pub(crate) struct SelectionCommand;
@@ -67,7 +67,7 @@ impl SlashCommand for SelectionCommand {
         let mut events = vec![];
 
         let Some(creases) = workspace
-            .update_in(cx, selections_creases)
+            .update(cx, selections_creases)
             .unwrap_or_else(|e| {
                 events.push(Err(e));
                 None

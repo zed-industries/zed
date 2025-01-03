@@ -117,7 +117,7 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("no project indexer")));
         };
 
-        let task = window.spawn(cx, |window: &mut Window, cx: &mut AppContext| async move {
+        let task = window.spawn(cx, |cx| async move {
             let summaries = project_index
                 .read_with(&cx, |project_index, cx| project_index.all_summaries(cx))?
                 .await?;

@@ -204,11 +204,7 @@ impl KeyIcon {
 }
 
 /// Returns a textual representation of the key binding for the given [`Action`].
-pub fn text_for_action(
-    action: &dyn Action,
-    window: &mut Window,
-    cx: &mut AppContext,
-) -> Option<String> {
+pub fn text_for_action(action: &dyn Action, window: &Window) -> Option<String> {
     let key_binding = window.bindings_for_action(action).last().cloned()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }

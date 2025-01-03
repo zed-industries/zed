@@ -440,6 +440,29 @@ impl AppContext {
         })
     }
 
+    /// Arrange for the given callback to be invoked whenever the given model or view calls `notify` on its respective context.
+    /// The callback is provided a handle to the emitting entity and a reference to the window.
+    pub fn observe_in<T, E>(
+        &mut self,
+        entity: &E,
+        window: &Window,
+        mut on_notify: impl FnMut(E, &mut Window, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+        E: Entity<T>,
+    {
+        let window_handle = window.handle;
+        self.observe_internal(entity, move |entity, cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    on_notify(entity, window, cx);
+                    true
+                })
+                .unwrap_or(false)
+        })
+    }
+
     pub(crate) fn new_observer(&mut self, key: EntityId, value: Handler) -> Subscription {
         let (subscription, activate) = self.observers.insert(key, value);
         self.defer(move |_| activate());
@@ -484,6 +507,30 @@ impl AppContext {
         self.subscribe_internal(entity, move |entity, event, cx| {
             on_event(entity, event, cx);
             true
+        })
+    }
+
+    /// Arrange for the given callback to be invoked whenever the given model or view emits an event of a given type.
+    /// The callback is provided a handle to the emitting entity, a reference to the emitted event and a reference to the window.
+    pub fn subscribe_in<T, E, Event>(
+        &mut self,
+        entity: &E,
+        window: &Window,
+        mut on_event: impl FnMut(E, &Event, &mut Window, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        T: 'static + EventEmitter<Event>,
+        E: Entity<T>,
+        Event: 'static,
+    {
+        let window_handle = window.handle;
+        self.subscribe_internal(entity, move |entity, event, cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    on_event(entity, event, window, cx);
+                    true
+                })
+                .unwrap_or(false)
         })
     }
 
@@ -1139,6 +1186,30 @@ impl AppContext {
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
                 on_release(entity, cx)
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Observe the release of a model or view. The callback is invoked after the model or view
+    /// has no more strong references but before it has been dropped.
+    pub fn observe_release_in<E, T>(
+        &self,
+        handle: &E,
+        window: &Window,
+        on_release: impl FnOnce(&mut T, &mut Window, &mut AppContext) + 'static,
+    ) -> Subscription
+    where
+        E: Entity<T>,
+        T: 'static,
+    {
+        let window_handle = window.handle;
+        let (subscription, activate) = self.release_listeners.insert(
+            handle.entity_id(),
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                let _ = window_handle.update(cx, |_, window, cx| on_release(entity, window, cx));
             }),
         );
         activate();
