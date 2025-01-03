@@ -45,7 +45,7 @@ use language::{
         IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
         ShowWhitespaceSetting,
     },
-    ChunkRendererContext,
+    ChunkKind, ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -5428,12 +5428,11 @@ impl LineWithInvisibles {
 
         let ellipsis = SharedString::from("⋯");
 
-        for highlighted_chunk in chunks.chain([HighlightedChunk {
+        let last_chunk = HighlightedChunk {
             text: "\n",
-            style: None,
-            is_tab: false,
-            replacement: None,
-        }]) {
+            ..HighlightedChunk::default()
+        };
+        for highlighted_chunk in chunks.chain([last_chunk]) {
             if let Some(replacement) = highlighted_chunk.replacement {
                 if !line.is_empty() {
                     let shaped_line = cx
@@ -5556,10 +5555,22 @@ impl LineWithInvisibles {
                             line_exceeded_max_len = true;
                         }
 
+                        let mut color = text_style.color;
+                        let accents = cx.theme().accents();
+                        // update text color if chunk is a bracket, and bracket coloring is enabled
+                        if let ChunkKind::Bracket { depth } = highlighted_chunk.kind {
+                            // TODO 1: we can't remote negative depth because we can't parse
+                            // files all the way from the beginning, find another approach
+                            // TODO 2: only apply if the bracket coloring setting is enabled
+                            if depth > 0 {
+                                color = accents.color_for_index(depth as u32);
+                            }
+                        }
+
                         styles.push(TextRun {
                             len: line_chunk.len(),
                             font: text_style.font(),
-                            color: text_style.color,
+                            color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
                             strikethrough: text_style.strikethrough,
@@ -5569,7 +5580,7 @@ impl LineWithInvisibles {
                             // Line wrap pads its contents with fake whitespaces,
                             // avoid printing them
                             let is_soft_wrapped = is_row_soft_wrapped(row);
-                            if highlighted_chunk.is_tab {
+                            if highlighted_chunk.kind.is_tab() {
                                 if non_whitespace_added || !is_soft_wrapped {
                                     invisibles.push(Invisible::Tab {
                                         line_start_offset: line.len(),
