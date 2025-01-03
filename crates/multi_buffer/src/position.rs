@@ -3,7 +3,7 @@ use std::{
     marker::PhantomData,
     ops::{Add, AddAssign, Sub, SubAssign},
 };
-use text::{Point, PointUtf16};
+use text::Point;
 
 #[repr(transparent)]
 pub struct TypedOffset<T> {
@@ -14,12 +14,6 @@ pub struct TypedOffset<T> {
 #[repr(transparent)]
 pub struct TypedPoint<T> {
     pub value: Point,
-    _marker: PhantomData<T>,
-}
-
-#[repr(transparent)]
-pub struct TypedPointUtf16<T> {
-    pub value: PointUtf16,
     _marker: PhantomData<T>,
 }
 
@@ -85,22 +79,6 @@ impl<T> TypedPoint<T> {
     }
 }
 
-impl<T> TypedPointUtf16<T> {
-    pub fn new(row: u32, column: u32) -> Self {
-        TypedPointUtf16 {
-            value: PointUtf16::new(row, column),
-            _marker: PhantomData,
-        }
-    }
-
-    pub fn wrap(point: PointUtf16) -> Self {
-        Self {
-            value: point,
-            _marker: PhantomData,
-        }
-    }
-}
-
 impl<T> TypedRow<T> {
     pub fn new(row: u32) -> Self {
         Self {
@@ -112,7 +90,6 @@ impl<T> TypedRow<T> {
 
 impl<T> Copy for TypedOffset<T> {}
 impl<T> Copy for TypedPoint<T> {}
-impl<T> Copy for TypedPointUtf16<T> {}
 impl<T> Copy for TypedRow<T> {}
 
 impl<T> Clone for TypedOffset<T> {
@@ -124,14 +101,6 @@ impl<T> Clone for TypedOffset<T> {
     }
 }
 impl<T> Clone for TypedPoint<T> {
-    fn clone(&self) -> Self {
-        Self {
-            value: self.value,
-            _marker: PhantomData,
-        }
-    }
-}
-impl<T> Clone for TypedPointUtf16<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value,
@@ -158,11 +127,6 @@ impl<T> Default for TypedPoint<T> {
         Self::wrap(Point::default())
     }
 }
-impl<T> Default for TypedPointUtf16<T> {
-    fn default() -> Self {
-        Self::wrap(PointUtf16::default())
-    }
-}
 impl<T> Default for TypedRow<T> {
     fn default() -> Self {
         Self::new(0)
@@ -175,11 +139,6 @@ impl<T> PartialOrd for TypedOffset<T> {
     }
 }
 impl<T> PartialOrd for TypedPoint<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.value.cmp(&other.value))
-    }
-}
-impl<T> PartialOrd for TypedPointUtf16<T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.value.cmp(&other.value))
     }
@@ -200,11 +159,6 @@ impl<T> Ord for TypedPoint<T> {
         self.value.cmp(&other.value)
     }
 }
-impl<T> Ord for TypedPointUtf16<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.value.cmp(&other.value)
-    }
-}
 impl<T> Ord for TypedRow<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.value.cmp(&other.value)
@@ -221,11 +175,6 @@ impl<T> PartialEq for TypedPoint<T> {
         self.value == other.value
     }
 }
-impl<T> PartialEq for TypedPointUtf16<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
-    }
-}
 impl<T> PartialEq for TypedRow<T> {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
@@ -234,7 +183,6 @@ impl<T> PartialEq for TypedRow<T> {
 
 impl<T> Eq for TypedOffset<T> {}
 impl<T> Eq for TypedPoint<T> {}
-impl<T> Eq for TypedPointUtf16<T> {}
 impl<T> Eq for TypedRow<T> {}
 
 impl<T> Debug for TypedOffset<T> {

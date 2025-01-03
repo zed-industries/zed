@@ -18,8 +18,7 @@ use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
     CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentGuide, IndentSize,
     Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16,
-    Selection, TextDimension, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _,
-    TransactionId, Unclipped,
+    Selection, TextDimension, ToOffset as _, ToPoint as _, TransactionId, Unclipped,
 };
 use project::buffer_store::BufferChangeSet;
 use rope::DimensionPair;
@@ -373,6 +372,8 @@ struct MultiBufferCursor<'a, D: TextDimension> {
 
 struct MultiBufferRegion<'a, D: TextDimension> {
     buffer: &'a BufferSnapshot,
+    editable: bool,
+    excerpt_id: ExcerptId,
     buffer_range: Range<D>,
     range: Range<D>,
 }
@@ -653,16 +654,6 @@ impl MultiBuffer {
                 return;
             }
 
-            if let Some(buffer) = this.as_singleton() {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.edit(edits, autoindent_mode, cx);
-                });
-                cx.emit(Event::ExcerptsEdited {
-                    ids: this.excerpt_ids(),
-                });
-                return;
-            }
-
             let original_indent_columns = match &mut autoindent_mode {
                 Some(AutoindentMode::Block {
                     original_indent_columns,
@@ -758,111 +749,80 @@ impl MultiBuffer {
     ) -> (HashMap<BufferId, Vec<BufferEdit>>, Vec<ExcerptId>) {
         let mut buffer_edits: HashMap<BufferId, Vec<BufferEdit>> = Default::default();
         let mut edited_excerpt_ids = Vec::new();
-        let mut diff_transforms_cursor = snapshot
-            .diff_transforms
-            .cursor::<(usize, ExcerptOffset)>(&());
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptOffset>(&());
+        let mut cursor = snapshot.cursor::<usize>();
         for (ix, (range, new_text)) in edits.into_iter().enumerate() {
             let original_indent_column = original_indent_columns.get(ix).copied().unwrap_or(0);
 
-            diff_transforms_cursor.seek_forward(&range.start, Bias::Right, &());
-            let mut start_excerpt_offset = diff_transforms_cursor.start().1;
-            if let Some(DiffTransform::BufferContent { .. }) = diff_transforms_cursor.item() {
-                let offset_in_transform = range.start - diff_transforms_cursor.start().0;
-                start_excerpt_offset.value += offset_in_transform;
-            }
+            cursor.seek_forward(&range.start);
+            let start_region = cursor.region().expect("start offset out of bounds");
+            let start_overshoot = range.start - start_region.range.start;
+            let buffer_start = start_region.buffer_range.start + start_overshoot;
 
-            diff_transforms_cursor.seek_forward(&range.end, Bias::Right, &());
-            let mut end_excerpt_offset = diff_transforms_cursor.start().1;
-            if let Some(DiffTransform::BufferContent { .. }) = diff_transforms_cursor.item() {
-                let offset_in_transform = range.start - diff_transforms_cursor.start().0;
-                end_excerpt_offset.value += offset_in_transform;
-            }
+            cursor.seek_forward(&range.end);
+            let end_region = cursor.region().expect("end offset out of bounds");
+            let end_overshoot = range.end - end_region.range.start;
+            let buffer_end = end_region.buffer_range.start + end_overshoot;
 
-            cursor.seek_forward(&start_excerpt_offset, Bias::Right, &());
-            let start_excerpt = cursor.item().expect("start offset out of bounds");
-            let start_overshoot = (start_excerpt_offset - *cursor.start()).value;
-            let buffer_start = start_excerpt
-                .range
-                .context
-                .start
-                .to_offset(&start_excerpt.buffer)
-                + start_overshoot;
-            edited_excerpt_ids.push(start_excerpt.id);
-
-            cursor.seek_forward(&end_excerpt_offset, Bias::Right, &());
-            if cursor.item().is_none() && end_excerpt_offset == *cursor.start() {
-                cursor.prev(&());
-            }
-            let end_excerpt = cursor.item().expect("end offset out of bounds");
-            let end_overshoot = (end_excerpt_offset - *cursor.start()).value;
-            let buffer_end = end_excerpt
-                .range
-                .context
-                .start
-                .to_offset(&end_excerpt.buffer)
-                + end_overshoot;
-
-            if start_excerpt.id == end_excerpt.id {
-                buffer_edits
-                    .entry(start_excerpt.buffer_id)
-                    .or_default()
-                    .push(BufferEdit {
-                        range: buffer_start..buffer_end,
-                        new_text,
-                        is_insertion: true,
-                        original_indent_column,
-                    });
-            } else {
-                edited_excerpt_ids.push(end_excerpt.id);
-                let start_excerpt_range = buffer_start
-                    ..start_excerpt
-                        .range
-                        .context
-                        .end
-                        .to_offset(&start_excerpt.buffer);
-                let end_excerpt_range = end_excerpt
-                    .range
-                    .context
-                    .start
-                    .to_offset(&end_excerpt.buffer)
-                    ..buffer_end;
-                buffer_edits
-                    .entry(start_excerpt.buffer_id)
-                    .or_default()
-                    .push(BufferEdit {
-                        range: start_excerpt_range,
-                        new_text: new_text.clone(),
-                        is_insertion: true,
-                        original_indent_column,
-                    });
-                buffer_edits
-                    .entry(end_excerpt.buffer_id)
-                    .or_default()
-                    .push(BufferEdit {
-                        range: end_excerpt_range,
-                        new_text: new_text.clone(),
-                        is_insertion: false,
-                        original_indent_column,
-                    });
-
-                cursor.seek(&start_excerpt_offset, Bias::Right, &());
-                cursor.next(&());
-                while let Some(excerpt) = cursor.item() {
-                    if excerpt.id == end_excerpt.id {
-                        break;
-                    }
+            if start_region.excerpt_id == end_region.excerpt_id {
+                if start_region.editable {
+                    edited_excerpt_ids.push(start_region.excerpt_id);
                     buffer_edits
-                        .entry(excerpt.buffer_id)
+                        .entry(start_region.buffer.remote_id())
                         .or_default()
                         .push(BufferEdit {
-                            range: excerpt.range.context.to_offset(&excerpt.buffer),
+                            range: buffer_start..buffer_end,
+                            new_text,
+                            is_insertion: true,
+                            original_indent_column,
+                        });
+                }
+            } else {
+                let start_excerpt_range = buffer_start..start_region.buffer_range.end;
+                let end_excerpt_range = end_region.buffer_range.clone();
+                if start_region.editable {
+                    edited_excerpt_ids.push(start_region.excerpt_id);
+                    buffer_edits
+                        .entry(start_region.buffer.remote_id())
+                        .or_default()
+                        .push(BufferEdit {
+                            range: start_excerpt_range,
+                            new_text: new_text.clone(),
+                            is_insertion: true,
+                            original_indent_column,
+                        });
+                }
+                if end_region.editable {
+                    edited_excerpt_ids.push(end_region.excerpt_id);
+                    buffer_edits
+                        .entry(end_region.buffer.remote_id())
+                        .or_default()
+                        .push(BufferEdit {
+                            range: end_excerpt_range,
                             new_text: new_text.clone(),
                             is_insertion: false,
                             original_indent_column,
                         });
-                    edited_excerpt_ids.push(excerpt.id);
-                    cursor.next(&());
+                }
+
+                cursor.seek(&range.start);
+                cursor.next_excerpt();
+                while let Some(region) = cursor.region() {
+                    if region.excerpt_id == end_region.excerpt_id {
+                        break;
+                    }
+                    if region.editable {
+                        edited_excerpt_ids.push(region.excerpt_id);
+                        buffer_edits
+                            .entry(region.buffer.remote_id())
+                            .or_default()
+                            .push(BufferEdit {
+                                range: region.buffer_range,
+                                new_text: new_text.clone(),
+                                is_insertion: false,
+                                original_indent_column,
+                            });
+                    }
+                    cursor.next_excerpt();
                 }
             }
         }
@@ -5163,71 +5123,102 @@ where
     fn seek(&mut self, position: &D) {
         self.diff_transforms
             .seek(&OutputDimension(*position), Bias::Right, &());
+        if self.diff_transforms.item().is_none() && *position == self.diff_transforms.start().0 .0 {
+            self.excerpts.prev(&());
+        }
+
         let overshoot = *position - self.diff_transforms.start().0 .0;
         let mut excerpt_position = self.diff_transforms.start().1 .0;
         excerpt_position.add_assign(&overshoot);
+
         self.excerpts
             .seek(&ExcerptDimension(excerpt_position), Bias::Right, &());
+        if self.excerpts.item().is_none() && excerpt_position == self.excerpts.start().0 {
+            self.excerpts.prev(&());
+        }
+    }
+
+    fn seek_forward(&mut self, position: &D) {
+        self.diff_transforms
+            .seek_forward(&OutputDimension(*position), Bias::Right, &());
+        if self.diff_transforms.item().is_none() && *position == self.diff_transforms.start().0 .0 {
+            self.excerpts.prev(&());
+        }
+
+        let overshoot = *position - self.diff_transforms.start().0 .0;
+        let mut excerpt_position = self.diff_transforms.start().1 .0;
+        excerpt_position.add_assign(&overshoot);
+
+        self.excerpts
+            .seek_forward(&ExcerptDimension(excerpt_position), Bias::Right, &());
+        if self.excerpts.item().is_none() && excerpt_position == self.excerpts.start().0 {
+            self.excerpts.prev(&());
+        }
+    }
+
+    fn next_excerpt(&mut self) {
+        self.excerpts.next(&());
     }
 
     fn region(&self) -> Option<MultiBufferRegion<'a, D>> {
-        match self.diff_transforms.item()? {
-            DiffTransform::DeletedHunk {
-                buffer_id,
-                base_text_byte_range,
-                ..
-            } => {
-                let diff = self.diffs.get(&buffer_id)?;
-                let buffer = &diff.base_text;
-                let buffer_range_start =
-                    buffer.text_summary_for_range::<D, _>(0..base_text_byte_range.start);
-                let buffer_range_end =
-                    buffer.text_summary_for_range::<D, _>(0..base_text_byte_range.end);
-                let buffer_range = buffer_range_start..buffer_range_end;
-                let start = self.diff_transforms.start().0 .0;
-                let end = self.diff_transforms.end(&()).0 .0;
-                let range = start..end;
-                return Some(MultiBufferRegion {
-                    buffer,
-                    buffer_range,
-                    range,
-                });
+        let excerpt = self.excerpts.item()?;
+        if let Some(DiffTransform::DeletedHunk {
+            buffer_id,
+            base_text_byte_range,
+            ..
+        }) = self.diff_transforms.item()
+        {
+            let diff = self.diffs.get(&buffer_id)?;
+            let buffer = &diff.base_text;
+            let mut rope_cursor = buffer.as_rope().cursor(0);
+            let buffer_range_start = rope_cursor.summary::<D>(base_text_byte_range.start);
+            let buffer_range_len = rope_cursor.summary::<D>(base_text_byte_range.end);
+            let mut buffer_range_end = buffer_range_start;
+            buffer_range_end.add_assign(&buffer_range_len);
+            let start = self.diff_transforms.start().0 .0;
+            let end = self.diff_transforms.end(&()).0 .0;
+            Some(MultiBufferRegion {
+                buffer,
+                editable: false,
+                excerpt_id: excerpt.id,
+                buffer_range: buffer_range_start..buffer_range_end,
+                range: start..end,
+            })
+        } else {
+            let buffer = &excerpt.buffer;
+            let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
+
+            let mut start = self.diff_transforms.start().0 .0;
+            let mut buffer_start = buffer_context_start;
+            if self.diff_transforms.start().1 < *self.excerpts.start() {
+                let overshoot = self.excerpts.start().0 - self.diff_transforms.start().1 .0;
+                start.add_assign(&overshoot);
+            } else {
+                let overshoot = self.diff_transforms.start().1 .0 - self.excerpts.start().0;
+                buffer_start.add_assign(&overshoot);
             }
-            DiffTransform::BufferContent { .. } => {
-                let excerpt = self.excerpts.item()?;
-                let buffer = &excerpt.buffer;
-                let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
 
-                let mut start = self.diff_transforms.start().0 .0;
-                let mut buffer_start = buffer_context_start;
-                if self.diff_transforms.start().1 < *self.excerpts.start() {
-                    let overshoot = self.excerpts.start().0 - self.diff_transforms.start().1 .0;
-                    start.add_assign(&overshoot);
-                } else {
-                    let overshoot = self.diff_transforms.start().1 .0 - self.excerpts.start().0;
-                    buffer_start.add_assign(&overshoot);
-                }
+            let mut end;
+            let mut buffer_end;
+            if self.diff_transforms.end(&()).1 .0 < self.excerpts.end(&()).0 {
+                let overshoot = self.diff_transforms.end(&()).1 .0 - self.excerpts.start().0;
+                end = self.diff_transforms.end(&()).0 .0;
+                buffer_end = buffer_context_start;
+                buffer_end.add_assign(&overshoot);
+            } else {
+                let overshoot = self.excerpts.end(&()).0 - self.diff_transforms.start().1 .0;
+                end = self.diff_transforms.start().0 .0;
+                end.add_assign(&overshoot);
+                buffer_end = excerpt.range.context.end.summary::<D>(buffer);
+            };
 
-                let mut end;
-                let mut buffer_end;
-                if self.diff_transforms.end(&()).1 .0 < self.excerpts.end(&()).0 {
-                    let overshoot = self.diff_transforms.end(&()).1 .0 - self.excerpts.start().0;
-                    end = self.diff_transforms.end(&()).0 .0;
-                    buffer_end = buffer_context_start;
-                    buffer_end.add_assign(&overshoot);
-                } else {
-                    let overshoot = self.excerpts.end(&()).0 - self.diff_transforms.start().1 .0;
-                    end = self.diff_transforms.start().0 .0;
-                    end.add_assign(&overshoot);
-                    buffer_end = excerpt.range.context.end.summary::<D>(buffer);
-                };
-
-                return Some(MultiBufferRegion {
-                    buffer,
-                    buffer_range: buffer_start..buffer_end,
-                    range: start..end,
-                });
-            }
+            Some(MultiBufferRegion {
+                buffer,
+                editable: true,
+                excerpt_id: excerpt.id,
+                buffer_range: buffer_start..buffer_end,
+                range: start..end,
+            })
         }
     }
 }
