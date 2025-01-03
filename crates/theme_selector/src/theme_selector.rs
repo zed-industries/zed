@@ -69,7 +69,7 @@ impl ThemeSelector {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
+        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }
@@ -276,7 +276,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.delegate.matches = matches;
                 this.delegate.selected_index = this
                     .delegate
