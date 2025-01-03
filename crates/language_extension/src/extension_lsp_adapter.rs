@@ -152,10 +152,15 @@ impl LspAdapter for ExtensionLspAdapter {
                         .context("failed to set file permissions")?;
                 }
             }
-
+            let mut arguments = command.args;
+            #[cfg(target_os = "windows")]
+            {
+                arguments[0] = arguments[0].trim_start_matches("/").to_string();
+            }
+            let arguments = arguments.into_iter().map(|arg| arg.into()).collect();
             Ok(LanguageServerBinary {
                 path,
-                arguments: command.args.into_iter().map(|arg| arg.into()).collect(),
+                arguments,
                 env: Some(command.env.into_iter().collect()),
             })
         }
