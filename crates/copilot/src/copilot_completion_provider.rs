@@ -938,6 +938,16 @@ mod tests {
 
     #[gpui::test]
     async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+        const ROOT: &str = if cfg!(target_os = "windows") {
+            "C:/test"
+        } else {
+            "/test"
+        };
+
+        fn to_path_buf(path: &str) -> std::path::PathBuf {
+            format!("C:{}", path).into()
+        }
+
         init_test(cx, |settings| {
             settings
                 .inline_completions
@@ -949,24 +959,24 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/test",
+            ROOT,
             json!({
                 ".env": "SECRET=something\n",
                 "README.md": "hello\nworld\nhow\nare\nyou\ntoday"
             }),
         )
         .await;
-        let project = Project::test(fs, ["/test".as_ref()], cx).await;
+        let project = Project::test(fs, [ROOT.as_ref()], cx).await;
 
         let private_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/test/.env", cx)
+                project.open_local_buffer(to_path_buf("/test/.env"), cx)
             })
             .await
             .unwrap();
         let public_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/test/README.md", cx)
+                project.open_local_buffer(to_path_buf("/test/README.md"), cx)
             })
             .await
             .unwrap();
