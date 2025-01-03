@@ -9,6 +9,7 @@ use ui::{
     div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ParentElement,
     Render, Tooltip, ViewContext,
 };
+use unicode_segmentation::UnicodeSegmentation;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
@@ -17,6 +18,7 @@ pub(crate) struct SelectionStats {
     pub lines: usize,
     pub characters: usize,
     pub selections: usize,
+    pub words: Option<usize>,
 }
 
 pub struct CursorPosition {
@@ -63,6 +65,7 @@ impl CursorPosition {
 
             editor
                 .update(&mut cx, |editor, cx| {
+                    let is_markdown_or_plaintext = Self::is_markdown_or_plaintext(editor, cx);
                     cursor_position.update(cx, |cursor_position, cx| {
                         cursor_position.selected_count = SelectionStats::default();
                         cursor_position.selected_count.selections = editor.selections.count();
@@ -81,6 +84,22 @@ impl CursorPosition {
                                             .text_for_range(selection.start..selection.end)
                                             .map(|t| t.chars().count())
                                             .sum::<usize>();
+                                        if is_markdown_or_plaintext {
+                                            let mut words = 0;
+                                            words += buffer
+                                                .text_for_range(selection.start..selection.end)
+                                                .map(|t| t.unicode_word_indices().count())
+                                                .sum::<usize>();
+
+                                            if let Some(current_words) =
+                                                cursor_position.selected_count.words
+                                            {
+                                                cursor_position.selected_count.words =
+                                                    Some(current_words + words);
+                                            } else {
+                                                cursor_position.selected_count.words = Some(words);
+                                            }
+                                        }
                                         if last_selection.as_ref().map_or(true, |last_selection| {
                                             selection.id > last_selection.id
                                         }) {
@@ -113,6 +132,17 @@ impl CursorPosition {
         });
     }
 
+    pub fn is_markdown_or_plaintext<V>(editor: &Editor, cx: &mut ViewContext<V>) -> bool {
+        let buffer = editor.buffer().read(cx);
+        if let Some(buffer) = buffer.as_singleton() {
+            if let Some(language) = buffer.read(cx).language() {
+                return language.name() == "Markdown".into()
+                    || language.name() == "Plain Text".into();
+            }
+        }
+        false
+    }
+
     fn write_position(&self, text: &mut String, cx: &AppContext) {
         if self.selected_count
             <= (SelectionStats {
@@ -127,19 +157,27 @@ impl CursorPosition {
             lines,
             characters,
             selections,
+            words,
         } = self.selected_count;
         let format = LineIndicatorFormat::get(None, cx);
         let is_short_format = format == &LineIndicatorFormat::Short;
         let lines = (lines > 1).then_some((lines, "line"));
         let selections = (selections > 1).then_some((selections, "selection"));
         let characters = (characters > 0).then_some((characters, "character"));
+        let words = words.and_then(|words| {
+            if words > 0 {
+                Some((words, "word"))
+            } else {
+                None
+            }
+        });
         if (None, None, None) == (characters, selections, lines) {
             // Nothing to display.
             return;
         }
         write!(text, " (").unwrap();
         let mut wrote_once = false;
-        for (count, name) in [selections, lines, characters].into_iter().flatten() {
+        for (count, name) in [selections, lines, characters, words].into_iter().flatten() {
             if wrote_once {
                 write!(text, ", ").unwrap();
             }

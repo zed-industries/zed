@@ -24,6 +24,7 @@ text.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
+unicode-segmentation.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
