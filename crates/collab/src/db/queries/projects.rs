@@ -744,7 +744,6 @@ impl Database {
                             Condition::all()
                                 .add(worktree_repository_statuses::Column::ProjectId.eq(project.id))
                                 .add(
-                                    // TODO: think about if we need this column
                                     worktree_repository_statuses::Column::WorktreeId
                                         .eq(worktree.id),
                                 )
