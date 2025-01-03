@@ -323,7 +323,12 @@ fn collect_files(
                         )))?;
                         directory_stack.push(entry.path.clone());
                     } else {
-                        let entry_name = format!("{}/{}", prefix_paths, &filename);
+                        let entry_name = format!(
+                            "{}{}{}",
+                            prefix_paths,
+                            std::path::MAIN_SEPARATOR_STR,
+                            &filename
+                        );
                         events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Folder,
                             label: entry_name.clone().into(),
@@ -507,7 +512,7 @@ mod custom_path_matcher {
                 .zip(self.sources_with_trailing_slash.iter())
                 .any(|(source, with_slash)| {
                     let as_bytes = other_path.as_os_str().as_encoded_bytes();
-                    let with_slash = if source.ends_with("/") {
+                    let with_slash = if source.ends_with(std::path::MAIN_SEPARATOR_STR) {
                         source.as_bytes()
                     } else {
                         with_slash.as_bytes()
@@ -588,6 +593,8 @@ mod test {
 
     #[gpui::test]
     async fn test_file_exact_matching(cx: &mut TestAppContext) {
+        use std::path::MAIN_SEPARATOR_STR;
+
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -609,29 +616,52 @@ mod test {
 
         let project = Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let result_1 =
-            cx.update(|cx| collect_files(project.clone(), &["root/dir".to_string()], cx));
+        let result_1 = cx.update(|cx| {
+            collect_files(
+                project.clone(),
+                &[format!("root{}dir", MAIN_SEPARATOR_STR)],
+                cx,
+            )
+        });
         let result_1 = SlashCommandOutput::from_event_stream(result_1.boxed())
             .await
             .unwrap();
 
-        assert!(result_1.text.starts_with("root/dir"));
+        assert!(result_1
+            .text
+            .starts_with(&format!("root{}dir", MAIN_SEPARATOR_STR)));
         // 4 files + 2 directories
         assert_eq!(result_1.sections.len(), 6);
 
-        let result_2 =
-            cx.update(|cx| collect_files(project.clone(), &["root/dir/".to_string()], cx));
+        let result_2 = cx.update(|cx| {
+            collect_files(
+                project.clone(),
+                &[format!(
+                    "root{}dir{}",
+                    MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+                )],
+                cx,
+            )
+        });
         let result_2 = SlashCommandOutput::from_event_stream(result_2.boxed())
             .await
             .unwrap();
 
         assert_eq!(result_1, result_2);
 
-        let result =
-            cx.update(|cx| collect_files(project.clone(), &["root/dir*".to_string()], cx).boxed());
+        let result = cx.update(|cx| {
+            collect_files(
+                project.clone(),
+                &[format!("root{}dir*", MAIN_SEPARATOR_STR)],
+                cx,
+            )
+            .boxed()
+        });
         let result = SlashCommandOutput::from_event_stream(result).await.unwrap();
 
-        assert!(result.text.starts_with("root/dir"));
+        assert!(result
+            .text
+            .starts_with(&format!("root{}dir", MAIN_SEPARATOR_STR)));
         // 5 files + 2 directories
         assert_eq!(result.sections.len(), 7);
 
