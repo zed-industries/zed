@@ -276,7 +276,6 @@ impl Database {
                         canonical_path: ActiveValue::set(entry.canonical_path.clone()),
                         is_ignored: ActiveValue::set(entry.is_ignored),
                         is_external: ActiveValue::set(entry.is_external),
-                        git_status: ActiveValue::set(None), // TODO remove
                         is_deleted: ActiveValue::set(false),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         is_fifo: ActiveValue::set(entry.is_fifo),
@@ -296,7 +295,6 @@ impl Database {
                         worktree_entry::Column::MtimeNanos,
                         worktree_entry::Column::CanonicalPath,
                         worktree_entry::Column::IsIgnored,
-                        worktree_entry::Column::GitStatus,
                         worktree_entry::Column::ScanId,
                     ])
                     .to_owned(),

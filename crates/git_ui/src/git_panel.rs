@@ -104,7 +104,7 @@ pub struct GitPanel {
     scrollbar_state: ScrollbarState,
     selected_item: Option<usize>,
     show_scrollbar: bool,
-    // todo!(): Reintroduce expanded directories, once we're deriving directories from paths
+    // TODO Reintroduce expanded directories, once we're deriving directories from paths
     // expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
 
     // The entries that are currently shown in the panel, aka
@@ -509,7 +509,7 @@ impl GitPanel {
                     let details = EntryDetails {
                         filename,
                         display_name: entry.repo_path.to_string_lossy().into_owned(),
-                        // FIXME get it from StatusEntry?
+                        // TODO get it from StatusEntry?
                         kind: EntryKind::File,
                         is_expanded,
                         path: entry.repo_path.clone(),
@@ -568,7 +568,7 @@ impl GitPanel {
                 work_directory = Some(worktree::WorkDirectory::clone(repository));
             }
 
-            // FIXME use the GitTraversal
+            // TODO use the GitTraversal
             // let mut visible_worktree_entries = snapshot
             //     .entries(false, 0)
             //     .filter(|entry| !entry.is_external)
@@ -595,7 +595,7 @@ impl GitPanel {
         }
         self.visible_entries.extend(after_update);
 
-        // FIXME re-implement this
+        // TODO re-implement this
         // if let Some((worktree_id, entry_id)) = new_selected_entry {
         //     self.selected_item = self.visible_entries.iter().enumerate().find_map(
         //         |(worktree_index, worktree_entries)| {
