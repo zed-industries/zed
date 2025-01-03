@@ -50,7 +50,8 @@ pub enum Model {
         cache_configuration: Option<AnthropicModelCacheConfiguration>,
         max_output_tokens: Option<u32>,
         default_temperature: Option<f32>,
-        extra_beta_headers: Option<Vec<String>>,
+        #[serde(default)]
+        extra_beta_headers: Vec<String>,
     },
 }
 
@@ -148,19 +149,14 @@ impl Model {
     }
 
     pub fn beta_headers(&self) -> String {
-        let mut headers = vec![
-            "tools-2024-04-04".to_string(),
-            "prompt-caching-2024-07-31".to_string(),
-            "max-tokens-3-5-sonnet-2024-07-15".to_string(),
-        ];
+        let mut headers = vec!["prompt-caching-2024-07-31".to_string()];
 
         if let Self::Custom {
-            extra_beta_headers: Some(extra_headers),
-            ..
+            extra_beta_headers, ..
         } = self
         {
             headers.extend(
-                extra_headers
+                extra_beta_headers
                     .iter()
                     .filter(|header| !header.trim().is_empty())
                     .cloned(),
@@ -190,14 +186,12 @@ pub async fn complete(
     request: Request,
 ) -> Result<Response, AnthropicError> {
     let uri = format!("{api_url}/v1/messages");
+    let model = Model::from_id(&request.model)?;
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header(
-            "Anthropic-Beta",
-            Model::from_id(&request.model)?.beta_headers(),
-        )
+        .header("Anthropic-Beta", model.beta_headers())
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
 
@@ -308,14 +302,12 @@ pub async fn stream_completion_with_rate_limit_info(
         stream: true,
     };
     let uri = format!("{api_url}/v1/messages");
+    let model = Model::from_id(&request.base.model)?;
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header(
-            "Anthropic-Beta",
-            Model::from_id(&request.base.model)?.beta_headers(),
-        )
+        .header("Anthropic-Beta", model.beta_headers())
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
     let serialized_request =

@@ -95,7 +95,8 @@ pub struct AvailableModel {
     /// The default temperature to use for this model.
     pub default_temperature: Option<f32>,
     /// Any extra beta headers to provide when using the model.
-    pub extra_beta_headers: Option<Vec<String>>,
+    #[serde(default)]
+    pub extra_beta_headers: Vec<String>,
 }
 
 struct GlobalRefreshLlmTokenListener(Model<RefreshLlmTokenListener>);

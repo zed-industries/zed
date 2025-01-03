@@ -52,7 +52,8 @@ pub struct AvailableModel {
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     pub max_output_tokens: Option<u32>,
     pub default_temperature: Option<f32>,
-    pub extra_beta_headers: Option<Vec<String>>,
+    #[serde(default)]
+    pub extra_beta_headers: Vec<String>,
 }
 
 pub struct AnthropicLanguageModelProvider {
