@@ -15,7 +15,7 @@ use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 actions!(welcome, [ToggleBaseKeymapSelector]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+    cx.observe_new_views(|workspace: &mut Workspace, window, _cx| {
         workspace.register_action(toggle);
     })
     .detach();
@@ -56,7 +56,7 @@ impl BaseKeymapSelector {
         window: &mut Window,
         cx: &mut ModelContext<BaseKeymapSelector>,
     ) -> Self {
-        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
+        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }

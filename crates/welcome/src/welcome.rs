@@ -31,7 +31,7 @@ const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
 pub fn init(cx: &mut AppContext) {
     BaseKeymap::register(cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+    cx.observe_new_views(|workspace: &mut Workspace, window, _cx| {
         workspace.register_action(|workspace, _: &Welcome, window, cx| {
             let welcome_page = WelcomePage::new(workspace, window, cx);
             workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx)
@@ -221,8 +221,8 @@ impl Render for WelcomePage {
                                                     this.telemetry.report_app_event(
                                                         "welcome page: install cli".to_string(),
                                                     );
-                                                    cx.app_mut()
-                                                        .spawn(|cx| async move {
+                                                    cx
+                                                        .spawn(|_, cx| async move {
                                                             install_cli::install_cli(&cx).await
                                                         })
                                                         .detach_and_log_err(cx);
@@ -352,8 +352,8 @@ impl WelcomePage {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
-        let this = window.new_view(cx, |cx| {
-            cx.subscribe_in(window, |this: &mut Self, _, _, _| {
+        let this = window.new_view(cx, |window, cx| {
+            cx.on_release(|this: &mut Self, _| {
                 this.telemetry
                     .report_app_event("welcome page: close".to_string());
             })
@@ -374,7 +374,7 @@ impl WelcomePage {
     fn section_label(&self, window: &mut Window, cx: &mut AppContext) -> Div {
         div()
             .pl_1()
-            .font_buffer(window, cx)
+            .font_buffer(cx)
             .text_color(Color::Muted.color(cx))
     }
 
@@ -412,7 +412,7 @@ impl FocusableView for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         Some("Welcome".into())
     }
 
@@ -430,7 +430,7 @@ impl Item for WelcomePage {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
-        Some(window.new_view(cx, |cx| WelcomePage {
+        Some(window.new_view(cx, |window, cx| WelcomePage {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             telemetry: self.telemetry.clone(),

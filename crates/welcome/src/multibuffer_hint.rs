@@ -115,8 +115,9 @@ impl ToolbarItemView for MultibufferHint {
 
         let this = cx.view().downgrade();
         self.subscription = Some(active_pane_item.subscribe_to_item_events(
+            window,
             cx,
-            Box::new(move |event, cx| {
+            Box::new(move |event, window, cx| {
                 if let ItemEvent::UpdateBreadcrumbs = event {
                     this.update(cx, |this, cx| {
                         cx.notify();
