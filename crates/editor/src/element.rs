@@ -2959,7 +2959,12 @@ impl EditorElement {
         selected_buffer_ids: &Vec<BufferId>,
         cx: &mut WindowContext,
     ) -> AnyElement {
-        let jump_data = header_jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt);
+        let jump_data = header_jump_data(
+            snapshot,
+            DisplayRow(scroll_position as u32),
+            FILE_HEADER_HEIGHT + MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+            excerpt,
+        );
 
         let editor_bg_color = cx.theme().colors().editor_background;
 
@@ -5121,7 +5126,7 @@ fn header_jump_data(
     let offset_from_excerpt_start = if jump_anchor == excerpt_start {
         0
     } else {
-        let excerpt_start_row = language::ToPoint::to_point(&jump_anchor, buffer).row;
+        let excerpt_start_row = language::ToPoint::to_point(&excerpt_start, buffer).row;
         jump_position.row - excerpt_start_row
     };
 
