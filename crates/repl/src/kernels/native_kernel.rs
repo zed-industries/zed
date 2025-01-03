@@ -5,7 +5,7 @@ use futures::{
     stream::{SelectAll, StreamExt},
     AsyncBufReadExt as _, SinkExt as _,
 };
-use gpui::{Window, AppContext, Model, EntityId, Task,  };
+use gpui::{AppContext, EntityId, Model, Task, Window};
 use jupyter_protocol::{
     connection_info::{ConnectionInfo, Transport},
     ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
@@ -115,7 +115,8 @@ impl NativeRunningKernel {
         fs: Arc<dyn Fs>,
         // todo: convert to weak view
         session: Model<Session>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
         window.spawn(cx, |cx| async move {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -179,7 +180,7 @@ impl NativeRunningKernel {
                 |mut cx| async move {
                     while let Some(message) = messages_rx.next().await {
                         session
-                            .update(&mut cx, |session, cx| {
+                            .update_in(&mut cx, |session, window, cx| {
                                 session.route(&message, window, cx);
                             })
                             .ok();
@@ -196,7 +197,7 @@ impl NativeRunningKernel {
                 |mut cx| async move {
                     while let Ok(message) = iopub_socket.read().await {
                         session
-                            .update(&mut cx, |session, cx| {
+                            .update_in(&mut cx, |session, window, cx| {
                                 session.route(&message, window, cx);
                             })
                             .ok();
@@ -298,7 +299,7 @@ impl NativeRunningKernel {
                 log::error!("{}", error_message);
 
                 session
-                    .update(&mut cx, |session, cx| {
+                    .update_in(&mut cx, |session, window, cx| {
                         session.kernel_errored(error_message, window, cx);
 
                         cx.notify();
@@ -347,7 +348,11 @@ impl RunningKernel for NativeRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(&mut self, _window: &mut Window, _cx: &mut AppContext) -> Task<anyhow::Result<()>> {
+    fn force_shutdown(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut AppContext,
+    ) -> Task<anyhow::Result<()>> {
         self._process_status_task.take();
         self.request_tx.close_channel();
 

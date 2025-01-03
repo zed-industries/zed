@@ -199,7 +199,8 @@ impl TableView {
         schema: &TableSchema,
         is_header: bool,
         row: &Value,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> AnyElement {
         let theme = cx.theme();
 
@@ -268,7 +269,13 @@ impl Render for TableView {
         for field in &self.table.schema.fields {
             headings.insert(field.name.clone(), Value::String(field.name.clone()));
         }
-        let header = self.render_row(&self.table.schema, true, &Value::Object(headings), window, cx);
+        let header = self.render_row(
+            &self.table.schema,
+            true,
+            &Value::Object(headings),
+            window,
+            cx,
+        );
 
         let body = data
             .iter()
@@ -285,11 +292,11 @@ impl Render for TableView {
 }
 
 impl OutputContent for TableView {
-    fn clipboard_content(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, _cx: &AppContext) -> Option<ClipboardItem> {
         Some(self.cached_clipboard_content.clone())
     }
 
-    fn has_clipboard_content(&self, _window: &mut Window, _cx: &mut AppContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, _cx: &AppContext) -> bool {
         true
     }
 }

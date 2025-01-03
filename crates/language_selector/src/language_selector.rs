@@ -69,7 +69,7 @@ impl LanguageSelector {
             language_registry,
         );
 
-        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
+        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }

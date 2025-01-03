@@ -5,7 +5,9 @@ use gpui::{
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
 use project::{Project, WorktreeId};
-use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
+use ui::{
+    AppContext, Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip,
+};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::ToolchainSelector;
@@ -62,7 +64,7 @@ impl ActiveToolchain {
                 .ok()
                 .flatten()?;
             let toolchain =
-                Self::active_toolchain(workspace, worktree_id, language_name, cx.clone()).await?;
+                Self::active_toolchain(workspace, worktree_id, language_name, &mut cx).await?;
             let _ = this.update(&mut cx, |this, cx| {
                 this.active_toolchain = Some(toolchain);
 
@@ -102,8 +104,7 @@ impl ActiveToolchain {
         workspace: WeakModel<Workspace>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
-        window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut AsyncWindowContext,
     ) -> Task<Option<Toolchain>> {
         cx.spawn(move |mut cx| async move {
             let workspace_id = workspace

@@ -53,7 +53,7 @@ impl RecentProjects {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = window.new_view(cx, |cx| {
+        let picker = window.new_view(cx, |window, cx| {
             // We want to use a list when we render paths, because the items can have different heights (multiple paths).
             if delegate.render_paths {
                 Picker::list(delegate, window, cx)
@@ -71,7 +71,7 @@ impl RecentProjects {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            this.update(&mut cx, move |this, cx| {
+            this.update_in(&mut cx, move |this, window, cx| {
                 this.picker.update(cx, move |picker, cx| {
                     picker.delegate.set_workspaces(workspaces);
                     picker.update_matches(picker.query(cx), window, cx)
@@ -301,7 +301,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 if replace_current_window {
                                     cx.spawn_in(window, move |workspace, mut cx| async move {
                                         let continue_replacing = workspace
-                                            .update(&mut cx, |workspace, cx| {
+                                            .update_in(&mut cx, |workspace, window, cx| {
                                                 workspace.prepare_to_close(
                                                     CloseIntent::ReplaceWindow,
                                                     window,
@@ -311,7 +311,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                             .await?;
                                         if continue_replacing {
                                             workspace
-                                                .update(&mut cx, |workspace, cx| {
+                                                .update_in(&mut cx, |workspace, window, cx| {
                                                     workspace.open_workspace_for_paths(
                                                         true, paths, window, cx,
                                                     )
@@ -577,7 +577,7 @@ impl RecentProjectsDelegate {
                     .recent_workspaces_on_disk()
                     .await
                     .unwrap_or_default();
-                this.update(&mut cx, move |picker, cx| {
+                this.update_in(&mut cx, move |picker, window, cx| {
                     picker.delegate.set_workspaces(workspaces);
                     picker
                         .delegate

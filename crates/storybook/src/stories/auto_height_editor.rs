@@ -16,7 +16,7 @@ impl AutoHeightEditorStory {
             Some("Editor"),
         )]);
         window.new_view(cx, |window, cx| Self {
-            editor: window.new_view(cx, |cx| {
+            editor: window.new_view(cx, |window, cx| {
                 let mut editor = Editor::auto_height(3, window, cx);
                 editor.set_soft_wrap_mode(
                     language::language_settings::SoftWrap::EditorWidth,

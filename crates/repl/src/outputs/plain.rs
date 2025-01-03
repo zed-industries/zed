@@ -258,7 +258,8 @@ impl Render for TerminalOutput {
                 point: ic.point,
                 cell: ic.cell.clone(),
             });
-        let (cells, rects) = TerminalElement::layout_grid(grid, &text_style, text_system, None, window, cx);
+        let (cells, rects) =
+            TerminalElement::layout_grid(grid, &text_style, text_system, None, window, cx);
 
         // lines are 0-indexed, so we must add 1 to get the number of lines
         let text_line_height = text_style.line_height_in_pixels(window.rem_size());
@@ -286,7 +287,8 @@ impl Render for TerminalOutput {
                             line_height: text_line_height,
                             size: bounds.size,
                         },
-                        window, cx,
+                        window,
+                        cx,
                     );
                 }
 
@@ -299,7 +301,8 @@ impl Render for TerminalOutput {
                             size: bounds.size,
                         },
                         bounds,
-                        window, cx,
+                        window,
+                        cx,
                     );
                 }
             },
@@ -310,19 +313,23 @@ impl Render for TerminalOutput {
 }
 
 impl OutputContent for TerminalOutput {
-    fn clipboard_content(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, _cx: &AppContext) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_string(self.full_text()))
     }
 
-    fn has_clipboard_content(&self, _window: &mut Window, _cx: &mut AppContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, _cx: &AppContext) -> bool {
         true
     }
 
-    fn has_buffer_content(&self, _window: &mut Window, _cx: &mut AppContext) -> bool {
+    fn has_buffer_content(&self, _window: &Window, _cx: &AppContext) -> bool {
         true
     }
 
-    fn buffer_content(&mut self, window: &mut Window, cx: &mut AppContext) -> Option<Model<Buffer>> {
+    fn buffer_content(
+        &mut self,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> Option<Model<Buffer>> {
         if self.full_buffer.as_ref().is_some() {
             return self.full_buffer.clone();
         }

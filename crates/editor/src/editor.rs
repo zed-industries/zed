@@ -12218,7 +12218,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn working_directory(&self, window: &mut Window, cx: &mut AppContext) -> Option<PathBuf> {
+    pub fn working_directory(&self, cx: &AppContext) -> Option<PathBuf> {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 if let Some(dir) = file.abs_path(cx).parent() {

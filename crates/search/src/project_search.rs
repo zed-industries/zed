@@ -3893,7 +3893,7 @@ pub mod tests {
             .expect("should open a project search view after spawning a new search");
         project_search_view.update_in(&mut cx, |search_view, window, cx| {
             assert_eq!(
-                search_view.search_query_text(window, cx),
+                search_view.search_query_text(cx),
                 buffer_search_query,
                 "Project search should take the query from the buffer search bar since it got focused and had a query inside"
             );

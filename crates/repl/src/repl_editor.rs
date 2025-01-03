@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use editor::Editor;
-use gpui::{Window, AppContext, Model, prelude::*, Entity,  WeakModel, };
+use gpui::{prelude::*, AppContext, Entity, Model, WeakModel, Window};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
 
@@ -18,7 +18,8 @@ use crate::{
 pub fn assign_kernelspec(
     kernel_specification: KernelSpecification,
     weak_editor: WeakModel<Editor>,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
@@ -43,7 +44,9 @@ pub fn assign_kernelspec(
         });
     }
 
-    let session = window.new_view(cx, |window, cx| Session::new(weak_editor.clone(), fs, kernel_specification, window, cx));
+    let session = window.new_view(cx, |window, cx| {
+        Session::new(weak_editor.clone(), fs, kernel_specification, window, cx)
+    });
 
     weak_editor
         .update(cx, |_editor, cx| {
@@ -51,7 +54,7 @@ pub fn assign_kernelspec(
 
             cx.subscribe_in(&session, window, {
                 let store = store.clone();
-                move |_this, _session, event, cx| match event {
+                move |_this, _session, event, window, cx| match event {
                     SessionEvent::Shutdown(shutdown_event) => {
                         store.update(cx, |store, _cx| {
                             store.remove_session(shutdown_event.entity_id());
@@ -70,7 +73,12 @@ pub fn assign_kernelspec(
     Ok(())
 }
 
-pub fn run(editor: WeakModel<Editor>, move_down: bool, window: &mut Window, cx: &mut AppContext) -> Result<()> {
+pub fn run(
+    editor: WeakModel<Editor>,
+    move_down: bool,
+    window: &mut Window,
+    cx: &mut AppContext,
+) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
         return Ok(());
@@ -109,14 +117,16 @@ pub fn run(editor: WeakModel<Editor>, move_down: bool, window: &mut Window, cx: 
             session
         } else {
             let weak_editor = editor.downgrade();
-            let session = window.new_view(cx, |window, cx| Session::new(weak_editor, fs, kernel_specification, window, cx));
+            let session = window.new_view(cx, |window, cx| {
+                Session::new(weak_editor, fs, kernel_specification, window, cx)
+            });
 
             editor.update(cx, |_editor, cx| {
                 cx.notify();
 
                 cx.subscribe_in(&session, window, {
                     let store = store.clone();
-                    move |_this, _session, event, cx| match event {
+                    move |_this, _session, event, window, cx| match event {
                         SessionEvent::Shutdown(shutdown_event) => {
                             store.update(cx, |store, _cx| {
                                 store.remove_session(shutdown_event.entity_id());
@@ -148,7 +158,14 @@ pub fn run(editor: WeakModel<Editor>, move_down: bool, window: &mut Window, cx: 
         }
 
         session.update(cx, |session, cx| {
-            session.execute(selected_text, anchor_range, next_cursor, move_down, window, cx);
+            session.execute(
+                selected_text,
+                anchor_range,
+                next_cursor,
+                move_down,
+                window,
+                cx,
+            );
         });
     }
 
@@ -165,7 +182,8 @@ pub enum SessionSupport {
 
 pub fn worktree_id_for_editor(
     editor: WeakModel<Editor>,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> Option<WorktreeId> {
     editor.upgrade().and_then(|editor| {
         editor
@@ -179,7 +197,11 @@ pub fn worktree_id_for_editor(
     })
 }
 
-pub fn session(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppContext) -> SessionSupport {
+pub fn session(
+    editor: WeakModel<Editor>,
+    window: &mut Window,
+    cx: &mut AppContext,
+) -> SessionSupport {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
 
@@ -276,7 +298,7 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakMode
     editor
         .register_action({
             let editor_handle = editor_handle.clone();
-            move |_: &ClearOutputs, cx| {
+            move |_: &ClearOutputs, window, cx| {
                 if !JupyterSettings::enabled(cx) {
                     return;
                 }
@@ -289,7 +311,7 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakMode
     editor
         .register_action({
             let editor_handle = editor_handle.clone();
-            move |_: &Interrupt, cx| {
+            move |_: &Interrupt, window, cx| {
                 if !JupyterSettings::enabled(cx) {
                     return;
                 }
@@ -302,7 +324,7 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakMode
     editor
         .register_action({
             let editor_handle = editor_handle.clone();
-            move |_: &Shutdown, cx| {
+            move |_: &Shutdown, window, cx| {
                 if !JupyterSettings::enabled(cx) {
                     return;
                 }
@@ -315,7 +337,7 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakMode
     editor
         .register_action({
             let editor_handle = editor_handle.clone();
-            move |_: &Restart, cx| {
+            move |_: &Restart, window, cx| {
                 if !JupyterSettings::enabled(cx) {
                     return;
                 }
@@ -448,7 +470,11 @@ fn language_supported(language: &Arc<Language>) -> bool {
     }
 }
 
-fn get_language(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppContext) -> Option<Arc<Language>> {
+fn get_language(
+    editor: WeakModel<Editor>,
+    window: &mut Window,
+    cx: &mut AppContext,
+) -> Option<Arc<Language>> {
     editor
         .update(cx, |editor, cx| {
             let selection = editor.selections.newest::<usize>(cx);

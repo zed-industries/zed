@@ -7,7 +7,7 @@ use language::LanguageRegistry;
 use paths::config_dir;
 use picker::{Picker, PickerDelegate};
 use std::{borrow::Borrow, fs, sync::Arc};
-use ui::{prelude::*, AppContext, HighlightedLabel, ListItem, ListItemSpacing, Window};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, ModalView, Workspace};
 
@@ -60,7 +60,7 @@ impl ScopeSelector {
         let delegate =
             ScopeSelectorDelegate::new(workspace, cx.view().downgrade(), language_registry);
 
-        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
+        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
@@ -140,7 +140,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                         _ => language.await?.lsp_id(),
                     };
 
-                    workspace.update(&mut cx, |workspace, cx| {
+                    workspace.update_in(&mut cx, |workspace, window, cx| {
                         workspace
                             .open_abs_path(
                                 config_dir().join("snippets").join(scope + ".json"),

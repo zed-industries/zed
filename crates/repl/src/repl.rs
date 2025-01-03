@@ -31,7 +31,7 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     set_dispatcher(zed_dispatcher(cx));
     JupyterSettings::register(cx);
     ::editor::init_settings(cx);
-    repl_sessions_ui::init(window, cx);
+    repl_sessions_ui::init(cx);
     ReplStore::init(fs, cx);
 }
 

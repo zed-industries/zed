@@ -84,7 +84,12 @@ impl PickerDelegate for KernelPickerDelegate {
         }
     }
 
-    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_kernelspec = self.filtered_kernels.get(ix).cloned();
         cx.notify();
     }
@@ -93,7 +98,12 @@ impl PickerDelegate for KernelPickerDelegate {
         "Select a kernel...".into()
     }
 
-    fn update_matches(&mut self, query: String, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let all_kernels = self.all_kernels.clone();
 
         if query.is_empty() {
@@ -113,9 +123,14 @@ impl PickerDelegate for KernelPickerDelegate {
         return Task::ready(());
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         if let Some(kernelspec) = &self.selected_kernelspec {
-            (self.on_select)(kernelspec.clone(), cx.window_context());
+            (self.on_select)(kernelspec.clone(), window, cx);
             cx.emit(DismissEvent);
         }
     }
@@ -126,7 +141,8 @@ impl PickerDelegate for KernelPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window, cx: &mut ModelContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let kernelspec = self.filtered_kernels.get(ix)?;
         let is_selected = self.selected_kernelspec.as_ref() == Some(kernelspec);
@@ -204,7 +220,11 @@ impl PickerDelegate for KernelPickerDelegate {
         )
     }
 
-    fn render_footer(&self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Option<gpui::AnyElement> {
         Some(
             h_flex()
                 .w_full()

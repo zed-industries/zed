@@ -295,7 +295,7 @@ impl TestServer {
             Project::init(&client, cx);
             client::init(&client, cx);
             language::init(cx);
-            editor::init(window, cx);
+            editor::init(cx);
             workspace::init(app_state.clone(), cx);
             call::init(client.clone(), user_store.clone(), cx);
             channel::init(&client, user_store.clone(), cx);
@@ -756,13 +756,13 @@ impl TestClient {
         channel_id: ChannelId,
         cx: &mut VisualTestContext,
     ) {
-        cx.update(|cx| {
+        cx.update(|window, cx| {
             let active_call = ActiveCall::global(cx);
             active_call.update(cx, |call, cx| call.join_channel(channel_id, cx))
         })
         .await
         .unwrap();
-        cx.update(|cx| {
+        cx.update(|window, cx| {
             let active_call = ActiveCall::global(cx);
             let project = workspace.read(cx).project().clone();
             active_call.update(cx, |call, cx| call.share_project(project, cx))
@@ -823,7 +823,7 @@ impl TestClient {
         project: &Model<Project>,
         cx: &'a mut TestAppContext,
     ) -> (Model<Workspace>, &'a mut VisualTestContext) {
-        cx.add_window_view(|cx| {
+        cx.add_window_view(|window, cx| {
             window.activate_window();
             Workspace::new(None, project.clone(), self.app_state.clone(), window, cx)
         })
@@ -834,7 +834,7 @@ impl TestClient {
         cx: &'a mut TestAppContext,
     ) -> (Model<Workspace>, &'a mut VisualTestContext) {
         let project = self.build_test_project(cx).await;
-        cx.add_window_view(|cx| {
+        cx.add_window_view(|window, cx| {
             window.activate_window();
             Workspace::new(None, project.clone(), self.app_state.clone(), window, cx)
         })
@@ -857,10 +857,11 @@ pub fn open_channel_notes(
     channel_id: ChannelId,
     cx: &mut VisualTestContext,
 ) -> Task<anyhow::Result<Model<ChannelView>>> {
-    let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+    let window =
+        cx.update(|window, cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
     let view = window.root_view(cx).unwrap();
 
-    cx.update(|cx| ChannelView::open(channel_id, None, view.clone(), window, cx))
+    cx.update(|window, cx| ChannelView::open(channel_id, None, view.clone(), window, cx))
 }
 
 impl Drop for TestClient {

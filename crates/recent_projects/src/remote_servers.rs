@@ -129,7 +129,7 @@ impl ProjectPicker {
         let query = lister.default_query(cx);
         let delegate = file_finder::OpenPathDelegate::new(tx, lister);
 
-        let picker = window.new_view(cx, |cx| {
+        let picker = window.new_view(cx, |window, cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .width(rems(34.))
                 .modal(false);
@@ -144,7 +144,7 @@ impl ProjectPicker {
                 move |this, mut cx| async move {
                     let Ok(Some(paths)) = rx.await else {
                         workspace
-                            .update(&mut cx, |workspace, cx| {
+                            .update_in(&mut cx, |workspace, window, cx| {
                                 let weak = cx.view().downgrade();
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     RemoteServerProjects::new(window, cx, weak)
@@ -161,7 +161,7 @@ impl ProjectPicker {
                         .update(|window, cx| (app_state.build_window_options)(None, cx))
                         .log_err()?;
 
-                    cx.open_window(options, |cx| {
+                    cx.open_window(options, |window, cx| {
                         window.activate_window();
 
                         let fs = app_state.fs.clone();
@@ -226,7 +226,7 @@ impl ProjectPicker {
                 }
             })
             .shared();
-        window.new_view(cx, |_| Self {
+        window.new_view(cx, |_, _| Self {
             _path_task,
             picker,
             connection_string,
@@ -404,7 +404,9 @@ impl RemoteServerProjects {
                 return;
             }
         };
-        let ssh_prompt = window.new_view(cx, |cx| SshPrompt::new(&connection_options, window, cx));
+        let ssh_prompt = window.new_view(cx, |window, cx| {
+            SshPrompt::new(&connection_options, window, cx)
+        });
 
         let connection = connect_over_ssh(
             ConnectionIdentifier::setup(),
@@ -419,7 +421,7 @@ impl RemoteServerProjects {
         let creating = cx.spawn_in(window, move |this, mut cx| async move {
             match connection.await {
                 Some(Some(client)) => this
-                    .update(&mut cx, |this, cx| {
+                    .update_in(&mut cx, |this, window, cx| {
                         let _ = this.workspace.update(cx, |workspace, _| {
                             workspace
                                 .client()
@@ -433,7 +435,7 @@ impl RemoteServerProjects {
                     })
                     .log_err(),
                 _ => this
-                    .update(&mut cx, |this, cx| {
+                    .update_in(&mut cx, |this, window, cx| {
                         address_editor.update(cx, |this, _| {
                             this.set_read_only(false);
                         });
@@ -513,7 +515,7 @@ impl RemoteServerProjects {
                     let session = connect.await;
 
                     workspace
-                        .update(&mut cx, |workspace, cx| {
+                        .update_in(&mut cx, |workspace, window, cx| {
                             if let Some(prompt) = workspace.active_modal::<SshConnectionModal>(cx) {
                                 prompt.update(cx, |prompt, cx| prompt.finished(window, cx))
                             }
@@ -522,7 +524,7 @@ impl RemoteServerProjects {
 
                     let Some(Some(session)) = session else {
                         workspace
-                            .update(&mut cx, |workspace, cx| {
+                            .update_in(&mut cx, |workspace, window, cx| {
                                 let weak = cx.view().downgrade();
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     RemoteServerProjects::new(window, cx, weak)
@@ -533,7 +535,7 @@ impl RemoteServerProjects {
                     };
 
                     workspace
-                        .update(&mut cx, |workspace, cx| {
+                        .update_in(&mut cx, |workspace, window, cx| {
                             let app_state = workspace.app_state().clone();
                             let weak = cx.view().downgrade();
                             let project = project::Project::ssh(
@@ -672,7 +674,7 @@ impl RemoteServerProjects {
                             .anchor_scroll(ssh_server.open_folder.scroll_anchor.clone())
                             .on_action(cx.listener({
                                 let ssh_connection = ssh_server.clone();
-                                move |this, _: &menu::Confirm, cx| {
+                                move |this, _: &menu::Confirm, window, cx| {
                                     this.create_ssh_project(
                                         ix,
                                         ssh_connection.connection.clone(),
@@ -695,7 +697,7 @@ impl RemoteServerProjects {
                                     .child(Label::new("Open Folder"))
                                     .on_click(cx.listener({
                                         let ssh_connection = ssh_server.clone();
-                                        move |this, _, cx| {
+                                        move |this, _, window, cx| {
                                             this.create_ssh_project(
                                                 ix,
                                                 ssh_connection.connection.clone(),
@@ -713,7 +715,7 @@ impl RemoteServerProjects {
                             .anchor_scroll(ssh_server.configure.scroll_anchor.clone())
                             .on_action(cx.listener({
                                 let ssh_connection = ssh_server.clone();
-                                move |this, _: &menu::Confirm, cx| {
+                                move |this, _: &menu::Confirm, window, cx| {
                                     this.view_server_options(
                                         (ix, ssh_connection.connection.clone()),
                                         window,
@@ -735,7 +737,7 @@ impl RemoteServerProjects {
                                     .child(Label::new("View Server Options"))
                                     .on_click(cx.listener({
                                         let ssh_connection = ssh_server.clone();
-                                        move |this, _, cx| {
+                                        move |this, _, window, cx| {
                                             this.view_server_options(
                                                 (ix, ssh_connection.connection.clone()),
                                                 window,
@@ -1097,7 +1099,7 @@ impl RemoteServerProjects {
                                 .on_action({
                                     let connection_string = connection_string.clone();
                                     let workspace = self.workspace.clone();
-                                    move |_: &menu::Confirm, cx| {
+                                    move |_: &menu::Confirm, window, cx| {
                                         callback(
                                             workspace.clone(),
                                             connection_string.clone(),
@@ -1121,7 +1123,7 @@ impl RemoteServerProjects {
                                         )
                                         .on_click({
                                             let connection_string = connection_string.clone();
-                                            move |_, cx| {
+                                            move |_, window, cx| {
                                                 callback(
                                                     workspace.clone(),
                                                     connection_string.clone(),
@@ -1155,12 +1157,12 @@ impl RemoteServerProjects {
                                     .spawn(cx, |mut cx| async move {
                                         if confirmation.await.ok() == Some(0) {
                                             remote_servers
-                                                .update(&mut cx, |this, cx| {
+                                                .update_in(&mut cx, |this, window, cx| {
                                                     this.delete_ssh_server(index, window, cx);
                                                 })
                                                 .ok();
                                             remote_servers
-                                                .update(&mut cx, |this, cx| {
+                                                .update_in(&mut cx, |this, window, cx| {
                                                     this.mode = Mode::default_mode(window, cx);
                                                     cx.notify();
                                                 })
@@ -1175,7 +1177,7 @@ impl RemoteServerProjects {
                                 .track_focus(&entries[2].focus_handle)
                                 .on_action(cx.listener({
                                     let connection_string = connection_string.clone();
-                                    move |_, _: &menu::Confirm, cx| {
+                                    move |_, _: &menu::Confirm, window, cx| {
                                         remove_ssh_server(
                                             cx.view().clone(),
                                             server_index,
@@ -1397,6 +1399,7 @@ impl RemoteServerProjects {
                                     modal_section.prepaint_as_root(
                                         bounds.origin,
                                         bounds.size.into(),
+                                        window,
                                         cx,
                                     );
                                     modal_section

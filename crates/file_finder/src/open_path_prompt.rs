@@ -52,7 +52,7 @@ impl OpenPathPrompt {
         _window: &mut Window,
         _: &mut ModelContext<Workspace>,
     ) {
-        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, cx| {
+        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, window, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
             Self::prompt_for_open_path(workspace, lister, tx, window, cx);
             rx

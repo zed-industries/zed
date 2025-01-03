@@ -175,7 +175,7 @@ impl Cell {
                 let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
                 let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-                let editor_view = window.new_view(cx, |cx| {
+                let editor_view = window.new_view(cx, |window, cx| {
                     let mut editor = Editor::new(
                         EditorMode::AutoHeight { max_lines: 1024 },
                         multi_buffer,
@@ -410,7 +410,7 @@ impl Render for MarkdownCell {
                             .size_full()
                             .flex_1()
                             .p_3()
-                            .font_ui(window, cx)
+                            .font_ui(cx)
                             .text_size(TextSize::Default.rems(cx))
                             //
                             .children(parsed.children.iter().map(|child| {
@@ -736,7 +736,7 @@ impl Render for RawCell {
                             .size_full()
                             .flex_1()
                             .p_3()
-                            .font_ui(window, cx)
+                            .font_ui(cx)
                             .text_size(TextSize::Default.rems(cx))
                             .child(self.source.clone()),
                     ),

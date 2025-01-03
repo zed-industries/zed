@@ -105,7 +105,7 @@ impl TabSwitcher {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self {
-            picker: window.new_view(cx, |cx| {
+            picker: window.new_view(cx, |window, cx| {
                 Picker::nonsearchable_uniform_list(delegate, window, cx)
             }),
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
@@ -423,7 +423,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             icon.color(git_status_color.unwrap_or_default())
         });
 
-        let indicator = render_item_indicator(tab_match.item.boxed_clone(), window, cx);
+        let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
         let indicator_color = if let Some(ref indicator) = indicator {
             indicator.color
         } else {

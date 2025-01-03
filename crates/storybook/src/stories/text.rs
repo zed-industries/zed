@@ -82,7 +82,7 @@ impl Render for TextStory {
                             InteractiveText::new(
                                 "interactive",
                                 StyledText::new("Hello world, how is it going?").with_highlights(
-                                    &cx.text_style(),
+                                    &window.text_style(),
                                     [
                                         (
                                             6..11,
@@ -94,7 +94,7 @@ impl Render for TextStory {
                                     ],
                                 ),
                             )
-                            .on_click(vec![2..4, 1..3, 7..9], |range_ix, _cx| {
+                            .on_click(vec![2..4, 1..3, 7..9], |range_ix, window, _cx| {
                                 println!("Clicked range {range_ix}");
                             }),
                         )

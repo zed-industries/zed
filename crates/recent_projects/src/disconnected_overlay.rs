@@ -112,7 +112,7 @@ impl DisconnectedOverlay {
             return;
         };
 
-        let Some(window) = window.window_handle().downcast::<Workspace>() else {
+        let Some(window_handle) = window.window_handle().downcast::<Workspace>() else {
             return;
         };
 
@@ -126,7 +126,7 @@ impl DisconnectedOverlay {
                 paths,
                 app_state,
                 OpenOptions {
-                    replace_window: Some(window),
+                    replace_window: Some(window_handle),
                     ..Default::default()
                 },
                 &mut cx,

@@ -60,7 +60,7 @@ impl ToolchainSelector {
                 .ok()
                 .flatten();
             workspace
-                .update(&mut cx, |this, cx| {
+                .update_in(&mut cx, |this, window, cx| {
                     this.toggle_modal(window, cx, move |window, cx| {
                         ToolchainSelector::new(
                             weak,
@@ -92,7 +92,7 @@ impl ToolchainSelector {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let view = cx.view().downgrade();
-        let picker = window.new_view(cx, |cx| {
+        let picker = window.new_view(cx, |window, cx| {
             let delegate = ToolchainSelectorDelegate::new(
                 active_toolchain,
                 view,
@@ -154,24 +154,24 @@ impl ToolchainSelectorDelegate {
             let project = project.clone();
             move |this, mut cx| async move {
                 let term = project
-                    .update(&mut cx, |this, _| {
+                    .update_in(&mut cx, |this, window, _| {
                         Project::toolchain_term(this.languages().clone(), language_name.clone())
                     })
                     .ok()?
                     .await?;
                 let placeholder_text = format!("Select a {}…", term.to_lowercase()).into();
-                let _ = this.update(&mut cx, move |this, cx| {
+                let _ = this.update_in(&mut cx, move |this, window, cx| {
                     this.delegate.placeholder_text = placeholder_text;
                     this.refresh_placeholder(window, cx);
                 });
                 let available_toolchains = project
-                    .update(&mut cx, |this, cx| {
+                    .update_in(&mut cx, |this, window, cx| {
                         this.available_toolchains(worktree_id, language_name, cx)
                     })
                     .ok()?
                     .await?;
 
-                let _ = this.update(&mut cx, move |this, cx| {
+                let _ = this.update_in(&mut cx, move |this, window, cx| {
                     this.delegate.candidates = available_toolchains;
 
                     if let Some(active_toolchain) = active_toolchain {

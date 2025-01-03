@@ -16,7 +16,7 @@ use workspace::{ModalView, Workspace};
 use zed_actions::branches::OpenRecent;
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
         workspace.register_action(BranchList::open);
     })
     .detach();
@@ -40,7 +40,7 @@ impl BranchList {
             // Modal branch picker has a longer trailoff than a popover one.
             let delegate = BranchListDelegate::new(this.clone(), 70, &cx).await?;
 
-            this.update(&mut cx, |workspace, cx| {
+            this.update_in(&mut cx, |workspace, window, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
                     BranchList::new(delegate, 34., window, cx)
                 })
@@ -57,7 +57,7 @@ impl BranchList {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
+        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
         let _subscription =
             cx.subscribe_in(&picker, window, |_, _, _, window, cx| cx.emit(DismissEvent));
         Self {

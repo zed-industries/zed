@@ -24,12 +24,7 @@ struct Match {
 }
 
 impl Match {
-    fn entry<'a>(
-        &'a self,
-        project: &'a Project,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<&'a Entry> {
+    fn entry<'a>(&'a self, project: &'a Project, cx: &'a AppContext) -> Option<&'a Entry> {
         if let Some(suffix) = &self.suffix {
             let (worktree, path) = if let Some(path_match) = &self.path_match {
                 (
@@ -50,8 +45,8 @@ impl Match {
         }
     }
 
-    fn is_dir(&self, project: &Project, window: &mut Window, cx: &mut AppContext) -> bool {
-        self.entry(project, window, cx).is_some_and(|e| e.is_dir())
+    fn is_dir(&self, project: &Project, cx: &AppContext) -> bool {
+        self.entry(project, cx).is_some_and(|e| e.is_dir())
             || self.suffix.as_ref().is_some_and(|s| s.ends_with('/'))
     }
 
@@ -73,12 +68,7 @@ impl Match {
         }
     }
 
-    fn project_path(
-        &self,
-        project: &Project,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<ProjectPath> {
+    fn project_path(&self, project: &Project, cx: &AppContext) -> Option<ProjectPath> {
         let worktree_id = if let Some(path_match) = &self.path_match {
             WorktreeId::from_usize(path_match.worktree_id)
         } else if let Some(worktree) = project.visible_worktrees(cx).find(|worktree| {
@@ -101,12 +91,7 @@ impl Match {
         })
     }
 
-    fn existing_prefix(
-        &self,
-        project: &Project,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<PathBuf> {
+    fn existing_prefix(&self, project: &Project, cx: &AppContext) -> Option<PathBuf> {
         let worktree = project.worktrees(cx).next()?.read(cx);
         let mut prefix = PathBuf::new();
         let parts = self.suffix.as_ref()?.split('/');
@@ -120,12 +105,7 @@ impl Match {
         None
     }
 
-    fn styled_text(
-        &self,
-        project: &Project,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> StyledText {
+    fn styled_text(&self, project: &Project, window: &Window, cx: &AppContext) -> StyledText {
         let mut text = "./".to_string();
         let mut highlights = Vec::new();
         let mut offset = text.as_bytes().len();
@@ -149,7 +129,7 @@ impl Match {
 
             if let Some(suffix) = &self.suffix {
                 text.push_str(suffix);
-                let entry = self.entry(project, window, cx);
+                let entry = self.entry(project, cx);
                 let color = if let Some(entry) = entry {
                     if entry.is_dir() {
                         Color::Accent
@@ -184,7 +164,7 @@ impl Match {
         } else if let Some(suffix) = &self.suffix {
             text.push_str(suffix);
             let existing_prefix_len = self
-                .existing_prefix(project, window, cx)
+                .existing_prefix(project, cx)
                 .map(|prefix| prefix.to_string_lossy().as_bytes().len())
                 .unwrap_or(0);
 
@@ -196,7 +176,7 @@ impl Match {
             }
             highlights.push((
                 offset + existing_prefix_len..offset + suffix.as_bytes().len(),
-                HighlightStyle::color(if self.entry(project, window, cx).is_some() {
+                HighlightStyle::color(if self.entry(project, cx).is_some() {
                     Color::Conflict.color(cx)
                 } else {
                     Color::Created.color(cx)
@@ -232,7 +212,7 @@ impl NewPathPrompt {
         _window: &mut Window,
         _cx: &mut ModelContext<Workspace>,
     ) {
-        workspace.set_prompt_for_new_path(Box::new(|workspace, cx| {
+        workspace.set_prompt_for_new_path(Box::new(|workspace, window, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
             Self::prompt_for_new_path(workspace, tx, window, cx);
             rx
@@ -351,7 +331,7 @@ impl PickerDelegate for NewPathDelegate {
                 .update(&mut cx, |picker, cx| {
                     picker
                         .delegate
-                        .set_search_matches(query, prefix, suffix, matches, window, cx)
+                        .set_search_matches(query, prefix, suffix, matches, cx)
                 })
                 .log_err();
         })
@@ -372,7 +352,7 @@ impl PickerDelegate for NewPathDelegate {
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<String> {
         let m = self.matches.get(self.selected_index)?;
-        if m.is_dir(self.project.read(cx), window, cx) {
+        if m.is_dir(self.project.read(cx), cx) {
             let path = m.relative_path();
             self.last_selected_dir = Some(path.clone());
             Some(format!("{}/", path))
@@ -391,7 +371,7 @@ impl PickerDelegate for NewPathDelegate {
             return;
         };
 
-        let exists = m.entry(self.project.read(cx), window, cx).is_some();
+        let exists = m.entry(self.project.read(cx), cx).is_some();
         if exists {
             self.should_dismiss = false;
             let answer = window.prompt(
@@ -406,14 +386,12 @@ impl PickerDelegate for NewPathDelegate {
             cx.spawn_in(window, |picker, mut cx| async move {
                 let answer = answer.await.ok();
                 picker
-                    .update(&mut cx, |picker, cx| {
+                    .update_in(&mut cx, |picker, window, cx| {
                         picker.delegate.should_dismiss = true;
                         if answer != Some(0) {
                             return;
                         }
-                        if let Some(path) =
-                            m.project_path(picker.delegate.project.read(cx), window, cx)
-                        {
+                        if let Some(path) = m.project_path(picker.delegate.project.read(cx), cx) {
                             if let Some(tx) = picker.delegate.tx.take() {
                                 tx.send(Some(path)).ok();
                             }
@@ -426,7 +404,7 @@ impl PickerDelegate for NewPathDelegate {
             return;
         }
 
-        if let Some(path) = m.project_path(self.project.read(cx), window, cx) {
+        if let Some(path) = m.project_path(self.project.read(cx), cx) {
             if let Some(tx) = self.tx.take() {
                 tx.send(Some(path)).ok();
             }
@@ -479,7 +457,6 @@ impl NewPathDelegate {
         prefix: String,
         suffix: Option<String>,
         matches: Vec<PathMatch>,
-        window: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         cx.notify();

@@ -1,4 +1,4 @@
-use gpui::{Window, AppContext, Model, AnyElement, FontWeight,  };
+use gpui::{AnyElement, AppContext, FontWeight, Model, Window};
 use ui::{h_flex, prelude::*, v_flex, Label};
 
 use crate::outputs::plain::TerminalOutput;
@@ -21,7 +21,7 @@ impl ErrorView {
                 .gap_3()
                 .child(
                     h_flex()
-                        .font_buffer(window, cx)
+                        .font_buffer(cx)
                         .child(
                             Label::new(format!("{}: ", self.ename.clone()))
                                 // .size(LabelSize::Large)

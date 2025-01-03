@@ -144,7 +144,7 @@ impl PickerStory {
             ]);
 
             PickerStory {
-                picker: window.new_view(cx, |cx| {
+                picker: window.new_view(cx, |window, cx| {
                     let mut delegate = Delegate::new(&[
                         "Baguette (France)",
                         "Baklava (Turkey)",
