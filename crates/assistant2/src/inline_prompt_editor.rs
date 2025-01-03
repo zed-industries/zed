@@ -27,6 +27,7 @@ use settings::Settings;
 use std::cmp;
 use std::sync::Arc;
 use theme::ThemeSettings;
+use ui::utils::WithRemSize;
 use ui::{
     prelude::*, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, PopoverMenuHandle, Tooltip,
 };
@@ -54,6 +55,7 @@ impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
 
 impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
         let mut buttons = Vec::new();
 
         let left_gutter_spacing = match &self.mode {
@@ -85,106 +87,111 @@ impl<T: 'static> Render for PromptEditor<T> {
 
         buttons.extend(self.render_buttons(cx));
 
-        v_flex()
-            .key_context("PromptEditor")
-            .bg(cx.theme().colors().editor_background)
-            .block_mouse_down()
-            .gap_0p5()
-            .border_y_1()
-            .border_color(cx.theme().status().info_border)
-            .size_full()
-            .pt_0p5()
-            .pb(bottom_padding)
-            .pr_6()
-            .child(
-                h_flex()
-                    .items_start()
-                    .cursor(CursorStyle::Arrow)
-                    .on_action(cx.listener(Self::toggle_context_picker))
-                    .on_action(cx.listener(Self::toggle_model_selector))
-                    .on_action(cx.listener(Self::confirm))
-                    .on_action(cx.listener(Self::cancel))
-                    .on_action(cx.listener(Self::move_up))
-                    .on_action(cx.listener(Self::move_down))
-                    .capture_action(cx.listener(Self::cycle_prev))
-                    .capture_action(cx.listener(Self::cycle_next))
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .w(left_gutter_spacing)
-                            .justify_center()
-                            .gap_2()
-                            .child(self.render_close_button(cx))
-                            .map(|el| {
-                                let CodegenStatus::Error(error) = self.codegen_status(cx) else {
-                                    return el;
-                                };
+        WithRemSize::new(ui_font_size).flex().w_full().child(
+            v_flex()
+                .key_context("PromptEditor")
+                .bg(cx.theme().colors().editor_background)
+                .block_mouse_down()
+                .gap_0p5()
+                .border_y_1()
+                .border_color(cx.theme().status().info_border)
+                .size_full()
+                .pt_0p5()
+                .pb(bottom_padding)
+                .pr_6()
+                .child(
+                    h_flex()
+                        .items_start()
+                        .cursor(CursorStyle::Arrow)
+                        .on_action(cx.listener(Self::toggle_context_picker))
+                        .on_action(cx.listener(Self::toggle_model_selector))
+                        .on_action(cx.listener(Self::confirm))
+                        .on_action(cx.listener(Self::cancel))
+                        .on_action(cx.listener(Self::move_up))
+                        .on_action(cx.listener(Self::move_down))
+                        .capture_action(cx.listener(Self::cycle_prev))
+                        .capture_action(cx.listener(Self::cycle_next))
+                        .child(
+                            h_flex()
+                                .h_full()
+                                .w(left_gutter_spacing)
+                                .justify_center()
+                                .gap_2()
+                                .child(self.render_close_button(cx))
+                                .map(|el| {
+                                    let CodegenStatus::Error(error) = self.codegen_status(cx)
+                                    else {
+                                        return el;
+                                    };
 
-                                let error_message = SharedString::from(error.to_string());
-                                if error.error_code() == proto::ErrorCode::RateLimitExceeded
-                                    && cx.has_flag::<ZedPro>()
-                                {
-                                    el.child(
-                                        v_flex()
-                                            .child(
-                                                IconButton::new(
-                                                    "rate-limit-error",
-                                                    IconName::XCircle,
+                                    let error_message = SharedString::from(error.to_string());
+                                    if error.error_code() == proto::ErrorCode::RateLimitExceeded
+                                        && cx.has_flag::<ZedPro>()
+                                    {
+                                        el.child(
+                                            v_flex()
+                                                .child(
+                                                    IconButton::new(
+                                                        "rate-limit-error",
+                                                        IconName::XCircle,
+                                                    )
+                                                    .toggle_state(self.show_rate_limit_notice)
+                                                    .shape(IconButtonShape::Square)
+                                                    .icon_size(IconSize::Small)
+                                                    .on_click(
+                                                        cx.listener(Self::toggle_rate_limit_notice),
+                                                    ),
                                                 )
-                                                .toggle_state(self.show_rate_limit_notice)
-                                                .shape(IconButtonShape::Square)
-                                                .icon_size(IconSize::Small)
-                                                .on_click(
-                                                    cx.listener(Self::toggle_rate_limit_notice),
+                                                .children(self.show_rate_limit_notice.then(|| {
+                                                    deferred(
+                                                        anchored()
+                                                            .position_mode(
+                                                                gpui::AnchoredPositionMode::Local,
+                                                            )
+                                                            .position(point(px(0.), px(24.)))
+                                                            .anchor(gpui::Corner::TopLeft)
+                                                            .child(
+                                                                self.render_rate_limit_notice(cx),
+                                                            ),
+                                                    )
+                                                })),
+                                        )
+                                    } else {
+                                        el.child(
+                                            div()
+                                                .id("error")
+                                                .tooltip(move |cx| {
+                                                    Tooltip::text(error_message.clone(), cx)
+                                                })
+                                                .child(
+                                                    Icon::new(IconName::XCircle)
+                                                        .size(IconSize::Small)
+                                                        .color(Color::Error),
                                                 ),
-                                            )
-                                            .children(self.show_rate_limit_notice.then(|| {
-                                                deferred(
-                                                    anchored()
-                                                        .position_mode(
-                                                            gpui::AnchoredPositionMode::Local,
-                                                        )
-                                                        .position(point(px(0.), px(24.)))
-                                                        .anchor(gpui::Corner::TopLeft)
-                                                        .child(self.render_rate_limit_notice(cx)),
-                                                )
-                                            })),
-                                    )
-                                } else {
-                                    el.child(
-                                        div()
-                                            .id("error")
-                                            .tooltip(move |cx| {
-                                                Tooltip::text(error_message.clone(), cx)
-                                            })
-                                            .child(
-                                                Icon::new(IconName::XCircle)
-                                                    .size(IconSize::Small)
-                                                    .color(Color::Error),
-                                            ),
-                                    )
-                                }
-                            }),
-                    )
-                    .child(
+                                        )
+                                    }
+                                }),
+                        )
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .child(div().flex_1().child(self.render_editor(cx)))
+                                .child(h_flex().gap_1().children(buttons)),
+                        ),
+                )
+                .child(
+                    h_flex().child(div().w(left_gutter_spacing)).child(
                         h_flex()
                             .w_full()
+                            .pl_1()
+                            .items_start()
                             .justify_between()
-                            .child(div().flex_1().child(self.render_editor(cx)))
-                            .child(h_flex().gap_1().children(buttons)),
+                            .child(self.context_strip.clone())
+                            .child(self.model_selector.clone()),
                     ),
-            )
-            .child(
-                h_flex().child(div().w(left_gutter_spacing)).child(
-                    h_flex()
-                        .w_full()
-                        .pl_1()
-                        .items_start()
-                        .justify_between()
-                        .child(self.context_strip.clone())
-                        .child(self.model_selector.clone()),
                 ),
-            )
+        )
     }
 }
 
