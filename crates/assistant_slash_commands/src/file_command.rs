@@ -671,6 +671,8 @@ mod test {
 
     #[gpui::test]
     async fn test_file_sub_directory_rendering(cx: &mut TestAppContext) {
+        use std::path::MAIN_SEPARATOR_STR;
+
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -702,73 +704,67 @@ mod test {
 
         let project = Project::test(fs, ["/zed".as_ref()], cx).await;
 
-        #[cfg(not(target_os = "windows"))]
-        let path_to_themes = "zed/assets/themes".to_string();
-        #[cfg(target_os = "windows")]
-        let path_to_themes = "zed\\assets\\themes".to_string();
-        let result = cx.update(|cx| collect_files(project.clone(), &[path_to_themes], cx));
+        let result = cx.update(|cx| {
+            collect_files(
+                project.clone(),
+                &[format!(
+                    "zed{}assets{}themes",
+                    MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+                )],
+                cx,
+            )
+        });
         let result = SlashCommandOutput::from_event_stream(result.boxed())
             .await
             .unwrap();
 
         // Sanity check
-        #[cfg(not(target_os = "windows"))]
-        let expected = "zed/assets/themes\n";
-        #[cfg(target_os = "windows")]
-        let expected = "zed\\assets\\themes\n";
-        assert!(result.text.starts_with(expected));
+        assert!(result.text.starts_with(&format!(
+            "zed{}assets{}themes\n",
+            MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+        )));
         assert_eq!(result.sections.len(), 7);
 
         // Ensure that full file paths are included in the real output
-        #[cfg(not(target_os = "windows"))]
-        {
-            assert!(result.text.contains("zed/assets/themes/andromeda/LICENSE"));
-            assert!(result.text.contains("zed/assets/themes/ayu/LICENSE"));
-            assert!(result.text.contains("zed/assets/themes/summercamp/LICENSE"));
-        }
-        #[cfg(target_os = "windows")]
-        {
-            assert!(result
-                .text
-                .contains("zed\\assets\\themes\\andromeda\\LICENSE"));
-            assert!(result.text.contains("zed\\assets\\themes\\ayu\\LICENSE"));
-            assert!(result
-                .text
-                .contains("zed\\assets\\themes\\summercamp\\LICENSE"));
-        }
+        assert!(result.text.contains(&format!(
+            "zed{}assets{}themes{}andromeda{}LICENSE",
+            MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+        )));
+        assert!(result.text.contains(&format!(
+            "zed{}assets{}themes{}ayu{}LICENSE",
+            MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+        )));
+        assert!(result.text.contains(&format!(
+            "zed{}assets{}themes{}summercamp{}LICENSE",
+            MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+        )));
 
         assert_eq!(result.sections[5].label, "summercamp");
 
         // Ensure that things are in descending order, with properly relativized paths
         assert_eq!(result.sections[1].label, "andromeda");
         assert_eq!(result.sections[3].label, "ayu");
-        #[cfg(not(target_os = "windows"))]
-        {
-            assert_eq!(
-                result.sections[0].label,
-                "zed/assets/themes/andromeda/LICENSE"
-            );
-            assert_eq!(result.sections[2].label, "zed/assets/themes/ayu/LICENSE");
-            assert_eq!(
-                result.sections[4].label,
-                "zed/assets/themes/summercamp/LICENSE"
-            );
-        }
-        #[cfg(target_os = "windows")]
-        {
-            assert_eq!(
-                result.sections[0].label,
-                "zed\\assets\\themes\\andromeda\\LICENSE"
-            );
-            assert_eq!(
-                result.sections[2].label,
-                "zed\\assets\\themes\\ayu\\LICENSE"
-            );
-            assert_eq!(
-                result.sections[4].label,
-                "zed\\assets\\themes\\summercamp\\LICENSE"
-            );
-        }
+        assert_eq!(
+            result.sections[0].label,
+            format!(
+                "zed{}assets{}themes{}andromeda{}LICENSE",
+                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+            )
+        );
+        assert_eq!(
+            result.sections[2].label,
+            format!(
+                "zed{}assets{}themes{}ayu{}LICENSE",
+                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+            )
+        );
+        assert_eq!(
+            result.sections[4].label,
+            format!(
+                "zed{}assets{}themes{}summercamp{}LICENSE",
+                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+            )
+        );
 
         // Ensure that the project lasts until after the last await
         drop(project);
