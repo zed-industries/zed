@@ -3519,7 +3519,7 @@ impl Workspace {
         &self.active_pane
     }
 
-    pub fn focused_pane(&self, window: &mut Window, cx: &mut AppContext) -> Model<Pane> {
+    pub fn focused_pane(&self, window: &Window, cx: &AppContext) -> Model<Pane> {
         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
             if dock.focus_handle(cx).contains_focused(window, cx) {
                 if let Some(pane) = dock

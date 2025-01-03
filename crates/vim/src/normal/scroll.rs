@@ -198,7 +198,7 @@ mod test {
 
         let window = cx.window;
         let margin = cx
-            .update_window(window, |_, cx| {
+            .update_window(window, |_, window, cx| {
                 window.viewport_size().height - line_height * visible_line_count
             })
             .unwrap();
@@ -227,29 +227,32 @@ mod test {
         );
 
         cx.update_editor(|editor, window, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
+            assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 0.))
         });
         cx.simulate_keystrokes("ctrl-e");
         cx.update_editor(|editor, window, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 1.))
+            assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 1.))
         });
         cx.simulate_keystrokes("2 ctrl-e");
         cx.update_editor(|editor, window, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.))
+            assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 3.))
         });
         cx.simulate_keystrokes("ctrl-y");
         cx.update_editor(|editor, window, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 2.))
+            assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 2.))
         });
 
         // does not select in normal mode
         cx.simulate_keystrokes("g g");
         cx.update_editor(|editor, window, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
+            assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 0.))
         });
         cx.simulate_keystrokes("ctrl-d");
         cx.update_editor(|editor, window, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.0));
+            assert_eq!(
+                editor.snapshot(window, cx).scroll_position(),
+                point(0., 3.0)
+            );
             assert_eq!(
                 editor.selections.newest(cx).range(),
                 Point::new(6, 0)..Point::new(6, 0)
@@ -259,11 +262,14 @@ mod test {
         // does select in visual mode
         cx.simulate_keystrokes("g g");
         cx.update_editor(|editor, window, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
+            assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 0.))
         });
         cx.simulate_keystrokes("v ctrl-d");
         cx.update_editor(|editor, window, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.0));
+            assert_eq!(
+                editor.snapshot(window, cx).scroll_position(),
+                point(0., 3.0)
+            );
             assert_eq!(
                 editor.selections.newest(cx).range(),
                 Point::new(0, 0)..Point::new(6, 1)

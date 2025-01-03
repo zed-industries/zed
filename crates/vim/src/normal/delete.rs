@@ -5,9 +5,9 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
+use gpui::{AppContext, ModelContext, Window};
 use language::{Point, Selection};
 use multi_buffer::MultiBufferRow;
-use ui::ViewContext;
 
 impl Vim {
     pub fn delete_motion(

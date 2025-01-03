@@ -6,7 +6,7 @@ use editor::{
     scroll::Autoscroll,
     Anchor, Bias, DisplayPoint,
 };
-use gpui::ViewContext;
+use gpui::{AppContext, Model, ModelContext, Window};
 use language::SelectionGoal;
 
 use crate::{

@@ -8,7 +8,8 @@ use crate::{
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor};
-use gpui::ViewContext;
+use gpui::ModelContext;
+use gpui::Window;
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use settings::Settings;
@@ -224,7 +225,7 @@ impl Vim {
             cx.background_executor()
                 .timer(Duration::from_millis(highlight_duration))
                 .await;
-            this.update(&mut cx, |editor, cx| {
+            this.update_in(&mut cx, |editor, window, cx| {
                 editor.clear_background_highlights::<HighlightOnYank>(window, cx)
             })
             .ok();

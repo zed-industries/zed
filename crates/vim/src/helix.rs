@@ -1,7 +1,7 @@
 use editor::{movement, scroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{actions, Action};
+use gpui::{AppContext, ModelContext, Window};
 use language::{CharClassifier, CharKind};
-use ui::ViewContext;
 
 use crate::{motion::Motion, state::Mode, Vim};
 

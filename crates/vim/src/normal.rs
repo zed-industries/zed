@@ -1396,7 +1396,7 @@ mod test {
     #[gpui::test]
     async fn test_subword_motions(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        cx.update(|cx| {
+        cx.update(|window, cx| {
             cx.bind_keys(vec![
                 KeyBinding::new(
                     "w",
@@ -1480,7 +1480,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_neovim_option("textwidth=5").await;
 
-        cx.update(|cx| {
+        cx.update(|window, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                     settings.defaults.preferred_line_length = Some(5);

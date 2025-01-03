@@ -55,7 +55,7 @@ impl VimTestContext {
     }
 
     pub fn new_with_lsp(mut cx: EditorLspTestContext, enabled: bool) -> VimTestContext {
-        cx.update(|cx| {
+        cx.update(|window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
@@ -69,15 +69,15 @@ impl VimTestContext {
         cx.update_workspace(|workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
-                    let buffer_search_bar = window.new_view(BufferSearchBar::new, cx);
+                    let buffer_search_bar = window.new_view(cx, BufferSearchBar::new);
                     toolbar.add_item(buffer_search_bar, window, cx);
 
-                    let project_search_bar = window.new_view(cx, |_| ProjectSearchBar::new());
+                    let project_search_bar = window.new_view(cx, |_, _| ProjectSearchBar::new());
                     toolbar.add_item(project_search_bar, window, cx);
                 })
             });
             workspace.status_bar().update(cx, |status_bar, cx| {
-                let vim_mode_indicator = window.new_view(ModeIndicator::new, cx);
+                let vim_mode_indicator = window.new_view(cx, ModeIndicator::new);
                 status_bar.add_right_item(vim_mode_indicator, window, cx);
             });
         });
@@ -91,8 +91,10 @@ impl VimTestContext {
         F: FnOnce(&mut T, &mut Window, &mut ModelContext<T>) -> R + 'static,
     {
         let window = self.window;
-        self.update_window(window, move |_, cx| view.update(cx, update))
-            .unwrap()
+        self.update_window(window, move |_, window, cx| {
+            view.update(cx, |view, cx| update(view, window, cx))
+        })
+        .unwrap()
     }
 
     pub fn workspace<F, T>(&mut self, update: F) -> T
@@ -103,7 +105,7 @@ impl VimTestContext {
     }
 
     pub fn enable_vim(&mut self) {
-        self.cx.update(|cx| {
+        self.cx.update(|window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(true));
             });
@@ -111,7 +113,7 @@ impl VimTestContext {
     }
 
     pub fn disable_vim(&mut self) {
-        self.cx.update(|cx| {
+        self.cx.update(|window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(false));
             });
@@ -142,7 +144,7 @@ impl VimTestContext {
         let vim =
             self.update_editor(|editor, _window, _cx| editor.addon::<VimAddon>().cloned().unwrap());
 
-        self.update(|cx| {
+        self.update(|window, cx| {
             vim.view.update(cx, |vim, cx| {
                 vim.switch_mode(mode, true, window, cx);
             });

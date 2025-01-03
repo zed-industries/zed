@@ -100,10 +100,10 @@ pub fn init(cx: &mut AppContext) {
     VimSettings::register(cx);
     VimGlobals::register(cx);
 
-    cx.observe_new_views(|editor: &mut Editor, cx| Vim::register(editor, window, cx))
+    cx.observe_new_views(|editor: &mut Editor, window, cx| Vim::register(editor, window, cx))
         .detach();
 
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+    cx.observe_new_views(|workspace: &mut Workspace, window, _| {
         workspace.register_action(|workspace, _: &ToggleVimMode, window, cx| {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
@@ -121,7 +121,7 @@ pub fn init(cx: &mut AppContext) {
         });
 
         workspace.register_action(|workspace, _: &ResetPaneSizes, window, cx| {
-            workspace.reset_pane_sizes(window, cx);
+            workspace.reset_pane_sizes(cx);
         });
 
         workspace.register_action(|workspace, _: &MaximizePane, window, cx| {
@@ -138,7 +138,7 @@ pub fn init(cx: &mut AppContext) {
             } else {
                 px(10000.)
             };
-            workspace.resize_pane(Axis::Vertical, desired_size - size.size.height, window, cx)
+            workspace.resize_pane(Axis::Vertical, desired_size - size.size.height, cx)
         });
 
         workspace.register_action(|workspace, action: &ResizePane, window, cx| {
@@ -162,7 +162,7 @@ pub fn init(cx: &mut AppContext) {
                 ResizeIntent::Narrow => (Axis::Horizontal, width.width * -1.),
             };
 
-            workspace.resize_pane(axis, amount * count, window, cx);
+            workspace.resize_pane(axis, amount * count, cx);
         });
 
         workspace.register_action(|workspace, _: &SearchSubmit, window, cx| {
@@ -266,7 +266,7 @@ impl Vim {
             editor: editor.downgrade(),
             _subscriptions: vec![
                 cx.observe_keystrokes(Self::observe_keystrokes),
-                cx.subscribe(&editor, |this, _, event, cx| {
+                cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
                     this.handle_editor_event(event, window, cx)
                 }),
             ],
@@ -388,8 +388,7 @@ impl Vim {
         f: impl Fn(&mut Vim, &A, &mut Window, &mut ModelContext<Vim>) + 'static,
     ) {
         let subscription = editor.register_action(cx.listener(f));
-        cx.subscribe_in(window, |_, _, _, _| drop(subscription))
-            .detach();
+        cx.on_release(|_, _| drop(subscription)).detach();
     }
 
     pub fn editor(&self) -> Option<Model<Editor>> {
@@ -855,7 +854,7 @@ impl Vim {
         update: impl FnOnce(&mut Self, &mut Editor, &mut Window, &mut ModelContext<Editor>) -> S,
     ) -> Option<S> {
         let editor = self.editor.upgrade()?;
-        Some(editor.update(cx, |editor, cx| update(self, editor, cx)))
+        Some(editor.update(cx, |editor, cx| update(self, editor, window, cx)))
     }
 
     fn editor_selections(

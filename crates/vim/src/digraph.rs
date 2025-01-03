@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::Editor;
-use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent};
+use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent, ModelContext, Window};
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::LazyLock;
-use ui::ViewContext;
 
 use crate::{state::Operator, Vim, VimSettings};
 
@@ -69,7 +68,7 @@ impl Vim {
             if let Some(prefix) = prefix {
                 if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
                     window.defer(cx, |window, cx| {
-                        window.dispatch_keystroke(keystroke);
+                        window.dispatch_keystroke(keystroke, cx);
                     });
                 }
                 return self.handle_literal_input(prefix, "", window, cx);
@@ -102,7 +101,7 @@ impl Vim {
         if keystroke_event.action.is_none() {
             let keystroke = keystroke_event.keystroke.clone();
             window.defer(cx, |window, cx| {
-                window.dispatch_keystroke(keystroke);
+                window.dispatch_keystroke(keystroke, cx);
             });
         }
         return;

@@ -10,8 +10,8 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
+use gpui::{AppContext, ModelContext, Window};
 use language::Selection;
-use ui::ViewContext;
 
 impl Vim {
     pub fn change_motion(

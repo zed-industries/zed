@@ -1,6 +1,6 @@
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, scroll::Autoscroll};
-use gpui::ViewContext;
+use gpui::{AppContext, Model, ModelContext, Window};
 use language::{Bias, Point, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 

@@ -14,31 +14,27 @@ pub struct ModeIndicator {
 impl ModeIndicator {
     /// Construct a new mode indicator in this window.
     pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        cx.observe_pending_input(window, |this, window, cx| {
+        cx.observe_pending_input(window, |this: &mut Self, window, cx| {
             this.update_pending_keys(window, cx);
             cx.notify();
         })
         .detach();
 
         let handle = cx.view().clone();
-        let window = window.window_handle();
-        cx.observe_new_views::<Vim>(move |_, cx| {
-            if window.window_handle() != window {
+        let window_handle = window.window_handle();
+        cx.observe_new_views::<Vim>(move |_, window, cx| {
+            if window.window_handle() != window_handle {
                 return;
             }
             let vim = cx.view().clone();
             handle.update(cx, |_, cx| {
-                cx.subscribe_in(
-                    &vim,
-                    window,
-                    |mode_indicator, vim, event, window, cx| match event {
-                        VimEvent::Focused => {
-                            mode_indicator.vim_subscription =
-                                Some(cx.observe_in(&vim, window, |_, _, window, cx| cx.notify()));
-                            mode_indicator.vim = Some(vim.downgrade());
-                        }
-                    },
-                )
+                cx.subscribe(&vim, |mode_indicator, vim, event, cx| match event {
+                    VimEvent::Focused => {
+                        mode_indicator.vim_subscription =
+                            Some(cx.observe(&vim, |_, _, cx| cx.notify()));
+                        mode_indicator.vim = Some(vim.downgrade());
+                    }
+                })
                 .detach()
             })
         })

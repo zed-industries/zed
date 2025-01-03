@@ -150,7 +150,7 @@ impl Vim {
                     if !search_bar.show(window, cx) {
                         return;
                     }
-                    let query = search_bar.query(window, cx);
+                    let query = search_bar.query(cx);
 
                     search_bar.select_query(window, cx);
                     cx.focus_self(window);
@@ -203,7 +203,7 @@ impl Vim {
                 let direction = self.search.direction;
                 // in the case that the query has changed, the search bar
                 // will have selected the next match already.
-                if (search_bar.query(window, cx) != self.search.initial_query)
+                if (search_bar.query(cx) != self.search.initial_query)
                     && self.search.direction == Direction::Next
                 {
                     count = count.saturating_sub(1)
@@ -216,7 +216,7 @@ impl Vim {
                 let prior_mode = self.search.prior_mode;
                 let prior_operator = self.search.prior_operator.take();
 
-                let query = search_bar.query(window, cx).into();
+                let query = search_bar.query(cx).into();
                 Vim::globals(cx).registers.insert('/', query);
                 Some((prior_selections, prior_mode, prior_operator))
             })
@@ -342,7 +342,7 @@ impl Vim {
             let search_bar = search_bar.downgrade();
             cx.spawn_in(window, |_, mut cx| async move {
                 search.await?;
-                search_bar.update(&mut cx, |search_bar, cx| {
+                search_bar.update_in(&mut cx, |search_bar, window, cx| {
                     search_bar.select_match(direction, count, window, cx);
 
                     vim.update(cx, |vim, cx| {
@@ -388,7 +388,7 @@ impl Vim {
                     }
                     let mut query = action.query.clone();
                     if query.is_empty() {
-                        query = search_bar.query(window, cx);
+                        query = search_bar.query(cx);
                     };
 
                     let mut options = SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE;
@@ -410,7 +410,7 @@ impl Vim {
                 };
                 cx.spawn_in(window, |_, mut cx| async move {
                     search.await?;
-                    search_bar.update(&mut cx, |search_bar, cx| {
+                    search_bar.update_in(&mut cx, |search_bar, window, cx| {
                         search_bar.select_match(direction, 1, window, cx)
                     })?;
                     anyhow::Ok(())
@@ -462,7 +462,7 @@ impl Vim {
                     options.set(SearchOptions::CASE_SENSITIVE, true)
                 }
                 let search = if replacement.search.is_empty() {
-                    search_bar.query(window, cx)
+                    search_bar.query(cx)
                 } else {
                     replacement.search
                 };
@@ -479,7 +479,7 @@ impl Vim {
             let search_bar = search_bar.downgrade();
             cx.spawn_in(window, |_, mut cx| async move {
                 search.await?;
-                search_bar.update(&mut cx, |search_bar, cx| {
+                search_bar.update_in(&mut cx, |search_bar, window, cx| {
                     if replacement.should_replace_all {
                         search_bar.select_last_match(window, cx);
                         search_bar.replace_all(&Default::default(), window, cx);
@@ -488,7 +488,7 @@ impl Vim {
                                 .timer(Duration::from_millis(200))
                                 .await;
                             editor
-                                .update(&mut cx, |editor, cx| {
+                                .update_in(&mut cx, |editor, window, cx| {
                                     editor.clear_search_within_ranges(window, cx)
                                 })
                                 .ok();
@@ -694,7 +694,7 @@ mod test {
         });
 
         cx.update_view(search_bar, |bar, window, cx| {
-            assert_eq!(bar.query(window, cx), "cc");
+            assert_eq!(bar.query(cx), "cc");
         });
 
         cx.run_until_parked();

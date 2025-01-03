@@ -1,8 +1,8 @@
 use crate::{motion::Motion, object::Object, Vim};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Bias};
+use gpui::{AppContext, ModelContext, Window};
 use language::SelectionGoal;
-use ui::ViewContext;
 
 impl Vim {
     pub fn toggle_comments_motion(

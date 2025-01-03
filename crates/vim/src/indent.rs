@@ -2,8 +2,8 @@ use crate::{motion::Motion, object::Object, state::Mode, Vim};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Bias, Editor};
 use gpui::actions;
+use gpui::{AppContext, ModelContext, Window};
 use language::SelectionGoal;
-use ui::ViewContext;
 
 #[derive(PartialEq, Eq)]
 pub(crate) enum IndentDirection {

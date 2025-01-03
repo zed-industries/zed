@@ -1058,7 +1058,7 @@ impl OnMatchingLines {
                     return;
                 }
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update_in(&mut cx, |editor, window, cx| {
                         editor.start_transaction_at(Instant::now(), window, cx);
                         editor.change_selections(None, window, cx, |s| {
                             s.replace_cursors_with(|_| new_selections);
@@ -1088,9 +1088,8 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::Editor;
-    use gpui::TestAppContext;
+    use gpui::{ModelContext, TestAppContext, Window};
     use indoc::indoc;
-    use ui::ViewContext;
     use workspace::Workspace;
 
     #[gpui::test]

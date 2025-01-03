@@ -5,10 +5,10 @@ use crate::{
     Vim,
 };
 use editor::{movement, scroll::Autoscroll, Bias};
+use gpui::{AppContext, ModelContext, Window};
 use language::BracketPair;
 use serde::Deserialize;
 use std::sync::Arc;
-use ui::ViewContext;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurroundsType {
@@ -756,7 +756,7 @@ mod test {
     async fn test_add_surrounds_visual(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        cx.update(|cx| {
+        cx.update(|window, cx| {
             cx.bind_keys([KeyBinding::new(
                 "shift-s",
                 PushOperator(Operator::AddSurrounds { target: None }),
