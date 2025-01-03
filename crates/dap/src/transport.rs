@@ -24,7 +24,7 @@ use std::{
     time::Duration,
 };
 use task::TCPHost;
-use util::ResultExt as _;
+use util::{maybe, ResultExt as _};
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
@@ -785,9 +785,9 @@ impl FakeTransport {
                     let message = serde_json::to_string(&Message::Response(Response {
                         seq: seq + 1,
                         request_seq: seq,
-                        success: response.is_ok(),
+                        success: response.as_ref().is_ok(),
                         command: R::COMMAND.into(),
-                        body: Some(serde_json::to_value(response).unwrap()),
+                        body: maybe!({ serde_json::to_value(response.ok()?).ok() }),
                     }))
                     .unwrap();
 
