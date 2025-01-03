@@ -45,7 +45,7 @@ use language::{
         IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
         ShowWhitespaceSetting,
     },
-    ChunkRendererContext,
+    ChunkRendererContext, DiagnosticEntry,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -4741,10 +4741,11 @@ impl EditorElement {
                             if scrollbar_settings.diagnostics != ScrollbarDiagnostics::None {
                                 let diagnostics = snapshot
                                     .buffer_snapshot
-                                    .diagnostics_in_range::<_, Point>(
-                                        Point::zero()..max_point,
-                                        false,
-                                    )
+                                    .diagnostics_in_range(Point::zero()..max_point, false)
+                                    .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                                        diagnostic,
+                                        range: range.to_point(&snapshot.buffer_snapshot),
+                                    })
                                     // Don't show diagnostics the user doesn't care about
                                     .filter(|diagnostic| {
                                         match (

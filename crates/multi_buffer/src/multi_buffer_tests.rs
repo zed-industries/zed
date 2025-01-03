@@ -1234,14 +1234,13 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                 start_ix..end_ix
             );
 
-            let excerpted_buffer_ranges = multibuffer
-                .read(cx)
-                .range_to_buffer_ranges(start_ix..end_ix, cx);
+            let snapshot = multibuffer.read(cx).snapshot(cx);
+            let excerpted_buffer_ranges = snapshot.range_to_buffer_ranges(start_ix..end_ix);
             let excerpted_buffers_text = excerpted_buffer_ranges
                 .iter()
-                .map(|(buffer, buffer_range, _)| {
-                    buffer
-                        .read(cx)
+                .map(|(excerpt, buffer_range)| {
+                    excerpt
+                        .buffer()
                         .text_for_range(buffer_range.clone())
                         .collect::<String>()
                 })
