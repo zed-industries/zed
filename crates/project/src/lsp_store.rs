@@ -1824,7 +1824,7 @@ impl LocalLspStore {
         let mut sanitized_diagnostics = Vec::new();
         let edits_since_save = Patch::new(
             snapshot
-                .edits_since::<Unclipped<PointUtf16>>(buffer.read(cx).saved_version())
+                .edits_since::<PointUtf16>(buffer.read(cx).saved_version())
                 .collect(),
         );
         for entry in diagnostics {
@@ -1834,8 +1834,8 @@ impl LocalLspStore {
                 // Some diagnostics are based on files on disk instead of buffers'
                 // current contents. Adjust these diagnostics' ranges to reflect
                 // any unsaved edits.
-                start = edits_since_save.old_to_new(entry.range.start);
-                end = edits_since_save.old_to_new(entry.range.end);
+                start = Unclipped(edits_since_save.old_to_new(entry.range.start.0));
+                end = Unclipped(edits_since_save.old_to_new(entry.range.end.0));
             } else {
                 start = entry.range.start;
                 end = entry.range.end;
