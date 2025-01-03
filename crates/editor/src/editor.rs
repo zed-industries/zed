@@ -99,8 +99,8 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
-    Point, Selection, SelectionGoal, TransactionId,
+    CursorShape, Diagnostic, DiagnosticEntry, Documentation, IndentKind, IndentSize, Language,
+    OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -992,12 +992,17 @@ pub(crate) struct FocusedBlock {
 }
 
 #[derive(Clone)]
-struct JumpData {
-    excerpt_id: ExcerptId,
-    position: Point,
-    anchor: text::Anchor,
-    path: Option<project::ProjectPath>,
-    line_offset_from_top: u32,
+enum JumpData {
+    MultiBufferRow {
+        row: MultiBufferRow,
+        line_offset_from_top: u32,
+    },
+    MultiBufferPoint {
+        excerpt_id: ExcerptId,
+        position: Point,
+        anchor: text::Anchor,
+        line_offset_from_top: u32,
+    },
 }
 
 impl Editor {
@@ -3544,13 +3549,12 @@ impl Editor {
             Bias::Left,
         );
         let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
-        multi_buffer
-            .range_to_buffer_ranges(multi_buffer_visible_range, cx)
+        multi_buffer_snapshot
+            .range_to_buffer_ranges(multi_buffer_visible_range)
             .into_iter()
-            .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
-            .filter_map(|(buffer_handle, excerpt_visible_range, excerpt_id)| {
-                let buffer = buffer_handle.read(cx);
-                let buffer_file = project::File::from_dyn(buffer.file())?;
+            .filter(|(_, excerpt_visible_range)| !excerpt_visible_range.is_empty())
+            .filter_map(|(excerpt, excerpt_visible_range)| {
+                let buffer_file = project::File::from_dyn(excerpt.buffer().file())?;
                 let buffer_worktree = project.worktree_for_id(buffer_file.worktree_id(cx), cx)?;
                 let worktree_entry = buffer_worktree
                     .read(cx)
@@ -3559,17 +3563,17 @@ impl Editor {
                     return None;
                 }
 
-                let language = buffer.language()?;
+                let language = excerpt.buffer().language()?;
                 if let Some(restrict_to_languages) = restrict_to_languages {
                     if !restrict_to_languages.contains(language) {
                         return None;
                     }
                 }
                 Some((
-                    excerpt_id,
+                    excerpt.id(),
                     (
-                        buffer_handle,
-                        buffer.version().clone(),
+                        multi_buffer.buffer(excerpt.buffer_id()).unwrap(),
+                        excerpt.buffer().version().clone(),
                         excerpt_visible_range,
                     ),
                 ))
@@ -9174,10 +9178,23 @@ impl Editor {
         let snapshot = self.snapshot(cx);
         loop {
             let diagnostics = if direction == Direction::Prev {
-                buffer.diagnostics_in_range::<_, usize>(0..search_start, true)
+                buffer
+                    .diagnostics_in_range(0..search_start, true)
+                    .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                        diagnostic,
+                        range: range.to_offset(&buffer),
+                    })
+                    .collect::<Vec<_>>()
             } else {
-                buffer.diagnostics_in_range::<_, usize>(search_start..buffer.len(), false)
+                buffer
+                    .diagnostics_in_range(search_start..buffer.len(), false)
+                    .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                        diagnostic,
+                        range: range.to_offset(&buffer),
+                    })
+                    .collect::<Vec<_>>()
             }
+            .into_iter()
             .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start));
             let group = diagnostics
                 // relies on diagnostics_in_range to return diagnostics with the same starting range to
@@ -10284,11 +10301,12 @@ impl Editor {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
             let is_valid = buffer
-                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone(), false)
+                .diagnostics_in_range(active_diagnostics.primary_range.clone(), false)
                 .any(|entry| {
+                    let range = entry.range.to_offset(&buffer);
                     entry.diagnostic.is_primary
-                        && !entry.range.is_empty()
-                        && entry.range.start == primary_range_start
+                        && !range.is_empty()
+                        && range.start == primary_range_start
                         && entry.diagnostic.message == active_diagnostics.primary_message
                 });
 
@@ -11488,21 +11506,23 @@ impl Editor {
             let (buffer, selection) = if let Some(buffer) = self.buffer().read(cx).as_singleton() {
                 (buffer, selection_range.start.row..selection_range.end.row)
             } else {
-                let buffer_ranges = self
-                    .buffer()
-                    .read(cx)
-                    .range_to_buffer_ranges(selection_range, cx);
+                let multi_buffer = self.buffer().read(cx);
+                let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+                let buffer_ranges = multi_buffer_snapshot.range_to_buffer_ranges(selection_range);
 
-                let (buffer, range, _) = if selection.reversed {
+                let (excerpt, range) = if selection.reversed {
                     buffer_ranges.first()
                 } else {
                     buffer_ranges.last()
                 }?;
 
-                let snapshot = buffer.read(cx).snapshot();
+                let snapshot = excerpt.buffer();
                 let selection = text::ToPoint::to_point(&range.start, &snapshot).row
                     ..text::ToPoint::to_point(&range.end, &snapshot).row;
-                (buffer.clone(), selection)
+                (
+                    multi_buffer.buffer(excerpt.buffer_id()).unwrap().clone(),
+                    selection,
+                )
             };
 
             Some((buffer, selection))
@@ -12394,17 +12414,18 @@ impl Editor {
         };
 
         let selections = self.selections.all::<usize>(cx);
-        let buffer = self.buffer.read(cx);
+        let multi_buffer = self.buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let mut new_selections_by_buffer = HashMap::default();
         for selection in selections {
-            for (buffer, range, _) in
-                buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
+            for (excerpt, range) in
+                multi_buffer_snapshot.range_to_buffer_ranges(selection.start..selection.end)
             {
-                let mut range = range.to_point(buffer.read(cx));
+                let mut range = range.to_point(excerpt.buffer());
                 range.start.column = 0;
-                range.end.column = buffer.read(cx).line_len(range.end.row);
+                range.end.column = excerpt.buffer().line_len(range.end.row);
                 new_selections_by_buffer
-                    .entry(buffer)
+                    .entry(multi_buffer.buffer(excerpt.buffer_id()).unwrap())
                     .or_insert(Vec::new())
                     .push(range)
             }
@@ -12458,37 +12479,60 @@ impl Editor {
 
         let mut new_selections_by_buffer = HashMap::default();
         match &jump_data {
-            Some(jump_data) => {
+            Some(JumpData::MultiBufferPoint {
+                excerpt_id,
+                position,
+                anchor,
+                line_offset_from_top,
+            }) => {
                 let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
                 if let Some(buffer) = multi_buffer_snapshot
-                    .buffer_id_for_excerpt(jump_data.excerpt_id)
+                    .buffer_id_for_excerpt(*excerpt_id)
                     .and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id))
                 {
                     let buffer_snapshot = buffer.read(cx).snapshot();
-                    let jump_to_point = if buffer_snapshot.can_resolve(&jump_data.anchor) {
-                        language::ToPoint::to_point(&jump_data.anchor, &buffer_snapshot)
+                    let jump_to_point = if buffer_snapshot.can_resolve(anchor) {
+                        language::ToPoint::to_point(anchor, &buffer_snapshot)
                     } else {
-                        buffer_snapshot.clip_point(jump_data.position, Bias::Left)
+                        buffer_snapshot.clip_point(*position, Bias::Left)
                     };
                     let jump_to_offset = buffer_snapshot.point_to_offset(jump_to_point);
                     new_selections_by_buffer.insert(
                         buffer,
                         (
                             vec![jump_to_offset..jump_to_offset],
-                            Some(jump_data.line_offset_from_top),
+                            Some(*line_offset_from_top),
                         ),
                     );
                 }
             }
+            Some(JumpData::MultiBufferRow {
+                row,
+                line_offset_from_top,
+            }) => {
+                let point = MultiBufferPoint::new(row.0, 0);
+                if let Some((buffer, buffer_point, _)) =
+                    self.buffer.read(cx).point_to_buffer_point(point, cx)
+                {
+                    let buffer_offset = buffer.read(cx).point_to_offset(buffer_point);
+                    new_selections_by_buffer
+                        .entry(buffer)
+                        .or_insert((Vec::new(), Some(*line_offset_from_top)))
+                        .0
+                        .push(buffer_offset..buffer_offset)
+                }
+            }
             None => {
                 let selections = self.selections.all::<usize>(cx);
-                let buffer = self.buffer.read(cx);
+                let multi_buffer = self.buffer.read(cx);
                 for selection in selections {
-                    for (mut buffer_handle, mut range, _) in
-                        buffer.range_to_buffer_ranges(selection.range(), cx)
+                    for (excerpt, mut range) in multi_buffer
+                        .snapshot(cx)
+                        .range_to_buffer_ranges(selection.range())
                     {
                         // When editing branch buffers, jump to the corresponding location
                         // in their base buffer.
+                        let mut buffer_handle = multi_buffer.buffer(excerpt.buffer_id()).unwrap();
                         let buffer = buffer_handle.read(cx);
                         if let Some(base_buffer) = buffer.base_buffer() {
                             range = buffer.range_to_version(range, &base_buffer.read(cx).version());

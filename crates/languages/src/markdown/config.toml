@@ -2,6 +2,7 @@ name = "Markdown"
 grammar = "markdown"
 path_suffixes = ["md", "mdx", "mdwn", "markdown", "MD"]
 word_characters = ["-"]
+block_comment = ["<!-- ", " -->"]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },

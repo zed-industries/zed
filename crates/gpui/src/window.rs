@@ -1586,6 +1586,19 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
+        // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
+        // Ensure it's not stuck around in such cases.
+        let invalidate_tooltip = !tooltip_request
+            .tooltip
+            .origin_bounds
+            .contains(&self.mouse_position())
+            && (!tooltip_request.tooltip.hoverable
+                || !tooltip_bounds.contains(&self.mouse_position()));
+        if invalidate_tooltip {
+            return None;
+        }
+
         self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
 
         self.window.tooltip_bounds = Some(TooltipBounds {

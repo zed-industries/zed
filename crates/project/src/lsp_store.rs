@@ -2353,8 +2353,16 @@ impl LocalLspStore {
                             let (mut edits, mut snippet_edits) = (vec![], vec![]);
                             for edit in op.edits {
                                 match edit {
-                                    Edit::Plain(edit) => edits.push(edit),
-                                    Edit::Annotated(edit) => edits.push(edit.text_edit),
+                                    Edit::Plain(edit) => {
+                                        if !edits.contains(&edit) {
+                                            edits.push(edit)
+                                        }
+                                    }
+                                    Edit::Annotated(edit) => {
+                                        if !edits.contains(&edit.text_edit) {
+                                            edits.push(edit.text_edit)
+                                        }
+                                    }
                                     Edit::Snippet(edit) => {
                                         let Ok(snippet) = Snippet::parse(&edit.snippet.value)
                                         else {
@@ -2365,10 +2373,13 @@ impl LocalLspStore {
                                             snippet_edits.push((edit.range, snippet));
                                         } else {
                                             // Since this buffer is not focused, apply a normal edit.
-                                            edits.push(TextEdit {
+                                            let new_edit = TextEdit {
                                                 range: edit.range,
                                                 new_text: snippet.text,
-                                            });
+                                            };
+                                            if !edits.contains(&new_edit) {
+                                                edits.push(new_edit);
+                                            }
                                         }
                                     }
                                 }

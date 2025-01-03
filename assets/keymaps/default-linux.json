@@ -377,6 +377,7 @@
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
       "alt-ctrl-o": "projects::OpenRecent",
+      "alt-ctrl-shift-o": "projects::OpenRemote",
       "alt-ctrl-shift-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "ctrl-s": "workspace::Save",
@@ -432,6 +433,13 @@
       "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
+    }
+  },
+  {
+    "context": "ApplicationMenu",
+    "bindings": {
+      "left": ["app_menu::NavigateApplicationMenuInDirection", "Left"],
+      "right": ["app_menu::NavigateApplicationMenuInDirection", "Right"]
     }
   },
   // Bindings from Sublime Text
