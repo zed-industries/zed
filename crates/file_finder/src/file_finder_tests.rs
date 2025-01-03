@@ -57,7 +57,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         "a bandana",
     ] {
         picker
-            .update(cx, |picker, cx| {
+            .update_in(cx, |picker, window, cx| {
                 picker
                     .delegate
                     .update_matches(bandana_query.to_string(), window, cx)
@@ -108,7 +108,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
 
     let matching_abs_path = "/root/a/b/file2.txt";
     picker
-        .update(cx, |picker, cx| {
+        .update_in(cx, |picker, window, cx| {
             picker
                 .delegate
                 .update_matches(matching_abs_path.to_string(), window, cx)
@@ -130,7 +130,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
 
     let mismatching_abs_path = "/root/a/b/file1.txt";
     picker
-        .update(cx, |picker, cx| {
+        .update_in(cx, |picker, window, cx| {
             picker
                 .delegate
                 .update_matches(mismatching_abs_path.to_string(), window, cx)
@@ -213,7 +213,7 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
     assert!(file_column <= first_file_contents.len());
     let query_inside_file = format!("{file_query}:{file_row}:{file_column}");
     picker
-        .update(cx, |finder, cx| {
+        .update_in(cx, |finder, window, cx| {
             finder
                 .delegate
                 .update_matches(query_inside_file.to_string(), window, cx)
@@ -238,7 +238,7 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
     cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm);
 
-    let editor = cx.update(|cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+    let editor = cx.update(|_, cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
     cx.executor().advance_clock(Duration::from_secs(2));
 
     editor.update(cx, |editor, cx| {
@@ -288,7 +288,7 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
     assert!(file_column > first_file_contents.len());
     let query_outside_file = format!("{file_query}:{file_row}:{file_column}");
     picker
-        .update(cx, |picker, cx| {
+        .update_in(cx, |picker, window, cx| {
             picker
                 .delegate
                 .update_matches(query_outside_file.to_string(), window, cx)
@@ -313,7 +313,7 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
     cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm);
 
-    let editor = cx.update(|cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+    let editor = cx.update(|_, cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
     cx.executor().advance_clock(Duration::from_secs(2));
 
     editor.update(cx, |editor, cx| {
@@ -359,7 +359,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
 
     let query = test_path_position("hi");
     picker
-        .update(cx, |picker, cx| {
+        .update_in(cx, |picker, window, cx| {
             picker.delegate.spawn_search(query.clone(), window, cx)
         })
         .await;
@@ -368,7 +368,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
         assert_eq!(picker.delegate.matches.len(), 5)
     });
 
-    picker.update(cx, |picker, cx| {
+    picker.update_in(cx, |picker, window, cx| {
         let matches = collect_search_matches(picker).search_matches_only();
         let delegate = &mut picker.delegate;
 

@@ -66,7 +66,7 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
             .map_or(false, |state| state.menu.borrow().as_ref().is_some())
     }
 
-    pub fn is_focused(&self, window: &mut Window, cx: &mut AppContext) -> bool {
+    pub fn is_focused(&self, window: &Window, cx: &AppContext) -> bool {
         self.0.borrow().as_ref().map_or(false, |state| {
             state
                 .menu

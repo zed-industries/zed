@@ -141,7 +141,7 @@ impl FileFinder {
             let history_items = join_all(history_items).await.into_iter().flatten();
 
             workspace
-                .update(&mut cx, |workspace, cx| {
+                .update_in(&mut cx, |workspace, window, cx| {
                     let project = workspace.project().clone();
                     let weak_workspace = cx.view().downgrade();
                     workspace.toggle_modal(window, cx, |window, cx| {
@@ -164,7 +164,7 @@ impl FileFinder {
     }
 
     fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let picker = window.new_view(cx, |cx| Picker::uniform_list(delegate, window, cx));
+        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
@@ -755,7 +755,7 @@ impl FileFinderDelegate {
             .map(ProjectPanelOrdMatch);
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             picker
-                .update(&mut cx, |picker, cx| {
+                .update_in(&mut cx, |picker, window, cx| {
                     picker
                         .delegate
                         .set_search_matches(search_id, did_cancel, query, matches, window, cx)
@@ -979,7 +979,7 @@ impl FileFinderDelegate {
             }
 
             picker
-                .update(&mut cx, |picker, cx| {
+                .update_in(&mut cx, |picker, window, cx| {
                     let picker_delegate = &mut picker.delegate;
                     let search_id = util::post_inc(&mut picker_delegate.search_count);
                     picker_delegate.set_search_matches(
@@ -1011,7 +1011,7 @@ impl FileFinderDelegate {
         0
     }
 
-    fn key_context(&self, window: &mut Window, cx: &mut AppContext) -> KeyContext {
+    fn key_context(&self, window: &Window, cx: &AppContext) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("FileFinder");
         if self.popover_menu_handle.is_focused(window, cx) {
@@ -1135,7 +1135,7 @@ impl PickerDelegate for FileFinderDelegate {
     ) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade() {
-                let open_task = workspace.update(cx, move |workspace, cx| {
+                let open_task = workspace.update(cx, |workspace, cx| {
                     let split_or_open =
                         |workspace: &mut Workspace,
                          project_path,
@@ -1242,7 +1242,7 @@ impl PickerDelegate for FileFinderDelegate {
                         if let Some(active_editor) = item.downcast::<Editor>() {
                             active_editor
                                 .downgrade()
-                                .update(&mut cx, |editor, cx| {
+                                .update_in(&mut cx, |editor, window, cx| {
                                     let snapshot = editor.snapshot(window, cx).display_snapshot;
                                     let point = snapshot
                                         .buffer_snapshot
@@ -1369,10 +1369,10 @@ impl PickerDelegate for FileFinderDelegate {
                                 )),
                         )
                         .menu({
-                            move |cx| {
+                            move |window, cx| {
                                 Some(ContextMenu::build(window, cx, {
                                     let context = context.clone();
-                                    move |menu, _| {
+                                    move |menu, _, _| {
                                         menu.context(context)
                                             .action("Split Left", pane::SplitLeft.boxed_clone())
                                             .action("Split Right", pane::SplitRight.boxed_clone())
