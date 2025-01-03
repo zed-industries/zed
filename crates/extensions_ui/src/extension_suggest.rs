@@ -174,7 +174,7 @@ pub(crate) fn suggest(
         );
 
         workspace.show_notification(notification_id, window, cx, |window, cx| {
-            window.new_view(cx, move |_cx| {
+            window.new_view(cx, move |_window, _cx| {
                 simple_message_notification::MessageNotification::new(format!(
                     "Do you want to install the recommended '{}' extension for '{}' files?",
                     extension_id, file_name_or_extension

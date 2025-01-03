@@ -37,7 +37,7 @@ use crate::extension_version_selector::{
 actions!(zed, [InstallDevExtension]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(move |workspace: &mut Workspace, cx| {
+    cx.observe_new_views(move |workspace: &mut Workspace, window, cx| {
         workspace
             .register_action(move |workspace, _: &zed_actions::Extensions, window, cx| {
                 let existing = workspace
@@ -81,7 +81,7 @@ pub fn init(cx: &mut AppContext) {
                                 Ok(None) => return None,
                                 Err(err) => {
                                     workspace_handle
-                                        .update(&mut cx, |workspace, cx| {
+                                        .update_in(&mut cx, |workspace, window, cx| {
                                             workspace.show_portal_error(
                                                 err.to_string(),
                                                 window,
@@ -234,7 +234,7 @@ impl ExtensionsPage {
                 ),
             ];
 
-            let query_editor = window.new_view(cx, |cx| {
+            let query_editor = window.new_view(cx, |window, cx| {
                 let mut input = Editor::single_line(window, cx);
                 input.set_placeholder_text("Search extensions...", window, cx);
                 input
@@ -387,7 +387,7 @@ impl ExtensionsPage {
             };
 
             let fetch_result = remote_extensions.await;
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 cx.notify();
                 this.dev_extension_entries = dev_extensions;
                 this.is_fetching_extensions = false;
@@ -523,7 +523,7 @@ impl ExtensionsPage {
                         .style(ButtonStyle::Filled)
                         .on_click(cx.listener({
                             let repository_url = repository_url.clone();
-                            move |_, _, cx| {
+                            move |_, _, _, cx| {
                                 cx.open_url(&repository_url);
                             }
                         }))
@@ -634,7 +634,7 @@ impl ExtensionsPage {
                                 .style(ButtonStyle::Filled)
                                 .on_click(cx.listener({
                                     let repository_url = repository_url.clone();
-                                    move |_, _, cx| {
+                                    move |_, _, _, cx| {
                                         cx.open_url(&repository_url);
                                     }
                                 }))
@@ -682,14 +682,14 @@ impl ExtensionsPage {
                     None,
                     window.handler_for(this, {
                         let extension_id = extension_id.clone();
-                        move |this, cx| {
+                        move |this, window, cx| {
                             this.show_extension_version_list(extension_id.clone(), window, cx)
                         }
                     }),
                 )
                 .entry("Copy Extension ID", None, {
                     let extension_id = extension_id.clone();
-                    move |cx| {
+                    move |_, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(extension_id.to_string()));
                     }
                 })
@@ -719,7 +719,7 @@ impl ExtensionsPage {
 
             let extension_versions = extension_versions_task.await?;
 
-            workspace.update(&mut cx, |workspace, cx| {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
                 let fs = workspace.project().read(cx).fs().clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
                     let delegate = ExtensionVersionSelectorDelegate::new(
@@ -798,7 +798,7 @@ impl ExtensionsPage {
                             .when(!is_compatible, |upgrade_button| {
                                 upgrade_button.disabled(true).tooltip({
                                     let version = extension.manifest.version.clone();
-                                    move |cx| {
+                                    move |window, cx| {
                                         Tooltip::text(
                                             format!(
                                                 "v{version} is not compatible with this version of Zed.",
@@ -895,7 +895,7 @@ impl ExtensionsPage {
 
     fn on_query_change(
         &mut self,
-        _: Model<Editor>,
+        _: &Model<Editor>,
         event: &editor::EditorEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -914,7 +914,7 @@ impl ExtensionsPage {
     ) {
         self.extension_fetch_task = Some(cx.spawn_in(window, |this, mut cx| async move {
             let search = this
-                .update(&mut cx, |this, cx| this.search_query(window, cx))
+                .update_in(&mut cx, |this, window, cx| this.search_query(window, cx))
                 .ok()
                 .flatten();
 
@@ -930,7 +930,7 @@ impl ExtensionsPage {
                     .await;
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.fetch_extensions(search, window, cx);
             })
             .ok();
@@ -1216,7 +1216,7 @@ impl FocusableView for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         Some("Extensions".into())
     }
 
