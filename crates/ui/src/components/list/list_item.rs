@@ -12,6 +12,7 @@ pub enum ListItemSpacing {
     #[default]
     Dense,
     Sparse,
+    ExtraDense,
 }
 
 #[derive(IntoElement)]
@@ -220,6 +221,7 @@ impl RenderOnce for ListItem {
                     .map(|this| match self.spacing {
                         ListItemSpacing::Dense => this,
                         ListItemSpacing::Sparse => this.py_1(),
+                        ListItemSpacing::ExtraDense => this.py_neg_px(),
                     })
                     .when(self.inset && !self.disabled, |this| {
                         this
