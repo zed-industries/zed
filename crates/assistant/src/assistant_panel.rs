@@ -44,7 +44,7 @@ use gpui::{
     ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle,
     FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
     Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription,
-    Task, Transformation, UpdateGlobal, WeakModel, WeakModel,
+    Task, Transformation, UpdateGlobal, WeakModel,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{

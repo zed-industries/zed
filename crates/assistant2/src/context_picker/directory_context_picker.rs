@@ -6,9 +6,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{
-    AppContext, DismissEvent, FocusHandle, FocusableView, Model, Task, WeakModel, WeakModel,
-};
+use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Model, Task, WeakModel};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, WorktreeId};
 use ui::{prelude::*, ListItem};

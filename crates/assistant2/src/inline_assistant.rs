@@ -24,7 +24,7 @@ use util::ResultExt;
 
 use gpui::{
     point, AppContext, FocusableView, Global, HighlightStyle, Model, ModelContext, Subscription,
-    Task, UpdateGlobal, WeakModel, WeakModel, Window,
+    Task, UpdateGlobal, WeakModel, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::LanguageModelRegistry;

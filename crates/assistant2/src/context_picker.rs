@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, SharedString, Task,
-    WeakModel, WeakModel,
+    WeakModel,
 };
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;

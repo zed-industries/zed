@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
-use gpui::{
-    AppContext, DismissEvent, FocusableView, Model, Subscription, TextStyle, WeakModel, WeakModel,
-};
+use gpui::{AppContext, DismissEvent, FocusableView, Model, Subscription, TextStyle, WeakModel};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use rope::Point;

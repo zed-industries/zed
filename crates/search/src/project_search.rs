@@ -723,7 +723,7 @@ impl ProjectSearchView {
             |this, _, event: &EditorEvent, window, cx| {
                 if let EditorEvent::Edited { .. } = event {
                     if EditorSettings::get_global(cx).use_smartcase_search {
-                        let query = this.search_query_text(window, cx);
+                        let query = this.search_query_text(cx);
                         if !query.is_empty()
                             && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
                                 != is_contains_uppercase(&query)
@@ -980,7 +980,7 @@ impl ProjectSearchView {
         }
     }
 
-    pub fn search_query_text(&self, window: &mut Window, cx: &mut AppContext) -> String {
+    pub fn search_query_text(&self, cx: &AppContext) -> String {
         self.query_editor.read(cx).text(cx)
     }
 

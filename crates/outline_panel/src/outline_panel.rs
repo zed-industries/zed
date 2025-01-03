@@ -580,7 +580,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
     file_icons::init(assets, cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
         });
@@ -591,8 +591,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
 impl OutlinePanel {
     pub async fn load(
         workspace: WeakModel<Workspace>,
-        window: &mut Window,
-        cx: &mut AppContext,
+        mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Model<Self>> {
         let serialized_panel = cx
             .background_executor()
@@ -606,7 +605,7 @@ impl OutlinePanel {
             .log_err()
             .flatten();
 
-        workspace.update(&mut cx, |workspace, cx| {
+        workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = Self::new(workspace, window, cx);
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
@@ -626,8 +625,8 @@ impl OutlinePanel {
     ) -> Model<Self> {
         let project = workspace.project().clone();
         let workspace_handle = cx.view().downgrade();
-        let outline_panel = window.new_view(cx, |cx| {
-            let filter_editor = window.new_view(cx, |cx| {
+        let outline_panel = window.new_view(cx, |window, cx| {
+            let filter_editor = window.new_view(cx, |window, cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text("Filter...", window, cx);
                 editor
@@ -712,9 +711,9 @@ impl OutlinePanel {
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_view(cx.view()),
+                    .parent_view(&cx.view()),
                 horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_view(cx.view()),
+                    .parent_view(&cx.view()),
                 max_width_item_index: None,
                 scroll_handle,
                 focus_handle,
@@ -1663,7 +1662,7 @@ impl OutlinePanel {
         };
         cx.spawn_in(window, |outline_panel, mut cx| async move {
             outline_panel
-                .update(&mut cx, |outline_panel, cx| {
+                .update_in(&mut cx, |outline_panel, window, cx| {
                     active_editor.update(cx, |editor, cx| {
                         for buffer_id in buffers {
                             outline_panel
@@ -1765,9 +1764,10 @@ impl OutlinePanel {
         let project = self.project.clone();
         self.reveal_selection_task = cx.spawn_in(window, |outline_panel, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
-            let entry_with_selection = outline_panel.update(&mut cx, |outline_panel, cx| {
-                outline_panel.location_for_editor_selection(&editor, window, cx)
-            })?;
+            let entry_with_selection =
+                outline_panel.update_in(&mut cx, |outline_panel, window, cx| {
+                    outline_panel.location_for_editor_selection(&editor, window, cx)
+                })?;
             let Some(entry_with_selection) = entry_with_selection else {
                 outline_panel.update(&mut cx, |outline_panel, cx| {
                     outline_panel.selected_entry = SelectedEntry::None;
@@ -1894,7 +1894,7 @@ impl OutlinePanel {
                 })?
             }
 
-            outline_panel.update(&mut cx, |outline_panel, cx| {
+            outline_panel.update_in(&mut cx, |outline_panel, window, cx| {
                 outline_panel.select_entry(entry_with_selection, false, window, cx);
                 outline_panel.update_cached_entries(None, window, cx);
             })?;
@@ -2314,7 +2314,7 @@ impl OutlinePanel {
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
         div()
-            .text_ui(window, cx)
+            .text_ui(cx)
             .id(item_id.clone())
             .on_click({
                 let clicked_entry = rendered_entry.clone();
@@ -2746,7 +2746,7 @@ impl OutlinePanel {
             };
 
             outline_panel
-                .update(&mut cx, |outline_panel, cx| {
+                .update_in(&mut cx, |outline_panel, window, cx| {
                     outline_panel.updating_fs_entries = false;
                     outline_panel.new_entries_for_fs_update.clear();
                     outline_panel.excerpts = new_excerpts;
@@ -3056,7 +3056,7 @@ impl OutlinePanel {
                             })
                             .await;
                         outline_panel
-                            .update(&mut cx, |outline_panel, cx| {
+                            .update_in(&mut cx, |outline_panel, window, cx| {
                                 if let Some(excerpt) = outline_panel
                                     .excerpts
                                     .entry(buffer_id)
@@ -3219,7 +3219,7 @@ impl OutlinePanel {
                 cx.background_executor().timer(debounce).await;
             }
             let Some(new_cached_entries) = outline_panel
-                .update(&mut cx, |outline_panel, cx| {
+                .update_in(&mut cx, |outline_panel, window, cx| {
                     outline_panel.generate_cached_entries(is_singleton, query, window, cx)
                 })
                 .ok()
@@ -3228,7 +3228,7 @@ impl OutlinePanel {
             };
             let (new_cached_entries, max_width_item_index) = new_cached_entries.await;
             outline_panel
-                .update(&mut cx, |outline_panel, cx| {
+                .update_in(&mut cx, |outline_panel, window, cx| {
                     outline_panel.cached_entries = new_cached_entries;
                     outline_panel.max_width_item_index = max_width_item_index;
                     if outline_panel.selected_entry.is_invalidated()
@@ -3268,7 +3268,7 @@ impl OutlinePanel {
         cx.spawn_in(window, |outline_panel, mut cx| async move {
             let mut generation_state = GenerationState::default();
 
-            let Ok(()) = outline_panel.update(&mut cx, |outline_panel, cx| {
+            let Ok(()) = outline_panel.update_in(&mut cx, |outline_panel, window, cx| {
                 let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
                 let mut folded_dirs_entry = None::<(usize, WorktreeId, Vec<Entry>)>;
                 let track_matches = query.is_some();
@@ -3789,7 +3789,7 @@ impl OutlinePanel {
                     SearchKind::Project,
                     project_search_matches,
                     project_search
-                        .map(|project_search| project_search.read(cx).search_query_text(window, cx))
+                        .map(|project_search| project_search.read(cx).search_query_text(cx))
                         .unwrap_or_default(),
                 )
             } else {
@@ -4291,7 +4291,7 @@ impl OutlinePanel {
                     .active_editor()
                     .map(|editor| editor.read(cx).buffer().read(cx).snapshot(cx));
                 uniform_list(cx.view().clone(), "entries", items_len, {
-                    move |outline_panel, range, cx| {
+                    move |outline_panel, range, window, cx| {
                         let entries = outline_panel.cached_entries.get(range);
                         entries
                             .map(|entries| entries.to_vec())
@@ -4576,7 +4576,7 @@ impl Panel for OutlinePanel {
         "Outline Panel"
     }
 
-    fn position(&self, window: &mut Window, cx: &mut AppContext) -> DockPosition {
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
         match OutlinePanelSettings::get_global(cx).dock {
             OutlinePanelDockPosition::Left => DockPosition::Left,
             OutlinePanelDockPosition::Right => DockPosition::Right,
@@ -4606,7 +4606,7 @@ impl Panel for OutlinePanel {
         );
     }
 
-    fn size(&self, window: &mut Window, cx: &mut AppContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| OutlinePanelSettings::get_global(cx).default_width)
     }
@@ -4617,13 +4617,13 @@ impl Panel for OutlinePanel {
         cx.notify();
     }
 
-    fn icon(&self, window: &mut Window, cx: &mut AppContext) -> Option<IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
         OutlinePanelSettings::get_global(cx)
             .button
             .then_some(IconName::ListTree)
     }
 
-    fn icon_tooltip(&self, _window: &mut Window, _: &mut AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _: &AppContext) -> Option<&'static str> {
         Some("Outline Panel")
     }
 
@@ -4631,14 +4631,14 @@ impl Panel for OutlinePanel {
         Box::new(ToggleFocus)
     }
 
-    fn starts_open(&self, _window: &mut Window, _: &mut AppContext) -> bool {
+    fn starts_open(&self, _window: &Window, _: &AppContext) -> bool {
         self.active
     }
 
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
         cx.spawn_in(window, |outline_panel, mut cx| async move {
             outline_panel
-                .update(&mut cx, |outline_panel, cx| {
+                .update_in(&mut cx, |outline_panel, window, cx| {
                     let old_active = outline_panel.active;
                     outline_panel.active = active;
                     if active && old_active != active {
@@ -4815,14 +4815,14 @@ fn subscribe_for_editor_events(
         window,
         move |outline_panel, editor, e: &EditorEvent, window, cx| match e {
             EditorEvent::SelectionsChanged { local: true } => {
-                outline_panel.reveal_entry_for_selection(editor, window, cx);
+                outline_panel.reveal_entry_for_selection(editor.clone(), window, cx);
                 cx.notify();
             }
             EditorEvent::ExcerptsAdded { excerpts, .. } => {
                 outline_panel
                     .new_entries_for_fs_update
                     .extend(excerpts.iter().map(|&(excerpt_id, _)| excerpt_id));
-                outline_panel.update_fs_entries(editor, debounce, window, cx);
+                outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
             }
             EditorEvent::ExcerptsRemoved { ids } => {
                 let mut ids = ids.iter().collect::<HashSet<_>>();
@@ -4832,7 +4832,7 @@ fn subscribe_for_editor_events(
                         break;
                     }
                 }
-                outline_panel.update_fs_entries(editor, debounce, window, cx);
+                outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
             }
             EditorEvent::ExcerptsExpanded { ids } => {
                 outline_panel.invalidate_outlines(ids);
@@ -4907,7 +4907,7 @@ fn subscribe_for_editor_events(
                     }
                 }
 
-                outline_panel.update_fs_entries(editor, debounce, window, cx);
+                outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
             }
             EditorEvent::Reparsed(buffer_id) => {
                 if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
@@ -4975,7 +4975,7 @@ mod tests {
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.set_active(true, window, cx)
         });
 
@@ -5058,7 +5058,7 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_parent(&SelectParent, window, cx);
             assert_eq!(
                 display_entries(
@@ -5069,7 +5069,7 @@ mod tests {
                 select_first_in_all_matches("fn_lifetime_fn.rs")
             );
         });
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
         cx.executor()
@@ -5103,13 +5103,13 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.expand_all_entries(&ExpandAllEntries, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_parent(&SelectParent, window, cx);
             assert_eq!(
                 display_entries(
@@ -5121,7 +5121,7 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_parent(&SelectParent, window, cx);
             assert_eq!(
                 display_entries(
@@ -5133,7 +5133,7 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
         cx.executor()
@@ -5159,7 +5159,7 @@ mod tests {
                 )
             );
         });
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
         });
         cx.executor()
@@ -5190,7 +5190,7 @@ mod tests {
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.set_active(true, window, cx)
         });
 
@@ -5263,7 +5263,7 @@ mod tests {
         });
 
         let filter_text = "a";
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.filter_editor.update(cx, |filter_editor, cx| {
                 filter_editor.set_text(filter_text, window, cx);
             });
@@ -5287,7 +5287,7 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.filter_editor.update(cx, |filter_editor, cx| {
                 filter_editor.set_text("", window, cx);
             });
@@ -5320,7 +5320,7 @@ mod tests {
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.set_active(true, window, cx)
         });
 
@@ -5437,10 +5437,10 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.open(&Open, window, cx);
         });
-        outline_panel.update_in(cx, |_, cx| {
+        outline_panel.update_in(cx, |_outline_panel, window, cx| {
             assert_eq!(
                 selected_row_text(&active_editor, window, cx),
                 navigated_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
@@ -5448,7 +5448,7 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
         });
         let next_navigated_outline_selection =
@@ -5465,7 +5465,7 @@ mod tests {
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        outline_panel.update_in(cx, |_, cx| {
+        outline_panel.update_in(cx, |_outline_panel, window, cx| {
             assert_eq!(
                 selected_row_text(&active_editor, window, cx),
                 next_navigated_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
@@ -5473,7 +5473,7 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.open_excerpts(&editor::OpenExcerpts, window, cx);
         });
         cx.executor()
@@ -5550,7 +5550,7 @@ mod tests {
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.set_active(true, window, cx)
         });
 
@@ -5616,7 +5616,7 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             // Move to 5th element in the list, 3 items down.
             for _ in 0..2 {
                 outline_panel.select_next(&SelectNext, window, cx);
@@ -5645,7 +5645,7 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             // Move to the next visible non-FS entry
             for _ in 0..3 {
                 outline_panel.select_next(&SelectNext, window, cx);
@@ -5671,7 +5671,7 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel
                 .active_editor()
                 .expect("Should have an active editor")
@@ -5700,7 +5700,7 @@ mod tests {
             );
         });
 
-        outline_panel.update(cx, |outline_panel, cx| {
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel
                 .active_editor()
                 .expect("Should have an active editor")
@@ -5735,7 +5735,7 @@ mod tests {
         project: &Model<Project>,
         cx: &mut TestAppContext,
     ) -> WindowHandle<Workspace> {
-        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let outline_panel = window
             .update(cx, |_, window, cx| cx.spawn_in(window, OutlinePanel::load))

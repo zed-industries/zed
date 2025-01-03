@@ -18,7 +18,7 @@ use fs::Fs;
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Model, ModelContext, Subscription, TextStyle,
-    WeakModel, WeakModel, Window,
+    WeakModel, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use language_model_selector::LanguageModelSelector;
