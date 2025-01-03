@@ -149,7 +149,6 @@ members = [
     # Extensions
     #
 
-    "extensions/clojure",
     "extensions/csharp",
     "extensions/deno",
     "extensions/elixir",
