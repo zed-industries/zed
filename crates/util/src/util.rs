@@ -8,7 +8,6 @@ pub mod test;
 
 use anyhow::{anyhow, Context as _, Result};
 use futures::Future;
-
 use itertools::Either;
 use regex::Regex;
 use std::sync::{LazyLock, OnceLock};
@@ -50,10 +49,15 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
 pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 
+    // If the string's byte length is <= max_chars, walking the string can be skipped since the
+    // number of chars is <= the number of bytes.
+    if s.len() <= max_chars {
+        return s.to_string();
+    }
     let truncation_ix = s.char_indices().map(|(i, _)| i).nth(max_chars);
     match truncation_ix {
-        Some(length) => s[..length].to_string() + "…",
-        None => s.to_string(),
+        Some(index) => s[..index].to_string() + "…",
+        _ => s.to_string(),
     }
 }
 
@@ -62,10 +66,19 @@ pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
 pub fn truncate_and_remove_front(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 
-    let truncation_ix = s.char_indices().map(|(i, _)| i).nth_back(max_chars);
+    // If the string's byte length is <= max_chars, walking the string can be skipped since the
+    // number of chars is <= the number of bytes.
+    if s.len() <= max_chars {
+        return s.to_string();
+    }
+    let suffix_char_length = max_chars.saturating_sub(1);
+    let truncation_ix = s
+        .char_indices()
+        .map(|(i, _)| i)
+        .nth_back(suffix_char_length);
     match truncation_ix {
-        Some(length) => "…".to_string() + &s[length..],
-        None => s.to_string(),
+        Some(index) if index > 0 => "…".to_string() + &s[index..],
+        _ => s.to_string(),
     }
 }
 
@@ -109,6 +122,28 @@ where
             start_index = index;
         }
     }
+}
+
+pub fn truncate_to_bottom_n_sorted_by<T, F>(items: &mut Vec<T>, limit: usize, compare: &F)
+where
+    F: Fn(&T, &T) -> Ordering,
+{
+    if limit == 0 {
+        items.truncate(0);
+    }
+    if items.len() <= limit {
+        items.sort_by(compare);
+        return;
+    }
+    // When limit is near to items.len() it may be more efficient to sort the whole list and
+    // truncate, rather than always doing selection first as is done below. It's hard to analyze
+    // where the threshold for this should be since the quickselect style algorithm used by
+    // `select_nth_unstable_by` makes the prefix partially sorted, and so its work is not wasted -
+    // the expected number of comparisons needed by `sort_by` is less than it is for some arbitrary
+    // unsorted input.
+    items.select_nth_unstable_by(limit, compare);
+    items.truncate(limit);
+    items.sort_by(compare);
 }
 
 #[cfg(unix)]
@@ -735,6 +770,29 @@ mod tests {
     }
 
     #[test]
+    fn test_truncate_to_bottom_n_sorted_by() {
+        let mut vec: Vec<u32> = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 10, &u32::cmp);
+        assert_eq!(vec, &[1, 2, 3, 4, 5]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 5, &u32::cmp);
+        assert_eq!(vec, &[1, 2, 3, 4, 5]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 4, &u32::cmp);
+        assert_eq!(vec, &[1, 2, 3, 4]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 1, &u32::cmp);
+        assert_eq!(vec, &[1]);
+
+        vec = vec![5, 2, 3, 4, 1];
+        truncate_to_bottom_n_sorted_by(&mut vec, 0, &u32::cmp);
+        assert!(vec.is_empty());
+    }
+
+    #[test]
     fn test_iife() {
         fn option_returning_function() -> Option<()> {
             None
@@ -751,9 +809,23 @@ mod tests {
     #[test]
     fn test_truncate_and_trailoff() {
         assert_eq!(truncate_and_trailoff("", 5), "");
+        assert_eq!(truncate_and_trailoff("aaaaaa", 7), "aaaaaa");
+        assert_eq!(truncate_and_trailoff("aaaaaa", 6), "aaaaaa");
+        assert_eq!(truncate_and_trailoff("aaaaaa", 5), "aaaaa…");
         assert_eq!(truncate_and_trailoff("èèèèèè", 7), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 6), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 5), "èèèèè…");
+    }
+
+    #[test]
+    fn test_truncate_and_remove_front() {
+        assert_eq!(truncate_and_remove_front("", 5), "");
+        assert_eq!(truncate_and_remove_front("aaaaaa", 7), "aaaaaa");
+        assert_eq!(truncate_and_remove_front("aaaaaa", 6), "aaaaaa");
+        assert_eq!(truncate_and_remove_front("aaaaaa", 5), "…aaaaa");
+        assert_eq!(truncate_and_remove_front("èèèèèè", 7), "èèèèèè");
+        assert_eq!(truncate_and_remove_front("èèèèèè", 6), "èèèèèè");
+        assert_eq!(truncate_and_remove_front("èèèèèè", 5), "…èèèèè");
     }
 
     #[test]

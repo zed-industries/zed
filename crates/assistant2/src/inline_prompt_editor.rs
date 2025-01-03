@@ -2,7 +2,7 @@ use crate::assistant_model_selector::AssistantModelSelector;
 use crate::buffer_codegen::BufferCodegen;
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
-use crate::context_strip::ContextStrip;
+use crate::context_strip::{ContextStrip, SuggestContextKind};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::ThreadStore;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
@@ -793,6 +793,7 @@ impl PromptEditor<BufferCodegen> {
                     thread_store.clone(),
                     prompt_editor.focus_handle(cx),
                     context_picker_menu_handle.clone(),
+                    SuggestContextKind::Thread,
                     cx,
                 )
             }),
@@ -932,6 +933,7 @@ impl PromptEditor<TerminalCodegen> {
                     thread_store.clone(),
                     prompt_editor.focus_handle(cx),
                     context_picker_menu_handle.clone(),
+                    SuggestContextKind::Thread,
                     cx,
                 )
             }),

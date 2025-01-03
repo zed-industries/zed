@@ -953,22 +953,32 @@ impl Terminal {
 
                 match found_word {
                     Some((maybe_url_or_path, is_url, url_match)) => {
-                        if *open {
-                            let target = if is_url {
-                                MaybeNavigationTarget::Url(maybe_url_or_path)
-                            } else {
+                        let target = if is_url {
+                            // Treat "file://" URLs like file paths to ensure
+                            // that line numbers at the end of the path are
+                            // handled correctly
+                            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
                                 MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                    maybe_path: maybe_url_or_path,
+                                    maybe_path: path.to_string(),
                                     terminal_dir: self.working_directory(),
                                 })
-                            };
+                            } else {
+                                MaybeNavigationTarget::Url(maybe_url_or_path.clone())
+                            }
+                        } else {
+                            MaybeNavigationTarget::PathLike(PathLikeTarget {
+                                maybe_path: maybe_url_or_path.clone(),
+                                terminal_dir: self.working_directory(),
+                            })
+                        };
+                        if *open {
                             cx.emit(Event::Open(target));
                         } else {
                             self.update_selected_word(
                                 prev_hovered_word,
                                 url_match,
                                 maybe_url_or_path,
-                                is_url,
+                                target,
                                 cx,
                             );
                         }
@@ -990,7 +1000,7 @@ impl Terminal {
         prev_word: Option<HoveredWord>,
         word_match: RangeInclusive<AlacPoint>,
         word: String,
-        is_url: bool,
+        navigation_target: MaybeNavigationTarget,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(prev_word) = prev_word {
@@ -1009,14 +1019,6 @@ impl Terminal {
             word_match,
             id: self.next_link_id(),
         });
-        let navigation_target = if is_url {
-            MaybeNavigationTarget::Url(word)
-        } else {
-            MaybeNavigationTarget::PathLike(PathLikeTarget {
-                maybe_path: word,
-                terminal_dir: self.working_directory(),
-            })
-        };
         cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
     }
 
