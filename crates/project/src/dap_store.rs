@@ -1015,7 +1015,7 @@ impl DapStore {
                     command: RunInTerminal::COMMAND.to_string(),
                     body: match success {
                         true => serde_json::to_value(RunInTerminalResponse {
-                            process_id: Some(std::process::id() as u64),
+                            process_id: None,
                             shell_process_id: shell_pid,
                         })
                         .ok(),

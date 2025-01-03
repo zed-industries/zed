@@ -19,5 +19,14 @@
     "program": "$ZED_FILE",
     "request": "launch",
     "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "JavaScript debug terminal",
+    "adapter": "javascript",
+    "request": "launch",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "initialize_args": {
+      "console": "integratedTerminal"
+    }
   }
 ]
