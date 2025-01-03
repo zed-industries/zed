@@ -27,7 +27,7 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
+    cx.observe_new_views(move |workspace: &mut Workspace, window, _cx| {
         workspace.register_action(|workspace, _: &RateCompletions, window, cx| {
             RateCompletionModal::toggle(workspace, window, cx);
         });
@@ -317,7 +317,7 @@ impl RateCompletionModal {
 
         self.active_completion = completion.map(|completion| ActiveCompletion {
             completion,
-            feedback_editor: window.new_view(cx, |cx| {
+            feedback_editor: window.new_view(cx, |window, cx| {
                 let mut editor = Editor::multi_line(window, cx);
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, window, cx);
                 editor.set_show_line_numbers(false, window, cx);
