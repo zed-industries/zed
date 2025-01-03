@@ -9210,12 +9210,12 @@ impl Editor {
                         .is_some_and(|a| a.group_id != entry.diagnostic.group_id)
                 })
                 .find_map(|entry| {
-                    if dbg!(entry.diagnostic.is_primary)
-                        && dbg!(entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
-                        && dbg!(!entry.range.is_empty())
+                    if entry.diagnostic.is_primary
+                        && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
+                        && !entry.range.is_empty()
                         // if we match with the active diagnostic, skip it
-                        && dbg!(Some(entry.diagnostic.group_id)
-                            != self.active_diagnostics.as_ref().map(|d| d.group_id))
+                        && Some(entry.diagnostic.group_id)
+                            != self.active_diagnostics.as_ref().map(|d| d.group_id)
                     {
                         Some((entry.range, entry.diagnostic.group_id))
                     } else {
@@ -9224,7 +9224,7 @@ impl Editor {
                 });
 
             if let Some((primary_range, group_id)) = group {
-                if dbg!(self.activate_diagnostics(group_id, cx)) {
+                if self.activate_diagnostics(group_id, cx) {
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select(vec![Selection {
                             id: selection.id,
@@ -10327,7 +10327,6 @@ impl Editor {
     }
 
     fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) -> bool {
-        eprintln!("***********************************************");
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
@@ -10339,26 +10338,24 @@ impl Editor {
             let diagnostic_group = buffer
                 .diagnostic_group::<MultiBufferPoint>(group_id)
                 .filter_map(|entry| {
-                    eprintln!("------------------");
-                    dbg!(&entry);
                     if snapshot.is_line_folded(MultiBufferRow(entry.range.start.row))
                         && (entry.range.start.row == entry.range.end.row
                             || snapshot.is_line_folded(MultiBufferRow(entry.range.end.row)))
                     {
-                        return dbg!(None);
+                        return None;
                     }
                     if entry.range.end > group_end {
                         group_end = entry.range.end;
                     }
-                    if dbg!(entry.diagnostic.is_primary) {
+                    if entry.diagnostic.is_primary {
                         primary_range = Some(entry.range.clone());
                         primary_message = Some(entry.diagnostic.message.clone());
                     }
                     Some(entry)
                 })
                 .collect::<Vec<_>>();
-            let primary_range = dbg!(primary_range)?;
-            let primary_message = dbg!(primary_message)?;
+            let primary_range = primary_range?;
+            let primary_message = primary_message?;
             let primary_range =
                 buffer.anchor_after(primary_range.start)..buffer.anchor_before(primary_range.end);
 
