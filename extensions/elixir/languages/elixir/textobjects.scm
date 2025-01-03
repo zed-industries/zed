@@ -31,7 +31,6 @@
   target: ((identifier) @_identifier
     (#any-of? @_identifier "defdelegate" "defguard" "defguardp"))) @function.around
 
-
 (comment) @comment.around
 
 (unary_operator
