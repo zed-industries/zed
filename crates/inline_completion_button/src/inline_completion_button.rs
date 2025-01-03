@@ -1,10 +1,11 @@
 use anyhow::Result;
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
+use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
 use fs::Fs;
 use gpui::{
-    div, Action, AnchorCorner, AppContext, AsyncWindowContext, Entity, IntoElement, ParentElement,
-    Render, Subscription, View, ViewContext, WeakView, WindowContext,
+    actions, div, Action, AppContext, AsyncWindowContext, Corner, Entity, IntoElement,
+    ParentElement, Render, Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::{
@@ -25,6 +26,9 @@ use workspace::{
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
+use zeta::RateCompletionModal;
+
+actions!(zeta, [RateCompletions]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
@@ -36,6 +40,7 @@ pub struct InlineCompletionButton {
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
     fs: Arc<dyn Fs>,
+    workspace: WeakView<Workspace>,
 }
 
 enum SupermavenButtonStatus {
@@ -118,7 +123,7 @@ impl Render for InlineCompletionButton {
                                 _ => this.update(cx, |this, cx| this.build_copilot_start_menu(cx)),
                             })
                         })
-                        .anchor(AnchorCorner::BottomRight)
+                        .anchor(Corner::BottomRight)
                         .trigger(
                             IconButton::new("copilot-icon", icon)
                                 .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
@@ -186,19 +191,48 @@ impl Render for InlineCompletionButton {
                             ),
                             _ => None,
                         })
-                        .anchor(AnchorCorner::BottomRight)
+                        .anchor(Corner::BottomRight)
                         .trigger(
                             IconButton::new("supermaven-icon", icon)
                                 .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx)),
                         ),
                 );
             }
+
+            InlineCompletionProvider::Zeta => {
+                if !cx.has_flag::<ZetaFeatureFlag>() {
+                    return div();
+                }
+
+                div().child(
+                    IconButton::new("zeta", IconName::ZedPredict)
+                        .tooltip(|cx| {
+                            Tooltip::with_meta(
+                                "Zed Predict",
+                                Some(&RateCompletions),
+                                "Click to rate completions",
+                                cx,
+                            )
+                        })
+                        .on_click(cx.listener(|this, _, cx| {
+                            if let Some(workspace) = this.workspace.upgrade() {
+                                workspace.update(cx, |workspace, cx| {
+                                    RateCompletionModal::toggle(workspace, cx)
+                                });
+                            }
+                        })),
+                )
+            }
         }
     }
 }
 
 impl InlineCompletionButton {
-    pub fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        workspace: WeakView<Workspace>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
         }
@@ -211,6 +245,7 @@ impl InlineCompletionButton {
             editor_enabled: None,
             language: None,
             file: None,
+            workspace,
             fs,
         }
     }

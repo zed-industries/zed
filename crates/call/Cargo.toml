@@ -18,6 +18,7 @@ test-support = [
     "collections/test-support",
     "gpui/test-support",
     "livekit_client/test-support",
+    "livekit_client_macos/test-support",
     "project/test-support",
     "util/test-support"
 ]
@@ -39,6 +40,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 settings.workspace = true
+telemetry.workspace = true
 util.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

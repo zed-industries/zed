@@ -123,9 +123,17 @@ impl ProjectItem for ImageItem {
         let path = path.clone();
         let project = project.clone();
 
-        let ext = path
-            .path
+        let worktree_abs_path = project
+            .read(cx)
+            .worktree_for_id(path.worktree_id, cx)?
+            .read(cx)
+            .abs_path();
+
+        // Resolve the file extension from either the worktree path (if it's a single file)
+        // or from the project path's subpath.
+        let ext = worktree_abs_path
             .extension()
+            .or_else(|| path.path.extension())
             .and_then(OsStr::to_str)
             .map(str::to_lowercase)
             .unwrap_or_default();

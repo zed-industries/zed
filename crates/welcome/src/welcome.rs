@@ -11,7 +11,7 @@ use gpui::{
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use ui::{prelude::*, CheckboxWithLabel};
+use ui::{prelude::*, CheckboxWithLabel, Tooltip};
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     dock::DockPosition,
@@ -69,7 +69,7 @@ pub struct WelcomePage {
 }
 
 impl Render for WelcomePage {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -266,46 +266,51 @@ impl Render for WelcomePage {
                     .child(
                         v_group()
                             .gap_2()
-                            .child(CheckboxWithLabel::new(
-                                "enable-vim",
-                                Label::new("Enable Vim Mode"),
-                                if VimModeSetting::get_global(cx).0 {
-                                    ui::Selection::Selected
-                                } else {
-                                    ui::Selection::Unselected
-                                },
-                                cx.listener(move |this, selection, cx| {
-                                    this.telemetry
-                                        .report_app_event("welcome page: toggle vim".to_string());
-                                    this.update_settings::<VimModeSetting>(
-                                        selection,
-                                        cx,
-                                        |setting, value| *setting = Some(value),
-                                    );
-                                }),
-                            ))
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .child(CheckboxWithLabel::new(
+                                        "enable-vim",
+                                        Label::new("Enable Vim Mode"),
+                                        if VimModeSetting::get_global(cx).0 {
+                                            ui::ToggleState::Selected
+                                        } else {
+                                            ui::ToggleState::Unselected
+                                        },
+                                        cx.listener(move |this, selection, cx| {
+                                            this.telemetry
+                                                .report_app_event("welcome page: toggle vim".to_string());
+                                            this.update_settings::<VimModeSetting>(
+                                                selection,
+                                                cx,
+                                                |setting, value| *setting = Some(value),
+                                            );
+                                        }),
+                                    ))
+                                    .child(
+                                        IconButton::new("vim-mode", IconName::Info)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .tooltip(|cx| Tooltip::text("You can also toggle Vim Mode via the command palette or Editor Controls menu.", cx)),
+                                    )
+                            )
                             .child(CheckboxWithLabel::new(
                                 "enable-crash",
                                 Label::new("Send Crash Reports"),
                                 if TelemetrySettings::get_global(cx).diagnostics {
-                                    ui::Selection::Selected
+                                    ui::ToggleState::Selected
                                 } else {
-                                    ui::Selection::Unselected
+                                    ui::ToggleState::Unselected
                                 },
                                 cx.listener(move |this, selection, cx| {
                                     this.telemetry.report_app_event(
                                         "welcome page: toggle diagnostic telemetry".to_string(),
                                     );
                                     this.update_settings::<TelemetrySettings>(selection, cx, {
-                                        let telemetry = this.telemetry.clone();
-
                                         move |settings, value| {
                                             settings.diagnostics = Some(value);
 
-                                            telemetry.report_setting_event(
-                                                "diagnostic telemetry",
-                                                value.to_string(),
-                                            );
+                                            telemetry::event!("Settings Changed", setting = "diagnostic telemetry", value);
                                         }
                                     });
                                 }),
@@ -314,24 +319,18 @@ impl Render for WelcomePage {
                                 "enable-telemetry",
                                 Label::new("Send Telemetry"),
                                 if TelemetrySettings::get_global(cx).metrics {
-                                    ui::Selection::Selected
+                                    ui::ToggleState::Selected
                                 } else {
-                                    ui::Selection::Unselected
+                                    ui::ToggleState::Unselected
                                 },
                                 cx.listener(move |this, selection, cx| {
                                     this.telemetry.report_app_event(
                                         "welcome page: toggle metric telemetry".to_string(),
                                     );
                                     this.update_settings::<TelemetrySettings>(selection, cx, {
-                                        let telemetry = this.telemetry.clone();
-
                                         move |settings, value| {
                                             settings.metrics = Some(value);
-
-                                            telemetry.report_setting_event(
-                                                "metric telemetry",
-                                                value.to_string(),
-                                            );
+                                            telemetry::event!("Settings Changed", setting = "metric telemetry", value);
                                         }
                                     });
                                 }),
@@ -371,7 +370,7 @@ impl WelcomePage {
 
     fn update_settings<T: Settings>(
         &mut self,
-        selection: &Selection,
+        selection: &ToggleState,
         cx: &mut ViewContext<Self>,
         callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
     ) {
@@ -380,8 +379,8 @@ impl WelcomePage {
             let selection = *selection;
             settings::update_settings_file::<T>(fs, cx, move |settings, _| {
                 let value = match selection {
-                    Selection::Unselected => false,
-                    Selection::Selected => true,
+                    ToggleState::Unselected => false,
+                    ToggleState::Selected => true,
                     _ => return,
                 };
 

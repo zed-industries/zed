@@ -143,7 +143,7 @@ fn populate_pane_items(
     pane: &mut Pane,
     items: Vec<View<TerminalView>>,
     active_item: Option<u64>,
-    cx: &mut ViewContext<'_, Pane>,
+    cx: &mut ViewContext<Pane>,
 ) {
     let mut item_index = pane.items_len();
     for item in items {
@@ -214,8 +214,13 @@ async fn deserialize_pane_group(
             .await;
 
             let pane = panel
-                .update(cx, |_, cx| {
-                    new_terminal_pane(workspace.clone(), project.clone(), cx)
+                .update(cx, |terminal_panel, cx| {
+                    new_terminal_pane(
+                        workspace.clone(),
+                        project.clone(),
+                        terminal_panel.active_pane.read(cx).is_zoomed(),
+                        cx,
+                    )
                 })
                 .log_err()?;
             let active_item = serialized_pane.active_item;
@@ -246,7 +251,13 @@ async fn deserialize_pane_group(
                 let terminal = terminal.await.ok()?;
                 pane.update(cx, |pane, cx| {
                     let terminal_view = Box::new(cx.new_view(|cx| {
-                        TerminalView::new(terminal, workspace.clone(), Some(workspace_id), cx)
+                        TerminalView::new(
+                            terminal,
+                            workspace.clone(),
+                            Some(workspace_id),
+                            project.downgrade(),
+                            cx,
+                        )
                     }));
                     pane.add_item(terminal_view, true, false, None, cx);
                 })

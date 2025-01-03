@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Context as _;
+use anyhow::{anyhow, Context as _};
 use collections::{BTreeMap, HashMap};
 use feature_flags::FeatureFlagAppExt;
 use git::{
@@ -22,10 +22,7 @@ use multi_buffer::{ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer}
 use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use text::{OffsetRangeExt, ToPoint};
 use theme::ActiveTheme;
-use ui::{
-    div, h_flex, Color, Context, FluentBuilder, Icon, IconName, IntoElement, Label, LabelCommon,
-    ParentElement, SharedString, Styled, ViewContext, VisualContext, WindowContext,
-};
+use ui::prelude::*;
 use util::{paths::compare_paths, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
@@ -235,22 +232,30 @@ impl ProjectDiffEditor {
                         >::default();
                         let mut change_sets = Vec::new();
                         for (status, entry_id, entry_path, open_task) in open_tasks {
-                            let (_, opened_model) = open_task.await.with_context(|| {
-                                format!("loading buffer {:?} for git diff", entry_path.path)
-                            })?;
-                            let buffer = match opened_model.downcast::<Buffer>() {
-                                Ok(buffer) => buffer,
-                                Err(_model) => anyhow::bail!(
-                                    "Could not load {:?} as a buffer for git diff",
-                                    entry_path.path
-                                ),
+                            let Some(buffer) = open_task
+                                .await
+                                .and_then(|(_, opened_model)| {
+                                    opened_model
+                                        .downcast::<Buffer>()
+                                        .map_err(|_| anyhow!("Unexpected non-buffer"))
+                                })
+                                .with_context(|| {
+                                    format!("loading {:?} for git diff", entry_path.path)
+                                })
+                                .log_err()
+                            else {
+                                continue;
                             };
 
-                            let change_set = project
+                            let Some(change_set) = project
                                 .update(&mut cx, |project, cx| {
                                     project.open_unstaged_changes(buffer.clone(), cx)
                                 })?
-                                .await?;
+                                .await
+                                .log_err()
+                            else {
+                                continue;
+                            };
 
                             cx.update(|cx| {
                                 buffers.insert(
@@ -267,7 +272,7 @@ impl ProjectDiffEditor {
                             new_entries.push((entry_path, entry_id));
                         }
 
-                        Ok((buffers, new_entries, change_sets))
+                        anyhow::Ok((buffers, new_entries, change_sets))
                     })
                     .await
                     .log_err()
@@ -305,11 +310,11 @@ impl ProjectDiffEditor {
                 project_diff_editor
                     .update(&mut cx, |project_diff_editor, cx| {
                         project_diff_editor.update_excerpts(id, new_changes, new_entry_order, cx);
-                        for change_set in change_sets {
-                            project_diff_editor.editor.update(cx, |editor, cx| {
+                        project_diff_editor.editor.update(cx, |editor, cx| {
+                            for change_set in change_sets {
                                 editor.diff_map.add_change_set(change_set, cx)
-                            });
-                        }
+                            }
+                        });
                     })
                     .ok();
             }),

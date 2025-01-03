@@ -2712,6 +2712,29 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/", json!({".env": "PRIVATE=secret\n"}))
+        .await;
+    let tree = Worktree::local(
+        Path::new("/.env"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.read_with(cx, |tree, _| {
+        let entry = tree.entry_for_path("").unwrap();
+        assert!(entry.is_private);
+    });
+}
+
 #[track_caller]
 fn check_propagated_statuses(
     snapshot: &Snapshot,

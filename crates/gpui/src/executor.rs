@@ -1,6 +1,10 @@
 use crate::{AppContext, PlatformDispatcher};
+use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
+use std::mem::ManuallyDrop;
+use std::panic::Location;
+use std::thread::{self, ThreadId};
 use std::{
     fmt::Debug,
     marker::PhantomData,
@@ -46,7 +50,10 @@ pub struct ForegroundExecutor {
 /// the task to continue running, but with no way to return a value.
 #[must_use]
 #[derive(Debug)]
-pub enum Task<T> {
+pub struct Task<T>(TaskState<T>);
+
+#[derive(Debug)]
+enum TaskState<T> {
     /// A task that is ready to return a value
     Ready(Option<T>),
 
@@ -57,14 +64,14 @@ pub enum Task<T> {
 impl<T> Task<T> {
     /// Creates a new task that will resolve with the value
     pub fn ready(val: T) -> Self {
-        Task::Ready(Some(val))
+        Task(TaskState::Ready(Some(val)))
     }
 
     /// Detaching a task runs it to completion in the background
     pub fn detach(self) {
         match self {
-            Task::Ready(_) => {}
-            Task::Spawned(task) => task.detach(),
+            Task(TaskState::Ready(_)) => {}
+            Task(TaskState::Spawned(task)) => task.detach(),
         }
     }
 }
@@ -90,8 +97,8 @@ impl<T> Future for Task<T> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match unsafe { self.get_unchecked_mut() } {
-            Task::Ready(val) => Poll::Ready(val.take().unwrap()),
-            Task::Spawned(task) => task.poll(cx),
+            Task(TaskState::Ready(val)) => Poll::Ready(val.take().unwrap()),
+            Task(TaskState::Spawned(task)) => task.poll(cx),
         }
     }
 }
@@ -159,7 +166,7 @@ impl BackgroundExecutor {
         let (runnable, task) =
             async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable, label));
         runnable.schedule();
-        Task::Spawned(task)
+        Task(TaskState::Spawned(task))
     }
 
     /// Used by the test harness to run an async test in a synchronous fashion.
@@ -328,12 +335,15 @@ impl BackgroundExecutor {
     /// Depending on other concurrent tasks the elapsed duration may be longer
     /// than requested.
     pub fn timer(&self, duration: Duration) -> Task<()> {
+        if duration.is_zero() {
+            return Task::ready(());
+        }
         let (runnable, task) = async_task::spawn(async move {}, {
             let dispatcher = self.dispatcher.clone();
             move |runnable| dispatcher.dispatch_after(duration, runnable)
         });
         runnable.schedule();
-        Task::Spawned(task)
+        Task(TaskState::Spawned(task))
     }
 
     /// in tests, start_waiting lets you indicate which task is waiting (for debugging only)
@@ -437,23 +447,91 @@ impl ForegroundExecutor {
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
+    #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
     where
         R: 'static,
     {
         let dispatcher = self.dispatcher.clone();
+
+        #[track_caller]
         fn inner<R: 'static>(
             dispatcher: Arc<dyn PlatformDispatcher>,
             future: AnyLocalFuture<R>,
         ) -> Task<R> {
-            let (runnable, task) = async_task::spawn_local(future, move |runnable| {
+            let (runnable, task) = spawn_local_with_source_location(future, move |runnable| {
                 dispatcher.dispatch_on_main_thread(runnable)
             });
             runnable.schedule();
-            Task::Spawned(task)
+            Task(TaskState::Spawned(task))
         }
         inner::<R>(dispatcher, Box::pin(future))
     }
+}
+
+/// Variant of `async_task::spawn_local` that includes the source location of the spawn in panics.
+///
+/// Copy-modified from:
+/// https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405
+#[track_caller]
+fn spawn_local_with_source_location<Fut, S>(
+    future: Fut,
+    schedule: S,
+) -> (Runnable<()>, async_task::Task<Fut::Output, ()>)
+where
+    Fut: Future + 'static,
+    Fut::Output: 'static,
+    S: async_task::Schedule<()> + Send + Sync + 'static,
+{
+    #[inline]
+    fn thread_id() -> ThreadId {
+        std::thread_local! {
+            static ID: ThreadId = thread::current().id();
+        }
+        ID.try_with(|id| *id)
+            .unwrap_or_else(|_| thread::current().id())
+    }
+
+    struct Checked<F> {
+        id: ThreadId,
+        inner: ManuallyDrop<F>,
+        location: &'static Location<'static>,
+    }
+
+    impl<F> Drop for Checked<F> {
+        fn drop(&mut self) {
+            assert!(
+                self.id == thread_id(),
+                "local task dropped by a thread that didn't spawn it. Task spawned at {}",
+                self.location
+            );
+            unsafe {
+                ManuallyDrop::drop(&mut self.inner);
+            }
+        }
+    }
+
+    impl<F: Future> Future for Checked<F> {
+        type Output = F::Output;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            assert!(
+                self.id == thread_id(),
+                "local task polled by a thread that didn't spawn it. Task spawned at {}",
+                self.location
+            );
+            unsafe { self.map_unchecked_mut(|c| &mut *c.inner).poll(cx) }
+        }
+    }
+
+    // Wrap the future into one that checks which thread it's on.
+    let future = Checked {
+        id: thread_id(),
+        inner: ManuallyDrop::new(future),
+        location: Location::caller(),
+    };
+
+    unsafe { async_task::spawn_unchecked(future, schedule) }
 }
 
 /// Scope manages a set of tasks that are enqueued and waited on together. See [`BackgroundExecutor::scoped`].

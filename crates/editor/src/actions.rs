@@ -251,6 +251,7 @@ gpui::actions!(
         DisplayCursorNames,
         DuplicateLineDown,
         DuplicateLineUp,
+        DuplicateSelection,
         ExpandAllHunkDiffs,
         ExpandMacroRecursively,
         FindAllReferences,
@@ -386,7 +387,5 @@ gpui::actions!(
         UniqueLinesCaseSensitive,
     ]
 );
-
-action_as!(outline, ToggleOutline as Toggle);
 
 action_as!(go_to_line, ToggleGoToLine as Toggle);

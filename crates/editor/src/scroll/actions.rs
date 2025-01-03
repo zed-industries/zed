@@ -4,7 +4,7 @@ use crate::{
     ScrollAnchor, ScrollCursorBottom, ScrollCursorCenter, ScrollCursorCenterTopBottom,
     ScrollCursorTop, SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT,
 };
-use gpui::{Point, ViewContext};
+use gpui::{AsyncWindowContext, Point, ViewContext};
 
 impl Editor {
     pub fn next_screen(&mut self, _: &NextScreen, cx: &mut ViewContext<Editor>) {
@@ -75,7 +75,7 @@ impl Editor {
 
         self.next_scroll_position = self.next_scroll_position.next();
         self._scroll_cursor_center_top_bottom_task =
-            cx.spawn(|editor, mut cx: gpui::AsyncWindowContext| async move {
+            cx.spawn(|editor, mut cx: AsyncWindowContext| async move {
                 cx.background_executor()
                     .timer(SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT)
                     .await;

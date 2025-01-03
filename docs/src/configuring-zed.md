@@ -133,6 +133,38 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Restore on Startup
+
+- Description: Controls session restoration on startup.
+- Setting: `restore_on_startup`
+- Default: `last_session`
+
+**Options**
+
+1. Restore all workspaces that were open when quitting Zed:
+
+```json
+{
+  "restore_on_startup": "last_session"
+}
+```
+
+2. Restore the workspace that was closed last:
+
+```json
+{
+  "restore_on_startup": "last_workspace"
+}
+```
+
+3. Always start with an empty editor:
+
+```json
+{
+  "restore_on_startup": "none"
+}
+```
+
 ## Autoscroll on Clicks
 
 - Description: Whether to scroll when clicking near the edge of the visible text area.
@@ -435,6 +467,12 @@ List of `string` values
 "current_line_highlight": "all"
 ```
 
+## LSP Highlight Debounce
+
+- Description: The debounce delay before querying highlights from the language server based on the current cursor location.
+- Setting: `lsp_highlight_debounce`
+- Default: `75`
+
 ## Cursor Blink
 
 - Description: Whether or not the cursor blinks.
@@ -496,7 +534,11 @@ List of `string` values
   "git_diff": true,
   "search_results": true,
   "selected_symbol": true,
-  "diagnostics": true
+  "diagnostics": "all",
+  "axes": {
+    "horizontal": true,
+    "vertical": true,
+  },
 },
 ```
 
@@ -582,8 +624,81 @@ List of `string` values
 
 ### Diagnostics
 
-- Description: Whether to show diagnostic indicators in the scrollbar.
+- Description: Which diagnostic indicators to show in the scrollbar.
 - Setting: `diagnostics`
+- Default: `all`
+
+**Options**
+
+1. Show all diagnostics:
+
+```json
+{
+  "diagnostics": "all"
+}
+```
+
+2. Do not show any diagnostics:
+
+```json
+{
+  "diagnostics": "none"
+}
+```
+
+3. Show only errors:
+
+```json
+{
+  "diagnostics": "error"
+}
+```
+
+4. Show only errors and warnings:
+
+```json
+{
+  "diagnostics": "warning"
+}
+```
+
+5. Show only errors, warnings, and information:
+
+```json
+{
+  "diagnostics": "information"
+}
+```
+
+### Axes
+
+- Description: Forcefully enable or disable the scrollbar for each axis
+- Setting: `axes`
+- Default:
+
+```json
+"scrollbar": {
+  "axes": {
+    "horizontal": true,
+    "vertical": true,
+  },
+}
+```
+
+#### Horizontal
+
+- Description: When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+- Setting: `horizontal`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+#### Vertical
+
+- Description: When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+- Setting: `vertical`
 - Default: `true`
 
 **Options**
@@ -691,11 +806,19 @@ List of `string` values
 }
 ```
 
-2. Activate the neighbour tab (prefers the right one, if present):
+2. Activate the right neighbour tab if present:
 
 ```json
 {
   "activate_on_close": "neighbour"
+}
+```
+
+3. Activate the left neighbour tab if present:
+
+```json
+{
+  "activate_on_close": "left_neighbour"
 }
 ```
 
@@ -994,6 +1117,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
   "**/.git",
   "**/.svn",
   "**/.hg",
+  "**/.jj",
   "**/CVS",
   "**/.DS_Store",
   "**/Thumbs.db",
@@ -1516,16 +1640,6 @@ Or to set a `socks5` proxy:
 
 `boolean` values
 
-## Completion Documentation Debounce Delay
-
-- Description: The debounce delay before re-querying the language server for completion documentation when not included in original completion list.
-- Setting: `completion_documentation_secondary_query_debounce`
-- Default: `300` ms
-
-**Options**
-
-`integer` values
-
 ## Show Inline Completions
 
 - Description: Whether to show inline completions as you type or manually by triggering `editor::ShowInlineCompletion`.
@@ -1561,6 +1675,7 @@ Or to set a `socks5` proxy:
 2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
 4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
+5. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
 
 ## Wrap Guides (Vertical Rulers)
 
