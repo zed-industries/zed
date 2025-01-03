@@ -179,7 +179,7 @@ define_connection! {
     //   group_id: usize, // Primary key for pane_groups
     //   workspace_id: usize, // References workspaces table
     //   parent_group_id: Option<usize>, // None indicates that this is the root node
-    //   position: Optiopn<usize>, // None indicates that this is the root node
+    //   position: Option<usize>, // None indicates that this is the root node
     //   axis: Option<Axis>, // 'Vertical', 'Horizontal'
     //   flexes: Option<Vec<f32>>, // A JSON array of floats
     // )

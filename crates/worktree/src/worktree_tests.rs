@@ -1501,7 +1501,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Modified)), // This is testing our propogation stuff, which we just said we wouldn't do
+            (Path::new(""), Some(GitFileStatus::Modified)), // This is testing our propagation stuff, which we just said we wouldn't do
             (Path::new("a.txt"), None),
             (Path::new("b/c.txt"), Some(GitFileStatus::Modified)),
         ],
@@ -3096,7 +3096,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
         ],
     );
 
-    // Test one of the fundamental cases of propogation blocking, the transition from one git repository to another
+    // Test one of the fundamental cases of propagation blocking, the transition from one git repository to another
     check_git_statuses(
         &snapshot,
         &[

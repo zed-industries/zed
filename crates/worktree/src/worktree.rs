@@ -354,7 +354,7 @@ impl WorkDirectory {
         }
     }
 
-    /// This is the opposite operaiton to `relativize` above
+    /// This is the opposite operation to `relativize` above
     pub fn unrelativize(&self, path: &RepoPath) -> Option<Arc<Path>> {
         if let Some(location) = &self.location_in_repo {
             // If we fail to strip the prefix, that means this status entry is

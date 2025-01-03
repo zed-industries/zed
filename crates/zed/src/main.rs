@@ -70,7 +70,7 @@ use util::load_shell_from_passwd;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-fn files_not_createad_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
+fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
     let message = "Zed failed to launch";
     let error_details = errors
         .into_iter()
@@ -179,7 +179,7 @@ fn main() {
 
     let file_errors = init_paths();
     if !file_errors.is_empty() {
-        files_not_createad_on_launch(file_errors);
+        files_not_created_on_launch(file_errors);
         return;
     }
 
