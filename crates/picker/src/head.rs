@@ -16,12 +16,12 @@ pub(crate) enum Head {
 impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
-        edit_handler: impl FnMut(&mut V, Model<Editor>, &EditorEvent, &mut Window, &mut ModelContext<V>)
+        edit_handler: impl FnMut(&mut V, &Model<Editor>, &EditorEvent, &mut Window, &mut ModelContext<V>)
             + 'static,
         window: &mut Window,
         cx: &mut ModelContext<V>,
     ) -> Self {
-        let editor = window.new_view(cx, |cx| {
+        let editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text(placeholder_text, window, cx);
             editor
@@ -35,7 +35,7 @@ impl Head {
         window: &mut Window,
         cx: &mut ModelContext<V>,
     ) -> Self {
-        let head = window.new_view(EmptyHead::new, cx);
+        let head = window.new_view(cx, EmptyHead::new);
         cx.on_blur(&head.focus_handle(cx), window, blur_handler)
             .detach();
         Self::Empty(head)

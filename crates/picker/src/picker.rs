@@ -217,10 +217,9 @@ impl<D: PickerDelegate> Picker<D> {
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn uniform_list(delegate: D, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let head = Head::editor(
-            delegate.placeholder_text(cx),
+            delegate.placeholder_text(window, cx),
             Self::on_input_editor_event,
             window,
-            cxndow,
             cx,
         );
 
@@ -244,10 +243,9 @@ impl<D: PickerDelegate> Picker<D> {
     /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
     pub fn list(delegate: D, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let head = Head::editor(
-            delegate.placeholder_text(cx),
+            delegate.placeholder_text(window, cx),
             Self::on_input_editor_event,
             window,
-            cxndow,
             cx,
         );
 
@@ -293,7 +291,7 @@ impl<D: PickerDelegate> Picker<D> {
                     0,
                     gpui::ListAlignment::Top,
                     px(1000.),
-                    move |ix, cx| {
+                    move |ix, window, cx| {
                         view.upgrade()
                             .map(|view| {
                                 view.update(cx, |this, cx| {
@@ -338,12 +336,12 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut ModelContext<Self>,
     ) {
         let previous_index = self.delegate.selected_index();
-        self.delegate.set_selected_index(ix, cx);
+        self.delegate.set_selected_index(ix, window, cx);
         let current_index = self.delegate.selected_index();
 
         if previous_index != current_index {
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
-                action(cx);
+                action(window, cx);
             }
             if scroll_to_index {
                 self.scroll_to_item_index(ix);
@@ -417,7 +415,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.delegate.should_dismiss() {
-            self.delegate.dismissed(cx);
+            self.delegate.dismissed(window, cx);
             cx.emit(DismissEvent);
         }
     }
@@ -496,15 +494,15 @@ impl<D: PickerDelegate> Picker<D> {
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
             self.set_query(update_query, window, cx);
-            self.delegate.set_selected_index(0, cx);
+            self.delegate.set_selected_index(0, window, cx);
         } else {
-            self.delegate.confirm(secondary, cx)
+            self.delegate.confirm(secondary, window, cx)
         }
     }
 
     fn on_input_editor_event(
         &mut self,
-        _: Model<Editor>,
+        _: &Model<Editor>,
         event: &editor::EditorEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -534,7 +532,7 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut AppContext) {
         match &self.head {
             Head::Editor(view) => {
-                let placeholder = self.delegate.placeholder_text(cx);
+                let placeholder = self.delegate.placeholder_text(window, cx);
                 view.update(cx, |this, cx| {
                     this.set_placeholder_text(placeholder, window, cx);
                     cx.notify();
@@ -555,7 +553,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let delegate_pending_update_matches = self.delegate.update_matches(query, cx);
+        let delegate_pending_update_matches = self.delegate.update_matches(query, window, cx);
 
         self.matches_updated(window, cx);
         // This struct ensures that we can synchronously drop the task returned by the
@@ -576,7 +574,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .unwrap()
                 })?;
                 delegate_pending_update_matches.await;
-                this.update(&mut cx, |this, cx| {
+                this.update_in(&mut cx, |this, window, cx| {
                     this.matches_updated(window, cx);
                 })
             }),
@@ -649,10 +647,12 @@ impl<D: PickerDelegate> Picker<D> {
                     this.handle_click(ix, event.modifiers.platform, window, cx)
                 }),
             )
-            .children(
-                self.delegate
-                    .render_match(ix, ix == self.delegate.selected_index(), cx),
-            )
+            .children(self.delegate.render_match(
+                ix,
+                ix == self.delegate.selected_index(),
+                window,
+                cx,
+            ))
             .when(
                 self.delegate.separators_after_indices().contains(&ix),
                 |picker| {
