@@ -591,6 +591,10 @@ mod test {
         });
     }
 
+    fn to_file_path(path: &str) -> String {
+        path.replace("/", std::path::MAIN_SEPARATOR_STR)
+    }
+
     #[gpui::test]
     async fn test_file_exact_matching(cx: &mut TestAppContext) {
         use std::path::MAIN_SEPARATOR_STR;
@@ -772,6 +776,8 @@ mod test {
 
     #[gpui::test]
     async fn test_file_deep_sub_directory_rendering(cx: &mut TestAppContext) {
+        use std::path::MAIN_SEPARATOR_STR;
+
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -798,30 +804,71 @@ mod test {
 
         let project = Project::test(fs, ["/zed".as_ref()], cx).await;
 
-        let result =
-            cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));
+        let result = cx.update(|cx| {
+            collect_files(
+                project.clone(),
+                &[format!(
+                    "zed{}assets{}themes",
+                    MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+                )],
+                cx,
+            )
+        });
         let result = SlashCommandOutput::from_event_stream(result.boxed())
             .await
             .unwrap();
 
-        assert!(result.text.starts_with("zed/assets/themes\n"));
-        assert_eq!(result.sections[0].label, "zed/assets/themes/LICENSE");
+        assert!(result.text.starts_with(&format!(
+            "zed{}assets{}themes\n",
+            MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+        )));
+        assert_eq!(
+            result.sections[0].label,
+            format!(
+                "zed{}assets{}themes{}LICENSE",
+                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+            )
+        );
         assert_eq!(
             result.sections[1].label,
-            "zed/assets/themes/summercamp/LICENSE"
+            format!(
+                "zed{}assets{}themes{}summercamp{}LICENSE",
+                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+            )
         );
         assert_eq!(
             result.sections[2].label,
-            "zed/assets/themes/summercamp/subdir/LICENSE"
+            format!(
+                "zed{}assets{}themes{}summercamp{}subdir{}LICENSE",
+                MAIN_SEPARATOR_STR,
+                MAIN_SEPARATOR_STR,
+                MAIN_SEPARATOR_STR,
+                MAIN_SEPARATOR_STR,
+                MAIN_SEPARATOR_STR
+            )
         );
         assert_eq!(
             result.sections[3].label,
-            "zed/assets/themes/summercamp/subdir/subsubdir/LICENSE"
+            format!(
+                "zed{}assets{}themes{}summercamp{}subdir{}subsubdir{}LICENSE",
+                MAIN_SEPARATOR_STR,
+                MAIN_SEPARATOR_STR,
+                MAIN_SEPARATOR_STR,
+                MAIN_SEPARATOR_STR,
+                MAIN_SEPARATOR_STR,
+                MAIN_SEPARATOR_STR
+            )
         );
         assert_eq!(result.sections[4].label, "subsubdir");
         assert_eq!(result.sections[5].label, "subdir");
         assert_eq!(result.sections[6].label, "summercamp");
-        assert_eq!(result.sections[7].label, "zed/assets/themes");
+        assert_eq!(
+            result.sections[7].label,
+            format!(
+                "zed{}assets{}themes",
+                MAIN_SEPARATOR_STR, MAIN_SEPARATOR_STR
+            )
+        );
 
         assert_eq!(result.text, "zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n");
 
