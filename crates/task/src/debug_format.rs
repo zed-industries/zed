@@ -185,7 +185,7 @@ impl DebugTaskDefinition {
             command,
             args,
             task_type,
-            cwd: if cwd.is_some() { self.cwd } else { None },
+            cwd: self.cwd,
             ..Default::default()
         })
     }
