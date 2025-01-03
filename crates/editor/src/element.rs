@@ -45,7 +45,7 @@ use language::{
         IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
         ShowWhitespaceSetting,
     },
-    ChunkRendererContext,
+    ChunkRendererContext, DiagnosticEntry,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -4729,10 +4729,11 @@ impl EditorElement {
                             if scrollbar_settings.diagnostics {
                                 let diagnostics = snapshot
                                     .buffer_snapshot
-                                    .diagnostics_in_range::<_, Point>(
-                                        Point::zero()..max_point,
-                                        false,
-                                    )
+                                    .diagnostics_in_range(Point::zero()..max_point, false)
+                                    .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                                        diagnostic,
+                                        range: range.to_point(&snapshot.buffer_snapshot),
+                                    })
                                     // We want to sort by severity, in order to paint the most severe diagnostics last.
                                     .sorted_by_key(|diagnostic| {
                                         std::cmp::Reverse(diagnostic.diagnostic.severity)

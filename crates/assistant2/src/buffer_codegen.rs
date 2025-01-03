@@ -257,17 +257,20 @@ impl CodegenAlternative {
     ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
 
-        let (old_buffer, _, _) = buffer
-            .read(cx)
-            .range_to_buffer_ranges(range.clone(), cx)
+        let (old_excerpt, _) = snapshot
+            .range_to_buffer_ranges(range.clone())
             .pop()
             .unwrap();
         let old_buffer = cx.new_model(|cx| {
-            let old_buffer = old_buffer.read(cx);
-            let text = old_buffer.as_rope().clone();
-            let line_ending = old_buffer.line_ending();
-            let language = old_buffer.language().cloned();
-            let language_registry = old_buffer.language_registry();
+            let text = old_excerpt.buffer().as_rope().clone();
+            let line_ending = old_excerpt.buffer().line_ending();
+            let language = old_excerpt.buffer().language().cloned();
+            let language_registry = buffer
+                .read(cx)
+                .buffer(old_excerpt.buffer_id())
+                .unwrap()
+                .read(cx)
+                .language_registry();
 
             let mut buffer = Buffer::local_normalized(text, line_ending, cx);
             buffer.set_language(language, cx);
@@ -471,10 +474,11 @@ impl CodegenAlternative {
         let telemetry = self.telemetry.clone();
         let language_name = {
             let multibuffer = self.buffer.read(cx);
-            let ranges = multibuffer.range_to_buffer_ranges(self.range.clone(), cx);
+            let snapshot = multibuffer.snapshot(cx);
+            let ranges = snapshot.range_to_buffer_ranges(self.range.clone());
             ranges
                 .first()
-                .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                .and_then(|(excerpt, _)| excerpt.buffer().language())
                 .map(|language| language.name())
         };
 

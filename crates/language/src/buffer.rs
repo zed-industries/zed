@@ -3943,14 +3943,14 @@ impl BufferSnapshot {
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         T: 'a + Clone + ToOffset,
-        O: 'a + FromAnchor + Ord,
+        O: 'a + FromAnchor,
     {
         let mut iterators: Vec<_> = self
             .diagnostics
             .iter()
             .map(|(_, collection)| {
                 collection
-                    .range::<T, O>(search_range.clone(), self, true, reversed)
+                    .range::<T, text::Anchor>(search_range.clone(), self, true, reversed)
                     .peekable()
             })
             .collect();
@@ -3964,7 +3964,7 @@ impl BufferSnapshot {
                     let cmp = a
                         .range
                         .start
-                        .cmp(&b.range.start)
+                        .cmp(&b.range.start, self)
                         // when range is equal, sort by diagnostic severity
                         .then(a.diagnostic.severity.cmp(&b.diagnostic.severity))
                         // and stabilize order with group_id
@@ -3975,7 +3975,13 @@ impl BufferSnapshot {
                         cmp
                     }
                 })?;
-            iterators[next_ix].next()
+            iterators[next_ix]
+                .next()
+                .map(|DiagnosticEntry { range, diagnostic }| DiagnosticEntry {
+                    diagnostic,
+                    range: FromAnchor::from_anchor(&range.start, self)
+                        ..FromAnchor::from_anchor(&range.end, self),
+                })
         })
     }
 
