@@ -253,7 +253,7 @@ impl LspAdapter for RustLspAdapter {
             .as_ref()
             .and_then(|detail| detail.detail.as_ref())
             .or(completion.detail.as_ref())
-            .map(ToOwned::to_owned);
+            .map(|detail| detail.trim());
         let function_signature = completion
             .label_details
             .as_ref()
@@ -280,9 +280,9 @@ impl LspAdapter for RustLspAdapter {
                 let text = format!(
                     "{}: {}",
                     name,
-                    completion.detail.as_ref().or(detail.as_ref()).unwrap()
+                    completion.detail.as_deref().or(detail).unwrap()
                 );
-                let source = Rope::from(format!("let {} = ();", text).as_str());
+                let source = Rope::from(format!("let {text} = ();").as_str());
                 let runs = language.highlight_text(&source, 4..4 + text.len());
                 return Some(CodeLabel {
                     text,
@@ -315,10 +315,11 @@ impl LspAdapter for RustLspAdapter {
                 // fn keyword should be followed by opening parenthesis.
                 if let Some((prefix, suffix)) = fn_keyword {
                     let mut text = REGEX.replace(&completion.label, suffix).to_string();
-                    let source = Rope::from(format!("{prefix} {} {{}}", text).as_str());
+                    let source = Rope::from(format!("{prefix} {text} {{}}"));
                     let run_start = prefix.len() + 1;
                     let runs = language.highlight_text(&source, run_start..run_start + text.len());
-                    if detail.starts_with(" (") {
+                    if detail.starts_with("(") {
+                        text.push(' ');
                         text.push_str(&detail);
                     }
 
@@ -356,9 +357,9 @@ impl LspAdapter for RustLspAdapter {
                 };
 
                 let mut label = completion.label.clone();
-                if let Some(detail) = detail.filter(|detail| detail.starts_with(" (")) {
-                    use std::fmt::Write;
-                    write!(label, "{detail}").ok()?;
+                if let Some(detail) = detail.filter(|detail| detail.starts_with("(")) {
+                    label.push(' ');
+                    label.push_str(detail);
                 }
                 let mut label = CodeLabel::plain(label, None);
                 if let Some(highlight_name) = highlight_name {
@@ -883,7 +884,7 @@ mod tests {
                         kind: Some(lsp::CompletionItemKind::FUNCTION),
                         label: "hello(…)".to_string(),
                         label_details: Some(CompletionItemLabelDetails {
-                            detail: Some(" (use crate::foo)".into()),
+                            detail: Some("(use crate::foo)".into()),
                             description: Some("fn(&mut Option<T>) -> Vec<T>".to_string())
                         }),
                         ..Default::default()
