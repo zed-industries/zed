@@ -49,3 +49,17 @@ You can trigger formatting via {#kb editor::Format} or the `editor: format` acti
 ```
 
 See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.
+
+## Compile Commands
+
+Clangd requires a `compile_commands.json` file to properly analyze your project. This file contains the compilation database that tells clangd how your project should be built.
+
+### Using CMake
+
+If you are using CMake, you can generate `compile_commands.json` automatically by adding the following line to your `CMakeLists.txt`:
+
+```cmake
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+```
+
+After building your project, CMake will generate the `compile_commands.json` file in the build directory.
