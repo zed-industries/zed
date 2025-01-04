@@ -5165,7 +5165,7 @@ impl LspStore {
                     local
                         .language_server_ids
                         .iter()
-                        .filter_map(|((worktree_id, _), server_id)| {
+                        .filter_map(|((ProjectPath { worktree_id, .. }, _), server_id)| {
                             let worktree = this
                                 .worktree_store
                                 .read(cx)
