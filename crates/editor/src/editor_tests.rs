@@ -11875,10 +11875,15 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         ))
     });
 
+    let file_abs_path = if cfg!(windows) {
+        "C:/file.ts"
+    } else {
+        "/file.ts"
+    };
     let fs = FakeFs::new(cx.executor());
-    fs.insert_file("/file.ts", Default::default()).await;
+    fs.insert_file(file_abs_path, Default::default()).await;
 
-    let project = Project::test(fs, ["/file.ts".as_ref()], cx).await;
+    let project = Project::test(fs, [file_abs_path.as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(Arc::new(Language::new(
@@ -11910,7 +11915,9 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/file.ts", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer(file_abs_path, cx)
+        })
         .await
         .unwrap();
 
