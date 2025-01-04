@@ -8,6 +8,7 @@ use crate::{
 use anyhow::{Context, Result};
 use refineable::Refineable;
 use std::mem;
+use std::rc::Rc;
 use std::{
     any::{type_name, TypeId},
     fmt,
@@ -227,7 +228,7 @@ impl<V> Eq for WeakView<V> {}
 pub struct AnyView {
     model: AnyModel,
     render: fn(&AnyView, &mut WindowContext) -> AnyElement,
-    cached_style: Option<StyleRefinement>,
+    cached_style: Option<Rc<StyleRefinement>>,
 }
 
 impl AnyView {
@@ -235,7 +236,7 @@ impl AnyView {
     /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [ViewContext::notify] has not been called since it was rendered.
     /// The one exception is when [WindowContext::refresh] is called, in which case caching is ignored.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
-        self.cached_style = Some(style);
+        self.cached_style = Some(style.into());
         self
     }
 
@@ -276,7 +277,7 @@ impl<V: Render> From<View<V>> for AnyView {
         AnyView {
             model: value.model.into_any(),
             render: any_view::render::<V>,
-            cached_style: None,
+            cached_style: None.into(),
         }
     }
 }
@@ -432,7 +433,7 @@ impl AnyWeakView {
         Some(AnyView {
             model,
             render: self.render,
-            cached_style: None,
+            cached_style: None.into(),
         })
     }
 }
