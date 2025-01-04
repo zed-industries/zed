@@ -7074,9 +7074,9 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_file("/file.rs", Default::default()).await;
+    fs.insert_file(file_abs_path, Default::default()).await;
 
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let project = Project::test(fs, [add_root_for_windows("/file.rs").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -7092,7 +7092,9 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer(file_abs_path, cx)
+        })
         .await
         .unwrap();
 
@@ -7117,7 +7119,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Url::from_file_path(file_abs_path).unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -7145,7 +7147,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Url::from_file_path("/file.rs").unwrap()
+            lsp::Url::from_file_path(file_abs_path).unwrap()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -7202,7 +7204,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Url::from_file_path(file_abs_path).unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
