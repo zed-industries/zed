@@ -10570,7 +10570,10 @@ async fn go_to_prev_overlapping_diagnostic(
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
+                        #[cfg(not(target_os = "windows"))]
                         uri: lsp::Url::from_file_path("/root/file").unwrap(),
+                        #[cfg(target_os = "windows")]
+                        uri: lsp::Url::from_file_path("C:/root/file").unwrap(),
                         version: None,
                         diagnostics: vec![
                             lsp::Diagnostic {
