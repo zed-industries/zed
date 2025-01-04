@@ -1501,7 +1501,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Modified)), // This is testing our propagation stuff, which we just said we wouldn't do
+            (Path::new(""), Some(GitFileStatus::Modified)),
             (Path::new("a.txt"), None),
             (Path::new("b/c.txt"), Some(GitFileStatus::Modified)),
         ],

@@ -4832,7 +4832,6 @@ impl BackgroundScanner {
                     },
                 );
 
-                // This breaks it in another way
                 if let Some(work_directory_id) = work_directory_id {
                     let scan_id = state.snapshot.scan_id;
                     state.snapshot.git_repositories.update(
