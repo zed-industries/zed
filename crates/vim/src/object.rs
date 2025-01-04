@@ -21,6 +21,7 @@ use serde::Deserialize;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Object {
     Word { ignore_punctuation: bool },
+    Subword { ignore_punctuation: bool },
     Sentence,
     Paragraph,
     Quotes,
@@ -47,12 +48,18 @@ struct Word {
 }
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+struct Subword {
+    #[serde(default)]
+    ignore_punctuation: bool,
+}
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 struct IndentObj {
     #[serde(default)]
     include_below: bool,
 }
 
-impl_actions!(vim, [Word, IndentObj]);
+impl_actions!(vim, [Word, Subword, IndentObj]);
 
 actions!(
     vim,
@@ -81,6 +88,13 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         cx,
         |vim, &Word { ignore_punctuation }: &Word, cx| {
             vim.object(Object::Word { ignore_punctuation }, cx)
+        },
+    );
+    Vim::action(
+        editor,
+        cx,
+        |vim, &Subword { ignore_punctuation }: &Subword, cx| {
+            vim.object(Object::Subword { ignore_punctuation }, cx)
         },
     );
     Vim::action(editor, cx, |vim, _: &Tag, cx| vim.object(Object::Tag, cx));
@@ -154,6 +168,7 @@ impl Object {
     pub fn is_multiline(self) -> bool {
         match self {
             Object::Word { .. }
+            | Object::Subword { .. }
             | Object::Quotes
             | Object::BackQuotes
             | Object::VerticalBars
@@ -176,6 +191,7 @@ impl Object {
     pub fn always_expands_both_ways(self) -> bool {
         match self {
             Object::Word { .. }
+            | Object::Subword { .. }
             | Object::Sentence
             | Object::Paragraph
             | Object::Argument
@@ -198,6 +214,7 @@ impl Object {
     pub fn target_visual_mode(self, current_mode: Mode, around: bool) -> Mode {
         match self {
             Object::Word { .. }
+            | Object::Subword { .. }
             | Object::Sentence
             | Object::Quotes
             | Object::BackQuotes
@@ -241,6 +258,13 @@ impl Object {
                     around_word(map, relative_to, ignore_punctuation)
                 } else {
                     in_word(map, relative_to, ignore_punctuation)
+                }
+            }
+            Object::Subword { ignore_punctuation } => {
+                if around {
+                    around_subword(map, relative_to, ignore_punctuation)
+                } else {
+                    in_subword(map, relative_to, ignore_punctuation)
                 }
             }
             Object::Sentence => sentence(map, relative_to, around),
@@ -345,6 +369,63 @@ fn in_word(
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
         classifier.kind(left) != classifier.kind(right)
+    });
+
+    Some(start..end)
+}
+
+fn in_subword(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    ignore_punctuation: bool,
+) -> Option<Range<DisplayPoint>> {
+    let offset = relative_to.to_offset(map, Bias::Left);
+    // Use motion::right so that we consider the character under the cursor when looking for the start
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(relative_to.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
+    let in_subword = map
+        .buffer_chars_at(offset)
+        .next()
+        .map(|(c, _)| {
+            if classifier.is_word('-') {
+                !classifier.is_whitespace(c) && c != '_' && c != '-'
+            } else {
+                !classifier.is_whitespace(c) && c != '_'
+            }
+        })
+        .unwrap_or(false);
+
+    let start = if in_subword {
+        movement::find_preceding_boundary_display_point(
+            map,
+            right(map, relative_to, 1),
+            movement::FindRange::SingleLine,
+            |left, right| {
+                let is_word_start = classifier.kind(left) != classifier.kind(right);
+                let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
+                    || left == '_' && right != '_'
+                    || left.is_lowercase() && right.is_uppercase();
+                is_word_start || is_subword_start
+            },
+        )
+    } else {
+        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+            let is_word_start = classifier.kind(left) != classifier.kind(right);
+            let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
+                || left == '_' && right != '_'
+                || left.is_lowercase() && right.is_uppercase();
+            is_word_start || is_subword_start
+        })
+    };
+
+    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+        let is_word_end = classifier.kind(left) != classifier.kind(right);
+        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
+            || left != '_' && right == '_'
+            || left.is_lowercase() && right.is_uppercase();
+        is_word_end || is_subword_end
     });
 
     Some(start..end)
@@ -459,6 +540,40 @@ fn around_word(
     } else {
         around_next_word(map, relative_to, ignore_punctuation)
     }
+}
+
+fn around_subword(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    ignore_punctuation: bool,
+) -> Option<Range<DisplayPoint>> {
+    // Use motion::right so that we consider the character under the cursor when looking for the start
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(relative_to.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
+    let start = movement::find_preceding_boundary_display_point(
+        map,
+        right(map, relative_to, 1),
+        movement::FindRange::SingleLine,
+        |left, right| {
+            let is_word_start = classifier.kind(left) != classifier.kind(right);
+            let is_subword_start = classifier.is_word('-') && left != '-' && right == '-'
+                || left != '_' && right == '_'
+                || left.is_lowercase() && right.is_uppercase();
+            is_word_start || is_subword_start
+        },
+    );
+
+    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+        let is_word_end = classifier.kind(left) != classifier.kind(right);
+        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
+            || left != '_' && right == '_'
+            || left.is_lowercase() && right.is_uppercase();
+        is_word_end || is_subword_end
+    });
+
+    Some(start..end)
 }
 
 fn around_containing_word(
