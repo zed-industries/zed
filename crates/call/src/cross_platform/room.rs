@@ -1441,7 +1441,7 @@ impl Room {
             let sources = sources.await??;
             let source = sources.first().ok_or_else(|| anyhow!("no display found"))?;
 
-            let (track, stream) = capture_local_video_track(&**source).await?;
+            let (track, stream) = capture_local_video_track(&**source, None).await?;
 
             let publication = participant
                 .publish_track(
