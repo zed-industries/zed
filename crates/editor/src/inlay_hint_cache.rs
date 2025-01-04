@@ -3396,9 +3396,17 @@ pub mod tests {
         cx: &mut TestAppContext,
         initialize: impl 'static + Send + Fn(&mut FakeLanguageServer, &'static str) + Send + Sync,
     ) -> (&'static str, WindowHandle<Editor>, FakeLanguageServer) {
+        fn to_path_string(path: &str) -> String {
+            if cfg!(target_os = "windows") {
+                path.replace("/a", "C:/a")
+            } else {
+                path.to_string()
+            }
+        }
+
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            to_path_string("/a"),
             json!({
                 "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
                 "other.rs": "// Test file",
@@ -3406,8 +3414,12 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
-        let file_path = "/a/main.rs";
+        let project = Project::test(fs, [to_path_string("/a").as_ref()], cx).await;
+        let file_path = if cfg!(target_os = "windows") {
+            "C:/a/main.rs"
+        } else {
+            "/a/main.rs"
+        };
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -3425,7 +3437,7 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer(to_path_string("/a/main.rs"), cx)
             })
             .await
             .unwrap();
