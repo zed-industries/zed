@@ -7237,23 +7237,9 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}"
     );
 
-    const ROOT_PATH: &str = if cfg!(target_os = "windows") {
-        "C:/a"
-    } else {
-        "/a"
-    };
-
-    fn to_path_string(path: &str) -> String {
-        if cfg!(target_os = "windows") {
-            path.replace("file:///a", "file:///C:/a")
-        } else {
-            path.to_string()
-        }
-    }
-
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        ROOT_PATH,
+        "/a",
         json!({
             "main.rs": sample_text_1,
             "other.rs": sample_text_2,
@@ -7262,7 +7248,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs, [ROOT_PATH.as_ref()], cx).await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
@@ -7437,20 +7423,20 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
     assert!(cx.read(|cx| !multi_buffer_editor.is_dirty(cx)));
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.text(cx)),
-        to_path_string("a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"),
+        "a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}",
     );
     buffer_1.update(cx, |buffer, _| {
         assert!(!buffer.is_dirty());
         assert_eq!(
             buffer.text(),
-            to_path_string("a|o[file:///a/main.rs formatted]bbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n"),
+            "a|o[file:///a/main.rs formatted]bbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n",
         )
     });
     buffer_2.update(cx, |buffer, _| {
         assert!(!buffer.is_dirty());
         assert_eq!(
             buffer.text(),
-            to_path_string("lll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|oooo\npppp\nr\nssss\ntttt\nuuuu\n"),
+            "lll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|oooo\npppp\nr\nssss\ntttt\nuuuu\n",
         )
     });
     buffer_3.update(cx, |buffer, _| {
@@ -11067,23 +11053,9 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
 async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    const ROOT_PATH: &str = if cfg!(target_os = "windows") {
-        "C:/a"
-    } else {
-        "/a"
-    };
-
-    fn to_path_buf(path: &str) -> PathBuf {
-        if cfg!(target_os = "windows") {
-            PathBuf::from(format!("C:{}", path))
-        } else {
-            PathBuf::from(path)
-        }
-    }
-
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        ROOT_PATH,
+        "/a",
         json!({
             "main.rs": "fn main() { let a = 5; }",
             "other.rs": "// Test file",
@@ -11091,7 +11063,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     )
     .await;
 
-    let project = Project::test(fs, [ROOT_PATH.as_ref()], cx).await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
 
     let server_restarts = Arc::new(AtomicUsize::new(0));
     let closure_restarts = Arc::clone(&server_restarts);
@@ -11131,7 +11103,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let _window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let _buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(to_path_buf("/a/main.rs"), cx)
+            project.open_local_buffer_with_lsp("/a/main.rs", cx)
         })
         .await
         .unwrap();
@@ -11903,15 +11875,10 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         ))
     });
 
-    let file_abs_path = if cfg!(windows) {
-        "C:/file.ts"
-    } else {
-        "/file.ts"
-    };
     let fs = FakeFs::new(cx.executor());
-    fs.insert_file(file_abs_path, Default::default()).await;
+    fs.insert_file("/file.ts", Default::default()).await;
 
-    let project = Project::test(fs, [file_abs_path.as_ref()], cx).await;
+    let project = Project::test(fs, ["/file.ts".as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(Arc::new(Language::new(
@@ -11943,9 +11910,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
     let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(file_abs_path, cx)
-        })
+        .update(cx, |project, cx| project.open_local_buffer("/file.ts", cx))
         .await
         .unwrap();
 
@@ -15800,6 +15765,82 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
+        release_channel::init(SemanticVersion::default(), cx);
+        client::init_settings(cx);
+        language::init(cx);
+        Project::init_settings(cx);
+        workspace::init_settings(cx);
+        crate::init(cx);
+    });
+
+    update_test_language_settings(cx, f);
+}
+
+#[track_caller]
+fn assert_hunk_revert(
+    not_reverted_text_with_selections: &str,
+    expected_not_reverted_hunk_statuses: Vec<DiffHunkStatus>,
+    expected_reverted_text_with_selections: &str,
+    base_text: &str,
+    cx: &mut EditorLspTestContext,
+) {
+    cx.set_state(not_reverted_text_with_selections);
+    cx.set_diff_base(base_text);
+    cx.executor().run_until_parked();
+
+    let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let reverted_hunk_statuses = snapshot
+            .diff_map
+            .diff_hunks_in_range(0..snapshot.buffer_snapshot.len(), &snapshot.buffer_snapshot)
+            .map(|hunk| hunk_status(&hunk))
+            .collect::<Vec<_>>();
+
+        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+        reverted_hunk_statuses
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(expected_reverted_text_with_selections);
+    assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
+}
+        release_channel::init(SemanticVersion::default(), cx);
+        client::init_settings(cx);
+        language::init(cx);
+        Project::init_settings(cx);
+        workspace::init_settings(cx);
+        crate::init(cx);
+    });
+
+    update_test_language_settings(cx, f);
+}
+
+#[track_caller]
+fn assert_hunk_revert(
+    not_reverted_text_with_selections: &str,
+    expected_hunk_statuses_before: Vec<DiffHunkStatus>,
+    expected_reverted_text_with_selections: &str,
+    base_text: &str,
+    cx: &mut EditorLspTestContext,
+) {
+    cx.set_state(not_reverted_text_with_selections);
+    cx.set_diff_base(base_text);
+    cx.executor().run_until_parked();
+
+    let actual_hunk_statuses_before = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let reverted_hunk_statuses = snapshot
+            .buffer_snapshot
+            .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
+            .map(|hunk| hunk.status())
+            .collect::<Vec<_>>();
+
+        editor.revert_selected_hunks(&RevertSelectedHunks, window, cx);
+        reverted_hunk_statuses
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(expected_reverted_text_with_selections);
+    assert_eq!(actual_hunk_statuses_before, expected_hunk_statuses_before);
+}
         release_channel::init(SemanticVersion::default(), cx);
         client::init_settings(cx);
         language::init(cx);
