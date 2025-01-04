@@ -389,7 +389,7 @@ hyper = "0.14"
 http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
-indexmap = { version = "2", features = ["serde"] }
+indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
@@ -440,9 +440,10 @@ runtimelib = { version = "0.24.0", default-features = false, features = [
 ] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
+rustc-hash = "2.1.0"
 rustls = "0.21.12"
 rustls-native-certs = "0.8.0"
-schemars = { version = "0.8", features = ["impl_json_schema"] }
+schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }

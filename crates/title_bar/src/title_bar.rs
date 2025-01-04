@@ -21,7 +21,7 @@ use gpui::{
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
-use project::{Project, RepositoryEntry};
+use project::Project;
 use rpc::proto;
 use settings::Settings as _;
 use smallvec::SmallVec;
@@ -487,7 +487,7 @@ impl TitleBar {
         let workspace = self.workspace.upgrade()?;
         let branch_name = entry
             .as_ref()
-            .and_then(RepositoryEntry::branch)
+            .and_then(|entry| entry.branch())
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
             Button::new("project_branch_trigger", branch_name)

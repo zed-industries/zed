@@ -118,7 +118,7 @@ impl InlineAssistant {
             };
             let enabled = AssistantSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.asssistant_enabled(enabled, cx)
+                terminal_panel.set_assistant_enabled(enabled, cx)
             });
         })
         .detach();

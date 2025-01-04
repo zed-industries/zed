@@ -2784,7 +2784,8 @@ dependencies = [
 name = "collections"
 version = "0.1.0"
 dependencies = [
- "rustc-hash 1.1.0",
+ "indexmap",
+ "rustc-hash 2.1.0",
 ]
 
 [[package]]
@@ -5193,6 +5194,7 @@ dependencies = [
  "util",
  "windows 0.58.0",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
