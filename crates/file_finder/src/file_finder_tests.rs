@@ -8,9 +8,9 @@ use project::{RemoveOptions, FS_WATCH_LATENCY};
 use serde_json::json;
 use workspace::{AppState, ToggleFileFinder, Workspace};
 
-fn to_path_string(path: &str) -> String {
+fn to_path_string(path: &str, pattern: &str) -> String {
     if cfg!(target_os = "windows") {
-        path.replace("/root", "C:/root")
+        path.replace(pattern, &format!("C:{}", pattern))
     } else {
         path.to_string()
     }
@@ -93,12 +93,13 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_absolute_paths(cx: &mut TestAppContext) {
+    const PATTERN: &str = "/root";
     let app_state = init_test(cx);
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/root"),
+            to_path_string("/root", PATTERN),
             json!({
                 "a": {
                     "file1.txt": "",
@@ -110,11 +111,16 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), [to_path_string("/root").as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [to_path_string("/root", PATTERN).as_ref()],
+        cx,
+    )
+    .await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    let matching_abs_path = to_path_string("/root/a/b/file2.txt");
+    let matching_abs_path = to_path_string("/root/a/b/file2.txt", PATTERN);
     picker
         .update_in(cx, |picker, window, cx| {
             picker.delegate.update_matches(matching_abs_path, window, cx)
@@ -134,7 +140,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         assert_eq!(active_editor.read(cx).title(cx), "file2.txt");
     });
 
-    let mismatching_abs_path = to_path_string("/root/a/b/file1.txt");
+    let mismatching_abs_path = to_path_string("/root/a/b/file1.txt", PATTERN);
     picker
         .update_in(cx, |picker, window, cx| {
             picker.delegate.update_matches(mismatching_abs_path, window, cx)
@@ -746,13 +752,8 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
-    fn to_path_string_extra(path: &str) -> String {
-        if cfg!(target_os = "windows") {
-            path.replace("/external-src", "D:/external-src")
-        } else {
-            path.to_string()
-        }
-    }
+    const PATTERN: &str = "/src";
+    const PATTERN_EXTRA: &str = "/external-src";
 
     let app_state = init_test(cx);
 
@@ -760,7 +761,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/src"),
+            to_path_string("/src", PATTERN),
             json!({
                 "test": {
                     "first.rs": "// First Rust file",
@@ -774,7 +775,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string_extra("/external-src"),
+            to_path_string("/external-src", PATTERN_EXTRA),
             json!({
                 "test": {
                     "third.rs": "// Third Rust file",
@@ -784,10 +785,19 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), [to_path_string("/src").as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [to_path_string("/src", PATTERN).as_ref()],
+        cx,
+    )
+    .await;
     cx.update(|cx| {
         project.update(cx, |project, cx| {
-            project.find_or_create_worktree(to_path_string_extra("/external-src"), false, cx)
+            project.find_or_create_worktree(
+                to_path_string("/external-src", PATTERN_EXTRA),
+                false,
+                cx,
+            )
         })
     })
     .detach();
@@ -804,7 +814,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         .update_in(cx, |workspace, window, cx| {
             workspace.open_abs_path(
                 
-                PathBuf::from(to_path_string_extra("/external-src/test/third.rs")),
+                PathBuf::from(to_path_string("/external-src/test/third.rs", PATTERN_EXTRA)),
                
                 false,
                 window,
@@ -843,8 +853,9 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
                 worktree_id: external_worktree_id,
                 path: Arc::from(Path::new("")),
             },
-            Some(PathBuf::from(to_path_string_extra(
-                "/external-src/test/third.rs"
+            Some(PathBuf::from(to_path_string(
+                "/external-src/test/third.rs",
+                PATTERN_EXTRA
             )))
         )],
         "Should show external file with its full path in the history after it was open"
@@ -860,15 +871,19 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
                     worktree_id,
                     path: Arc::from(Path::new("test/second.rs")),
                 },
-                Some(PathBuf::from(to_path_string("/src/test/second.rs")))
+                Some(PathBuf::from(to_path_string(
+                    "/src/test/second.rs",
+                    PATTERN
+                )))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id: external_worktree_id,
                     path: Arc::from(Path::new("")),
                 },
-                Some(PathBuf::from(to_path_string_extra(
-                    "/external-src/test/third.rs"
+                Some(PathBuf::from(to_path_string(
+                    "/external-src/test/third.rs",
+                    PATTERN_EXTRA
                 )))
             ),
         ],
@@ -1123,13 +1138,15 @@ async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppCon
 async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
     cx: &mut TestAppContext,
 ) {
+    const PATTERN: &str = "/src";
+
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            "/src",
+            to_path_string("/src", PATTERN),
             json!({
                 "test": {
                     "bar.rs": "// Bar file",
@@ -1142,7 +1159,12 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [to_path_string("/src", PATTERN).as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
     open_close_queried_buffer("bar", 1, "bar.rs", &workspace, cx).await;
