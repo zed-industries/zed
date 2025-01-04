@@ -2196,10 +2196,21 @@ impl Workspace {
     }
 
     fn active_nearest_project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        self.active_pane()
+        let p = self
+            .active_pane()
             .read(cx)
             .active_nearest_item()
-            .and_then(|item| item.project_path(cx))
+            .and_then(|item| item.project_path(cx));
+        if p.is_some() {
+            return p;
+        }
+        self.last_active_center_pane.clone().and_then(|p| {
+            p.upgrade().and_then(|pane| {
+                pane.read(cx)
+                    .active_item()
+                    .and_then(|item| item.project_path(cx))
+            })
+        })
     }
 
     pub fn save_active_item(
