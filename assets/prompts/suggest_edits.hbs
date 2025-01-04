@@ -13,15 +13,15 @@ You must describe the change using the following XML structure:
         - <description> (optional) - An arbitrarily-long comment that describes the purpose
           of this edit.
         - <old_text> (optional) - An excerpt from the file's current contents that uniquely
-          identifies a range within the file where the edit should occur. If this tag is not
-          specified, then the entire file will be used as the range.
+          identifies a range within the file where the edit should occur. Required for all operations
+          except `create`.
         - <new_text> (required) - The new text to insert into the file.
         - <operation> (required) - The type of change that should occur at the given range
           of the file. Must be one of the following values:
             - `update`: Replaces the entire range with the new text.
             - `insert_before`: Inserts the new text before the range.
             - `insert_after`: Inserts new text after the range.
-            - `create`: Creates a new file with the given path and the new text.
+            - `create`: Creates or overwrites a file with the given path and the new text.
             - `delete`: Deletes the specified range from the file.
 
 <guidelines>
