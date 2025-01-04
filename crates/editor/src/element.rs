@@ -342,7 +342,7 @@ impl EditorElement {
                 .detach_and_log_err(cx);
         });
         register_action(view, cx, Editor::open_url);
-        register_action(view, cx, Editor::open_file);
+        register_action(view, cx, Editor::open_selected_filename);
         register_action(view, cx, Editor::fold);
         register_action(view, cx, Editor::fold_at_level);
         register_action(view, cx, Editor::fold_all);
