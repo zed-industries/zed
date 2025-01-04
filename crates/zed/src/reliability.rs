@@ -134,8 +134,6 @@ pub fn init_panic_hook(
                 }
             }
         }
-
-        std::process::abort();
     }));
 }
 
