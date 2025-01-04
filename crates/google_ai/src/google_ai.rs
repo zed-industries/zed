@@ -13,13 +13,24 @@ pub async fn stream_generate_content(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
-    mut request: GenerateContentRequest,
+    request: GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
+    // Basic validation
+    if request.contents.is_empty() {
+        return Err(anyhow!("Request must contain at least one content item"));
+    }
+
+    // Only validate the user's input content, not the model's responses
+    if let Some(user_content) = request.contents.iter().find(|c| c.role == Role::User) {
+        if user_content.parts.is_empty() {
+            return Err(anyhow!("User content must contain at least one part"));
+        }
+    }
+
+    let model = request.model.clone();
     let uri = format!(
         "{api_url}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}",
-        model = request.model
     );
-    request.model.clear();
 
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
