@@ -1276,6 +1276,14 @@ pub mod tests {
 
     use super::*;
 
+    fn to_path_string(path: &str) -> String {
+        if cfg!(target_os = "windows") {
+            path.replace("/a", "C:/a")
+        } else {
+            path.to_string()
+        }
+    }
+
     #[gpui::test]
     async fn test_basic_cache_update_with_duplicate_hints(cx: &mut gpui::TestAppContext) {
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
@@ -2451,14 +2459,6 @@ pub mod tests {
 
     #[gpui::test]
     async fn test_multiple_excerpts_large_multibuffer(cx: &mut gpui::TestAppContext) {
-        fn to_path_string(path: &str) -> String {
-            if cfg!(target_os = "windows") {
-                path.replace("/a", "C:/a")
-            } else {
-                path.to_string()
-            }
-        }
-
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
@@ -2802,14 +2802,6 @@ pub mod tests {
 
     #[gpui::test]
     async fn test_excerpts_removed(cx: &mut gpui::TestAppContext) {
-        fn to_path_string(path: &str) -> String {
-            if cfg!(target_os = "windows") {
-                path.replace("/a", "C:/a")
-            } else {
-                path.to_string()
-            }
-        }
-
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
@@ -3035,7 +3027,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            to_path_string("/a"),
             json!({
                 "main.rs": format!(r#"fn main() {{\n{}\n}}"#, format!("let i = {};\n", "√".repeat(10)).repeat(500)),
                 "other.rs": "// Test file",
@@ -3043,7 +3035,7 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [to_path_string("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -3062,7 +3054,7 @@ pub mod tests {
                             async move {
                                 assert_eq!(
                                     params.text_document.uri,
-                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                    lsp::Url::from_file_path(to_path_string("/a/main.rs")).unwrap(),
                                 );
                                 let query_start = params.range.start;
                                 Ok(Some(vec![lsp::InlayHint {
@@ -3085,7 +3077,7 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer(to_path_string("/a/main.rs"), cx)
             })
             .await
             .unwrap();
@@ -3412,14 +3404,6 @@ pub mod tests {
         cx: &mut TestAppContext,
         initialize: impl 'static + Send + Fn(&mut FakeLanguageServer, &'static str) + Send + Sync,
     ) -> (&'static str, WindowHandle<Editor>, FakeLanguageServer) {
-        fn to_path_string(path: &str) -> String {
-            if cfg!(target_os = "windows") {
-                path.replace("/a", "C:/a")
-            } else {
-                path.to_string()
-            }
-        }
-
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             to_path_string("/a"),
