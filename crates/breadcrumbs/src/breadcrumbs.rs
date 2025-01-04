@@ -90,7 +90,8 @@ impl Render for Breadcrumbs {
         });
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
-        let indicator = pane::render_item_indicator(active_item.boxed_clone(), cx);
+        let dirty_indicator = pane::render_item_indicator(active_item.boxed_clone(), cx);
+
         match active_item
             .downcast::<Editor>()
             .map(|editor| editor.downgrade())
@@ -124,16 +125,11 @@ impl Render for Breadcrumbs {
                         }
                     })
                     .children(
-                        indicator
-                            .map(|item| {
-                                h_flex()
-                                    .size_3()
-                                    .justify_center()
-                                    .child(item)
-                                    .into_any_element()
-                            })
-                            .into_iter()
-                            .chain([breadcrumbs_stack.into_any_element()]),
+                        [breadcrumbs_stack.into_any_element()].into_iter().chain(
+                            dirty_indicator
+                                .map(|item| div().ml_1p5().child(item).into_any_element())
+                                .into_iter(),
+                        ),
                     ),
             ),
             None => element
