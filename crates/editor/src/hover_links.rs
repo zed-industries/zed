@@ -924,7 +924,7 @@ mod tests {
 
         cx.set_state(indoc! {"
             struct A;
-            let vˇvariable = A;
+            let vˇariable = A;
         "});
         let screen_coord = cx.editor(|editor, cx| editor.pixel_position_of_cursor(cx));
 
