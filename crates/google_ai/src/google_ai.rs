@@ -291,6 +291,8 @@ pub enum Model {
     Gemini15Pro,
     #[serde(rename = "gemini-1.5-flash")]
     Gemini15Flash,
+    #[serde(rename = "gemini-2.0-flash-exp")]
+    Gemini20Flash,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -305,6 +307,7 @@ impl Model {
         match self {
             Model::Gemini15Pro => "gemini-1.5-pro",
             Model::Gemini15Flash => "gemini-1.5-flash",
+            Model::Gemini20Flash => "gemini-2.0-flash-exp",
             Model::Custom { name, .. } => name,
         }
     }
@@ -313,6 +316,7 @@ impl Model {
         match self {
             Model::Gemini15Pro => "Gemini 1.5 Pro",
             Model::Gemini15Flash => "Gemini 1.5 Flash",
+            Model::Gemini20Flash => "Gemini 2.0 Flash",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -323,6 +327,7 @@ impl Model {
         match self {
             Model::Gemini15Pro => 2_000_000,
             Model::Gemini15Flash => 1_000_000,
+            Model::Gemini20Flash => 1_000_000,
             Model::Custom { max_tokens, .. } => *max_tokens,
         }
     }
