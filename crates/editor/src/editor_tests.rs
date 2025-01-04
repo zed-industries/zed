@@ -7596,8 +7596,13 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         ))
     });
 
+    let file_abs_path = if cfg!(windows) {
+        "C:/file.rs"
+    } else {
+        "/file.rs"
+    };
     let fs = FakeFs::new(cx.executor());
-    fs.insert_file("/file.rs", Default::default()).await;
+    fs.insert_file(file_abs_path, Default::default()).await;
 
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
@@ -7633,7 +7638,9 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer(file_abs_path, cx)
+        })
         .await
         .unwrap();
 
@@ -7663,7 +7670,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Url::from_file_path(file_abs_path).unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -7687,7 +7694,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Url::from_file_path("/file.rs").unwrap()
+            lsp::Url::from_file_path(file_abs_path).unwrap()
         );
         futures::future::pending::<()>().await;
         unreachable!()
