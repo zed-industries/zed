@@ -428,17 +428,24 @@ impl DirectWriteState {
                     target_font.fallbacks.as_ref(),
                 )
                 .unwrap_or_else(|| {
-                    let family = self.system_ui_font_name.clone();
-                    log::error!("{} not found, use {} instead.", target_font.family, family);
-                    self.get_font_id_from_font_collection(
-                        family.as_ref(),
-                        target_font.weight,
-                        target_font.style,
-                        &target_font.features,
-                        target_font.fallbacks.as_ref(),
-                        true,
-                    )
-                    .unwrap()
+                    #[cfg(any(test, feature = "test-support"))]
+                    {
+                        panic!("ERROR: {} font not found!", target_font.family);
+                    }
+                    #[cfg(not(any(test, feature = "test-support")))]
+                    {
+                        let family = self.system_ui_font_name.clone();
+                        log::error!("{} not found, use {} instead.", target_font.family, family);
+                        self.get_font_id_from_font_collection(
+                            family.as_ref(),
+                            target_font.weight,
+                            target_font.style,
+                            &target_font.features,
+                            target_font.fallbacks.as_ref(),
+                            true,
+                        )
+                        .unwrap()
+                    }
                 })
             }
         }
