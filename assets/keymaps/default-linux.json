@@ -435,6 +435,13 @@
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
     }
   },
+  {
+    "context": "ApplicationMenu",
+    "bindings": {
+      "left": ["app_menu::NavigateApplicationMenuInDirection", "Left"],
+      "right": ["app_menu::NavigateApplicationMenuInDirection", "Right"]
+    }
+  },
   // Bindings from Sublime Text
   {
     "context": "Editor",
