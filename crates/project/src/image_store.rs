@@ -9,6 +9,7 @@ use gpui::{
     hash, prelude::*, AppContext, EventEmitter, Img, Model, ModelContext, Subscription, Task,
     WeakModel,
 };
+use image::{ColorType, GenericImageView};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
 use std::ffi::OsStr;
@@ -47,14 +48,85 @@ pub enum ImageStoreEvent {
 
 impl EventEmitter<ImageStoreEvent> for ImageStore {}
 
+#[derive(Clone)]
+pub struct ImageItemMeta {
+    pub width: u32,
+    pub height: u32,
+    pub file_size: u64,
+    pub color_type: &'static str,
+}
+
 pub struct ImageItem {
     pub id: ImageId,
     pub file: Arc<dyn File>,
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
+    pub image_meta: Option<ImageItemMeta>,
+}
+
+fn image_color_type_description(color_type: ColorType) -> &'static str {
+    match color_type {
+        ColorType::L8 => "Grayscale (8-bit)",
+        ColorType::La8 => "Grayscale with Alpha (8-bit)",
+        ColorType::Rgba8 => "PNG (32-bit color)",
+        ColorType::Rgb8 => "RGB (24-bit color)",
+        ColorType::Rgb16 => "RGB (48-bit color)",
+        ColorType::Rgba16 => "PNG (64-bit color)",
+        ColorType::L16 => "Grayscale (16-bit)",
+        ColorType::La16 => "Grayscale with Alpha (16-bit)",
+
+        _ => "unknown color type",
+    }
 }
 
 impl ImageItem {
+    async fn image_info(
+        image: &ImageItem,
+        project: &Project,
+        cx: &AppContext,
+        fs: Arc<dyn fs::Fs>,
+    ) -> Result<ImageItemMeta, String> {
+        let worktree = project
+            .worktree_for_id(image.project_path(cx).worktree_id, cx)
+            .ok_or_else(|| "Could not find worktree for image".to_string())?;
+        let worktree_root = worktree.read(cx).abs_path();
+        let path = if image.path().is_absolute() {
+            image.path().to_path_buf()
+        } else {
+            worktree_root.join(image.path())
+        };
+        if !path.exists() {
+            return Err(format!("File does not exist at path: {:?}", path));
+        }
+        let path_clone = path.to_path_buf();
+        let img = smol::unblock(move || image::open(&path_clone))
+            .await
+            .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        let (width, height, color_type) =
+            smol::unblock(move || -> Result<(u32, u32, &'static str), String> {
+                let dimensions = img.dimensions();
+                let img_color_type = image_color_type_description(img.color());
+                Ok((dimensions.0, dimensions.1, img_color_type))
+            })
+            .await
+            .map_err(|e| format!("Failed to process image: {}", e))?;
+
+        let file_metadata = fs
+            .metadata(path.as_path())
+            .await
+            .map_err(|e| format!("Cannot access image data: {}", e))?
+            .ok_or_else(|| "No metadata found".to_string())?;
+        let file_size = file_metadata.len;
+
+        Ok(ImageItemMeta {
+            width,
+            height,
+            file_size,
+            color_type,
+        })
+    }
+
     pub fn project_path(&self, cx: &AppContext) -> ProjectPath {
         ProjectPath {
             worktree_id: self.file.worktree_id(cx),
@@ -64,6 +136,24 @@ impl ImageItem {
 
     pub fn path(&self) -> &Arc<Path> {
         self.file.path()
+    }
+
+    pub async fn load_metadata(
+        &mut self,
+        project: &Project,
+        cx: &AppContext,
+        fs: Arc<dyn fs::Fs>,
+    ) -> Result<ImageItemMeta, String> {
+        match Self::image_info(self, project, cx, fs).await {
+            Ok(metadata) => {
+                self.image_meta = Some(metadata.clone());
+                Ok(metadata)
+            }
+            Err(err) => {
+                println!("Failed to load metadata: {}", err);
+                Err(err)
+            }
+        }
     }
 
     fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
@@ -143,9 +233,28 @@ impl ProjectItem for ImageItem {
         // Since we do not have a way to toggle to an editor
         if Img::extensions().contains(&ext) && !ext.contains("svg") {
             Some(cx.spawn(|mut cx| async move {
-                project
+                let image_model = project
                     .update(&mut cx, |project, cx| project.open_image(path, cx))?
-                    .await
+                    .await?;
+
+                let fs = Arc::new(fs::RealFs::default());
+                let project_clone = project.clone();
+
+                if let Ok(()) = image_model.update(&mut cx, |image, cx| {
+                    let project_ref = project_clone.read(cx);
+
+                    if let Ok(metadata) = futures::executor::block_on(image.load_metadata(
+                        &project_ref,
+                        cx,
+                        fs.clone(),
+                    )) {
+                        image.image_meta = Some(metadata)
+                    }
+                }) {
+                    // image metadata should be avialable now
+                }
+
+                Ok(image_model)
             }))
         } else {
             None
@@ -396,6 +505,11 @@ impl ImageStoreImpl for Model<LocalImageStore> {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
+                // width: None,
+                // file_size: None,
+                // height: None,
+                // color_type: None,
+                image_meta: None,
                 reload_task: None,
             })?;
 
