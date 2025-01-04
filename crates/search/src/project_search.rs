@@ -744,14 +744,16 @@ impl ProjectSearchView {
         );
 
         let focus_handle = cx.focus_handle();
-        subscriptions.push(cx.on_focus_in(&focus_handle, |this, cx| {
-            if this.focus_handle.is_focused(cx) {
-                if this.has_matches() {
-                    this.results_editor.focus_handle(cx).focus(cx);
-                } else {
-                    this.query_editor.focus_handle(cx).focus(cx);
+        subscriptions.push(cx.on_focus(&focus_handle, |_, cx| {
+            cx.on_next_frame(|this, cx| {
+                if this.focus_handle.is_focused(cx) {
+                    if this.has_matches() {
+                        this.results_editor.focus_handle(cx).focus(cx);
+                    } else {
+                        this.query_editor.focus_handle(cx).focus(cx);
+                    }
                 }
-            }
+            });
         }));
 
         // Check if Worktrees have all been previously indexed
