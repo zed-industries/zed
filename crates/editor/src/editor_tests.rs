@@ -10433,9 +10433,23 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
 async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
+    const ROOT_PATH: &str = if cfg!(target_os = "windows") {
+        "C:/a"
+    } else {
+        "/a"
+    };
+
+    fn to_path_buf(path: &str) -> PathBuf {
+        if cfg!(target_os = "windows") {
+            PathBuf::from(format!("C:{}", path))
+        } else {
+            PathBuf::from(path)
+        }
+    }
+
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        ROOT_PATH,
         json!({
             "main.rs": "fn main() { let a = 5; }",
             "other.rs": "// Test file",
@@ -10443,7 +10457,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     )
     .await;
 
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [ROOT_PATH.as_ref()], cx).await;
 
     let server_restarts = Arc::new(AtomicUsize::new(0));
     let closure_restarts = Arc::clone(&server_restarts);
@@ -10483,7 +10497,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
     let _window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
     let _buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/a/main.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_buf("/a/main.rs"), cx)
         })
         .await
         .unwrap();
