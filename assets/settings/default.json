@@ -83,6 +83,8 @@
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
   "pane_split_direction_vertical": "left",
+  // Layout mode of the bottom dock. Defaults to "contained"
+  "bottom_dock_layout": "contained",
   // Centered layout related settings.
   "centered_layout": {
     // The relative width of the left padding of the central pane from the

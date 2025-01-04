@@ -21,6 +21,7 @@ pub struct WorkspaceSettings {
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub use_system_path_prompts: bool,
     pub command_aliases: HashMap<String, String>,
+    pub bottom_dock_layout: BottomDockLayout,
     pub show_user_picture: bool,
     pub max_tabs: Option<NonZeroUsize>,
 }
@@ -47,6 +48,20 @@ pub struct ActivePanelModifiers {
     ///
     /// Default: `1.0`
     pub inactive_opacity: Option<f32>,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BottomDockLayout {
+    /// Contained between the left and right docks
+    #[default]
+    Contained,
+    /// Takes up the full width of the window
+    Full,
+    /// Extends under the left dock while snapping to the right dock
+    LeftAligned,
+    /// Extends under the right dock while snapping to the left dock
+    RightAligned,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -132,6 +147,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub command_aliases: Option<HashMap<String, String>>,
+    /// Layout mode for the bottom dock
+    ///
+    /// Default: contained
+    pub bottom_dock_layout: Option<BottomDockLayout>,
     /// Whether to show user avatar in the title bar.
     ///
     /// Default: true
