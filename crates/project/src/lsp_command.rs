@@ -4,14 +4,14 @@ use crate::{
     lsp_store::{LocalLspStore, LspStore},
     CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, MarkupContent, ProjectTransaction, ResolveState,
+    LocationLink, LspDiagnostics, MarkupContent, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashSet;
-use futures::future;
+use futures::future::{self};
 use gpui::{AppContext, AsyncAppContext, Entity, Model};
 use language::{
     language_settings::{language_settings, InlayHintKind, LanguageSettings},
@@ -21,13 +21,14 @@ use language::{
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
-    AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,
-    CompletionListItemDefaultsEditRange, CompletionTriggerKind, DocumentHighlightKind,
-    LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf,
-    ServerCapabilities,
+    AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CodeDescription,
+    CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
+    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
+    OneOf, ServerCapabilities,
 };
+use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
-use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Reverse, ops::Range, path::Path, str::FromStr, sync::Arc};
 use text::{BufferId, LineEnding};
 
 pub use signature_help::{
@@ -179,6 +180,11 @@ pub(crate) struct InlayHints {
 }
 #[derive(Debug)]
 pub(crate) struct LinkedEditingRange {
+    pub position: Anchor,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GetDocumentDiagnostics {
     pub position: Anchor,
 }
 
@@ -3069,5 +3075,482 @@ impl LspCommand for LinkedEditingRange {
 
     fn buffer_id_from_proto(message: &proto::LinkedEditingRange) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
+    }
+}
+
+impl GetDocumentDiagnostics {
+    pub fn deserialize_lsp_diagnostic(diagnostic: proto::LspDiagnostic) -> Result<lsp::Diagnostic> {
+        let start = diagnostic
+            .start
+            .ok_or_else(|| anyhow!("invalid start range"))?;
+        let end = diagnostic.end.ok_or_else(|| anyhow!("invalid end range"))?;
+
+        let range = Range::<PointUtf16> {
+            start: PointUtf16 {
+                row: start.row,
+                column: start.column,
+            },
+            end: PointUtf16 {
+                row: end.row,
+                column: end.column,
+            },
+        };
+
+        let data = diagnostic.data.and_then(|data| Value::from_str(&data).ok());
+        let code = diagnostic.code.map(lsp::NumberOrString::String);
+
+        let related_information = diagnostic
+            .related_information
+            .into_iter()
+            .map(|info| {
+                let start = info.location_range_start.unwrap();
+                let end = info.location_range_end.unwrap();
+
+                lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        range: lsp::Range {
+                            start: point_to_lsp(PointUtf16::new(start.row, start.column)),
+                            end: point_to_lsp(PointUtf16::new(end.row, end.column)),
+                        },
+                        uri: lsp::Url::parse(&info.location_url.unwrap()).unwrap(),
+                    },
+                    message: info.message.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Ok(lsp::Diagnostic {
+            range: language::range_to_lsp(range),
+            severity: match proto::lsp_diagnostic::Severity::from_i32(diagnostic.severity).unwrap()
+            {
+                proto::lsp_diagnostic::Severity::Error => Some(lsp::DiagnosticSeverity::ERROR),
+                proto::lsp_diagnostic::Severity::Warning => Some(lsp::DiagnosticSeverity::WARNING),
+                proto::lsp_diagnostic::Severity::Information => {
+                    Some(lsp::DiagnosticSeverity::INFORMATION)
+                }
+                proto::lsp_diagnostic::Severity::Hint => Some(lsp::DiagnosticSeverity::HINT),
+                _ => None,
+            },
+            code,
+            code_description: match diagnostic.code_description {
+                Some(code_description) => Some(CodeDescription {
+                    href: lsp::Url::parse(&code_description).unwrap(),
+                }),
+                None => None,
+            },
+            related_information: Some(related_information),
+            tags: Some(vec![]),
+            source: diagnostic.source.clone(),
+            message: diagnostic.message,
+            data,
+        })
+    }
+
+    pub fn serialize_lsp_diagnostic(diagnostic: lsp::Diagnostic) -> Result<proto::LspDiagnostic> {
+        let range = language::range_from_lsp(diagnostic.range);
+        let related_information = diagnostic
+            .related_information
+            .unwrap_or_default()
+            .into_iter()
+            .map(|related_information| {
+                let location_range_start =
+                    point_from_lsp(related_information.location.range.start).0;
+                let location_range_end = point_from_lsp(related_information.location.range.end).0;
+
+                Ok(proto::LspDiagnosticRelatedInformation {
+                    location_url: Some(related_information.location.uri.to_string()),
+                    location_range_start: Some(proto::PointUtf16 {
+                        row: location_range_start.row,
+                        column: location_range_start.column,
+                    }),
+                    location_range_end: Some(proto::PointUtf16 {
+                        row: location_range_end.row,
+                        column: location_range_end.column,
+                    }),
+                    message: related_information.message,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let tags = diagnostic
+            .tags
+            .map(|tags| {
+                tags.into_iter()
+                    .map(|tag| match tag {
+                        lsp::DiagnosticTag::UNNECESSARY => proto::LspDiagnosticTag::Unnecessary,
+                        lsp::DiagnosticTag::DEPRECATED => proto::LspDiagnosticTag::Deprecated,
+                        _ => proto::LspDiagnosticTag::None,
+                    } as i32)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(proto::LspDiagnostic {
+            start: Some(proto::PointUtf16 {
+                row: range.start.0.row,
+                column: range.start.0.column,
+            }),
+            end: Some(proto::PointUtf16 {
+                row: range.end.0.row,
+                column: range.end.0.column,
+            }),
+            severity: match diagnostic.severity {
+                Some(lsp::DiagnosticSeverity::ERROR) => proto::lsp_diagnostic::Severity::Error,
+                Some(lsp::DiagnosticSeverity::WARNING) => proto::lsp_diagnostic::Severity::Warning,
+                Some(lsp::DiagnosticSeverity::INFORMATION) => {
+                    proto::lsp_diagnostic::Severity::Information
+                }
+                Some(lsp::DiagnosticSeverity::HINT) => proto::lsp_diagnostic::Severity::Hint,
+                _ => proto::lsp_diagnostic::Severity::None,
+            } as i32,
+            code: diagnostic.code.as_ref().map(|code| match code {
+                lsp::NumberOrString::Number(code) => code.to_string(),
+                lsp::NumberOrString::String(code) => code.clone(),
+            }),
+            source: diagnostic.source.clone(),
+            related_information,
+            tags,
+            code_description: diagnostic
+                .code_description
+                .map(|desc| desc.href.to_string()),
+            message: diagnostic.message,
+            data: diagnostic.data.as_ref().map(|data| data.to_string()),
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetDocumentDiagnostics {
+    type Response = Option<LspDiagnostics>;
+    type LspRequest = lsp::request::DocumentDiagnosticRequest;
+    type ProtoRequest = proto::GetDocumentDiagnostics;
+
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
+        server_capabilities
+            .server_capabilities
+            .diagnostic_provider
+            .is_some()
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        language_server: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::DocumentDiagnosticParams {
+        let identifier = match language_server.capabilities().diagnostic_provider {
+            Some(lsp::DiagnosticServerCapabilities::Options(options)) => options.identifier.clone(),
+            Some(lsp::DiagnosticServerCapabilities::RegistrationOptions(options)) => {
+                options.diagnostic_options.identifier.clone()
+            }
+            None => None,
+        };
+
+        lsp::DocumentDiagnosticParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: lsp::Url::from_file_path(path).unwrap(),
+            },
+            identifier,
+            previous_result_id: None,
+            partial_result_params: Default::default(),
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: lsp::DocumentDiagnosticReportResult,
+        lsp_store: Model<LspStore>,
+        buffer: Model<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        let uri = buffer.read_with(&cx, |buffer, cx| {
+            buffer
+                .file()
+                .and_then(|file| file.as_local())
+                .map(|file| lsp::Url::from_file_path(file.abs_path(cx).clone()).unwrap())
+        })?;
+
+        let Some(uri) = uri else {
+            return Ok(None);
+        };
+
+        match message {
+            lsp::DocumentDiagnosticReportResult::Report(report) => match report {
+                lsp::DocumentDiagnosticReport::Full(report) => {
+                    lsp_store.update(&mut cx, |store, cx| {
+                        for (uri, report) in report.related_documents.into_iter().flatten() {
+                            match report {
+                                lsp::DocumentDiagnosticReportKind::Full(report) => {
+                                    store.update_diagnostics(
+                                        server_id,
+                                        lsp::PublishDiagnosticsParams {
+                                            diagnostics: report.items.clone(),
+                                            uri,
+                                            version: None,
+                                        },
+                                        &[],
+                                        cx,
+                                    ).expect("Failed to update diagnostics for the related document");
+                                }
+                                lsp::DocumentDiagnosticReportKind::Unchanged(_) => (),
+                            }
+                        }
+                    }).expect("Failed to update diagnostics for related documents");
+
+                    Ok(Some(LspDiagnostics {
+                        server_id,
+                        uri: Some(uri),
+                        diagnostics: Some(report.full_document_diagnostic_report.items.clone()),
+                    }))
+                }
+                lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(Some(LspDiagnostics {
+                    server_id,
+                    uri: Some(uri),
+                    diagnostics: None,
+                })),
+            },
+            lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(Some(LspDiagnostics {
+                server_id,
+                uri: Some(uri),
+                diagnostics: None,
+            })),
+        }
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDocumentDiagnostics {
+        proto::GetDocumentDiagnostics {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::GetDocumentDiagnostics,
+        _: Model<LspStore>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        Ok(Self { position })
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        _: &mut LspStore,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut AppContext,
+    ) -> proto::GetDocumentDiagnosticsResponse {
+        if let Some(response) = response {
+            let diagnostics = response
+                .diagnostics
+                .map(|diagnostics| {
+                    diagnostics
+                        .into_iter()
+                        .filter_map(|diagnostic| {
+                            match GetDocumentDiagnostics::serialize_lsp_diagnostic(diagnostic) {
+                                Ok(diagnostic) => Some(diagnostic),
+                                Err(error) => {
+                                    log::error!("Failed to serialize diagnostic: {}", error);
+                                    None
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            proto::GetDocumentDiagnosticsResponse {
+                server_id: LanguageServerId::to_proto(response.server_id),
+                uri: response.uri.unwrap().to_string(),
+                diagnostics,
+            }
+        } else {
+            proto::GetDocumentDiagnosticsResponse {
+                server_id: 0,
+                uri: Default::default(),
+                diagnostics: Vec::new(),
+            }
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        response: proto::GetDocumentDiagnosticsResponse,
+        _: Model<LspStore>,
+        _: Model<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        let uri = lsp::Url::from_str(response.uri.as_str())
+            .with_context(|| format!("Failed to parse URI: {}", response.uri))?;
+
+        let diagnostics = response
+            .diagnostics
+            .into_iter()
+            .filter_map(|diagnostic| {
+                match GetDocumentDiagnostics::deserialize_lsp_diagnostic(diagnostic) {
+                    Ok(diagnostic) => Some(diagnostic),
+                    Err(error) => {
+                        log::error!("Failed to deserialize diagnostic: {}", error);
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        Ok(Some(LspDiagnostics {
+            server_id: LanguageServerId::from_proto(response.server_id),
+            uri: Some(uri),
+            diagnostics: Some(diagnostics),
+        }))
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetDocumentDiagnostics) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lsp::{DiagnosticSeverity, DiagnosticTag};
+    use serde_json::json;
+
+    #[test]
+    fn test_serialize_lsp_diagnostic() {
+        let lsp_diagnostic = lsp::Diagnostic {
+            range: lsp::Range {
+                start: lsp::Position::new(0, 1),
+                end: lsp::Position::new(2, 3),
+            },
+            severity: Some(DiagnosticSeverity::ERROR),
+            code: Some(lsp::NumberOrString::String("E001".to_string())),
+            source: Some("test-source".to_string()),
+            message: "Test error message".to_string(),
+            related_information: None,
+            tags: Some(vec![DiagnosticTag::DEPRECATED]),
+            code_description: None,
+            data: Some(json!({"detail": "test detail"})),
+        };
+
+        let proto_diagnostic =
+            GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic.clone())
+                .expect("Failed to serialize diagnostic");
+
+        let start = proto_diagnostic.start.unwrap();
+        let end = proto_diagnostic.end.unwrap();
+        assert_eq!(start.row, 0);
+        assert_eq!(start.column, 1);
+        assert_eq!(end.row, 2);
+        assert_eq!(end.column, 3);
+        assert_eq!(
+            proto_diagnostic.severity,
+            proto::lsp_diagnostic::Severity::Error as i32
+        );
+        assert_eq!(proto_diagnostic.code, Some("E001".to_string()));
+        assert_eq!(proto_diagnostic.source, Some("test-source".to_string()));
+        assert_eq!(proto_diagnostic.message, "Test error message");
+    }
+
+    #[test]
+    fn test_deserialize_lsp_diagnostic() {
+        let proto_diagnostic = proto::LspDiagnostic {
+            start: Some(proto::PointUtf16 { row: 0, column: 1 }),
+            end: Some(proto::PointUtf16 { row: 2, column: 3 }),
+            severity: proto::lsp_diagnostic::Severity::Warning as i32,
+            code: Some("ERR".to_string()),
+            source: Some("Prism".to_string()),
+            message: "assigned but unused variable - a".to_string(),
+            related_information: vec![],
+            tags: vec![],
+            code_description: None,
+            data: None,
+        };
+
+        let lsp_diagnostic = GetDocumentDiagnostics::deserialize_lsp_diagnostic(proto_diagnostic)
+            .expect("Failed to deserialize diagnostic");
+
+        assert_eq!(lsp_diagnostic.range.start.line, 0);
+        assert_eq!(lsp_diagnostic.range.start.character, 1);
+        assert_eq!(lsp_diagnostic.range.end.line, 2);
+        assert_eq!(lsp_diagnostic.range.end.character, 3);
+        assert_eq!(lsp_diagnostic.severity, Some(DiagnosticSeverity::WARNING));
+        assert_eq!(
+            lsp_diagnostic.code,
+            Some(lsp::NumberOrString::String("ERR".to_string()))
+        );
+        assert_eq!(lsp_diagnostic.source, Some("Prism".to_string()));
+        assert_eq!(lsp_diagnostic.message, "assigned but unused variable - a");
+    }
+
+    #[test]
+    fn test_related_information() {
+        let related_info = lsp::DiagnosticRelatedInformation {
+            location: lsp::Location {
+                uri: lsp::Url::parse("file:///test.rs").unwrap(),
+                range: lsp::Range {
+                    start: lsp::Position::new(1, 1),
+                    end: lsp::Position::new(1, 5),
+                },
+            },
+            message: "Related info message".to_string(),
+        };
+
+        let lsp_diagnostic = lsp::Diagnostic {
+            range: lsp::Range {
+                start: lsp::Position::new(0, 0),
+                end: lsp::Position::new(0, 1),
+            },
+            severity: Some(DiagnosticSeverity::INFORMATION),
+            code: None,
+            source: Some("Prism".to_string()),
+            message: "assigned but unused variable - a".to_string(),
+            related_information: Some(vec![related_info]),
+            tags: None,
+            code_description: None,
+            data: None,
+        };
+
+        let proto_diagnostic = GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic)
+            .expect("Failed to serialize diagnostic");
+
+        assert_eq!(proto_diagnostic.related_information.len(), 1);
+        let related = &proto_diagnostic.related_information[0];
+        assert_eq!(related.location_url, Some("file:///test.rs".to_string()));
+        assert_eq!(related.message, "Related info message");
+    }
+
+    #[test]
+    fn test_invalid_ranges() {
+        let proto_diagnostic = proto::LspDiagnostic {
+            start: None,
+            end: Some(proto::PointUtf16 { row: 2, column: 3 }),
+            severity: proto::lsp_diagnostic::Severity::Error as i32,
+            code: None,
+            source: None,
+            message: "Test message".to_string(),
+            related_information: vec![],
+            tags: vec![],
+            code_description: None,
+            data: None,
+        };
+
+        let result = GetDocumentDiagnostics::deserialize_lsp_diagnostic(proto_diagnostic);
+        assert!(result.is_err());
     }
 }
