@@ -145,6 +145,7 @@ actions!(
         NewTerminal,
         NewWindow,
         Open,
+        OpenFiles,
         OpenInTerminal,
         ReloadActiveItem,
         SaveAs,
@@ -340,47 +341,71 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);
 
+    async fn open_paths_common(
+        app_state: Arc<AppState>,
+        paths: impl Future<Output = anyhow::Result<Option<Vec<PathBuf>>>>,
+        cx: AsyncAppContext,
+    ) {
+        match paths.await {
+            Ok(Some(paths)) => {
+                cx.update(|cx| {
+                    open_paths(&paths, app_state, OpenOptions::default(), cx).detach_and_log_err(cx)
+                })
+                .ok();
+            }
+            Ok(None) => {}
+            Err(err) => {
+                cx.update(|cx| {
+                    if let Some(workspace_window) = cx
+                        .active_window()
+                        .and_then(|window| window.downcast::<Workspace>())
+                    {
+                        workspace_window
+                            .update(cx, |workspace, cx| {
+                                workspace.show_portal_error(err.to_string(), cx);
+                            })
+                            .ok();
+                    }
+                })
+                .ok();
+            }
+        }
+    }
+
     cx.on_action({
         let app_state = Arc::downgrade(&app_state);
         move |_: &Open, cx: &mut AppContext| {
-            let paths = cx.prompt_for_paths(PathPromptOptions {
-                files: true,
-                directories: true,
-                multiple: true,
-            });
+            let paths = cx
+                .prompt_for_paths(PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: true,
+                })
+                .map(|result| Flatten::flatten(result.anyhow()));
 
             if let Some(app_state) = app_state.upgrade() {
-                cx.spawn(move |cx| async move {
-                    match Flatten::flatten(paths.await.map_err(|e| e.into())) {
-                        Ok(Some(paths)) => {
-                            cx.update(|cx| {
-                                open_paths(&paths, app_state, OpenOptions::default(), cx)
-                                    .detach_and_log_err(cx)
-                            })
-                            .ok();
-                        }
-                        Ok(None) => {}
-                        Err(err) => {
-                            cx.update(|cx| {
-                                if let Some(workspace_window) = cx
-                                    .active_window()
-                                    .and_then(|window| window.downcast::<Workspace>())
-                                {
-                                    workspace_window
-                                        .update(cx, |workspace, cx| {
-                                            workspace.show_portal_error(err.to_string(), cx);
-                                        })
-                                        .ok();
-                                }
-                            })
-                            .ok();
-                        }
-                    };
-                })
-                .detach();
+                cx.spawn(move |cx| open_paths_common(app_state, paths, cx))
+                    .detach();
             }
         }
     });
+    cx.on_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &OpenFiles, cx: &mut AppContext| {
+            let paths = cx
+                .prompt_for_paths(PathPromptOptions {
+                    files: true,
+                    directories: false,
+                    multiple: true,
+                })
+                .map(|result| Flatten::flatten(result.anyhow()));
+
+            if let Some(app_state) = app_state.upgrade() {
+                cx.spawn(move |cx| open_paths_common(app_state, paths, cx))
+                    .detach();
+            }
+        }
+    })
 }
 
 #[derive(Clone, Default, Deref, DerefMut)]

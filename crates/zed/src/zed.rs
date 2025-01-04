@@ -20,11 +20,11 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
-use futures::{channel::mpsc, select_biased, StreamExt};
+use futures::{channel::mpsc, select_biased, FutureExt, StreamExt};
 use gpui::{
-    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem,
-    PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
-    VisualContext, WindowKind, WindowOptions,
+    actions, point, px, AppContext, AsyncAppContext, AsyncWindowContext, Context, FocusableView,
+    MenuItem, PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
+    VisualContext, WeakView, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -41,6 +41,7 @@ use settings::{
     DEFAULT_KEYMAP_PATH,
 };
 use std::any::TypeId;
+use std::future::Future;
 use std::path::PathBuf;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
@@ -387,6 +388,29 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
     .detach();
 }
 
+async fn open_paths_helper(
+    workspace: WeakView<Workspace>,
+    paths: impl Future<Output = anyhow::Result<Option<Vec<PathBuf>>>>,
+    mut cx: AsyncWindowContext,
+) {
+    let Some(paths) = paths.await.log_err().flatten() else {
+        return;
+    };
+
+    if let Some(task) = workspace
+        .update(&mut cx, |this, cx| {
+            if this.project().read(cx).is_local() {
+                this.open_workspace_for_paths(false, paths, cx)
+            } else {
+                open_new_ssh_project_from_project(this, paths, cx)
+            }
+        })
+        .log_err()
+    {
+        task.await.log_err();
+    }
+}
+
 fn register_actions(
     app_state: Arc<AppState>,
     workspace: &mut Workspace,
@@ -415,38 +439,40 @@ fn register_actions(
                 .client()
                 .telemetry()
                 .report_app_event("open project".to_string());
-            let paths = workspace.prompt_for_open_path(
-                PathPromptOptions {
-                    files: true,
-                    directories: true,
-                    multiple: true,
-                },
-                DirectoryLister::Project(workspace.project().clone()),
-                cx,
-            );
+            let paths = workspace
+                .prompt_for_open_path(
+                    PathPromptOptions {
+                        files: true,
+                        directories: true,
+                        multiple: true,
+                    },
+                    DirectoryLister::Project(workspace.project().clone()),
+                    cx,
+                )
+                .map(|result| result.anyhow());
 
-            cx.spawn(|this, mut cx| async move {
-                let Some(paths) = paths.await.log_err().flatten() else {
-                    return;
-                };
-
-                if let Some(task) = this
-                    .update(&mut cx, |this, cx| {
-                        if this.project().read(cx).is_local() {
-                            this.open_workspace_for_paths(false, paths, cx)
-                        } else {
-                            open_new_ssh_project_from_project(this, paths, cx)
-                        }
-                    })
-                    .log_err()
-                {
-                    task.await.log_err();
-                }
-            })
-            .detach()
+            cx.spawn(|this, cx| open_paths_helper(this, paths, cx))
+                .detach()
         })
-        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
+        .register_action(move |workspace, _: &workspace::OpenFiles, cx| {
+            workspace
+                .client()
+                .telemetry()
+                .report_app_event("open project".to_string());
+            let paths = workspace
+                .prompt_for_open_path(
+                    PathPromptOptions {
+                        files: true,
+                        directories: false,
+                        multiple: true,
+                    },
+                    DirectoryLister::Project(workspace.project().clone()),
+                    cx,
+                )
+                .map(|result| result.anyhow());
+
+            cx.spawn(|this, cx| open_paths_helper(this, paths, cx))
+                .detach()
         })
         .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
             theme::reset_buffer_font_size(cx)
