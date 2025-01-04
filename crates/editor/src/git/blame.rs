@@ -791,9 +791,17 @@ mod tests {
     async fn test_blame_for_rows_with_edits(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
+        fn to_path_string(path: &str) -> String {
+            if cfg!(target_os = "windows") {
+                path.replace("/my-repo", "C:/my-repo")
+            } else {
+                path.to_string()
+            }
+        }
+
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/my-repo",
+            to_path_string("/my-repo"),
             json!({
                 ".git": {},
                 "file.txt": r#"
@@ -807,7 +815,7 @@ mod tests {
         .await;
 
         fs.set_blame_for_repo(
-            Path::new("/my-repo/.git"),
+            Path::new(&to_path_string("/my-repo/.git")),
             vec![(
                 "file.txt".into(),
                 Blame {
@@ -817,10 +825,10 @@ mod tests {
             )],
         );
 
-        let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
+        let project = Project::test(fs, [to_path_string("/my-repo").as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/my-repo/file.txt", cx)
+                project.open_local_buffer(to_path_string("/my-repo/file.txt"), cx)
             })
             .await
             .unwrap();
