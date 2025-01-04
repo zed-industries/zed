@@ -2801,6 +2801,14 @@ pub mod tests {
 
     #[gpui::test]
     async fn test_excerpts_removed(cx: &mut gpui::TestAppContext) {
+        fn to_path_string(path: &str) -> String {
+            if cfg!(target_os = "windows") {
+                path.replace("/a", "C:/a")
+            } else {
+                path.to_string()
+            }
+        }
+
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
@@ -2815,7 +2823,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            to_path_string("/a"),
             json!({
                 "main.rs": format!("fn main() {{\n{}\n}}", (0..501).map(|i| format!("let i = {i};\n")).collect::<Vec<_>>().join("")),
                 "other.rs": format!("fn main() {{\n{}\n}}", (0..501).map(|j| format!("let j = {j};\n")).collect::<Vec<_>>().join("")),
@@ -2823,7 +2831,7 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [to_path_string("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -2840,13 +2848,13 @@ pub mod tests {
 
         let (buffer_1, _handle) = project
             .update(cx, |project, cx| {
-                project.open_local_buffer_with_lsp("/a/main.rs", cx)
+                project.open_local_buffer_with_lsp(to_path_string("/a/main.rs"), cx)
             })
             .await
             .unwrap();
         let (buffer_2, _handle2) = project
             .update(cx, |project, cx| {
-                project.open_local_buffer_with_lsp("/a/other.rs", cx)
+                project.open_local_buffer_with_lsp(to_path_string("/a/other.rs"), cx)
             })
             .await
             .unwrap();
@@ -2886,11 +2894,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path("/a/main.rs").unwrap()
+                        == lsp::Url::from_file_path(to_path_string("/a/main.rs")).unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path("/a/other.rs").unwrap()
+                        == lsp::Url::from_file_path(to_path_string("/a/other.rs")).unwrap()
                     {
                         "other hint"
                     } else {
