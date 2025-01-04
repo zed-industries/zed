@@ -8,6 +8,14 @@ use project::{RemoveOptions, FS_WATCH_LATENCY};
 use serde_json::json;
 use workspace::{AppState, ToggleFileFinder, Workspace};
 
+fn to_path_string(path: &str) -> String {
+    if cfg!(target_os = "windows") {
+        path.replace("/root", "C:/root")
+    } else {
+        path.to_string()
+    }
+}
+
 #[ctor::ctor]
 fn init_logger() {
     if std::env::var("RUST_LOG").is_ok() {
@@ -90,7 +98,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/root",
+            to_path_string("/root"),
             json!({
                 "a": {
                     "file1.txt": "",
@@ -102,16 +110,14 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [to_path_string("/root").as_ref()], cx).await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    let matching_abs_path = "/root/a/b/file2.txt";
+    let matching_abs_path = to_path_string("/root/a/b/file2.txt");
     picker
         .update_in(cx, |picker, window, cx| {
-            picker
-                .delegate
-                .update_matches(matching_abs_path.to_string(), window, cx)
+            picker.delegate.update_matches(matching_abs_path, window, cx)
         })
         .await;
     picker.update(cx, |picker, _| {
@@ -128,12 +134,10 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         assert_eq!(active_editor.read(cx).title(cx), "file2.txt");
     });
 
-    let mismatching_abs_path = "/root/a/b/file1.txt";
+    let mismatching_abs_path = to_path_string("/root/a/b/file1.txt");
     picker
         .update_in(cx, |picker, window, cx| {
-            picker
-                .delegate
-                .update_matches(mismatching_abs_path.to_string(), window, cx)
+            picker.delegate.update_matches(mismatching_abs_path, window, cx)
         })
         .await;
     picker.update(cx, |picker, _| {
