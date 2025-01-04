@@ -355,7 +355,7 @@ impl AssistantPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
-                NewContext.boxed_clone(),
+                Some(NewContext.boxed_clone()),
                 cx,
             );
 

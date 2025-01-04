@@ -1,6 +1,7 @@
 pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
+pub mod dap_store;
 pub mod debounced_delay;
 pub mod image_store;
 pub mod lsp_command;
@@ -28,12 +29,21 @@ use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferChangeSet, BufferStore, BufferStoreEvent};
 use client::{proto, Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore};
 use clock::ReplicaId;
+
+use dap::{
+    client::{DebugAdapterClient, DebugAdapterClientId},
+    debugger_settings::DebuggerSettings,
+    messages::Message,
+    session::DebugSessionId,
+};
+
 use collections::{BTreeSet, HashMap, HashSet};
+use dap_store::{Breakpoint, BreakpointEditAction, DapStore, DapStoreEvent, SerializedBreakpoint};
 use debounced_delay::DebouncedDelay;
 pub use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
-    future::try_join_all,
+    future::{join_all, try_join_all},
     StreamExt,
 };
 pub use image_store::{ImageItem, ImageStore};
@@ -62,7 +72,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
 use rpc::{
-    proto::{LanguageServerPromptResponse, SSH_PROJECT_ID},
+    proto::{LanguageServerPromptResponse, SetDebuggerPanelItem, SSH_PROJECT_ID},
     AnyProtoClient, ErrorCode,
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
@@ -79,11 +89,12 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+
 use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
-use util::{paths::compare_paths, ResultExt as _};
+use util::{maybe, paths::compare_paths, ResultExt as _};
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -140,6 +151,7 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
+    dap_store: Model<DapStore>,
     client: Arc<client::Client>,
     join_project_response_message_id: u32,
     task_store: Model<TaskStore>,
@@ -238,6 +250,16 @@ pub enum Event {
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
+    DebugClientStarted((DebugSessionId, DebugAdapterClientId)),
+    DebugClientShutdown(DebugAdapterClientId),
+    SetDebugClient(SetDebuggerPanelItem),
+    ActiveDebugLineChanged,
+    DebugClientEvent {
+        session_id: DebugSessionId,
+        client_id: DebugAdapterClientId,
+        message: Message,
+    },
+    DebugClientLog(DebugAdapterClientId, String),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded(WorktreeId),
@@ -272,6 +294,11 @@ pub enum Event {
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
+}
+
+pub enum DebugAdapterClientState {
+    Starting(Task<Option<Arc<DebugAdapterClient>>>),
+    Running(Arc<DebugAdapterClient>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -497,6 +524,7 @@ enum EntitySubscription {
     WorktreeStore(PendingEntitySubscription<WorktreeStore>),
     LspStore(PendingEntitySubscription<LspStore>),
     SettingsObserver(PendingEntitySubscription<SettingsObserver>),
+    DapStore(PendingEntitySubscription<DapStore>),
 }
 
 #[derive(Clone)]
@@ -594,6 +622,7 @@ impl Project {
         SettingsObserver::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
+        DapStore::init(&client);
     }
 
     pub fn local(
@@ -614,7 +643,22 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
-            let buffer_store = cx.new_model(|cx| BufferStore::local(worktree_store.clone(), cx));
+            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
+
+            let dap_store = cx.new_model(|cx| {
+                DapStore::new_local(
+                    client.http_client(),
+                    node.clone(),
+                    fs.clone(),
+                    languages.clone(),
+                    environment.clone(),
+                    cx,
+                )
+            });
+            cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
+
+            let buffer_store = cx
+                .new_model(|cx| BufferStore::local(worktree_store.clone(), dap_store.clone(), cx));
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
@@ -632,7 +676,6 @@ impl Project {
                 )
             });
 
-            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
             let toolchain_store = cx.new_model(|cx| {
                 ToolchainStore::local(
                     languages.clone(),
@@ -641,6 +684,7 @@ impl Project {
                     cx,
                 )
             });
+
             let task_store = cx.new_model(|cx| {
                 TaskStore::local(
                     fs.clone(),
@@ -667,6 +711,7 @@ impl Project {
                 LspStore::new_local(
                     buffer_store.clone(),
                     worktree_store.clone(),
+                    dap_store.clone(),
                     prettier_store.clone(),
                     toolchain_store.clone(),
                     environment.clone(),
@@ -698,6 +743,7 @@ impl Project {
                 settings_observer,
                 fs,
                 ssh_client: None,
+                dap_store,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -793,6 +839,9 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
+            let dap_store =
+                cx.new_model(|cx| DapStore::new_remote(SSH_PROJECT_ID, client.clone().into(), cx));
+
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
 
@@ -803,6 +852,7 @@ impl Project {
                 buffer_store,
                 image_store,
                 lsp_store,
+                dap_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 client_subscriptions: Vec::new(),
@@ -852,6 +902,7 @@ impl Project {
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.dap_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
 
             ssh_proto.add_model_message_handler(Self::handle_create_buffer_for_peer);
@@ -866,6 +917,7 @@ impl Project {
             SettingsObserver::init(&ssh_proto);
             TaskStore::init(Some(&ssh_proto));
             ToolchainStore::init(&ssh_proto);
+            DapStore::init(&ssh_proto);
 
             this
         })
@@ -909,6 +961,7 @@ impl Project {
             EntitySubscription::SettingsObserver(
                 client.subscribe_to_entity::<SettingsObserver>(remote_id)?,
             ),
+            EntitySubscription::DapStore(client.subscribe_to_entity::<DapStore>(remote_id)?),
         ];
         let response = client
             .request_envelope(proto::JoinProject {
@@ -931,7 +984,7 @@ impl Project {
     #[allow(clippy::too_many_arguments)]
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscriptions: [EntitySubscription; 5],
+        subscriptions: [EntitySubscription; 6],
         client: Arc<Client>,
         run_tasks: bool,
         user_store: Model<UserStore>,
@@ -950,6 +1003,15 @@ impl Project {
         })?;
         let image_store = cx.new_model(|cx| {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
+        })?;
+
+        let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
+
+        let dap_store = cx.new_model(|cx| {
+            let mut dap_store = DapStore::new_remote(remote_id, client.clone().into(), cx);
+
+            dap_store.set_breakpoints_from_proto(response.payload.breakpoints, cx);
+            dap_store
         })?;
 
         let lsp_store = cx.new_model(|cx| {
@@ -1011,6 +1073,8 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
+            cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
+
             let mut this = Self {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
@@ -1036,6 +1100,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
+                dap_store: dap_store.clone(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1045,7 +1110,7 @@ impl Project {
                 search_history: Self::new_search_history(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
-                environment: ProjectEnvironment::new(&worktree_store, None, cx),
+                environment,
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
             };
@@ -1071,6 +1136,9 @@ impl Project {
                 EntitySubscription::Project(subscription) => subscription.set_model(&this, &mut cx),
                 EntitySubscription::LspStore(subscription) => {
                     subscription.set_model(&lsp_store, &mut cx)
+                }
+                EntitySubscription::DapStore(subscription) => {
+                    subscription.set_model(&dap_store, &mut cx)
                 }
             })
             .collect::<Vec<_>>();
@@ -1128,6 +1196,261 @@ impl Project {
                 self.disconnected_from_host_internal(cx);
             }
         }
+    }
+
+    pub fn all_breakpoints(
+        &self,
+        as_abs_path: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+        let mut all_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+        let open_breakpoints = self.dap_store.read(cx).breakpoints();
+        for (project_path, breakpoints) in open_breakpoints.iter() {
+            let buffer = maybe!({
+                let buffer_store = self.buffer_store.read(cx);
+                let buffer_id = buffer_store.buffer_id_for_project_path(project_path)?;
+                let buffer = self.buffer_for_id(*buffer_id, cx)?;
+                Some(buffer.read(cx))
+            });
+
+            let Some(path) = maybe!({
+                if as_abs_path {
+                    let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+                    Some(Arc::from(
+                        worktree
+                            .read(cx)
+                            .absolutize(&project_path.path)
+                            .ok()?
+                            .as_path(),
+                    ))
+                } else {
+                    Some(project_path.clone().path)
+                }
+            }) else {
+                continue;
+            };
+
+            all_breakpoints.entry(path).or_default().extend(
+                breakpoints
+                    .into_iter()
+                    .map(|bp| bp.to_serialized(buffer, project_path.clone().path)),
+            );
+        }
+
+        all_breakpoints
+    }
+
+    pub fn initial_send_breakpoints(
+        &self,
+        session_id: &DebugSessionId,
+        client_id: &DebugAdapterClientId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<()> {
+        let mut tasks = Vec::new();
+
+        for (abs_path, serialized_breakpoints) in self
+            .all_breakpoints(true, cx)
+            .into_iter()
+            .filter(|(_, bps)| !bps.is_empty())
+        {
+            let source_breakpoints = serialized_breakpoints
+                .iter()
+                .map(|bp| bp.to_source_breakpoint())
+                .collect::<Vec<_>>();
+
+            tasks.push(self.dap_store.update(cx, |store, cx| {
+                store.send_breakpoints(
+                    client_id,
+                    abs_path,
+                    source_breakpoints,
+                    store.ignore_breakpoints(session_id, cx),
+                    cx,
+                )
+            }));
+        }
+
+        cx.background_executor().spawn(async move {
+            join_all(tasks).await;
+        })
+    }
+
+    pub fn start_debug_adapter_client_from_task(
+        &mut self,
+        debug_task: task::ResolvedTask,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(config) = debug_task.debug_adapter_config() {
+            self.dap_store.update(cx, |store, cx| {
+                store.start_debug_session(config, cx).detach_and_log_err(cx);
+            });
+        }
+    }
+
+    /// Get all serialized breakpoints that belong to a buffer
+    ///
+    /// # Parameters
+    /// `buffer_id`: The buffer id to get serialized breakpoints of
+    /// `cx`: The context of the editor
+    ///
+    /// # Return
+    /// `None`: If the buffer associated with buffer id doesn't exist or this editor
+    ///     doesn't belong to a project
+    ///
+    /// `(Path, Vec<SerializedBreakpoint)`: Returns worktree path (used when saving workspace)
+    ///     and a vector of the serialized breakpoints
+    pub fn serialize_breakpoints_for_project_path(
+        &self,
+        project_path: &ProjectPath,
+        cx: &ModelContext<Self>,
+    ) -> Option<(Arc<Path>, Vec<SerializedBreakpoint>)> {
+        let buffer = maybe!({
+            let buffer_id = self
+                .buffer_store
+                .read(cx)
+                .buffer_id_for_project_path(project_path)?;
+            Some(self.buffer_for_id(*buffer_id, cx)?.read(cx))
+        });
+
+        let worktree_path = self
+            .worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .abs_path();
+
+        let breakpoints = self.dap_store.read(cx).breakpoints();
+
+        Some((
+            worktree_path,
+            breakpoints
+                .get(&project_path)?
+                .iter()
+                .map(|bp| bp.to_serialized(buffer, project_path.path.clone()))
+                .collect(),
+        ))
+    }
+
+    /// Serialize all breakpoints to save within workspace's database
+    ///
+    /// # Return
+    /// HashMap:
+    ///     Key: A valid worktree path
+    ///     Value: All serialized breakpoints that belong to a worktree
+    pub fn serialize_breakpoints(
+        &self,
+        cx: &ModelContext<Self>,
+    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+        let mut result: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+        if !DebuggerSettings::get_global(cx).save_breakpoints {
+            return result;
+        }
+
+        let breakpoints = self.dap_store.read(cx).breakpoints();
+        for project_path in breakpoints.keys() {
+            if let Some((worktree_path, mut serialized_breakpoint)) =
+                self.serialize_breakpoints_for_project_path(&project_path, cx)
+            {
+                result
+                    .entry(worktree_path.clone())
+                    .or_default()
+                    .append(&mut serialized_breakpoint)
+            }
+        }
+
+        result
+    }
+
+    pub fn toggle_ignore_breakpoints(
+        &self,
+        session_id: &DebugSessionId,
+        client_id: &DebugAdapterClientId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let tasks = self.dap_store.update(cx, |store, cx| {
+            store.toggle_ignore_breakpoints(session_id, cx);
+
+            let mut tasks = Vec::new();
+
+            for (project_path, breakpoints) in store.breakpoints() {
+                let Some((buffer, buffer_path)) = maybe!({
+                    let buffer = self
+                        .buffer_store
+                        .read_with(cx, |store, cx| store.get_by_path(project_path, cx))?;
+
+                    let buffer = buffer.read(cx);
+                    let project_path = buffer.project_path(cx)?;
+                    let worktree = self.worktree_for_id(project_path.clone().worktree_id, cx)?;
+                    Some((
+                        buffer,
+                        worktree.read(cx).absolutize(&project_path.path).ok()?,
+                    ))
+                }) else {
+                    continue;
+                };
+
+                tasks.push(
+                    store.send_breakpoints(
+                        client_id,
+                        Arc::from(buffer_path),
+                        breakpoints
+                            .into_iter()
+                            .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
+                            .collect::<Vec<_>>(),
+                        store.ignore_breakpoints(session_id, cx),
+                        cx,
+                    ),
+                );
+            }
+
+            tasks
+        });
+
+        cx.background_executor().spawn(async move {
+            try_join_all(tasks).await?;
+
+            Ok(())
+        })
+    }
+
+    /// Sends updated breakpoint information of one file to all active debug adapters
+    ///
+    /// This function is called whenever a breakpoint is toggled, and it doesn't need
+    /// to send breakpoints from closed files because those breakpoints can't change
+    /// without opening a buffer.
+    pub fn toggle_breakpoint(
+        &self,
+        buffer_id: BufferId,
+        breakpoint: Breakpoint,
+        edit_action: BreakpointEditAction,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
+            return;
+        };
+
+        let Some((project_path, buffer_path)) = maybe!({
+            let project_path = buffer.read(cx).project_path(cx)?;
+            let worktree = self.worktree_for_id(project_path.clone().worktree_id, cx)?;
+            Some((
+                project_path.clone(),
+                worktree.read(cx).absolutize(&project_path.path).ok()?,
+            ))
+        }) else {
+            return;
+        };
+
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .toggle_breakpoint_for_buffer(
+                    &project_path,
+                    breakpoint,
+                    buffer_path,
+                    buffer.read(cx).snapshot(),
+                    edit_action,
+                    cx,
+                )
+                .detach_and_log_err(cx);
+        });
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1212,6 +1535,10 @@ impl Project {
                 .await;
         }
         project
+    }
+
+    pub fn dap_store(&self) -> Model<DapStore> {
+        self.dap_store.clone()
     }
 
     pub fn lsp_store(&self) -> Model<LspStore> {
@@ -1576,6 +1903,9 @@ impl Project {
                 .set_model(&self.lsp_store, &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
+                .set_model(&self.dap_store, &mut cx.to_async()),
+            self.client
+                .subscribe_to_entity(project_id)?
                 .set_model(&self.settings_observer, &mut cx.to_async()),
         ]);
 
@@ -1587,6 +1917,9 @@ impl Project {
         });
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.client.clone().into(), cx)
+        });
+        self.dap_store.update(cx, |dap_store, cx| {
+            dap_store.shared(project_id, self.client.clone().into(), cx);
         });
         self.task_store.update(cx, |task_store, cx| {
             task_store.shared(project_id, self.client.clone().into(), cx);
@@ -1643,6 +1976,9 @@ impl Project {
         self.lsp_store.update(cx, |lsp_store, _| {
             lsp_store.set_language_server_statuses_from_proto(message.language_servers)
         });
+        self.dap_store.update(cx, |dap_store, cx| {
+            dap_store.set_breakpoints_from_proto(message.breakpoints, cx);
+        });
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
         cx.emit(Event::Rejoined);
@@ -1674,6 +2010,9 @@ impl Project {
             });
             self.task_store.update(cx, |task_store, cx| {
                 task_store.unshared(cx);
+            });
+            self.dap_store.update(cx, |dap_store, cx| {
+                dap_store.unshared(cx);
             });
             self.settings_observer.update(cx, |settings_observer, cx| {
                 settings_observer.unshared(cx);
@@ -1820,7 +2159,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(Option<ProjectEntryId>, AnyModel)>> {
         let task = self.open_buffer(path.clone(), cx);
-        cx.spawn(move |_, cx| async move {
+        cx.spawn(move |_project, cx| async move {
             let buffer = task.await?;
             let project_entry_id = buffer.read_with(&cx, |buffer, cx| {
                 File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
@@ -2149,6 +2488,46 @@ impl Project {
                 })
                 .detach();
             }
+        }
+    }
+
+    fn on_dap_store_event(
+        &mut self,
+        _: Model<DapStore>,
+        event: &DapStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            DapStoreEvent::DebugClientStarted(client_id) => {
+                cx.emit(Event::DebugClientStarted(*client_id));
+            }
+            DapStoreEvent::DebugClientShutdown(client_id) => {
+                cx.emit(Event::DebugClientShutdown(*client_id));
+            }
+            DapStoreEvent::DebugClientEvent {
+                session_id,
+                client_id,
+                message,
+            } => {
+                cx.emit(Event::DebugClientEvent {
+                    session_id: *session_id,
+                    client_id: *client_id,
+                    message: message.clone(),
+                });
+            }
+            DapStoreEvent::Notification(message) => {
+                cx.emit(Event::Toast {
+                    notification_id: "dap".into(),
+                    message: message.clone(),
+                });
+            }
+            DapStoreEvent::BreakpointsChanged => {
+                cx.notify();
+            }
+            DapStoreEvent::ActiveDebugLineChanged => {
+                cx.emit(Event::ActiveDebugLineChanged);
+            }
+            _ => {}
         }
     }
 
@@ -3500,6 +3879,37 @@ impl Project {
             }
         }
 
+        None
+    }
+
+    pub fn project_path_for_absolute_path(
+        &self,
+        abs_path: &Path,
+        cx: &AppContext,
+    ) -> Option<ProjectPath> {
+        self.find_local_worktree(abs_path, cx)
+            .map(|(worktree, relative_path)| ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path.into(),
+            })
+    }
+
+    pub fn find_local_worktree(
+        &self,
+        abs_path: &Path,
+        cx: &AppContext,
+    ) -> Option<(Model<Worktree>, PathBuf)> {
+        let trees = self.worktrees(cx);
+
+        for tree in trees {
+            if let Some(relative_path) = tree
+                .read(cx)
+                .as_local()
+                .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
+            {
+                return Some((tree.clone(), relative_path.into()));
+            }
+        }
         None
     }
 

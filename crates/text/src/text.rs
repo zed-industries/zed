@@ -2172,7 +2172,7 @@ impl BufferSnapshot {
         })
     }
 
-    fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
+    pub fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
     where
         D: TextDimension,
     {
@@ -2273,6 +2273,18 @@ impl BufferSnapshot {
 
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         self.anchor_at_offset(position.to_offset(self), bias)
+    }
+
+    pub fn breakpoint_anchor<T: ToOffset>(&self, position: T) -> Anchor {
+        let offset = position.to_offset(self);
+
+        let bias = if offset == 0usize {
+            Bias::Right
+        } else {
+            Bias::Left
+        };
+
+        self.anchor_at_offset(offset, bias)
     }
 
     fn anchor_at_offset(&self, offset: usize, bias: Bias) -> Anchor {
