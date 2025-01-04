@@ -10666,7 +10666,10 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
             lsp_store.update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
+                    #[cfg(not(target_os = "windows"))]
                     uri: lsp::Url::from_file_path("/root/file").unwrap(),
+                    #[cfg(target_os = "windows")]
+                    uri: lsp::Url::from_file_path("C:/root/file").unwrap(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 12)),
