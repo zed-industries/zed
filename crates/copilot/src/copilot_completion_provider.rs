@@ -945,7 +945,11 @@ mod tests {
         };
 
         fn to_path_buf(path: &str) -> std::path::PathBuf {
-            format!("C:{}", path).into()
+            if cfg!(target_os = "windows") {
+                format!("C:{}", path).into()
+            } else {
+                path.into()
+            }
         }
 
         init_test(cx, |settings| {
