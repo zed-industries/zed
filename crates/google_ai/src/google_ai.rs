@@ -15,12 +15,12 @@ pub async fn stream_generate_content(
     api_key: &str,
     request: GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
-    // Basic validation
+
     if request.contents.is_empty() {
         return Err(anyhow!("Request must contain at least one content item"));
     }
 
-    // Only validate the user's input content, not the model's responses
+    // Make sure the user's input isn't empty
     if let Some(user_content) = request.contents.iter().find(|c| c.role == Role::User) {
         if user_content.parts.is_empty() {
             return Err(anyhow!("User content must contain at least one part"));
@@ -151,7 +151,7 @@ pub struct Content {
     pub role: Role,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum Role {
     User,
