@@ -57,7 +57,9 @@
   {
     "context": "Workspace && !Terminal",
     "bindings": {
-      "ctrl-x ctrl-c": "workspace::CloseWindow", // kill-emacs
+      "ctrl-x ctrl-c": "zed::Quit", // save-buffers-kill-terminal
+      "ctrl-x 5 0": "workspace::CloseWindow", // delete-frame
+      "ctrl-x 5 2": "workspace::NewWindow", // make-frame-command
       "ctrl-x o": "workspace::ActivateNextPane", // other-window
       "ctrl-x k": "pane::CloseActiveItem", // kill-buffer
       "ctrl-x 0": "pane::CloseActiveItem", // delete-window
