@@ -257,45 +257,47 @@ impl LspAdapter for RustLspAdapter {
         let function_signature = completion
             .label_details
             .as_ref()
-            .and_then(|detail| detail.description.as_ref())
-            .or(completion.detail.as_ref())
-            .map(ToOwned::to_owned);
-        match completion.kind {
-            Some(lsp::CompletionItemKind::FIELD) if detail.is_some() => {
+            .and_then(|detail| detail.description.as_deref())
+            .or(completion.detail.as_deref());
+        match (detail, completion.kind) {
+            (Some(detail), Some(lsp::CompletionItemKind::FIELD)) => {
                 let name = &completion.label;
-                let text = format!("{}: {}", name, detail.unwrap());
-                let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
-                let runs = language.highlight_text(&source, 11..11 + text.len());
+                let text = format!("{name}: {detail}");
+                let prefix = "struct S { ";
+                let source = Rope::from(format!("{prefix}{text} }}"));
+                let runs =
+                    language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
                 return Some(CodeLabel {
                     text,
                     runs,
                     filter_range: 0..name.len(),
                 });
             }
-            Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
-                if detail.is_some()
-                    && completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) =>
-            {
+            (
+                Some(detail),
+                Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE),
+            ) if completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) => {
                 let name = &completion.label;
                 let text = format!(
                     "{}: {}",
                     name,
-                    completion.detail.as_deref().or(detail).unwrap()
+                    completion.detail.as_deref().unwrap_or(detail)
                 );
-                let source = Rope::from(format!("let {text} = ();").as_str());
-                let runs = language.highlight_text(&source, 4..4 + text.len());
+                let prefix = "let ";
+                let source = Rope::from(format!("{prefix}{text} = ();"));
+                let runs =
+                    language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
                 return Some(CodeLabel {
                     text,
                     runs,
                     filter_range: 0..name.len(),
                 });
             }
-            Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
-                if detail.is_some() =>
-            {
+            (
+                Some(detail),
+                Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD),
+            ) => {
                 static REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("\\(…?\\)").unwrap());
-
-                let detail = detail.unwrap();
                 const FUNCTION_PREFIXES: [&str; 6] = [
                     "async fn",
                     "async unsafe fn",
@@ -343,7 +345,7 @@ impl LspAdapter for RustLspAdapter {
                     });
                 }
             }
-            Some(kind) => {
+            (_, Some(kind)) => {
                 let highlight_name = match kind {
                     lsp::CompletionItemKind::STRUCT
                     | lsp::CompletionItemKind::INTERFACE
