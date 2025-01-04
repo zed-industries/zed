@@ -3490,7 +3490,7 @@ impl MultiBufferSnapshot {
         let mut cursor = self.cursor();
         cursor.seek(&position);
         if let Some(region) = cursor.region() {
-            let overshoot = position - region.range.start;
+            let overshoot = position.min(region.range.end) - region.range.start;
             let mut buffer_position = region.buffer_range.start;
             buffer_position.add_assign(&overshoot);
             let clipped_buffer_position =
@@ -5127,9 +5127,11 @@ where
             self.excerpts.prev(&());
         }
 
-        let overshoot = *position - self.diff_transforms.start().0 .0;
         let mut excerpt_position = self.diff_transforms.start().1 .0;
-        excerpt_position.add_assign(&overshoot);
+        if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
+            let overshoot = *position - self.diff_transforms.start().0 .0;
+            excerpt_position.add_assign(&overshoot);
+        }
 
         self.excerpts
             .seek(&ExcerptDimension(excerpt_position), Bias::Right, &());
