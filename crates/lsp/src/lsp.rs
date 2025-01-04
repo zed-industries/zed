@@ -7,6 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, SharedString, Task};
+use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
@@ -23,10 +24,11 @@ use smol::{
 };
 
 use std::{
+    collections::BTreeSet,
     ffi::{OsStr, OsString},
     fmt,
     io::Write,
-    ops::DerefMut,
+    ops::{Deref, DerefMut},
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -91,9 +93,8 @@ pub struct LanguageServer {
     #[allow(clippy::type_complexity)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
-    root_path: PathBuf,
-    working_dir: PathBuf,
     server: Arc<Mutex<Option<Child>>>,
+    workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
 }
 
 /// Identifies a running language server.
@@ -371,8 +372,6 @@ impl LanguageServer {
             Some(stderr),
             stderr_capture,
             Some(server),
-            root_path,
-            working_dir,
             code_action_kinds,
             cx,
             move |notification| {
@@ -401,8 +400,6 @@ impl LanguageServer {
         stderr: Option<Stderr>,
         stderr_capture: Arc<Mutex<Option<String>>>,
         server: Option<Child>,
-        root_path: &Path,
-        working_dir: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
         on_unhandled_notification: F,
@@ -474,9 +471,8 @@ impl LanguageServer {
             executor: cx.background_executor().clone(),
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
-            root_path: root_path.to_path_buf(),
-            working_dir: working_dir.to_path_buf(),
             server: Arc::new(Mutex::new(server)),
+            workspace_folders: Default::default(),
         }
     }
 
@@ -601,12 +597,11 @@ impl LanguageServer {
     }
 
     pub fn default_initialize_params(&self, cx: &AppContext) -> InitializeParams {
-        let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
         InitializeParams {
             process_id: None,
             root_path: None,
-            root_uri: Some(root_uri.clone()),
+            root_uri: None,
             initialization_options: None,
             capabilities: ClientCapabilities {
                 general: Some(GeneralClientCapabilities {
@@ -773,10 +768,7 @@ impl LanguageServer {
                 }),
             },
             trace: None,
-            workspace_folders: Some(vec![WorkspaceFolder {
-                uri: root_uri,
-                name: Default::default(),
-            }]),
+            workspace_folders: None,
             client_info: release_channel::ReleaseChannel::try_global(cx).map(|release_channel| {
                 ClientInfo {
                     name: release_channel.display_name().to_string(),
@@ -795,15 +787,9 @@ impl LanguageServer {
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
     pub fn initialize(
         mut self,
-        initialize_params: Option<InitializeParams>,
+        params: InitializeParams,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
-        let params = if let Some(params) = initialize_params {
-            params
-        } else {
-            self.default_initialize_params(cx)
-        };
-
         cx.spawn(|_| async move {
             let response = self.request::<request::Initialize>(params).await?;
             if let Some(info) = response.server_info {
@@ -1050,11 +1036,6 @@ impl LanguageServer {
         self.server_id
     }
 
-    /// Get the root path of the project the language server is running against.
-    pub fn root_path(&self) -> &PathBuf {
-        &self.root_path
-    }
-
     /// Sends a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
@@ -1182,6 +1163,66 @@ impl LanguageServer {
         outbound_tx.try_send(message)?;
         Ok(())
     }
+
+    /// Add new workspace folder to the list.
+    pub fn add_workspace_folder(&self, uri: Url) {
+        if self
+            .capabilities()
+            .workspace
+            .and_then(|ws| {
+                ws.workspace_folders.and_then(|folders| {
+                    folders
+                        .change_notifications
+                        .map(|caps| !matches!(caps, OneOf::Left(false)))
+                })
+            })
+            .unwrap_or(true)
+        {
+            return;
+        }
+        self.workspace_folders.lock().insert(uri.clone());
+        let params = DidChangeWorkspaceFoldersParams {
+            event: WorkspaceFoldersChangeEvent {
+                added: vec![WorkspaceFolder {
+                    uri,
+                    name: String::default(),
+                }],
+                removed: vec![],
+            },
+        };
+        self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+    }
+    /// Add new workspace folder to the list.
+    pub fn remove_workspace_folder(&self, uri: Url) {
+        if self
+            .capabilities()
+            .workspace
+            .and_then(|ws| {
+                ws.workspace_folders.and_then(|folders| {
+                    folders
+                        .change_notifications
+                        .map(|caps| !matches!(caps, OneOf::Left(false)))
+                })
+            })
+            .unwrap_or(true)
+        {
+            return;
+        }
+        self.workspace_folders.lock().remove(&uri);
+        let params = DidChangeWorkspaceFoldersParams {
+            event: WorkspaceFoldersChangeEvent {
+                added: vec![],
+                removed: vec![WorkspaceFolder {
+                    uri,
+                    name: String::default(),
+                }],
+            },
+        };
+        self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+    }
+    pub fn workspace_folders<'a>(&'a self) -> impl Deref<Target = BTreeSet<Url>> + 'a {
+        self.workspace_folders.lock()
+    }
 }
 
 impl Drop for LanguageServer {
@@ -1263,8 +1304,6 @@ impl FakeLanguageServer {
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
         let (notifications_tx, notifications_rx) = channel::unbounded();
 
-        let root = Self::root_path();
-
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
         let mut server = LanguageServer::new_internal(
@@ -1275,8 +1314,6 @@ impl FakeLanguageServer {
             None::<async_pipe::PipeReader>,
             Arc::new(Mutex::new(None)),
             None,
-            root,
-            root,
             None,
             cx.clone(),
             |_| {},
@@ -1293,8 +1330,6 @@ impl FakeLanguageServer {
                     None::<async_pipe::PipeReader>,
                     Arc::new(Mutex::new(None)),
                     None,
-                    root,
-                    root,
                     None,
                     cx,
                     move |msg| {
@@ -1329,16 +1364,6 @@ impl FakeLanguageServer {
         });
 
         (server, fake)
-    }
-
-    #[cfg(target_os = "windows")]
-    fn root_path() -> &'static Path {
-        Path::new("C:\\")
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn root_path() -> &'static Path {
-        Path::new("/")
     }
 }
 
@@ -1529,7 +1554,10 @@ mod tests {
             })
             .detach();
 
-        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
+        let server = cx
+            .update(|cx| server.initialize(server.default_initialize_params(cx), cx))
+            .await
+            .unwrap();
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(

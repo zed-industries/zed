@@ -8,6 +8,7 @@ pub mod lsp_ext_command;
 pub mod lsp_store;
 pub mod prettier_store;
 pub mod project_settings;
+mod project_tree;
 pub mod search;
 mod task_inventory;
 pub mod task_store;
@@ -4153,14 +4154,17 @@ impl Project {
         self.lsp_store.read(cx).language_server_for_id(id)
     }
 
-    pub fn language_servers_for_local_buffer<'a>(
-        &'a self,
-        buffer: &'a Buffer,
-        cx: &'a AppContext,
-    ) -> impl Iterator<Item = (&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)> {
-        self.lsp_store
-            .read(cx)
-            .language_servers_for_local_buffer(buffer, cx)
+    pub fn for_language_servers_for_local_buffer<R: 'static>(
+        &self,
+        buffer: &Buffer,
+        callback: impl FnOnce(
+            Box<dyn Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> + '_>,
+        ) -> R,
+        cx: &mut AppContext,
+    ) -> R {
+        self.lsp_store.update(cx, |this, cx| {
+            callback(Box::new(this.language_servers_for_local_buffer(buffer, cx)))
+        })
     }
 
     pub fn buffer_store(&self) -> &Model<BufferStore> {

@@ -259,6 +259,33 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+    pub fn find_closest_project_root(&self, _: WorktreeId, _: Arc<Path>) -> Option<Arc<Path>> {
+        // By default we'll root all projects at the root of a worktree.
+        Some(Arc::from("".as_ref()))
+    }
+    pub fn attach_kind(&self) -> Attach {
+        Attach::Shared
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Attach {
+    /// Create a single language server instance per subproject root.
+    InstancePerRoot,
+    /// Use one shared language server instance for all subprojects within a project.
+    Shared,
+}
+
+impl Attach {
+    pub fn root_path(
+        &self,
+        root_subproject_path: (WorktreeId, Arc<Path>),
+    ) -> (WorktreeId, Arc<Path>) {
+        match self {
+            Attach::InstancePerRoot => root_subproject_path,
+            Attach::Shared => (root_subproject_path.0, Arc::from(Path::new(""))),
+        }
+    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
