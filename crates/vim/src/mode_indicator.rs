@@ -108,9 +108,13 @@ impl Render for ModeIndicator {
             .pending_keys
             .as_ref()
             .unwrap_or(&current_operators_description);
-        Label::new(format!("{} -- {} --", pending, mode))
-            .size(LabelSize::Small)
-            .line_height_style(LineHeightStyle::UiLabel)
+        div()
+            .w_20()
+            .child(
+                Label::new(format!("{} -- {} --", pending, mode))
+                    .size(LabelSize::Small)
+                    .line_height_style(LineHeightStyle::UiLabel),
+            )
             .into_any_element()
     }
 }

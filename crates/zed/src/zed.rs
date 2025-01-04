@@ -180,12 +180,12 @@ pub fn initialize_workspace(
         let cursor_position =
             cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
+            status_bar.add_left_item(vim_mode_indicator, cx);
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(inline_completion_button, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(active_toolchain_language, cx);
-            status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);
         });
 
