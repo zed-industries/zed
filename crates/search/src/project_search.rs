@@ -5,18 +5,16 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    actions::SelectAll,
-    items::active_match_index,
-    scroll::{Autoscroll, Axis},
-    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
-    MAX_TAB_TITLE_LEN,
+    actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor,
+    EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
 use gpui::{
-    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
-    FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
-    ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
+    actions, div, Action, AnyElement, AnyView, AppContext, Axis, Context as _, EntityId,
+    EventEmitter, FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement,
+    KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
+    WeakView, WindowContext,
 };
 use language::Buffer;
 use menu::Confirm;
@@ -1256,7 +1254,7 @@ impl ProjectSearchView {
 fn buffer_search_query(
     workspace: &mut Workspace,
     item: &dyn ItemHandle,
-    cx: &mut ViewContext<'_, Workspace>,
+    cx: &mut ViewContext<Workspace>,
 ) -> Option<String> {
     let buffer_search_bar = workspace
         .pane_for(item)
@@ -1907,6 +1905,7 @@ impl Render for ProjectSearchBar {
         }
 
         v_flex()
+            .py(px(1.0))
             .key_context(key_context)
             .on_action(cx.listener(|this, _: &ToggleFocus, cx| this.move_focus_to_results(cx)))
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {

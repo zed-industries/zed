@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+
 use util::ResultExt;
 
 use super::*;
@@ -274,8 +275,8 @@ impl Database {
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
                         canonical_path: ActiveValue::set(entry.canonical_path.clone()),
                         is_ignored: ActiveValue::set(entry.is_ignored),
+                        git_status: ActiveValue::set(None),
                         is_external: ActiveValue::set(entry.is_external),
-                        git_status: ActiveValue::set(entry.git_status.map(|status| status as i64)),
                         is_deleted: ActiveValue::set(false),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         is_fifo: ActiveValue::set(entry.is_fifo),
@@ -295,7 +296,6 @@ impl Database {
                         worktree_entry::Column::MtimeNanos,
                         worktree_entry::Column::CanonicalPath,
                         worktree_entry::Column::IsIgnored,
-                        worktree_entry::Column::GitStatus,
                         worktree_entry::Column::ScanId,
                     ])
                     .to_owned(),
@@ -349,6 +349,79 @@ impl Database {
                 )
                 .exec(&*tx)
                 .await?;
+
+                let has_any_statuses = update
+                    .updated_repositories
+                    .iter()
+                    .any(|repository| !repository.updated_statuses.is_empty());
+
+                if has_any_statuses {
+                    worktree_repository_statuses::Entity::insert_many(
+                        update.updated_repositories.iter().flat_map(
+                            |repository: &proto::RepositoryEntry| {
+                                repository.updated_statuses.iter().map(|status_entry| {
+                                    worktree_repository_statuses::ActiveModel {
+                                        project_id: ActiveValue::set(project_id),
+                                        worktree_id: ActiveValue::set(worktree_id),
+                                        work_directory_id: ActiveValue::set(
+                                            repository.work_directory_id as i64,
+                                        ),
+                                        scan_id: ActiveValue::set(update.scan_id as i64),
+                                        is_deleted: ActiveValue::set(false),
+                                        repo_path: ActiveValue::set(status_entry.repo_path.clone()),
+                                        status: ActiveValue::set(status_entry.status as i64),
+                                    }
+                                })
+                            },
+                        ),
+                    )
+                    .on_conflict(
+                        OnConflict::columns([
+                            worktree_repository_statuses::Column::ProjectId,
+                            worktree_repository_statuses::Column::WorktreeId,
+                            worktree_repository_statuses::Column::WorkDirectoryId,
+                            worktree_repository_statuses::Column::RepoPath,
+                        ])
+                        .update_columns([
+                            worktree_repository_statuses::Column::ScanId,
+                            worktree_repository_statuses::Column::Status,
+                        ])
+                        .to_owned(),
+                    )
+                    .exec(&*tx)
+                    .await?;
+                }
+
+                let has_any_removed_statuses = update
+                    .updated_repositories
+                    .iter()
+                    .any(|repository| !repository.removed_statuses.is_empty());
+
+                if has_any_removed_statuses {
+                    worktree_repository_statuses::Entity::update_many()
+                        .filter(
+                            worktree_repository_statuses::Column::ProjectId
+                                .eq(project_id)
+                                .and(
+                                    worktree_repository_statuses::Column::WorktreeId
+                                        .eq(worktree_id),
+                                )
+                                .and(
+                                    worktree_repository_statuses::Column::RepoPath.is_in(
+                                        update.updated_repositories.iter().flat_map(|repository| {
+                                            repository.removed_statuses.iter()
+                                        }),
+                                    ),
+                                ),
+                        )
+                        .set(worktree_repository_statuses::ActiveModel {
+                            is_deleted: ActiveValue::Set(true),
+                            scan_id: ActiveValue::Set(update.scan_id as i64),
+                            ..Default::default()
+                        })
+                        .exec(&*tx)
+                        .await?;
+                }
             }
 
             if !update.removed_repositories.is_empty() {
@@ -643,7 +716,6 @@ impl Database {
                         canonical_path: db_entry.canonical_path,
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
-                        git_status: db_entry.git_status.map(|status| status as i32),
                         // This is only used in the summarization backlog, so if it's None,
                         // that just means we won't be able to detect when to resummarize
                         // based on total number of backlogged bytes - instead, we'd go
@@ -657,23 +729,49 @@ impl Database {
 
         // Populate repository entries.
         {
-            let mut db_repository_entries = worktree_repository::Entity::find()
+            let db_repository_entries = worktree_repository::Entity::find()
                 .filter(
                     Condition::all()
                         .add(worktree_repository::Column::ProjectId.eq(project.id))
                         .add(worktree_repository::Column::IsDeleted.eq(false)),
                 )
-                .stream(tx)
+                .all(tx)
                 .await?;
-            while let Some(db_repository_entry) = db_repository_entries.next().await {
-                let db_repository_entry = db_repository_entry?;
+            for db_repository_entry in db_repository_entries {
                 if let Some(worktree) = worktrees.get_mut(&(db_repository_entry.worktree_id as u64))
                 {
+                    let mut repository_statuses = worktree_repository_statuses::Entity::find()
+                        .filter(
+                            Condition::all()
+                                .add(worktree_repository_statuses::Column::ProjectId.eq(project.id))
+                                .add(
+                                    worktree_repository_statuses::Column::WorktreeId
+                                        .eq(worktree.id),
+                                )
+                                .add(
+                                    worktree_repository_statuses::Column::WorkDirectoryId
+                                        .eq(db_repository_entry.work_directory_id),
+                                )
+                                .add(worktree_repository_statuses::Column::IsDeleted.eq(false)),
+                        )
+                        .stream(tx)
+                        .await?;
+                    let mut updated_statuses = Vec::new();
+                    while let Some(status_entry) = repository_statuses.next().await {
+                        let status_entry: worktree_repository_statuses::Model = status_entry?;
+                        updated_statuses.push(proto::StatusEntry {
+                            repo_path: status_entry.repo_path,
+                            status: status_entry.status as i32,
+                        });
+                    }
+
                     worktree.repository_entries.insert(
                         db_repository_entry.work_directory_id as u64,
                         proto::RepositoryEntry {
                             work_directory_id: db_repository_entry.work_directory_id as u64,
                             branch: db_repository_entry.branch,
+                            updated_statuses,
+                            removed_statuses: Vec::new(),
                         },
                     );
                 }

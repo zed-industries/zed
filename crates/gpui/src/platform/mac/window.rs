@@ -1102,7 +1102,7 @@ impl PlatformWindow for MacWindow {
         self.0.lock().renderer.sprite_atlas().clone()
     }
 
-    fn gpu_specs(&self) -> Option<crate::GPUSpecs> {
+    fn gpu_specs(&self) -> Option<crate::GpuSpecs> {
         None
     }
 

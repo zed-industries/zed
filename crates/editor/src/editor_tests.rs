@@ -25,14 +25,18 @@ use language::{
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
+use pretty_assertions::{assert_eq, assert_ne};
 use project::{buffer_store::BufferChangeSet, FakeFs};
 use project::{
     lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
     project_settings::{LspSettings, ProjectSettings},
 };
 use serde_json::{self, json};
-use std::sync::atomic::{self, AtomicBool, AtomicUsize};
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
+use std::{
+    iter,
+    sync::atomic::{self, AtomicUsize},
+};
 use test::{build_editor_with_project, editor_lsp_test_context::rust_lang};
 use unindent::Unindent;
 use util::{
@@ -8398,7 +8402,6 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
         additional edit
     "});
 
-    handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 
     update_test_language_settings(&mut cx, |settings| {
@@ -8470,10 +8473,7 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
-                &["first", "last"]
-            );
+            assert_eq!(completion_menu_entries(&menu.entries), &["first", "last"]);
         } else {
             panic!("expected completion menu to be open");
         }
@@ -8566,7 +8566,7 @@ async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                completion_menu_entries(&menu.entries),
                 &["r", "ret", "Range", "return"]
             );
         } else {
@@ -10697,10 +10697,14 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
         ..lsp::CompletionItem::default()
     };
 
-    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    let item1 = item1.clone();
+    cx.handle_request::<lsp::request::Completion, _, _>({
         let item1 = item1.clone();
-        let item2 = item2.clone();
-        async move { Ok(Some(lsp::CompletionResponse::Array(vec![item1, item2]))) }
+        move |_, _, _| {
+            let item1 = item1.clone();
+            let item2 = item2.clone();
+            async move { Ok(Some(lsp::CompletionResponse::Array(vec![item1, item2]))) }
+        }
     })
     .next()
     .await;
@@ -10727,42 +10731,40 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
         }
     });
 
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| async move {
-        Ok(lsp::CompletionItem {
-            label: "method id()".to_string(),
-            filter_text: Some("id".to_string()),
-            detail: Some("Now resolved!".to_string()),
-            documentation: Some(lsp::Documentation::String("Docs".to_string())),
-            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-                new_text: ".id".to_string(),
-            })),
-            ..lsp::CompletionItem::default()
-        })
+    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>({
+        let item1 = item1.clone();
+        move |_, item_to_resolve, _| {
+            let item1 = item1.clone();
+            async move {
+                if item1 == item_to_resolve {
+                    Ok(lsp::CompletionItem {
+                        label: "method id()".to_string(),
+                        filter_text: Some("id".to_string()),
+                        detail: Some("Now resolved!".to_string()),
+                        documentation: Some(lsp::Documentation::String("Docs".to_string())),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 22),
+                                lsp::Position::new(0, 22),
+                            ),
+                            new_text: ".id".to_string(),
+                        })),
+                        ..lsp::CompletionItem::default()
+                    })
+                } else {
+                    Ok(item_to_resolve)
+                }
+            }
+        }
     })
     .next()
-    .await;
+    .await
+    .unwrap();
     cx.run_until_parked();
 
     cx.update_editor(|editor, cx| {
         editor.context_menu_next(&Default::default(), cx);
     });
-
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| async move {
-        Ok(lsp::CompletionItem {
-            label: "invalid changed label".to_string(),
-            detail: Some("Now resolved!".to_string()),
-            documentation: Some(lsp::Documentation::String("Docs".to_string())),
-            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-                new_text: ".id".to_string(),
-            })),
-            ..lsp::CompletionItem::default()
-        })
-    })
-    .next()
-    .await;
-    cx.run_until_parked();
 
     cx.update_editor(|editor, _| {
         let context_menu = editor.context_menu.borrow_mut();
@@ -10787,7 +10789,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
 }
 
 #[gpui::test]
-async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppContext) {
+async fn test_completions_resolve_happens_once(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorLspTestContext::new_rust(
@@ -10806,8 +10808,181 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
     cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
     cx.simulate_keystroke(".");
 
+    let unresolved_item_1 = lsp::CompletionItem {
+        label: "id".to_string(),
+        filter_text: Some("id".to_string()),
+        detail: None,
+        documentation: None,
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+            new_text: ".id".to_string(),
+        })),
+        ..lsp::CompletionItem::default()
+    };
+    let resolved_item_1 = lsp::CompletionItem {
+        additional_text_edits: Some(vec![lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 20), lsp::Position::new(0, 22)),
+            new_text: "!!".to_string(),
+        }]),
+        ..unresolved_item_1.clone()
+    };
+    let unresolved_item_2 = lsp::CompletionItem {
+        label: "other".to_string(),
+        filter_text: Some("other".to_string()),
+        detail: None,
+        documentation: None,
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+            new_text: ".other".to_string(),
+        })),
+        ..lsp::CompletionItem::default()
+    };
+    let resolved_item_2 = lsp::CompletionItem {
+        additional_text_edits: Some(vec![lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 20), lsp::Position::new(0, 22)),
+            new_text: "??".to_string(),
+        }]),
+        ..unresolved_item_2.clone()
+    };
+
+    let resolve_requests_1 = Arc::new(AtomicUsize::new(0));
+    let resolve_requests_2 = Arc::new(AtomicUsize::new(0));
+    cx.lsp
+        .server
+        .on_request::<lsp::request::ResolveCompletionItem, _, _>({
+            let unresolved_item_1 = unresolved_item_1.clone();
+            let resolved_item_1 = resolved_item_1.clone();
+            let unresolved_item_2 = unresolved_item_2.clone();
+            let resolved_item_2 = resolved_item_2.clone();
+            let resolve_requests_1 = resolve_requests_1.clone();
+            let resolve_requests_2 = resolve_requests_2.clone();
+            move |unresolved_request, _| {
+                let unresolved_item_1 = unresolved_item_1.clone();
+                let resolved_item_1 = resolved_item_1.clone();
+                let unresolved_item_2 = unresolved_item_2.clone();
+                let resolved_item_2 = resolved_item_2.clone();
+                let resolve_requests_1 = resolve_requests_1.clone();
+                let resolve_requests_2 = resolve_requests_2.clone();
+                async move {
+                    if unresolved_request == unresolved_item_1 {
+                        resolve_requests_1.fetch_add(1, atomic::Ordering::Release);
+                        Ok(resolved_item_1.clone())
+                    } else if unresolved_request == unresolved_item_2 {
+                        resolve_requests_2.fetch_add(1, atomic::Ordering::Release);
+                        Ok(resolved_item_2.clone())
+                    } else {
+                        panic!("Unexpected completion item {unresolved_request:?}")
+                    }
+                }
+            }
+        })
+        .detach();
+
+    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let unresolved_item_1 = unresolved_item_1.clone();
+        let unresolved_item_2 = unresolved_item_2.clone();
+        async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                unresolved_item_1,
+                unresolved_item_2,
+            ])))
+        }
+    })
+    .next()
+    .await;
+
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _| {
+        let context_menu = editor.context_menu.borrow_mut();
+        let context_menu = context_menu
+            .as_ref()
+            .expect("Should have the context menu deployed");
+        match context_menu {
+            CodeContextMenu::Completions(completions_menu) => {
+                let completions = completions_menu.completions.borrow_mut();
+                assert_eq!(
+                    completions
+                        .iter()
+                        .map(|completion| &completion.label.text)
+                        .collect::<Vec<_>>(),
+                    vec!["id", "other"]
+                )
+            }
+            CodeContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
+        }
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        editor.context_menu_next(&ContextMenuNext, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        editor.context_menu_prev(&ContextMenuPrev, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        editor.context_menu_next(&ContextMenuNext, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        editor
+            .compose_completion(&ComposeCompletion::default(), cx)
+            .expect("No task returned")
+    })
+    .await
+    .expect("Completion failed");
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            resolve_requests_1.load(atomic::Ordering::Acquire),
+            1,
+            "Should always resolve once despite multiple selections"
+        );
+        assert_eq!(
+            resolve_requests_2.load(atomic::Ordering::Acquire),
+            1,
+            "Should always resolve once after multiple selections and applying the completion"
+        );
+        assert_eq!(
+            editor.text(cx),
+            "fn main() { let a = ??.other; }",
+            "Should use resolved data when applying the completion"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let item_0 = lsp::CompletionItem {
+        label: "abs".into(),
+        insert_text: Some("abs".into()),
+        data: Some(json!({ "very": "special"})),
+        insert_text_mode: Some(lsp::InsertTextMode::ADJUST_INDENTATION),
+        text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+            lsp::InsertReplaceEdit {
+                new_text: "abs".to_string(),
+                insert: lsp::Range::default(),
+                replace: lsp::Range::default(),
+            },
+        )),
+        ..lsp::CompletionItem::default()
+    };
+    let items = iter::once(item_0.clone())
+        .chain((11..51).map(|i| lsp::CompletionItem {
+            label: format!("item_{}", i),
+            insert_text: Some(format!("item_{}", i)),
+            insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
+            ..lsp::CompletionItem::default()
+        }))
+        .collect::<Vec<_>>();
+
     let default_commit_characters = vec!["?".to_string()];
-    let default_data = json!({ "very": "special"});
+    let default_data = json!({ "default": "data"});
     let default_insert_text_format = lsp::InsertTextFormat::SNIPPET;
     let default_insert_text_mode = lsp::InsertTextMode::AS_IS;
     let default_edit_range = lsp::Range {
@@ -10821,123 +10996,49 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
         },
     };
 
-    let resolve_requests_number = Arc::new(AtomicUsize::new(0));
-    let expect_first_item = Arc::new(AtomicBool::new(true));
-    cx.lsp
-        .server
-        .on_request::<lsp::request::ResolveCompletionItem, _, _>({
-            let closure_default_data = default_data.clone();
-            let closure_resolve_requests_number = resolve_requests_number.clone();
-            let closure_expect_first_item = expect_first_item.clone();
-            let closure_default_commit_characters = default_commit_characters.clone();
-            move |item_to_resolve, _| {
-                closure_resolve_requests_number.fetch_add(1, atomic::Ordering::Release);
-                let default_data = closure_default_data.clone();
-                let default_commit_characters = closure_default_commit_characters.clone();
-                let expect_first_item = closure_expect_first_item.clone();
-                async move {
-                    if expect_first_item.load(atomic::Ordering::Acquire) {
-                        assert_eq!(
-                            item_to_resolve.label, "Some(2)",
-                            "Should have selected the first item"
-                        );
-                        assert_eq!(
-                            item_to_resolve.data,
-                            Some(json!({ "very": "special"})),
-                            "First item should bring its own data for resolving"
-                        );
-                        assert_eq!(
-                            item_to_resolve.commit_characters,
-                            Some(default_commit_characters),
-                            "First item had no own commit characters and should inherit the default ones"
-                        );
-                        assert!(
-                            matches!(
-                                item_to_resolve.text_edit,
-                                Some(lsp::CompletionTextEdit::InsertAndReplace { .. })
-                            ),
-                            "First item should bring its own edit range for resolving"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_format,
-                            Some(default_insert_text_format),
-                            "First item had no own insert text format and should inherit the default one"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_mode,
-                            Some(lsp::InsertTextMode::ADJUST_INDENTATION),
-                            "First item should bring its own insert text mode for resolving"
-                        );
-                        Ok(item_to_resolve)
-                    } else {
-                        assert_eq!(
-                            item_to_resolve.label, "vec![2]",
-                            "Should have selected the last item"
-                        );
-                        assert_eq!(
-                            item_to_resolve.data,
-                            Some(default_data),
-                            "Last item has no own resolve data and should inherit the default one"
-                        );
-                        assert_eq!(
-                            item_to_resolve.commit_characters,
-                            Some(default_commit_characters),
-                            "Last item had no own commit characters and should inherit the default ones"
-                        );
-                        assert_eq!(
-                            item_to_resolve.text_edit,
-                            Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: default_edit_range,
-                                new_text: "vec![2]".to_string()
-                            })),
-                            "Last item had no own edit range and should inherit the default one"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_format,
-                            Some(lsp::InsertTextFormat::PLAIN_TEXT),
-                            "Last item should bring its own insert text format for resolving"
-                        );
-                        assert_eq!(
-                            item_to_resolve.insert_text_mode,
-                            Some(default_insert_text_mode),
-                            "Last item had no own insert text mode and should inherit the default one"
-                        );
+    let item_0_out = lsp::CompletionItem {
+        commit_characters: Some(default_commit_characters.clone()),
+        insert_text_format: Some(default_insert_text_format),
+        ..item_0
+    };
+    let items_out = iter::once(item_0_out)
+        .chain(items[1..].iter().map(|item| lsp::CompletionItem {
+            commit_characters: Some(default_commit_characters.clone()),
+            data: Some(default_data.clone()),
+            insert_text_mode: Some(default_insert_text_mode),
+            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                range: default_edit_range,
+                new_text: item.label.clone(),
+            })),
+            ..item.clone()
+        }))
+        .collect::<Vec<lsp::CompletionItem>>();
 
-                        Ok(item_to_resolve)
-                    }
-                }
-            }
-        }).detach();
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.simulate_keystroke(".");
 
     let completion_data = default_data.clone();
     let completion_characters = default_commit_characters.clone();
     cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
         let default_data = completion_data.clone();
         let default_commit_characters = completion_characters.clone();
+        let items = items.clone();
         async move {
             Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
-                items: vec![
-                    lsp::CompletionItem {
-                        label: "Some(2)".into(),
-                        insert_text: Some("Some(2)".into()),
-                        data: Some(json!({ "very": "special"})),
-                        insert_text_mode: Some(lsp::InsertTextMode::ADJUST_INDENTATION),
-                        text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                            lsp::InsertReplaceEdit {
-                                new_text: "Some(2)".to_string(),
-                                insert: lsp::Range::default(),
-                                replace: lsp::Range::default(),
-                            },
-                        )),
-                        ..lsp::CompletionItem::default()
-                    },
-                    lsp::CompletionItem {
-                        label: "vec![2]".into(),
-                        insert_text: Some("vec![2]".into()),
-                        insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
-                        ..lsp::CompletionItem::default()
-                    },
-                ],
+                items,
                 item_defaults: Some(lsp::CompletionListItemDefaults {
                     data: Some(default_data.clone()),
                     commit_characters: Some(default_commit_characters.clone()),
@@ -10954,6 +11055,21 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
     .next()
     .await;
 
+    let resolved_items = Arc::new(Mutex::new(Vec::new()));
+    cx.lsp
+        .server
+        .on_request::<lsp::request::ResolveCompletionItem, _, _>({
+            let closure_resolved_items = resolved_items.clone();
+            move |item_to_resolve, _| {
+                let closure_resolved_items = closure_resolved_items.clone();
+                async move {
+                    closure_resolved_items.lock().push(item_to_resolve.clone());
+                    Ok(item_to_resolve)
+                }
+            }
+        })
+        .detach();
+
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.run_until_parked();
@@ -10963,42 +11079,50 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
             CodeContextMenu::Completions(completions_menu) => {
                 assert_eq!(
                     completions_menu
-                        .matches
+                        .entries
                         .iter()
-                        .map(|c| c.string.as_str())
-                        .collect::<Vec<_>>(),
-                    vec!["Some(2)", "vec![2]"]
+                        .flat_map(|c| match c {
+                            CompletionEntry::Match(mat) => Some(mat.string.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<String>>(),
+                    items_out
+                        .iter()
+                        .map(|completion| completion.label.clone())
+                        .collect::<Vec<String>>()
                 );
             }
             CodeContextMenu::CodeActions(_) => panic!("Expected to have the completions menu"),
         }
     });
+    // Approximate initial displayed interval is 0..12. With extra item padding of 4 this is 0..16
+    // with 4 from the end.
     assert_eq!(
-        resolve_requests_number.load(atomic::Ordering::Acquire),
-        1,
-        "While there are 2 items in the completion list, only 1 resolve request should have been sent, for the selected item"
+        *resolved_items.lock(),
+        [
+            &items_out[0..16],
+            &items_out[items_out.len() - 4..items_out.len()]
+        ]
+        .concat()
+        .iter()
+        .cloned()
+        .collect::<Vec<lsp::CompletionItem>>()
     );
+    resolved_items.lock().clear();
 
     cx.update_editor(|editor, cx| {
-        editor.context_menu_first(&ContextMenuFirst, cx);
+        editor.context_menu_prev(&ContextMenuPrev, cx);
     });
     cx.run_until_parked();
+    // Completions that have already been resolved are skipped.
     assert_eq!(
-        resolve_requests_number.load(atomic::Ordering::Acquire),
-        2,
-        "After re-selecting the first item, another resolve request should have been sent"
+        *resolved_items.lock(),
+        items_out[items_out.len() - 16..items_out.len() - 4]
+            .iter()
+            .cloned()
+            .collect::<Vec<lsp::CompletionItem>>()
     );
-
-    expect_first_item.store(false, atomic::Ordering::Release);
-    cx.update_editor(|editor, cx| {
-        editor.context_menu_last(&ContextMenuLast, cx);
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        resolve_requests_number.load(atomic::Ordering::Acquire),
-        3,
-        "After selecting the other item, another resolve request should have been sent"
-    );
+    resolved_items.lock().clear();
 }
 
 #[gpui::test]
@@ -11066,7 +11190,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                completion_menu_entries(&menu.entries),
                 &["bg-red", "bg-blue", "bg-yellow"]
             );
         } else {
@@ -11080,7 +11204,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                completion_menu_entries(&menu.entries),
                 &["bg-blue", "bg-yellow"]
             );
         } else {
@@ -11096,14 +11220,21 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
-                &["bg-yellow"]
-            );
+            assert_eq!(completion_menu_entries(&menu.entries), &["bg-yellow"]);
         } else {
             panic!("expected completion menu to be open");
         }
     });
+}
+
+fn completion_menu_entries(entries: &[CompletionEntry]) -> Vec<&str> {
+    entries
+        .iter()
+        .flat_map(|e| match e {
+            CompletionEntry::Match(mat) => Some(mat.string.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[gpui::test]
@@ -11129,7 +11260,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::LANGUAGE.into()),
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
     update_test_language_settings(cx, |settings| {
         settings.defaults.prettier = Some(PrettierSettings {
@@ -13078,6 +13209,7 @@ fn assert_indent_guides(
     let indent_guides = cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx).display_snapshot;
         let mut indent_guides: Vec<_> = crate::indent_guides::indent_guides_in_range(
+            editor,
             MultiBufferRow(range.start)..MultiBufferRow(range.end),
             true,
             &snapshot,
@@ -14360,6 +14492,300 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
         full_text,
     );
+}
+
+#[gpui::test]
+fn test_inline_completion_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Simple insertion
+    {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 6))
+                    ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
+                let edits = vec![(edit_range, " beautiful".to_string())];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, false, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "Hello, beautiful world!");
+                assert_eq!(highlights.len(), 1);
+                assert_eq!(highlights[0].0, 6..16);
+                assert_eq!(
+                    highlights[0].1.background_color,
+                    Some(cx.theme().status().created_background)
+                );
+            })
+            .unwrap();
+    }
+
+    // Replacement
+    {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("This is a test.", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edits = vec![(
+                    snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
+                        ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 4)),
+                    "That".to_string(),
+                )];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, false, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "That is a test.");
+                assert_eq!(highlights.len(), 1);
+                assert_eq!(highlights[0].0, 0..4);
+                assert_eq!(
+                    highlights[0].1.background_color,
+                    Some(cx.theme().status().created_background)
+                );
+            })
+            .unwrap();
+    }
+
+    // Multiple edits
+    {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edits = vec![
+                    (
+                        snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 5)),
+                        "Greetings".into(),
+                    ),
+                    (
+                        snapshot.buffer_snapshot.anchor_after(Point::new(0, 12))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 12)),
+                        " and universe".into(),
+                    ),
+                ];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, false, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "Greetings, world and universe!");
+                assert_eq!(highlights.len(), 2);
+                assert_eq!(highlights[0].0, 0..9);
+                assert_eq!(highlights[1].0, 16..29);
+                assert_eq!(
+                    highlights[0].1.background_color,
+                    Some(cx.theme().status().created_background)
+                );
+                assert_eq!(
+                    highlights[1].1.background_color,
+                    Some(cx.theme().status().created_background)
+                );
+            })
+            .unwrap();
+    }
+
+    // Multiple lines with edits
+    {
+        let window = cx.add_window(|cx| {
+            let buffer =
+                MultiBuffer::build_simple("First line\nSecond line\nThird line\nFourth line", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edits = vec![
+                    (
+                        snapshot.buffer_snapshot.anchor_before(Point::new(1, 7))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(1, 11)),
+                        "modified".to_string(),
+                    ),
+                    (
+                        snapshot.buffer_snapshot.anchor_before(Point::new(2, 0))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(2, 10)),
+                        "New third line".to_string(),
+                    ),
+                    (
+                        snapshot.buffer_snapshot.anchor_before(Point::new(3, 6))
+                            ..snapshot.buffer_snapshot.anchor_before(Point::new(3, 6)),
+                        " updated".to_string(),
+                    ),
+                ];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, false, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "Second modified\nNew third line\nFourth updated line");
+                assert_eq!(highlights.len(), 3);
+                assert_eq!(highlights[0].0, 7..15); // "modified"
+                assert_eq!(highlights[1].0, 16..30); // "New third line"
+                assert_eq!(highlights[2].0, 37..45); // " updated"
+
+                for highlight in &highlights {
+                    assert_eq!(
+                        highlight.1.background_color,
+                        Some(cx.theme().status().created_background)
+                    );
+                }
+            })
+            .unwrap();
+    }
+}
+
+#[gpui::test]
+fn test_inline_completion_text_with_deletions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Deletion
+    {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 5))
+                    ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 11));
+                let edits = vec![(edit_range, "".to_string())];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, true, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "Hello, world!");
+                assert_eq!(highlights.len(), 1);
+                assert_eq!(highlights[0].0, 5..11);
+                assert_eq!(
+                    highlights[0].1.background_color,
+                    Some(cx.theme().status().deleted_background)
+                );
+            })
+            .unwrap();
+    }
+
+    // Insertion
+    {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
+            Editor::new(EditorMode::Full, buffer, None, true, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 6))
+                    ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
+                let edits = vec![(edit_range, " digital".to_string())];
+
+                let InlineCompletionText::Edit { text, highlights } =
+                    inline_completion_edit_text(&snapshot, &edits, true, cx)
+                else {
+                    panic!("Failed to generate inline completion text");
+                };
+
+                assert_eq!(text, "Hello, digital world!");
+                assert_eq!(highlights.len(), 1);
+                assert_eq!(highlights[0].0, 6..14);
+                assert_eq!(
+                    highlights[0].1.background_color,
+                    Some(cx.theme().status().created_background)
+                );
+            })
+            .unwrap();
+    }
+}
+
+#[gpui::test]
+async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    cx.set_state(indoc! {"
+        struct Fˇoo {}
+    "});
+
+    cx.update_editor(|editor, cx| {
+        let highlight_range = Point::new(0, 7)..Point::new(0, 10);
+        let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
+        editor.highlight_background::<DocumentHighlightRead>(
+            &[highlight_range],
+            |c| c.editor_document_highlight_read_background,
+            cx,
+        );
+    });
+
+    cx.update_editor(|e, cx| e.rename(&Rename, cx))
+        .expect("Rename was not started")
+        .await
+        .expect("Rename failed");
+    let mut rename_handler =
+        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+            let edit = lsp::TextEdit {
+                range: lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 10,
+                    },
+                },
+                new_text: "FooRenamed".to_string(),
+            };
+            Ok(Some(lsp::WorkspaceEdit::new(
+                // Specify the same edit twice
+                std::collections::HashMap::from_iter(Some((url, vec![edit.clone(), edit]))),
+            )))
+        });
+    cx.update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
+        .expect("Confirm rename was not started")
+        .await
+        .expect("Confirm rename failed");
+    rename_handler.next().await.unwrap();
+    cx.run_until_parked();
+
+    // Despite two edits, only one is actually applied as those are identical
+    cx.assert_editor_state(indoc! {"
+        struct FooRenamedˇ {}
+    "});
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

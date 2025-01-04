@@ -324,6 +324,7 @@ impl TerminalBuilder {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         working_directory: Option<PathBuf>,
+        python_venv_directory: Option<PathBuf>,
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
@@ -471,6 +472,7 @@ impl TerminalBuilder {
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             vi_mode_enabled: false,
             is_ssh_terminal,
+            python_venv_directory,
         };
 
         Ok(TerminalBuilder {
@@ -619,6 +621,7 @@ pub struct Terminal {
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
     title_override: Option<SharedString>,
+    pub python_venv_directory: Option<PathBuf>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -950,22 +953,32 @@ impl Terminal {
 
                 match found_word {
                     Some((maybe_url_or_path, is_url, url_match)) => {
-                        if *open {
-                            let target = if is_url {
-                                MaybeNavigationTarget::Url(maybe_url_or_path)
-                            } else {
+                        let target = if is_url {
+                            // Treat "file://" URLs like file paths to ensure
+                            // that line numbers at the end of the path are
+                            // handled correctly
+                            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
                                 MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                    maybe_path: maybe_url_or_path,
+                                    maybe_path: path.to_string(),
                                     terminal_dir: self.working_directory(),
                                 })
-                            };
+                            } else {
+                                MaybeNavigationTarget::Url(maybe_url_or_path.clone())
+                            }
+                        } else {
+                            MaybeNavigationTarget::PathLike(PathLikeTarget {
+                                maybe_path: maybe_url_or_path.clone(),
+                                terminal_dir: self.working_directory(),
+                            })
+                        };
+                        if *open {
                             cx.emit(Event::Open(target));
                         } else {
                             self.update_selected_word(
                                 prev_hovered_word,
                                 url_match,
                                 maybe_url_or_path,
-                                is_url,
+                                target,
                                 cx,
                             );
                         }
@@ -987,7 +1000,7 @@ impl Terminal {
         prev_word: Option<HoveredWord>,
         word_match: RangeInclusive<AlacPoint>,
         word: String,
-        is_url: bool,
+        navigation_target: MaybeNavigationTarget,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(prev_word) = prev_word {
@@ -1006,14 +1019,6 @@ impl Terminal {
             word_match,
             id: self.next_link_id(),
         });
-        let navigation_target = if is_url {
-            MaybeNavigationTarget::Url(word)
-        } else {
-            MaybeNavigationTarget::PathLike(PathLikeTarget {
-                maybe_path: word,
-                terminal_dir: self.working_directory(),
-            })
-        };
         cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
     }
 
@@ -1180,10 +1185,10 @@ impl Terminal {
         }
 
         let motion: Option<ViMotion> = match key.as_str() {
-            "h" => Some(ViMotion::Left),
-            "j" => Some(ViMotion::Down),
-            "k" => Some(ViMotion::Up),
-            "l" => Some(ViMotion::Right),
+            "h" | "left" => Some(ViMotion::Left),
+            "j" | "down" => Some(ViMotion::Down),
+            "k" | "up" => Some(ViMotion::Up),
+            "l" | "right" => Some(ViMotion::Right),
             "w" => Some(ViMotion::WordRight),
             "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
             "e" => Some(ViMotion::WordRightEnd),
@@ -1458,7 +1463,7 @@ impl Terminal {
     fn drag_line_delta(&self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
         let top = region.origin.y + (self.last_content.size.line_height * 2.);
-        let bottom = region.lower_left().y - (self.last_content.size.line_height * 2.);
+        let bottom = region.bottom_left().y - (self.last_content.size.line_height * 2.);
         let scroll_delta = if e.position.y < top {
             (top - e.position.y).pow(1.1)
         } else if e.position.y > bottom {

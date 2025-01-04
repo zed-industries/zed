@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::ClickEvent;
 use ui::{prelude::*, IconButtonShape};
 
-use crate::context::Context;
+use crate::context::{Context, ContextKind};
 
 #[derive(IntoElement)]
 pub struct ContextPill {
@@ -27,16 +27,32 @@ impl ContextPill {
 
 impl RenderOnce for ContextPill {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let padding_right = if self.on_remove.is_some() {
+            px(2.)
+        } else {
+            px(4.)
+        };
+        let icon = match self.context.kind {
+            ContextKind::File(_) => IconName::File,
+            ContextKind::Directory => IconName::Folder,
+            ContextKind::FetchedUrl => IconName::Globe,
+            ContextKind::Thread(_) => IconName::MessageCircle,
+        };
+
         h_flex()
             .gap_1()
-            .px_1()
+            .pl_1()
+            .pr(padding_right)
+            .pb(px(1.))
             .border_1()
-            .border_color(cx.theme().colors().border)
+            .border_color(cx.theme().colors().border.opacity(0.5))
+            .bg(cx.theme().colors().element_background)
             .rounded_md()
+            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
             .child(Label::new(self.context.name.clone()).size(LabelSize::Small))
             .when_some(self.on_remove, |parent, on_remove| {
                 parent.child(
-                    IconButton::new("remove", IconName::Close)
+                    IconButton::new(("remove", self.context.id.0), IconName::Close)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .on_click({

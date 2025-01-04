@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
 
-use crate::context::{Context, ContextKind};
+use crate::context::{attach_context_to_message, Context};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -164,6 +164,27 @@ impl Thread {
         id
     }
 
+    /// Returns the representation of this [`Thread`] in a textual form.
+    ///
+    /// This is the representation we use when attaching a thread as context to another thread.
+    pub fn text(&self) -> String {
+        let mut text = String::new();
+
+        for message in &self.messages {
+            text.push_str(match message.role {
+                language_model::Role::User => "User:",
+                language_model::Role::Assistant => "Assistant:",
+                language_model::Role::System => "System:",
+            });
+            text.push('\n');
+
+            text.push_str(&message.text);
+            text.push('\n');
+        }
+
+        text
+    }
+
     pub fn to_completion_request(
         &self,
         _request_kind: RequestKind,
@@ -192,38 +213,7 @@ impl Thread {
             }
 
             if let Some(context) = self.context_for_message(message.id) {
-                let mut file_context = String::new();
-                let mut fetch_context = String::new();
-
-                for context in context.iter() {
-                    match context.kind {
-                        ContextKind::File => {
-                            file_context.push_str(&context.text);
-                            file_context.push('\n');
-                        }
-                        ContextKind::FetchedUrl => {
-                            fetch_context.push_str(&context.name);
-                            fetch_context.push('\n');
-                            fetch_context.push_str(&context.text);
-                            fetch_context.push('\n');
-                        }
-                    }
-                }
-
-                let mut context_text = String::new();
-                if !file_context.is_empty() {
-                    context_text.push_str("The following files are available:\n");
-                    context_text.push_str(&file_context);
-                }
-
-                if !fetch_context.is_empty() {
-                    context_text.push_str("The following fetched results are available\n");
-                    context_text.push_str(&fetch_context);
-                }
-
-                request_message
-                    .content
-                    .push(MessageContent::Text(context_text))
+                attach_context_to_message(&mut request_message, context.clone());
             }
 
             if !message.text.is_empty() {

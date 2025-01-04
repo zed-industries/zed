@@ -51,10 +51,10 @@ Zed uses the [Tree-sitter](https://tree-sitter.github.io) parsing library to pro
 ```toml
 [grammars.gleam]
 repository = "https://github.com/gleam-lang/tree-sitter-gleam"
-commit = "58b7cac8fc14c92b0677c542610d8738c373fa81"
+rev = "58b7cac8fc14c92b0677c542610d8738c373fa81"
 ```
 
-The `repository` field must specify a repository where the Tree-sitter grammar should be loaded from, and the `commit` field must contain the SHA of the Git commit to use. An extension can provide multiple grammars by referencing multiple tree-sitter repositories.
+The `repository` field must specify a repository where the Tree-sitter grammar should be loaded from, and the `rev` field must contain a Git revision to use, such as the SHA of a Git commit. An extension can provide multiple grammars by referencing multiple tree-sitter repositories.
 
 ## Tree-sitter Queries
 
@@ -363,12 +363,12 @@ TBD: `#set! tag`
 
 Zed uses the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) to provide advanced language support.
 
-An extension may provide any number of language servers. To provide a language server from your extension, add an entry to your `extension.toml` with the name of your language server and the language it applies to:
+An extension may provide any number of language servers. To provide a language server from your extension, add an entry to your `extension.toml` with the name of your language server and the language(s) it applies to:
 
 ```toml
 [language_servers.my-language]
 name = "My Language LSP"
-language = "My Language"
+languages = ["My Language"]
 ```
 
 Then, in the Rust code for your extension, implement the `language_server_command` method on your extension:

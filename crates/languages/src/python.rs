@@ -117,30 +117,48 @@ impl LspAdapter for PythonLspAdapter {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
 
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(
-                Self::SERVER_NAME.as_ref(),
-                &server_path,
+        self.node
+            .npm_install_packages(
                 &container_dir,
-                &latest_version,
+                &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
             )
-            .await;
-
-        if should_install_language_server {
-            self.node
-                .npm_install_packages(
-                    &container_dir,
-                    &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
-                )
-                .await?;
-        }
+            .await?;
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
             env: None,
             arguments: server_binary_arguments(&server_path),
         })
+    }
+
+    async fn check_if_version_installed(
+        &self,
+        version: &(dyn 'static + Send + Any),
+        container_dir: &PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let version = version.downcast_ref::<String>().unwrap();
+        let server_path = container_dir.join(SERVER_PATH);
+
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(
+                Self::SERVER_NAME.as_ref(),
+                &server_path,
+                &container_dir,
+                &version,
+            )
+            .await;
+
+        if should_install_language_server {
+            None
+        } else {
+            Some(LanguageServerBinary {
+                path: self.node.binary_path().await.ok()?,
+                env: None,
+                arguments: server_binary_arguments(&server_path),
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -752,6 +770,12 @@ impl PyLspAdapter {
     }
 }
 
+const BINARY_DIR: &str = if cfg!(target_os = "windows") {
+    "Scripts"
+} else {
+    "bin"
+};
+
 #[async_trait(?Send)]
 impl LspAdapter for PyLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -793,7 +817,7 @@ impl LspAdapter for PyLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
-        let pip_path = venv.join("bin").join("pip3");
+        let pip_path = venv.join(BINARY_DIR).join("pip3");
         ensure!(
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
@@ -824,7 +848,7 @@ impl LspAdapter for PyLspAdapter {
                 .success(),
             "pylsp-mypy installation failed"
         );
-        let pylsp = venv.join("bin").join("pylsp");
+        let pylsp = venv.join(BINARY_DIR).join("pylsp");
         Ok(LanguageServerBinary {
             path: pylsp,
             env: None,
@@ -838,7 +862,7 @@ impl LspAdapter for PyLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.ok()?;
-        let pylsp = venv.join("bin").join("pylsp");
+        let pylsp = venv.join(BINARY_DIR).join("pylsp");
         Some(LanguageServerBinary {
             path: pylsp,
             env: None,

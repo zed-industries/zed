@@ -1,35 +1,54 @@
-use collections::HashMap;
+use crate::{git_status_icon, settings::GitPanelSettings};
+use crate::{CommitAllChanges, CommitStagedChanges, DiscardAll, StageAll, UnstageAll};
+use anyhow::{Context as _, Result};
+use db::kvp::KEY_VALUE_STORE;
+use editor::{
+    scroll::{Autoscroll, AutoscrollStrategy},
+    Editor, MultiBuffer, DEFAULT_MULTIBUFFER_CONTEXT,
+};
+use git::{
+    diff::DiffHunk,
+    repository::{GitFileStatus, RepoPath},
+};
+use gpui::*;
+use gpui::{
+    actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
+    CursorStyle, EventEmitter, FocusHandle, FocusableView, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent,
+    MouseButton, ScrollStrategy, Stateful, Task, UniformListScrollHandle, View, WeakView,
+};
+use language::{Buffer, BufferRow, OffsetRangeExt};
+use menu::{SelectNext, SelectPrev};
+use project::{EntryKind, Fs, Project, ProjectEntryId, ProjectPath, WorktreeId};
+use serde::{Deserialize, Serialize};
+use settings::Settings as _;
 use std::{
     cell::OnceCell,
     collections::HashSet,
     ffi::OsStr,
-    ops::Range,
-    path::{Path, PathBuf},
+    ops::{Deref, Range},
+    path::PathBuf,
+    rc::Rc,
     sync::Arc,
     time::Duration,
+    usize,
 };
-
-use git::repository::GitFileStatus;
-
-use util::{ResultExt, TryFutureExt};
-
-use db::kvp::KEY_VALUE_STORE;
-use gpui::*;
-use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
-use serde::{Deserialize, Serialize};
-use settings::Settings as _;
 use ui::{
-    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, ListItem, Scrollbar,
+    ScrollbarState, Tooltip,
 };
-use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::Workspace;
-
-use crate::{git_status_icon, settings::GitPanelSettings};
-use crate::{CommitAllChanges, CommitStagedChanges, DiscardAll, StageAll, UnstageAll};
+use util::{ResultExt, TryFutureExt};
+use workspace::{
+    dock::{DockPosition, Panel, PanelEvent},
+    ItemHandle, Workspace,
+};
+use worktree::StatusEntry;
 
 actions!(git_panel, [ToggleFocus]);
 
 const GIT_PANEL_KEY: &str = "GitPanel";
+
+const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -53,11 +72,13 @@ pub struct GitStatusEntry {}
 struct EntryDetails {
     filename: String,
     display_name: String,
-    path: Arc<Path>,
+    path: RepoPath,
     kind: EntryKind,
     depth: usize,
     is_expanded: bool,
     status: Option<GitFileStatus>,
+    hunks: Rc<OnceCell<Vec<DiffHunk>>>,
+    index: usize,
 }
 
 impl EntryDetails {
@@ -72,7 +93,7 @@ struct SerializedGitPanel {
 }
 
 pub struct GitPanel {
-    _workspace: WeakView<Workspace>,
+    workspace: WeakView<Workspace>,
     current_modifiers: Modifiers,
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
@@ -83,12 +104,50 @@ pub struct GitPanel {
     scrollbar_state: ScrollbarState,
     selected_item: Option<usize>,
     show_scrollbar: bool,
-    expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
+    // TODO Reintroduce expanded directories, once we're deriving directories from paths
+    // expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
 
     // The entries that are currently shown in the panel, aka
     // not hidden by folding or such
-    visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
+    visible_entries: Vec<WorktreeEntries>,
     width: Option<Pixels>,
+    git_diff_editor: Option<View<Editor>>,
+    git_diff_editor_updates: Task<()>,
+    reveal_in_editor: Task<()>,
+}
+
+#[derive(Debug, Clone)]
+struct WorktreeEntries {
+    worktree_id: WorktreeId,
+    // TODO support multiple repositories per worktree
+    work_directory: worktree::WorkDirectory,
+    visible_entries: Vec<GitPanelEntry>,
+    paths: Rc<OnceCell<HashSet<RepoPath>>>,
+}
+
+#[derive(Debug, Clone)]
+struct GitPanelEntry {
+    entry: worktree::StatusEntry,
+    hunks: Rc<OnceCell<Vec<DiffHunk>>>,
+}
+
+impl Deref for GitPanelEntry {
+    type Target = worktree::StatusEntry;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entry
+    }
+}
+
+impl WorktreeEntries {
+    fn paths(&self) -> &HashSet<RepoPath> {
+        self.paths.get_or_init(|| {
+            self.visible_entries
+                .iter()
+                .map(|e| (e.entry.repo_path.clone()))
+                .collect()
+        })
+    }
 }
 
 impl GitPanel {
@@ -96,11 +155,7 @@ impl GitPanel {
         workspace: WeakView<Workspace>,
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
-        cx.spawn(|mut cx| async move {
-            // Clippy incorrectly classifies this as a redundant closure
-            #[allow(clippy::redundant_closure)]
-            workspace.update(&mut cx, |workspace, cx| Self::new(workspace, cx))
-        })
+        cx.spawn(|mut cx| async move { workspace.update(&mut cx, Self::new) })
     }
 
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
@@ -115,17 +170,31 @@ impl GitPanel {
                 this.hide_scrollbar(cx);
             })
             .detach();
-            cx.subscribe(&project, |this, _project, event, cx| match event {
-                project::Event::WorktreeRemoved(id) => {
-                    this.expanded_dir_ids.remove(id);
-                    this.update_visible_entries(None, cx);
+            cx.subscribe(&project, |this, _, event, cx| match event {
+                project::Event::GitRepositoryUpdated => {
+                    this.update_visible_entries(None, None, cx);
+                }
+                project::Event::WorktreeRemoved(_id) => {
+                    // this.expanded_dir_ids.remove(id);
+                    this.update_visible_entries(None, None, cx);
                     cx.notify();
                 }
-                project::Event::WorktreeUpdatedEntries(_, _)
-                | project::Event::WorktreeAdded(_)
-                | project::Event::WorktreeOrderChanged => {
-                    this.update_visible_entries(None, cx);
+                project::Event::WorktreeOrderChanged => {
+                    this.update_visible_entries(None, None, cx);
                     cx.notify();
+                }
+                project::Event::WorktreeUpdatedEntries(id, _)
+                | project::Event::WorktreeAdded(id)
+                | project::Event::WorktreeUpdatedGitRepositories(id) => {
+                    this.update_visible_entries(Some(*id), None, cx);
+                    cx.notify();
+                }
+                project::Event::Closed => {
+                    this.git_diff_editor_updates = Task::ready(());
+                    this.reveal_in_editor = Task::ready(());
+                    // this.expanded_dir_ids.clear();
+                    this.visible_entries.clear();
+                    this.git_diff_editor = None;
                 }
                 _ => {}
             })
@@ -133,25 +202,27 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            let mut this = Self {
-                _workspace: weak_workspace,
+            let mut git_panel = Self {
+                workspace: weak_workspace,
                 focus_handle: cx.focus_handle(),
                 fs,
                 pending_serialization: Task::ready(None),
-                project,
                 visible_entries: Vec::new(),
                 current_modifiers: cx.modifiers(),
-                expanded_dir_ids: Default::default(),
-
+                // expanded_dir_ids: Default::default(),
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
                 scroll_handle,
                 selected_item: None,
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
+                git_diff_editor: Some(diff_display_editor(cx)),
+                git_diff_editor_updates: Task::ready(()),
+                reveal_in_editor: Task::ready(()),
+                project,
             };
-            this.update_visible_entries(None, cx);
-            this
+            git_panel.update_visible_entries(None, None, cx);
+            git_panel
         });
 
         git_panel
@@ -188,12 +259,12 @@ impl GitPanel {
     }
 
     fn should_show_scrollbar(_cx: &AppContext) -> bool {
-        // todo!(): plug into settings
+        // TODO: plug into settings
         true
     }
 
     fn should_autohide_scrollbar(_cx: &AppContext) -> bool {
-        // todo!(): plug into settings
+        // TODO: plug into settings
         true
     }
 
@@ -225,16 +296,16 @@ impl GitPanel {
     }
 
     fn calculate_depth_and_difference(
-        entry: &Entry,
-        visible_worktree_entries: &HashSet<Arc<Path>>,
+        entry: &StatusEntry,
+        visible_worktree_entries: &HashSet<RepoPath>,
     ) -> (usize, usize) {
         let (depth, difference) = entry
-            .path
+            .repo_path
             .ancestors()
             .skip(1) // Skip the entry itself
             .find_map(|ancestor| {
                 if let Some(parent_entry) = visible_worktree_entries.get(ancestor) {
-                    let entry_path_components_count = entry.path.components().count();
+                    let entry_path_components_count = entry.repo_path.components().count();
                     let parent_path_components_count = parent_entry.components().count();
                     let difference = entry_path_components_count - parent_path_components_count;
                     let depth = parent_entry
@@ -251,38 +322,114 @@ impl GitPanel {
 
         (depth, difference)
     }
+
+    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+        let item_count = self
+            .visible_entries
+            .iter()
+            .map(|worktree_entries| worktree_entries.visible_entries.len())
+            .sum::<usize>();
+        if item_count == 0 {
+            return;
+        }
+        let selection = match self.selected_item {
+            Some(i) => {
+                if i < item_count - 1 {
+                    self.selected_item = Some(i + 1);
+                    i + 1
+                } else {
+                    self.selected_item = Some(0);
+                    0
+                }
+            }
+            None => {
+                self.selected_item = Some(0);
+                0
+            }
+        };
+        self.scroll_handle
+            .scroll_to_item(selection, ScrollStrategy::Center);
+
+        let mut hunks = None;
+        self.for_each_visible_entry(selection..selection + 1, cx, |_, entry, _| {
+            hunks = Some(entry.hunks.clone());
+        });
+        if let Some(hunks) = hunks {
+            self.reveal_entry_in_git_editor(hunks, false, Some(UPDATE_DEBOUNCE), cx);
+        }
+
+        cx.notify();
+    }
+
+    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+        let item_count = self
+            .visible_entries
+            .iter()
+            .map(|worktree_entries| worktree_entries.visible_entries.len())
+            .sum::<usize>();
+        if item_count == 0 {
+            return;
+        }
+        let selection = match self.selected_item {
+            Some(i) => {
+                if i > 0 {
+                    self.selected_item = Some(i - 1);
+                    i - 1
+                } else {
+                    self.selected_item = Some(item_count - 1);
+                    item_count - 1
+                }
+            }
+            None => {
+                self.selected_item = Some(0);
+                0
+            }
+        };
+        self.scroll_handle
+            .scroll_to_item(selection, ScrollStrategy::Center);
+
+        let mut hunks = None;
+        self.for_each_visible_entry(selection..selection + 1, cx, |_, entry, _| {
+            hunks = Some(entry.hunks.clone());
+        });
+        if let Some(hunks) = hunks {
+            self.reveal_entry_in_git_editor(hunks, false, Some(UPDATE_DEBOUNCE), cx);
+        }
+
+        cx.notify();
+    }
 }
 
 impl GitPanel {
     fn stage_all(&mut self, _: &StageAll, _cx: &mut ViewContext<Self>) {
-        // todo!(): Implement stage all
+        // TODO: Implement stage all
         println!("Stage all triggered");
     }
 
     fn unstage_all(&mut self, _: &UnstageAll, _cx: &mut ViewContext<Self>) {
-        // todo!(): Implement unstage all
+        // TODO: Implement unstage all
         println!("Unstage all triggered");
     }
 
     fn discard_all(&mut self, _: &DiscardAll, _cx: &mut ViewContext<Self>) {
-        // todo!(): Implement discard all
+        // TODO: Implement discard all
         println!("Discard all triggered");
     }
 
     /// Commit all staged changes
     fn commit_staged_changes(&mut self, _: &CommitStagedChanges, _cx: &mut ViewContext<Self>) {
-        // todo!(): Implement commit all staged
+        // TODO: Implement commit all staged
         println!("Commit staged changes triggered");
     }
 
     /// Commit all changes, regardless of whether they are staged or not
     fn commit_all_changes(&mut self, _: &CommitAllChanges, _cx: &mut ViewContext<Self>) {
-        // todo!(): Implement commit all changes
+        // TODO: Implement commit all changes
         println!("Commit all changes triggered");
     }
 
     fn all_staged(&self) -> bool {
-        // todo!(): Implement all_staged
+        // TODO: Implement all_staged
         true
     }
 
@@ -293,12 +440,7 @@ impl GitPanel {
     fn entry_count(&self) -> usize {
         self.visible_entries
             .iter()
-            .map(|(_, entries, _)| {
-                entries
-                    .iter()
-                    .filter(|entry| entry.git_status.is_some())
-                    .count()
-            })
+            .map(|worktree_entries| worktree_entries.visible_entries.len())
             .sum()
     }
 
@@ -306,123 +448,333 @@ impl GitPanel {
         &self,
         range: Range<usize>,
         cx: &mut ViewContext<Self>,
-        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<Self>),
+        mut callback: impl FnMut(usize, EntryDetails, &mut ViewContext<Self>),
     ) {
         let mut ix = 0;
-        for (worktree_id, visible_worktree_entries, entries_paths) in &self.visible_entries {
+        for worktree_entries in &self.visible_entries {
             if ix >= range.end {
                 return;
             }
 
-            if ix + visible_worktree_entries.len() <= range.start {
-                ix += visible_worktree_entries.len();
+            if ix + worktree_entries.visible_entries.len() <= range.start {
+                ix += worktree_entries.visible_entries.len();
                 continue;
             }
 
-            let end_ix = range.end.min(ix + visible_worktree_entries.len());
+            let end_ix = range.end.min(ix + worktree_entries.visible_entries.len());
             // let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-            if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
+            if let Some(worktree) = self
+                .project
+                .read(cx)
+                .worktree_for_id(worktree_entries.worktree_id, cx)
+            {
                 let snapshot = worktree.read(cx).snapshot();
                 let root_name = OsStr::new(snapshot.root_name());
-                let expanded_entry_ids = self
-                    .expanded_dir_ids
-                    .get(&snapshot.id())
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]);
+                // let expanded_entry_ids = self
+                //     .expanded_dir_ids
+                //     .get(&snapshot.id())
+                //     .map(Vec::as_slice)
+                //     .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                let entries = entries_paths.get_or_init(|| {
-                    visible_worktree_entries
-                        .iter()
-                        .map(|e| (e.path.clone()))
-                        .collect()
-                });
+                let entries = worktree_entries.paths();
 
-                for entry in visible_worktree_entries[entry_range].iter() {
-                    let status = entry.git_status;
-                    let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
+                let index_start = entry_range.start;
+                for (i, entry) in worktree_entries.visible_entries[entry_range]
+                    .iter()
+                    .enumerate()
+                {
+                    let index = index_start + i;
+                    let status = entry.status;
+                    let is_expanded = true; //expanded_entry_ids.binary_search(&entry.id).is_ok();
 
                     let (depth, difference) = Self::calculate_depth_and_difference(entry, entries);
 
                     let filename = match difference {
                         diff if diff > 1 => entry
-                            .path
+                            .repo_path
                             .iter()
-                            .skip(entry.path.components().count() - diff)
+                            .skip(entry.repo_path.components().count() - diff)
                             .collect::<PathBuf>()
                             .to_str()
                             .unwrap_or_default()
                             .to_string(),
                         _ => entry
-                            .path
+                            .repo_path
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
                     };
 
-                    let display_name = entry.path.to_string_lossy().into_owned();
-
                     let details = EntryDetails {
                         filename,
-                        display_name,
-                        kind: entry.kind,
+                        display_name: entry.repo_path.to_string_lossy().into_owned(),
+                        // TODO get it from StatusEntry?
+                        kind: EntryKind::File,
                         is_expanded,
-                        path: entry.path.clone(),
-                        status,
+                        path: entry.repo_path.clone(),
+                        status: Some(status),
+                        hunks: entry.hunks.clone(),
                         depth,
+                        index,
                     };
-                    callback(entry.id, details, cx);
+                    callback(ix, details, cx);
                 }
             }
             ix = end_ix;
         }
     }
 
-    // todo!(): Update expanded directory state
+    // TODO: Update expanded directory state
+    // TODO: Updates happen in the main loop, could be long for large workspaces
     fn update_visible_entries(
         &mut self,
-        new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
+        for_worktree: Option<WorktreeId>,
+        _new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut ViewContext<Self>,
     ) {
         let project = self.project.read(cx);
-        self.visible_entries.clear();
+        let mut old_entries_removed = false;
+        let mut after_update = Vec::new();
+        self.visible_entries
+            .retain(|worktree_entries| match for_worktree {
+                Some(for_worktree) => {
+                    if worktree_entries.worktree_id == for_worktree {
+                        old_entries_removed = true;
+                        false
+                    } else if old_entries_removed {
+                        after_update.push(worktree_entries.clone());
+                        false
+                    } else {
+                        true
+                    }
+                }
+                None => false,
+            });
         for worktree in project.visible_worktrees(cx) {
             let snapshot = worktree.read(cx).snapshot();
             let worktree_id = snapshot.id();
 
-            let mut visible_worktree_entries = Vec::new();
-            let mut entry_iter = snapshot.entries(true, 0);
-            while let Some(entry) = entry_iter.entry() {
-                // Only include entries with a git status
-                if entry.git_status.is_some() {
-                    visible_worktree_entries.push(entry.clone());
-                }
-                entry_iter.advance();
+            if for_worktree.is_some() && for_worktree != Some(worktree_id) {
+                continue;
             }
 
-            snapshot.propagate_git_statuses(&mut visible_worktree_entries);
-            project::sort_worktree_entries(&mut visible_worktree_entries);
+            let mut visible_worktree_entries = Vec::new();
+            // Only use the first repository for now
+            let repositories = snapshot.repositories().take(1);
+            let mut work_directory = None;
+            for repository in repositories {
+                visible_worktree_entries.extend(repository.status());
+                work_directory = Some(worktree::WorkDirectory::clone(repository));
+            }
+
+            // TODO use the GitTraversal
+            // let mut visible_worktree_entries = snapshot
+            //     .entries(false, 0)
+            //     .filter(|entry| !entry.is_external)
+            //     .filter(|entry| entry.git_status.is_some())
+            //     .cloned()
+            //     .collect::<Vec<_>>();
+            // snapshot.propagate_git_statuses(&mut visible_worktree_entries);
+            // project::sort_worktree_entries(&mut visible_worktree_entries);
 
             if !visible_worktree_entries.is_empty() {
-                self.visible_entries
-                    .push((worktree_id, visible_worktree_entries, OnceCell::new()));
+                self.visible_entries.push(WorktreeEntries {
+                    worktree_id,
+                    work_directory: work_directory.unwrap(),
+                    visible_entries: visible_worktree_entries
+                        .into_iter()
+                        .map(|entry| GitPanelEntry {
+                            entry,
+                            hunks: Rc::default(),
+                        })
+                        .collect(),
+                    paths: Rc::default(),
+                });
             }
         }
+        self.visible_entries.extend(after_update);
 
-        if let Some((worktree_id, entry_id)) = new_selected_entry {
-            self.selected_item = self.visible_entries.iter().enumerate().find_map(
-                |(worktree_index, (id, entries, _))| {
-                    if *id == worktree_id {
-                        entries
-                            .iter()
-                            .position(|entry| entry.id == entry_id)
-                            .map(|entry_index| worktree_index * entries.len() + entry_index)
-                    } else {
-                        None
+        // TODO re-implement this
+        // if let Some((worktree_id, entry_id)) = new_selected_entry {
+        //     self.selected_item = self.visible_entries.iter().enumerate().find_map(
+        //         |(worktree_index, worktree_entries)| {
+        //             if worktree_entries.worktree_id == worktree_id {
+        //                 worktree_entries
+        //                     .visible_entries
+        //                     .iter()
+        //                     .position(|entry| entry.id == entry_id)
+        //                     .map(|entry_index| {
+        //                         worktree_index * worktree_entries.visible_entries.len()
+        //                             + entry_index
+        //                     })
+        //             } else {
+        //                 None
+        //             }
+        //         },
+        //     );
+        // }
+
+        let project = self.project.downgrade();
+        self.git_diff_editor_updates = cx.spawn(|git_panel, mut cx| async move {
+            cx.background_executor()
+                .timer(UPDATE_DEBOUNCE)
+                .await;
+            let Some(project_buffers) = git_panel
+                .update(&mut cx, |git_panel, cx| {
+                    futures::future::join_all(git_panel.visible_entries.iter_mut().flat_map(
+                        |worktree_entries| {
+                            worktree_entries
+                                .visible_entries
+                                .iter()
+                                .filter_map(|entry| {
+                                    let git_status = entry.status;
+                                    let entry_hunks = entry.hunks.clone();
+                                    let (entry_path, unstaged_changes_task) =
+                                        project.update(cx, |project, cx| {
+                                            let entry_path = ProjectPath {
+                                                worktree_id: worktree_entries.worktree_id,
+                                                path: worktree_entries.work_directory.unrelativize(&entry.repo_path)?,
+                                            };
+                                            let open_task =
+                                                project.open_path(entry_path.clone(), cx);
+                                            let unstaged_changes_task =
+                                                cx.spawn(|project, mut cx| async move {
+                                                    let (_, opened_model) = open_task
+                                                        .await
+                                                        .context("opening buffer")?;
+                                                    let buffer = opened_model
+                                                        .downcast::<Buffer>()
+                                                        .map_err(|_| {
+                                                            anyhow::anyhow!(
+                                                                "accessing buffer for entry"
+                                                            )
+                                                        })?;
+                                                    // TODO added files have noop changes and those are not expanded properly in the multi buffer
+                                                    let unstaged_changes = project
+                                                        .update(&mut cx, |project, cx| {
+                                                            project.open_unstaged_changes(
+                                                                buffer.clone(),
+                                                                cx,
+                                                            )
+                                                        })?
+                                                        .await
+                                                        .context("opening unstaged changes")?;
+
+                                                    let hunks = cx.update(|cx| {
+                                                        entry_hunks
+                                                            .get_or_init(|| {
+                                                                match git_status {
+                                                                    GitFileStatus::Added => {
+                                                                        let buffer_snapshot = buffer.read(cx).snapshot();
+                                                                        let entire_buffer_range =
+                                                                            buffer_snapshot.anchor_after(0)
+                                                                                ..buffer_snapshot
+                                                                                    .anchor_before(
+                                                                                        buffer_snapshot.len(),
+                                                                                    );
+                                                                        let entire_buffer_point_range =
+                                                                            entire_buffer_range
+                                                                                .clone()
+                                                                                .to_point(&buffer_snapshot);
+
+                                                                        vec![DiffHunk {
+                                                                            row_range: entire_buffer_point_range
+                                                                                .start
+                                                                                .row
+                                                                                ..entire_buffer_point_range
+                                                                                    .end
+                                                                                    .row,
+                                                                            buffer_range: entire_buffer_range,
+                                                                            diff_base_byte_range: 0..0,
+                                                                        }]
+                                                                    }
+                                                                    GitFileStatus::Modified => {
+                                                                            let buffer_snapshot =
+                                                                                buffer.read(cx).snapshot();
+                                                                            unstaged_changes.read(cx)
+                                                                                .diff_to_buffer
+                                                                                .hunks_in_row_range(
+                                                                                    0..BufferRow::MAX,
+                                                                                    &buffer_snapshot,
+                                                                                )
+                                                                                .collect()
+                                                                    }
+                                                                    // TODO support these
+                                                                    GitFileStatus::Conflict | GitFileStatus::Deleted | GitFileStatus::Untracked => Vec::new(),
+                                                                }
+                                                            }).clone()
+                                                    })?;
+
+                                                    anyhow::Ok((buffer, unstaged_changes, hunks))
+                                                });
+                                            Some((entry_path, unstaged_changes_task))
+                                        }).ok()??;
+                                    Some((entry_path, unstaged_changes_task))
+                                })
+                                .map(|(entry_path, open_task)| async move {
+                                    (entry_path, open_task.await)
+                                })
+                                .collect::<Vec<_>>()
+                        },
+                    ))
+                })
+                .ok()
+            else {
+                return;
+            };
+
+            let project_buffers = project_buffers.await;
+            if project_buffers.is_empty() {
+                return;
+            }
+            let mut change_sets = Vec::with_capacity(project_buffers.len());
+            if let Some(buffer_update_task) = git_panel
+                .update(&mut cx, |git_panel, cx| {
+                    let editor = git_panel.git_diff_editor.clone()?;
+                    let multi_buffer = editor.read(cx).buffer().clone();
+                    let mut buffers_with_ranges = Vec::with_capacity(project_buffers.len());
+                    for (buffer_path, open_result) in project_buffers {
+                        if let Some((buffer, unstaged_changes, diff_hunks)) = open_result
+                            .with_context(|| format!("opening buffer {buffer_path:?}"))
+                            .log_err()
+                        {
+                            change_sets.push(unstaged_changes);
+                            buffers_with_ranges.push((
+                                buffer,
+                                diff_hunks
+                                    .into_iter()
+                                    .map(|hunk| hunk.buffer_range)
+                                    .collect(),
+                            ));
+                        }
                     }
-                },
-            );
-        }
+
+                    Some(multi_buffer.update(cx, |multi_buffer, cx| {
+                        multi_buffer.clear(cx);
+                        multi_buffer.push_multiple_excerpts_with_context_lines(
+                            buffers_with_ranges,
+                            DEFAULT_MULTIBUFFER_CONTEXT,
+                            cx,
+                        )
+                    }))
+                })
+                .ok().flatten()
+            {
+                buffer_update_task.await;
+                git_panel
+                    .update(&mut cx, |git_panel, cx| {
+                        if let Some(diff_editor) = git_panel.git_diff_editor.as_ref() {
+                            diff_editor.update(cx, |editor, cx| {
+                                for change_set in change_sets {
+                                    editor.add_change_set(change_set, cx);
+                                }
+                            });
+                        }
+                    })
+                    .ok();
+            }
+        });
 
         cx.notify();
     }
@@ -626,17 +978,23 @@ impl GitPanel {
         let item_count = self
             .visible_entries
             .iter()
-            .map(|(_, worktree_entries, _)| worktree_entries.len())
+            .map(|worktree_entries| worktree_entries.visible_entries.len())
             .sum();
+        let selected_entry = self.selected_item;
         h_flex()
             .size_full()
             .overflow_hidden()
             .child(
                 uniform_list(cx.view().clone(), "entries", item_count, {
-                    |this, range, cx| {
+                    move |git_panel, range, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
-                        this.for_each_visible_entry(range, cx, |id, details, cx| {
-                            items.push(this.render_entry(id, details, cx));
+                        git_panel.for_each_visible_entry(range, cx, |id, details, cx| {
+                            items.push(git_panel.render_entry(
+                                id,
+                                Some(details.index) == selected_entry,
+                                details,
+                                cx,
+                            ));
                         });
                         items
                     }
@@ -652,16 +1010,17 @@ impl GitPanel {
 
     fn render_entry(
         &self,
-        id: ProjectEntryId,
+        ix: usize,
+        selected: bool,
         details: EntryDetails,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
-        let id = id.to_proto() as usize;
-        let checkbox_id = ElementId::Name(format!("checkbox_{}", id).into());
+        let checkbox_id = ElementId::Name(format!("checkbox_{}", ix).into());
         let is_staged = ToggleState::Selected;
+        let handle = cx.view().downgrade();
 
         h_flex()
-            .id(id)
+            .id(("git-panel-entry", ix))
             .h(px(28.))
             .w_full()
             .pl(px(12. + 12. * details.depth as f32))
@@ -676,7 +1035,117 @@ impl GitPanel {
             .when_some(details.status, |this, status| {
                 this.child(git_status_icon(status))
             })
-            .child(h_flex().gap_1p5().child(details.display_name.clone()))
+            .child(
+                ListItem::new(details.path.0.clone())
+                    .toggle_state(selected)
+                    .child(h_flex().gap_1p5().child(details.display_name.clone()))
+                    .on_click(move |e, cx| {
+                        handle
+                            .update(cx, |git_panel, cx| {
+                                git_panel.selected_item = Some(details.index);
+                                let change_focus = e.down.click_count > 1;
+                                git_panel.reveal_entry_in_git_editor(
+                                    details.hunks.clone(),
+                                    change_focus,
+                                    None,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    }),
+            )
+    }
+
+    fn reveal_entry_in_git_editor(
+        &mut self,
+        hunks: Rc<OnceCell<Vec<DiffHunk>>>,
+        change_focus: bool,
+        debounce: Option<Duration>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let Some(diff_editor) = self.git_diff_editor.clone() else {
+            return;
+        };
+        self.reveal_in_editor = cx.spawn(|_, mut cx| async move {
+            if let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
+            }
+
+            let Some(editor) = workspace
+                .update(&mut cx, |workspace, cx| {
+                    let git_diff_editor = workspace
+                        .items_of_type::<Editor>(cx)
+                        .find(|editor| &diff_editor == editor);
+                    match git_diff_editor {
+                        Some(existing_editor) => {
+                            workspace.activate_item(&existing_editor, true, change_focus, cx);
+                            existing_editor
+                        }
+                        None => {
+                            workspace.active_pane().update(cx, |pane, cx| {
+                                pane.add_item(
+                                    diff_editor.boxed_clone(),
+                                    true,
+                                    change_focus,
+                                    None,
+                                    cx,
+                                )
+                            });
+                            diff_editor.clone()
+                        }
+                    }
+                })
+                .ok()
+            else {
+                return;
+            };
+
+            if let Some(first_hunk) = hunks.get().and_then(|hunks| hunks.first()) {
+                let hunk_buffer_range = &first_hunk.buffer_range;
+                if let Some(buffer_id) = hunk_buffer_range
+                    .start
+                    .buffer_id
+                    .or_else(|| first_hunk.buffer_range.end.buffer_id)
+                {
+                    editor
+                        .update(&mut cx, |editor, cx| {
+                            let multi_buffer = editor.buffer().read(cx);
+                            let buffer = multi_buffer.buffer(buffer_id)?;
+                            let buffer_snapshot = buffer.read(cx).snapshot();
+                            let (excerpt_id, _) = multi_buffer
+                                .excerpts_for_buffer(&buffer, cx)
+                                .into_iter()
+                                .find(|(_, excerpt)| {
+                                    hunk_buffer_range
+                                        .start
+                                        .cmp(&excerpt.context.start, &buffer_snapshot)
+                                        .is_ge()
+                                        && hunk_buffer_range
+                                            .end
+                                            .cmp(&excerpt.context.end, &buffer_snapshot)
+                                            .is_le()
+                                })?;
+                            let multi_buffer_hunk_start = multi_buffer
+                                .snapshot(cx)
+                                .anchor_in_excerpt(excerpt_id, hunk_buffer_range.start)?;
+                            editor.change_selections(
+                                Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
+                                cx,
+                                |s| {
+                                    s.select_ranges(Some(
+                                        multi_buffer_hunk_start..multi_buffer_hunk_start,
+                                    ))
+                                },
+                            );
+                            cx.notify();
+                            Some(())
+                        })
+                        .ok()
+                        .flatten();
+                }
+            }
+        });
     }
 }
 
@@ -704,6 +1173,8 @@ impl Render for GitPanel {
                         this.commit_all_changes(&CommitAllChanges, cx)
                     }))
             })
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_prev))
             .on_hover(cx.listener(|this, hovered, cx| {
                 if *hovered {
                     this.show_scrollbar = true;
@@ -745,7 +1216,7 @@ impl Panel for GitPanel {
         "GitPanel"
     }
 
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         GitPanelSettings::get_global(cx).dock
     }
 
@@ -761,7 +1232,7 @@ impl Panel for GitPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| GitPanelSettings::get_global(cx).default_width)
     }
@@ -783,4 +1254,19 @@ impl Panel for GitPanel {
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
     }
+
+    fn activation_priority(&self) -> u32 {
+        2
+    }
+}
+
+fn diff_display_editor(cx: &mut WindowContext) -> View<Editor> {
+    cx.new_view(|cx| {
+        let multi_buffer = cx.new_model(|_| {
+            MultiBuffer::new(language::Capability::ReadWrite).with_title("Project diff".to_string())
+        });
+        let mut editor = Editor::for_multibuffer(multi_buffer, None, true, cx);
+        editor.set_expand_all_diff_hunks();
+        editor
+    })
 }

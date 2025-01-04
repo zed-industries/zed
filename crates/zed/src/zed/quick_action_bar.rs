@@ -6,11 +6,11 @@ use assistant::AssistantPanel;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,
-    SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine, ToggleOutline,
+    SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine,
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
+    Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
@@ -23,7 +23,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
-use zed_actions::InlineAssist;
+use zed_actions::{outline::ToggleOutline, InlineAssist};
 
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
@@ -168,7 +168,7 @@ impl Render for QuickActionBar {
                         }),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
-                .anchor(AnchorCorner::TopRight)
+                .anchor(Corner::TopRight)
                 .menu(move |cx| {
                     let focus = focus.clone();
                     let menu = ContextMenu::build(cx, move |menu, _| {
@@ -217,7 +217,7 @@ impl Render for QuickActionBar {
                             this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
                         }),
                 )
-                .anchor(AnchorCorner::TopRight)
+                .anchor(Corner::TopRight)
                 .with_handle(self.toggle_settings_handle.clone())
                 .menu(move |cx| {
                     let menu = ContextMenu::build(cx, |mut menu, _| {

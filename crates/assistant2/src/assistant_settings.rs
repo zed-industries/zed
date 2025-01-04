@@ -157,6 +157,22 @@ impl AssistantSettingsContent {
         }
     }
 
+    pub fn set_dock(&mut self, dock: AssistantDockPosition) {
+        match self {
+            AssistantSettingsContent::Versioned(settings) => match settings {
+                VersionedAssistantSettingsContent::V1(settings) => {
+                    settings.dock = Some(dock);
+                }
+                VersionedAssistantSettingsContent::V2(settings) => {
+                    settings.dock = Some(dock);
+                }
+            },
+            AssistantSettingsContent::Legacy(settings) => {
+                settings.dock = Some(dock);
+            }
+        }
+    }
+
     pub fn set_model(&mut self, language_model: Arc<dyn LanguageModel>) {
         let model = language_model.id().0.to_string();
         let provider = language_model.provider_id().0.to_string();

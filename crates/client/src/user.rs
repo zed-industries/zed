@@ -16,7 +16,9 @@ use util::TryFutureExt as _;
 
 pub type UserId = u64;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
+)]
 pub struct ChannelId(pub u64);
 
 impl std::fmt::Display for ChannelId {
