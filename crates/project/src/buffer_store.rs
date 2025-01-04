@@ -2275,7 +2275,7 @@ impl BufferChangeSet {
         cx: &mut ModelContext<Self>,
     ) -> oneshot::Receiver<()> {
         LineEnding::normalize(&mut base_text);
-        self.recalculate_diff_internal(base_text, buffer_snapshot, true, cx)
+        self.recalculate_diff_internal(Rope::from(base_text), buffer_snapshot, true, cx)
     }
 
     pub fn unset_base_text(
@@ -2297,8 +2297,13 @@ impl BufferChangeSet {
         buffer_snapshot: text::BufferSnapshot,
         cx: &mut ModelContext<Self>,
     ) -> oneshot::Receiver<()> {
-        if let Some(base_text) = self.base_text.clone() {
-            self.recalculate_diff_internal(base_text.read(cx).text(), buffer_snapshot, false, cx)
+        if let Some(base_text) = self.base_text.as_ref() {
+            self.recalculate_diff_internal(
+                base_text.read(cx).as_rope().clone(),
+                buffer_snapshot,
+                false,
+                cx,
+            )
         } else {
             oneshot::channel().1
         }
@@ -2306,7 +2311,7 @@ impl BufferChangeSet {
 
     fn recalculate_diff_internal(
         &mut self,
-        base_text: String,
+        base_text: Rope,
         buffer_snapshot: text::BufferSnapshot,
         base_text_changed: bool,
         cx: &mut ModelContext<Self>,
@@ -2325,7 +2330,7 @@ impl BufferChangeSet {
                 if base_text_changed {
                     this.base_text_version += 1;
                     this.base_text = Some(cx.new_model(|cx| {
-                        Buffer::local_normalized(Rope::from(base_text), LineEnding::default(), cx)
+                        Buffer::local_normalized(base_text, LineEnding::default(), cx)
                     }));
                 }
                 this.diff_to_buffer = diff;
