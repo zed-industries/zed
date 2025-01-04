@@ -5580,11 +5580,10 @@ impl LineWithInvisibles {
                             } else {
                                 invisibles.extend(
                                     line_chunk
-                                        .bytes()
+                                        .chars()
                                         .enumerate()
-                                        .filter(|(_, line_byte)| {
-                                            let is_whitespace =
-                                                (*line_byte as char).is_whitespace();
+                                        .filter(|(_, c)| {
+                                            let is_whitespace = c.is_whitespace();
                                             non_whitespace_added |= !is_whitespace;
                                             is_whitespace
                                                 && (non_whitespace_added || !is_soft_wrapped)
