@@ -152,7 +152,6 @@ members = [
     "extensions/csharp",
     "extensions/deno",
     "extensions/elixir",
-    "extensions/elm",
     "extensions/emmet",
     "extensions/erlang",
     "extensions/glsl",
