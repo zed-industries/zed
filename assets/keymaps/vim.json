@@ -259,7 +259,7 @@
       "shift-d": "vim::VisualDeleteLine",
       "shift-x": "vim::VisualDeleteLine",
       "y": "vim::VisualYank",
-      "shift-y": "vim::VisualYank",
+      "shift-y": "vim::VisualYankLine",
       "p": "vim::Paste",
       "shift-p": ["vim::Paste", { "preserveClipboard": true }],
       "s": "vim::Substitute",
