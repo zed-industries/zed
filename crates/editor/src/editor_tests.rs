@@ -10936,16 +10936,30 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
 async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
+    const ROOT_PATH: &str = if cfg!(target_os = "windows") {
+        "C:/a"
+    } else {
+        "/a"
+    };
+
+    fn to_path_buf(path: &str) -> PathBuf {
+        if cfg!(target_os = "windows") {
+            PathBuf::from(format!("C:{}", path))
+        } else {
+            PathBuf::from(path)
+        }
+    }
+
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        ROOT_PATH,
         json!({
             "main.rs": "fn main() { let a = 5; }",
             "other.rs": "// Test file",
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [ROOT_PATH.as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(Arc::new(Language::new(
@@ -10997,7 +11011,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/a/main.rs", cx)
+            project.open_local_buffer(to_path_buf("/a/main.rs"), cx)
         })
         .await
         .unwrap();
@@ -11017,7 +11031,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
         assert_eq!(
             params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            lsp::Url::from_file_path(to_path_buf("/a/main.rs")).unwrap(),
         );
         assert_eq!(
             params.text_document_position.position,
