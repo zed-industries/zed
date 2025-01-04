@@ -790,9 +790,38 @@ impl Fs for RealFs {
         })
         .expect("Could not start file watcher");
 
-        file_watcher
+        // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
+        if file_watcher
             .watch(path, notify::RecursiveMode::Recursive)
-            .log_err();
+            .is_err()
+        {
+            if let Some(parent) = path.parent() {
+                if let Err(e) = file_watcher.watch(parent, notify::RecursiveMode::Recursive) {
+                    log::warn!("Failed to watch: {e}");
+                }
+            }
+        }
+
+        // Check if path is a symlink and follow the target parent
+        if let Some(mut target) = self.read_link(&path).await.ok() {
+            // Check if symlink target is relative path, if so make it absolute
+            if target.is_relative() {
+                if let Some(parent) = path.parent() {
+                    target = parent.join(target);
+                    if let Ok(canonical) = self.canonicalize(&target).await {
+                        target = canonical;
+                    }
+                }
+            }
+            file_watcher
+                .watch(&target, notify::RecursiveMode::Recursive)
+                .log_err();
+            if let Some(parent) = target.parent() {
+                file_watcher
+                    .watch(parent, notify::RecursiveMode::Recursive)
+                    .log_err();
+            }
+        }
 
         (
             Box::pin(rx.chain(futures::stream::once(async move {
