@@ -124,13 +124,9 @@ impl Render for Breadcrumbs {
                             )
                         }
                     })
-                    .children(
-                        [breadcrumbs_stack.into_any_element()].into_iter().chain(
-                            dirty_indicator
-                                .map(|item| div().ml_1p5().child(item).into_any_element())
-                                .into_iter(),
-                        ),
-                    ),
+                    .children([breadcrumbs_stack.into_any_element()].into_iter().chain(
+                        dirty_indicator.map(|item| div().ml_1p5().child(item).into_any_element()),
+                    )),
             ),
             None => element
                 // Match the height of the `ButtonLike` in the other arm.
