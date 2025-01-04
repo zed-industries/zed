@@ -174,6 +174,15 @@ pub enum UuidVersion {
     V7,
 }
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct JoinLines {
+    #[serde(default)]
+    pub remove_indent: Option<bool>,
+    #[serde(default)]
+    pub separator: Option<String>,
+}
+
 impl_actions!(
     editor,
     [
@@ -204,7 +213,8 @@ impl_actions!(
         ToggleCodeActions,
         ToggleComments,
         UnfoldAt,
-        FoldAtLevel
+        FoldAtLevel,
+        JoinLines,
     ]
 );
 
@@ -282,7 +292,6 @@ gpui::actions!(
         Indent,
         InsertUuidV4,
         InsertUuidV7,
-        JoinLines,
         KillRingCut,
         KillRingYank,
         LineDown,

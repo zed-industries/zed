@@ -5851,7 +5851,7 @@ impl Editor {
         });
     }
 
-    pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
+    pub fn join_lines(&mut self, options: &JoinLines, cx: &mut ViewContext<Self>) {
         if self.read_only(cx) {
             return;
         }
@@ -5891,10 +5891,15 @@ impl Editor {
                     let end_of_line = Point::new(row.0, snapshot.line_len(row));
                     let next_line_row = row.next_row();
                     let indent = snapshot.indent_size_for_line(next_line_row);
-                    let start_of_next_line = Point::new(next_line_row.0, indent.len);
+                    let indent_len = if options.remove_indent.unwrap_or(true) {
+                        indent.len
+                    } else {
+                        0
+                    };
+                    let start_of_next_line = Point::new(next_line_row.0, indent_len);
 
-                    let replace = if snapshot.line_len(next_line_row) > indent.len {
-                        " "
+                    let replace = if snapshot.line_len(next_line_row) > indent_len {
+                        options.separator.as_deref().unwrap_or(" ")
                     } else {
                         ""
                     };
