@@ -517,12 +517,14 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_path_distance_ordering(cx: &mut TestAppContext) {
+    const PATTERN: &str = "/root";
+
     let app_state = init_test(cx);
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            "/root",
+            to_path_string("/root", PATTERN),
             json!({
                 "dir1": { "a.txt": "" },
                 "dir2": {
@@ -533,7 +535,12 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [to_path_string("/root", PATTERN).as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
 
     let worktree_id = cx.read(|cx| {
