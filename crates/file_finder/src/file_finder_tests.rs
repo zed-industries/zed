@@ -1238,13 +1238,15 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
 
 #[gpui::test]
 async fn test_non_separate_history_items(cx: &mut TestAppContext) {
+    const PATTERN: &str = "/src";
+
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            "/src",
+            to_path_string("/src", PATTERN),
             json!({
                 "test": {
                     "bar.rs": "// Bar file",
@@ -1257,7 +1259,12 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [to_path_string("/src", PATTERN).as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
     open_close_queried_buffer("bar", 1, "bar.rs", &workspace, cx).await;
