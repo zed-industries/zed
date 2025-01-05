@@ -27,7 +27,10 @@ use terminal::{
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
-use util::{paths::PathWithPosition, ResultExt};
+use util::{
+    paths::{PathWithPosition, SanitizedPath},
+    ResultExt,
+};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
     register_serializable_item,
@@ -783,7 +786,8 @@ fn possible_open_paths_metadata(
         let mut canonical_paths = HashSet::default();
         for path in potential_paths {
             if let Ok(canonical) = fs.canonicalize(&path).await {
-                canonical_paths.insert(canonical);
+                let sanitized = SanitizedPath::from(canonical);
+                canonical_paths.insert(sanitized.as_path().as_ref().to_path_buf());
             } else {
                 canonical_paths.insert(path);
             }
