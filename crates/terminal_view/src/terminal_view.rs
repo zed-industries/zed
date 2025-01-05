@@ -839,7 +839,10 @@ fn possible_open_targets(
                     .worktrees(cx)
                     .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
                 {
-                    potential_cwd_and_workspace_paths.insert(potential_worktree_path);
+                    let canonicalized_path = potential_worktree_path
+                        .canonicalize()
+                        .unwrap_or(potential_worktree_path);
+                    potential_cwd_and_workspace_paths.insert(canonicalized_path);
                 }
 
                 for prefix in GIT_DIFF_PATH_PREFIXES {
@@ -850,7 +853,10 @@ fn possible_open_targets(
                             .worktrees(cx)
                             .map(|worktree| worktree.read(cx).abs_path().join(&stripped))
                         {
-                            potential_cwd_and_workspace_paths.insert(potential_worktree_path);
+                            let canonicalized_path = potential_worktree_path
+                                .canonicalize()
+                                .unwrap_or(potential_worktree_path);
+                            potential_cwd_and_workspace_paths.insert(canonicalized_path);
                         }
                     }
                 }
