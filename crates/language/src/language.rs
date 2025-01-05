@@ -1850,10 +1850,12 @@ pub fn point_from_lsp(point: lsp::Position) -> Unclipped<PointUtf16> {
 }
 
 pub fn range_to_lsp(range: Range<PointUtf16>) -> lsp::Range {
-    lsp::Range {
-        start: point_to_lsp(range.start),
-        end: point_to_lsp(range.end),
+    let mut start = point_to_lsp(range.start);
+    let mut end = point_to_lsp(range.end);
+    if start > end {
+        mem::swap(&mut start, &mut end);
     }
+    lsp::Range { start, end }
 }
 
 pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
