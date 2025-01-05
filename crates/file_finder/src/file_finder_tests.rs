@@ -1412,13 +1412,15 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut TestAppContext) {
+    const PATTERN: &str = "/test";
+
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            "/test",
+            to_path_string("/test", PATTERN),
             json!({
                 "test": {
                     "1.txt": "// One",
@@ -1429,7 +1431,12 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [to_path_string("/test", PATTERN).as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
 
     open_close_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
@@ -1448,7 +1455,7 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
 
     // Add more files to the worktree to trigger update matches
     for i in 0..5 {
-        let filename = format!("/test/{}.txt", 4 + i);
+        let filename = to_path_string(&format!("/test/{}.txt", 4 + i), PATTERN);
         app_state
             .fs
             .create_file(Path::new(&filename), Default::default())
