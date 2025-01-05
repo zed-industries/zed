@@ -1446,13 +1446,19 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
 
 #[gpui::test]
 async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppContext) {
+    const ROOT_PATH: &str = if cfg!(target_os = "windows") {
+        "C:/src"
+    } else {
+        "/src"
+    };
+
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            "/src",
+            ROOT_PATH,
             json!({
                 "collab_ui": {
                     "first.rs": "// First Rust file",
@@ -1464,7 +1470,7 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [ROOT_PATH.as_ref()], cx).await;
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     // generate some history to select from
     open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;

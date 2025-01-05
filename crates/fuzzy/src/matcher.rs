@@ -173,6 +173,8 @@ impl<'a> Matcher<'a> {
         path_idx: usize,
         cur_score: f64,
     ) -> f64 {
+        use std::path::MAIN_SEPARATOR;
+
         if query_idx == self.query.len() {
             return 1.0;
         }
@@ -196,12 +198,14 @@ impl<'a> Matcher<'a> {
             } else {
                 path_cased[j - prefix.len()]
             };
-            let is_path_sep = path_char == '/' || path_char == '\\';
+            let is_path_sep = path_char == MAIN_SEPARATOR;
 
             if query_idx == 0 && is_path_sep {
                 last_slash = j;
             }
 
+            // FIXME:
+            // `query_char == '\\'` may break on Windows, `\` is only used as a path separator on Windows.
             if query_char == path_char || (is_path_sep && query_char == '_' || query_char == '\\') {
                 let curr = if j < prefix.len() {
                     prefix[j]
@@ -217,7 +221,7 @@ impl<'a> Matcher<'a> {
                         path[j - 1 - prefix.len()]
                     };
 
-                    if last == '/' {
+                    if last == MAIN_SEPARATOR {
                         char_score = 0.9;
                     } else if (last == '-' || last == '_' || last == ' ' || last.is_numeric())
                         || (last.is_lowercase() && curr.is_uppercase())
@@ -238,7 +242,7 @@ impl<'a> Matcher<'a> {
                 // Apply a severe penalty if the case doesn't match.
                 // This will make the exact matches have higher score than the case-insensitive and the
                 // path insensitive matches.
-                if (self.smart_case || curr == '/') && self.query[query_idx] != curr {
+                if (self.smart_case || curr == MAIN_SEPARATOR) && self.query[query_idx] != curr {
                     char_score *= 0.001;
                 }
 
