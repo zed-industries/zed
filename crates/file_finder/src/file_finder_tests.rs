@@ -1120,13 +1120,15 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppContext) {
+    const PATTERN: &str = "/root";
+
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            "/root",
+            to_path_string("/root", PATTERN),
             json!({
                 "test": {
                     "1_qw": "",
@@ -1135,7 +1137,12 @@ async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppCon
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [to_path_string("/root", PATTERN).as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
     // Open new buffer
     open_queried_buffer("1", 1, "1_qw", &workspace, cx).await;
