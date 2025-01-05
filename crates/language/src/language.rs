@@ -1853,6 +1853,7 @@ pub fn range_to_lsp(range: Range<PointUtf16>) -> lsp::Range {
     let mut start = point_to_lsp(range.start);
     let mut end = point_to_lsp(range.end);
     if start > end {
+        log::error!("range_to_lsp called with inverted range {start:?}-{end:?}");
         mem::swap(&mut start, &mut end);
     }
     lsp::Range { start, end }
@@ -1862,6 +1863,7 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
     let mut start = point_from_lsp(range.start);
     let mut end = point_from_lsp(range.end);
     if start > end {
+        log::warn!("range_from_lsp called with inverted range {start:?}-{end:?}");
         mem::swap(&mut start, &mut end);
     }
     start..end
