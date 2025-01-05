@@ -889,15 +889,13 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                             }),
                     ),
             )
-            .child(
-                div().when_some(diagnostic.source.as_ref(), |stack, source| {
-                    stack.child(
-                        div()
-                            .child(SharedString::from(source.clone()))
-                            .text_color(color.text_muted),
-                    )
-                }),
-            )
+            .when_some(diagnostic.source.as_ref(), |stack, source| {
+                stack.child(
+                    div()
+                        .child(SharedString::from(source.clone()))
+                        .text_color(color.text_muted),
+                )
+            })
             .into_any_element()
     })
 }
