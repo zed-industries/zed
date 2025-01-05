@@ -952,13 +952,15 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
+    const PATTERN: &str = "/src";
+
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            "/src",
+            to_path_string("/src", PATTERN),
             json!({
                 "test": {
                     "first.rs": "// First Rust file",
@@ -970,7 +972,12 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [to_path_string("/src", PATTERN).as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -1001,7 +1008,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
-                Some(PathBuf::from("/src/test/first.rs"))
+                Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
             ));
             assert_eq!(matches.search.len(), 1, "Only one non-history item contains {first_query}, it should be present");
             assert_eq!(matches.search.first().unwrap(), Path::new("test/fourth.rs"));
@@ -1042,7 +1049,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
-                Some(PathBuf::from("/src/test/first.rs"))
+                Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
             ));
             assert_eq!(matches.search.len(), 1, "Only one non-history item contains {first_query_again}, it should be present, even after non-matching query");
             assert_eq!(matches.search.first().unwrap(), Path::new("test/fourth.rs"));
