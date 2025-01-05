@@ -4,12 +4,13 @@ use gpui::{
     Subscription, ViewContext,
 };
 use itertools::Itertools;
+use settings::Settings;
 use std::cmp;
 use theme::ActiveTheme;
 use ui::{prelude::*, ButtonLike, ButtonStyle, Label, Tooltip};
 use workspace::{
     item::{BreadcrumbText, ItemEvent, ItemHandle},
-    pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    pane, TabBarSettings, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
 };
 
 pub struct Breadcrumbs {
@@ -124,9 +125,14 @@ impl Render for Breadcrumbs {
                             )
                         }
                     })
-                    .children([breadcrumbs_stack.into_any_element()].into_iter().chain(
-                        dirty_indicator.map(|item| div().ml_1p5().child(item).into_any_element()),
-                    )),
+                    .children(
+                        [breadcrumbs_stack.into_any_element()].into_iter().chain(
+                            (!TabBarSettings::get_global(cx).show)
+                                .then(|| dirty_indicator)
+                                .flatten()
+                                .map(|item| div().ml_1p5().child(item).into_any_element()),
+                        ),
+                    ),
             ),
             None => element
                 // Match the height of the `ButtonLike` in the other arm.

@@ -1935,6 +1935,7 @@ dependencies = [
  "gpui",
  "itertools 0.13.0",
  "outline",
+ "settings",
  "theme",
  "ui",
  "workspace",
