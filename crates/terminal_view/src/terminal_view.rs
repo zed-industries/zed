@@ -787,7 +787,7 @@ fn possible_open_paths_metadata(
         for path in potential_paths {
             if let Ok(canonical) = fs.canonicalize(&path).await {
                 let sanitized = SanitizedPath::from(canonical);
-                canonical_paths.insert(sanitized.as_path().as_ref().to_path_buf());
+                canonical_paths.insert(sanitized.as_path().to_path_buf());
             } else {
                 canonical_paths.insert(path);
             }
