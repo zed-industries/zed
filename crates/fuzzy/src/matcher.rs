@@ -373,7 +373,7 @@ mod tests {
         );
     }
 
-    /// TODO:
+    /// todo(windows)
     /// Now, on Windows, users can only use the backslash as a path separator.
     /// I do want to support both the backslash and the forward slash as path separators on Windows.
     #[cfg(target_os = "windows")]
