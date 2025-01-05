@@ -1505,13 +1505,15 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
 
 #[gpui::test]
 async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext) {
+    const PATTERN: &str = "/src";
+
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            "/src",
+            to_path_string("/src", PATTERN),
             json!({
                 "test": {
                     "first.rs": "// First Rust file",
@@ -1522,7 +1524,12 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [to_path_string("/src", PATTERN).as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx)); // generate some history to select from
     open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
     open_close_queried_buffer("non", 1, "nonexistent.rs", &workspace, cx).await;
@@ -1531,7 +1538,7 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     app_state
         .fs
         .remove_file(
-            Path::new("/src/test/nonexistent.rs"),
+            Path::new(&to_path_string("/src/test/nonexistent.rs", PATTERN)),
             RemoveOptions::default(),
         )
         .await
