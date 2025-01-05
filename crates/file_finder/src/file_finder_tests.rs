@@ -617,13 +617,15 @@ async fn test_search_worktree_without_files(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_query_history(cx: &mut gpui::TestAppContext) {
+    const PATTERN: &str = "/src";
+
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            "/src",
+            to_path_string("/src", PATTERN),
             json!({
                 "test": {
                     "first.rs": "// First Rust file",
@@ -634,7 +636,12 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [to_path_string("/src", PATTERN).as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -665,7 +672,7 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
                 worktree_id,
                 path: Arc::from(Path::new("test/first.rs")),
             },
-            Some(PathBuf::from("/src/test/first.rs"))
+            Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
         )],
         "Should show 1st opened item in the history when opening the 2nd item"
     );
@@ -680,14 +687,17 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
                     worktree_id,
                     path: Arc::from(Path::new("test/second.rs")),
                 },
-                Some(PathBuf::from("/src/test/second.rs"))
+                Some(PathBuf::from(to_path_string(
+                    "/src/test/second.rs",
+                    PATTERN
+                )))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
-                Some(PathBuf::from("/src/test/first.rs"))
+                Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
             ),
         ],
         "Should show 1st and 2nd opened items in the history when opening the 3rd item. \
@@ -704,21 +714,21 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
                             worktree_id,
                             path: Arc::from(Path::new("test/third.rs")),
                         },
-                        Some(PathBuf::from("/src/test/third.rs"))
+                        Some(PathBuf::from(to_path_string("/src/test/third.rs", PATTERN)))
                     ),
                     FoundPath::new(
                         ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/second.rs")),
                         },
-                        Some(PathBuf::from("/src/test/second.rs"))
+                        Some(PathBuf::from(to_path_string("/src/test/second.rs", PATTERN)))
                     ),
                     FoundPath::new(
                         ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/first.rs")),
                         },
-                        Some(PathBuf::from("/src/test/first.rs"))
+                        Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
                     ),
                 ],
                 "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
@@ -735,21 +745,21 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
                             worktree_id,
                             path: Arc::from(Path::new("test/second.rs")),
                         },
-                        Some(PathBuf::from("/src/test/second.rs"))
+                        Some(PathBuf::from(to_path_string("/src/test/second.rs", PATTERN)))
                     ),
                     FoundPath::new(
                         ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/third.rs")),
                         },
-                        Some(PathBuf::from("/src/test/third.rs"))
+                        Some(PathBuf::from(to_path_string("/src/test/third.rs", PATTERN)))
                     ),
                     FoundPath::new(
                         ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/first.rs")),
                         },
-                        Some(PathBuf::from("/src/test/first.rs"))
+                        Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
                     ),
                 ],
                 "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
