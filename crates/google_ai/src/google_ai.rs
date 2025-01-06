@@ -154,7 +154,7 @@ pub struct Content {
     pub role: Role,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Role {
     User,
