@@ -2660,14 +2660,14 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "a.ts": "",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [to_path_string("/dir").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(typescript_lang());
@@ -2686,7 +2686,9 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     );
 
     let (buffer, _handle) = project
-        .update(cx, |p, cx| p.open_local_buffer_with_lsp("/dir/a.ts", cx))
+        .update(cx, |p, cx| {
+            p.open_local_buffer_with_lsp(to_path_string("/dir/a.ts"), cx)
+        })
         .await
         .unwrap();
 
