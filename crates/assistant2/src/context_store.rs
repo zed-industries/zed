@@ -77,12 +77,12 @@ impl ContextStore {
 
         let name = path.to_string_lossy().into_owned().into();
 
-        self.context.push(dbg!(Context {
+        self.context.push(Context {
             id,
             name,
             kind: ContextKind::Directory,
             text: text.into(),
-        }));
+        });
     }
 
     pub fn insert_thread(&mut self, thread: &Thread) {
