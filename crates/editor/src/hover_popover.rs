@@ -3,7 +3,7 @@ use crate::{
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
-    Hover, RangeToAnchorExt,
+    Hover,
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, FontWeight, Hsla, InteractiveElement, IntoElement,
@@ -277,12 +277,8 @@ fn show_hover(
             let primary_diagnostic = local_diagnostic.as_ref().and_then(|local_diagnostic| {
                 snapshot
                     .buffer_snapshot
-                    .diagnostic_group::<usize>(local_diagnostic.diagnostic.group_id)
+                    .diagnostic_group(local_diagnostic.diagnostic.group_id)
                     .find(|diagnostic| diagnostic.diagnostic.is_primary)
-                    .map(|entry| DiagnosticEntry {
-                        diagnostic: entry.diagnostic,
-                        range: entry.range.to_anchors(&snapshot.buffer_snapshot),
-                    })
             });
             if let Some(invisible) = snapshot
                 .buffer_snapshot
