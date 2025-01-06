@@ -5015,14 +5015,14 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "a.tsx": "a",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [to_path_string("/dir").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(tsx_lang());
@@ -5080,7 +5080,9 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
     ];
 
     let (buffer, _handle) = project
-        .update(cx, |p, cx| p.open_local_buffer_with_lsp("/dir/a.tsx", cx))
+        .update(cx, |p, cx| {
+            p.open_local_buffer_with_lsp(to_path_string("/dir/a.tsx"), cx)
+        })
         .await
         .unwrap();
     cx.executor().run_until_parked();
