@@ -187,6 +187,22 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
             return;
         };
         let path = mat.path.clone();
+
+        if self
+            .context_store
+            .update(cx, |context_store, _cx| {
+                if let Some(context_id) = context_store.included_directory(&path) {
+                    context_store.remove_context(&context_id);
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(true)
+        {
+            return;
+        }
+
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
@@ -239,11 +255,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
-                        if let Some(context_id) = context_store.included_directory(&path) {
-                            context_store.remove_context(&context_id);
-                        } else {
-                            context_store.insert_directory(&path, text);
-                        }
+                        context_store.insert_directory(&path, text);
                     })?;
 
                 match confirm_behavior {

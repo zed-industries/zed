@@ -201,6 +201,24 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
         let path = mat.path.clone();
+
+        if self
+            .context_store
+            .update(cx, |context_store, _cx| {
+                match context_store.included_file(&path) {
+                    Some(IncludedFile::Direct(context_id)) => {
+                        context_store.remove_context(&context_id);
+                        true
+                    }
+                    Some(IncludedFile::InDirectory(_)) => true,
+                    None => false,
+                }
+            })
+            .unwrap_or(true)
+        {
+            return;
+        }
+
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
@@ -227,17 +245,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, cx| {
-                        match context_store.included_file(&path) {
-                            Some(IncludedFile::Direct(context_id)) => {
-                                context_store.remove_context(&context_id);
-                            }
-                            Some(IncludedFile::InDirectory(_)) => {
-                                // Cannot remove whole directory
-                            }
-                            None => {
-                                context_store.insert_file(buffer.read(cx));
-                            }
-                        }
+                        context_store.insert_file(buffer.read(cx));
                     })?;
 
                 match confirm_behavior {
