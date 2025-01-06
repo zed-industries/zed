@@ -61,6 +61,13 @@ pub enum Event {
     Focus,
 }
 
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
+pub enum ViewMode {
+    #[default]
+    List,
+    Tree,
+}
+
 pub struct GitStatusEntry {}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -98,6 +105,7 @@ pub struct GitPanel {
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
     selected_item: Option<usize>,
+    view_mode: ViewMode,
     show_scrollbar: bool,
     // TODO Reintroduce expanded directories, once we're deriving directories from paths
     // expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
@@ -206,6 +214,7 @@ impl GitPanel {
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
                 scroll_handle,
                 selected_item: None,
+                view_mode: ViewMode::default(),
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 // git_diff_editor: Some(diff_display_editor(cx)),
@@ -1008,45 +1017,57 @@ impl GitPanel {
         details: EntryDetails,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
+        let view_mode = self.view_mode.clone();
         let checkbox_id = ElementId::Name(format!("checkbox_{}", ix).into());
         let is_staged = ToggleState::Selected;
         let handle = cx.view().downgrade();
 
-        h_flex()
+        let mut entry = h_flex()
             .id(("git-panel-entry", ix))
             .h(px(28.))
             .w_full()
-            .pl(px(12. + 12. * details.depth as f32))
             .pr(px(4.))
             .items_center()
             .gap_2()
             .font_buffer(cx)
             .text_ui_sm(cx)
-            .when(!details.is_dir(), |this| {
-                this.child(Checkbox::new(checkbox_id, is_staged))
-            })
+            .when(!selected, |this| {
+                this.hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+            });
+
+        if view_mode == ViewMode::Tree {
+            entry = entry.pl(px(12. + 12. * details.depth as f32))
+        } else {
+            entry = entry.pl(px(12.))
+        }
+
+        if selected {
+            entry = entry.bg(cx.theme().status().info_background);
+        }
+
+        entry = entry
+            .child(Checkbox::new(checkbox_id, is_staged))
             .when_some(details.status, |this, status| {
                 this.child(git_status_icon(status))
             })
-            .child(
-                ListItem::new(details.path.0.clone())
-                    .toggle_state(selected)
-                    .child(h_flex().gap_1p5().child(details.display_name.clone()))
-                    .on_click(move |e, cx| {
-                        handle
-                            .update(cx, |git_panel, cx| {
-                                git_panel.selected_item = Some(details.index);
-                                let change_focus = e.down.click_count > 1;
-                                git_panel.reveal_entry_in_git_editor(
-                                    details.hunks.clone(),
-                                    change_focus,
-                                    None,
-                                    cx,
-                                );
-                            })
-                            .ok();
-                    }),
-            )
+            .child(h_flex().gap_1p5().child(details.display_name.clone()))
+            // TODO: Only fire this if the entry is not currently revealed, otherwise the ui flashes
+            .on_click(move |e, cx| {
+                handle
+                    .update(cx, |git_panel, cx| {
+                        git_panel.selected_item = Some(details.index);
+                        let change_focus = e.down.click_count > 1;
+                        git_panel.reveal_entry_in_git_editor(
+                            details.hunks.clone(),
+                            change_focus,
+                            None,
+                            cx,
+                        );
+                    })
+                    .ok();
+            });
+
+        entry
     }
 
     fn reveal_entry_in_git_editor(
