@@ -2587,7 +2587,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "a.rs": "const fn a() { A }",
             "b.rs": "const y: i32 = crate::a()",
@@ -2595,7 +2595,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs, ["/dir/b.rs".as_ref()], cx).await;
+    let project = Project::test(fs, [to_path_string("/dir/b.rs").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -2603,7 +2603,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 
     let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/b.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/b.rs"), cx)
         })
         .await
         .unwrap();
@@ -2613,13 +2613,13 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         let params = params.text_document_position_params;
         assert_eq!(
             params.text_document.uri.to_file_path().unwrap(),
-            Path::new("/dir/b.rs"),
+            Path::new(&to_path_string("/dir/b.rs")),
         );
         assert_eq!(params.position, lsp::Position::new(0, 22));
 
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+                lsp::Url::from_file_path(to_path_string("/dir/a.rs")).unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
             ),
         )))
@@ -2645,18 +2645,24 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
                 .as_local()
                 .unwrap()
                 .abs_path(cx),
-            Path::new("/dir/a.rs"),
+            Path::new(&to_path_string("/dir/a.rs")),
         );
         assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);
         assert_eq!(
             list_worktrees(&project, cx),
-            [("/dir/a.rs".as_ref(), false), ("/dir/b.rs".as_ref(), true)],
+            [
+                (to_path_string("/dir/a.rs").as_ref(), false),
+                (to_path_string("/dir/b.rs").as_ref(), true)
+            ],
         );
 
         drop(definition);
     });
     cx.update(|cx| {
-        assert_eq!(list_worktrees(&project, cx), [("/dir/b.rs".as_ref(), true)]);
+        assert_eq!(
+            list_worktrees(&project, cx),
+            [(to_path_string("/dir/b.rs").as_ref(), true)]
+        );
     });
 
     fn list_worktrees<'a>(project: &'a Entity<Project>, cx: &'a App) -> Vec<(&'a Path, bool)> {
