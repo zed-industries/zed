@@ -232,11 +232,13 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
     float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
     alpha = saturate(0.5 - distance);
   } else {
+    // The signal is only non-zero in a limited range, so don't waste samples
     float low = point.y - half_size.y;
     float high = point.y + half_size.y;
     float start = clamp(-3. * shadow.blur_radius, low, high);
     float end = clamp(3. * shadow.blur_radius, low, high);
 
+    // Accumulate samples (we can get away with surprisingly few samples)
     float step = (end - start) / 4.;
     float y = start + step * 0.5;
     alpha = 0.;
