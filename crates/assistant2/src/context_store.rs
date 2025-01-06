@@ -59,13 +59,15 @@ impl ContextStore {
         self.files.insert(path.to_path_buf(), id);
 
         let name = path.to_string_lossy().into_owned().into();
-        let text = codeblock(path, buffer.text()).into();
+
+        let mut text = String::new();
+        push_fenced_codeblock(path, buffer.text(), &mut text);
 
         self.context.push(Context {
             id,
             name,
             kind: ContextKind::File,
-            text,
+            text: text.into(),
         });
     }
 
@@ -75,12 +77,12 @@ impl ContextStore {
 
         let name = path.to_string_lossy().into_owned().into();
 
-        self.context.push(Context {
+        self.context.push(dbg!(Context {
             id,
             name,
             kind: ContextKind::Directory,
             text: text.into(),
-        });
+        }));
     }
 
     pub fn insert_thread(&mut self, thread: &Thread) {
@@ -166,25 +168,23 @@ pub enum IncludedFile {
     InDirectory(PathBuf),
 }
 
-pub(crate) fn codeblock(path: &Path, content: String) -> String {
-    let mut text = String::with_capacity(content.len() + 64);
+pub(crate) fn push_fenced_codeblock(path: &Path, content: String, buf: &mut String) {
+    buf.reserve(content.len() + 64);
 
-    write!(text, "```").unwrap();
+    write!(buf, "```").unwrap();
 
     if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-        write!(text, "{} ", extension).unwrap();
+        write!(buf, "{} ", extension).unwrap();
     }
 
-    write!(text, "{}", path.display()).unwrap();
+    write!(buf, "{}", path.display()).unwrap();
 
-    text.push('\n');
-    text.push_str(&content);
+    buf.push('\n');
+    buf.push_str(&content);
 
-    if !text.ends_with('\n') {
-        text.push('\n');
+    if !buf.ends_with('\n') {
+        buf.push('\n');
     }
 
-    text.push_str("```\n");
-
-    text
+    buf.push_str("```\n");
 }
