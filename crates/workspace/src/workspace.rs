@@ -743,6 +743,7 @@ pub struct Workspace {
     weak_self: WeakView<Self>,
     workspace_actions: Vec<Box<dyn Fn(Div, &mut ViewContext<Self>) -> Div>>,
     zoomed: Option<AnyWeakView>,
+    previous_dock_drag_coordinates: Option<Point<Pixels>>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
     left_dock: View<Dock>,
@@ -1044,6 +1045,7 @@ impl Workspace {
             weak_self: weak_handle.clone(),
             zoomed: None,
             zoomed_position: None,
+            previous_dock_drag_coordinates: None,
             center: PaneGroup::new(center_pane.clone()),
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
@@ -4906,34 +4908,40 @@ impl Render for Workspace {
                                 })
                                 .when(self.zoomed.is_none(), |this| {
                                     this.on_drag_move(cx.listener(
-                                        |workspace, e: &DragMoveEvent<DraggedDock>, cx| {
-                                            match e.drag(cx).0 {
-                                                DockPosition::Left => {
-                                                    resize_left_dock(
-                                                        e.event.position.x
-                                                            - workspace.bounds.left(),
-                                                        workspace,
-                                                        cx,
-                                                    );
-                                                }
-                                                DockPosition::Right => {
-                                                    resize_right_dock(
-                                                        workspace.bounds.right()
-                                                            - e.event.position.x,
-                                                        workspace,
-                                                        cx,
-                                                    );
-                                                }
-                                                DockPosition::Bottom => {
-                                                    resize_bottom_dock(
-                                                        workspace.bounds.bottom()
-                                                            - e.event.position.y,
-                                                        workspace,
-                                                        cx,
-                                                    );
-                                                }
-                                            };
-                                            workspace.serialize_workspace(cx);
+                                        move |workspace, e: &DragMoveEvent<DraggedDock>, cx| {
+                                            if workspace.previous_dock_drag_coordinates
+                                                != Some(e.event.position)
+                                            {
+                                                workspace.previous_dock_drag_coordinates =
+                                                    Some(e.event.position);
+                                                match e.drag(cx).0 {
+                                                    DockPosition::Left => {
+                                                        resize_left_dock(
+                                                            e.event.position.x
+                                                                - workspace.bounds.left(),
+                                                            workspace,
+                                                            cx,
+                                                        );
+                                                    }
+                                                    DockPosition::Right => {
+                                                        resize_right_dock(
+                                                            workspace.bounds.right()
+                                                                - e.event.position.x,
+                                                            workspace,
+                                                            cx,
+                                                        );
+                                                    }
+                                                    DockPosition::Bottom => {
+                                                        resize_bottom_dock(
+                                                            workspace.bounds.bottom()
+                                                                - e.event.position.y,
+                                                            workspace,
+                                                            cx,
+                                                        );
+                                                    }
+                                                };
+                                                workspace.serialize_workspace(cx);
+                                            }
                                         },
                                     ))
                                 })
