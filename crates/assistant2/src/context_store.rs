@@ -39,6 +39,8 @@ impl ContextStore {
     pub fn drain(&mut self) -> Vec<Context> {
         self.files.clear();
         self.directories.clear();
+        self.threads.clear();
+        self.fetched_urls.clear();
         self.context.drain(..).collect()
     }
 
@@ -46,6 +48,8 @@ impl ContextStore {
         self.context.clear();
         self.files.clear();
         self.directories.clear();
+        self.threads.clear();
+        self.fetched_urls.clear();
     }
 
     pub fn insert_file(&mut self, buffer: &Buffer) {
