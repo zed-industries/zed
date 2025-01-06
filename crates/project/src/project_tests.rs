@@ -1255,7 +1255,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "a.rs": "fn a() { A }",
             "b.rs": "const y: i32 = 1",
@@ -1263,7 +1263,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [to_path_string("/dir").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(rust_lang());
@@ -1281,7 +1281,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     // Cause worktree to start the fake language server
     let _ = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/b.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/b.rs"), cx)
         })
         .await
         .unwrap();
@@ -1310,7 +1310,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     );
 
     fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
-        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: Url::from_file_path(to_path_string("/dir/a.rs")).unwrap(),
         version: None,
         diagnostics: vec![lsp::Diagnostic {
             range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
@@ -1336,7 +1336,9 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |p, cx| {
+            p.open_local_buffer(to_path_string("/dir/a.rs"), cx)
+        })
         .await
         .unwrap();
 
@@ -1362,7 +1364,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
 
     // Ensure publishing empty diagnostics twice only results in one update event.
     fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
-        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: Url::from_file_path(to_path_string("/dir/a.rs")).unwrap(),
         version: None,
         diagnostics: Default::default(),
     });
@@ -1375,7 +1377,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     );
 
     fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
-        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: Url::from_file_path(to_path_string("/dir/a.rs")).unwrap(),
         version: None,
         diagnostics: Default::default(),
     });
