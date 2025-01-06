@@ -337,6 +337,9 @@ impl Dock {
             self.is_open = open;
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(open, cx);
+                if !open {
+                    self.active_panel_index = None;
+                }
             }
 
             cx.notify();
@@ -487,7 +490,7 @@ impl Dock {
 
         self.restore_state(cx);
         if panel.read(cx).starts_open(cx) {
-            self.activate_panel(dbg!(index), cx);
+            self.activate_panel(index, cx);
             self.set_open(true, cx);
         }
 
@@ -549,7 +552,6 @@ impl Dock {
 
             self.active_panel_index = Some(panel_ix);
             if let Some(active_panel) = self.active_panel_entry() {
-                dbg!(panel_ix);
                 active_panel.panel.set_active(true, cx);
             }
 

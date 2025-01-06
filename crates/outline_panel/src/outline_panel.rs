@@ -1813,11 +1813,10 @@ impl OutlinePanel {
     }
 
     fn reveal_entry_for_selection(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        if dbg!(self.hidden()) || !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
+        if self.hidden() || !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
             return;
         }
         let project = self.project.clone();
-        dbg!("?");
         self.reveal_selection_task = cx.spawn(|outline_panel, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let entry_with_selection = outline_panel.update(&mut cx, |outline_panel, cx| {
@@ -4663,19 +4662,28 @@ impl Panel for OutlinePanel {
             outline_panel
                 .update(&mut cx, |outline_panel, cx| {
                     let old_active = outline_panel.active;
-                    outline_panel.active = dbg!(active);
-                    if active && old_active != active {
-                        if let Some((active_item, active_editor)) = outline_panel
-                            .workspace
-                            .upgrade()
-                            .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
-                        {
-                            if outline_panel.should_replace_active_item(active_item.as_ref()) {
-                                outline_panel.replace_active_editor(active_item, active_editor, cx);
-                            } else {
-                                outline_panel.update_fs_entries(active_editor, None, cx)
+                    outline_panel.active = active;
+                    if old_active != active {
+                        if active {
+                            if let Some((active_item, active_editor)) =
+                                outline_panel.workspace.upgrade().and_then(|workspace| {
+                                    workspace_active_editor(workspace.read(cx), cx)
+                                })
+                            {
+                                if outline_panel.should_replace_active_item(active_item.as_ref()) {
+                                    outline_panel.replace_active_editor(
+                                        active_item,
+                                        active_editor,
+                                        cx,
+                                    );
+                                } else {
+                                    outline_panel.update_fs_entries(active_editor, None, cx)
+                                }
+                                return;
                             }
-                        } else if !outline_panel.pinned {
+                        }
+
+                        if !outline_panel.pinned {
                             outline_panel.clear_previous(cx);
                         }
                     }
@@ -4823,7 +4831,7 @@ fn subscribe_for_editor_events(
 ) -> Subscription {
     let debounce = Some(UPDATE_DEBOUNCE);
     cx.subscribe(editor, move |outline_panel, editor, e: &EditorEvent, cx| {
-        if dbg!(outline_panel.hidden()) {
+        if outline_panel.hidden() {
             return;
         }
         match e {
