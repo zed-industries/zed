@@ -9,6 +9,7 @@ use crate::context::{Context, ContextKind};
 pub enum ContextPill {
     Added {
         context: Context,
+        show_parent: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     },
     Suggested {
@@ -21,9 +22,14 @@ pub enum ContextPill {
 impl ContextPill {
     pub fn new_added(
         context: Context,
+        show_parent: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     ) -> Self {
-        Self::Added { context, on_remove }
+        Self::Added {
+            context,
+            show_parent,
+            on_remove,
+        }
     }
 
     pub fn new_suggested(
@@ -73,7 +79,11 @@ impl RenderOnce for ContextPill {
             .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
 
         match &self {
-            ContextPill::Added { context, on_remove } => base_pill
+            ContextPill::Added {
+                context,
+                show_parent,
+                on_remove,
+            } => base_pill
                 .bg(color.element_background)
                 .border_color(color.border.opacity(0.5))
                 .pr(if on_remove.is_some() { px(4.) } else { px(2.) })
@@ -85,11 +95,15 @@ impl RenderOnce for ContextPill {
                         .and_then(|path| path.parent())
                         .and_then(|parent| parent.file_name()),
                     |element, parent_name| {
-                        element.child(
-                            Label::new(parent_name.to_string_lossy().into_owned())
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        )
+                        if *show_parent {
+                            element.child(
+                                Label::new(parent_name.to_string_lossy().into_owned())
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                        } else {
+                            element
+                        }
                     },
                 )
                 .when_some(context.path.as_ref(), |element, path| {

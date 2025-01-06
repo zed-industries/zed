@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::SharedString;
 use language::Buffer;
 
@@ -170,6 +170,23 @@ impl ContextStore {
 
     pub fn included_url(&self, url: &str) -> Option<ContextId> {
         self.fetched_urls.get(url).copied()
+    }
+
+    pub fn duplicated_basenames(&self) -> HashSet<SharedString> {
+        let mut seen = HashSet::default();
+        let mut dupes = HashSet::default();
+
+        for path in self.files.keys().chain(self.directories.keys()) {
+            if let Some(basename) = path.file_name() {
+                if seen.contains(&basename) {
+                    dupes.insert(basename.to_string_lossy().into_owned().into());
+                } else {
+                    seen.insert(basename);
+                }
+            }
+        }
+
+        dupes
     }
 }
 

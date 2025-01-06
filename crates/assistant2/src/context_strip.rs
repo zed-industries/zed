@@ -118,6 +118,8 @@ impl Render for ContextStrip {
 
         let suggested_context = self.suggested_context(cx);
 
+        let duplicated_basenames = context_store.duplicated_basenames();
+
         h_flex()
             .flex_wrap()
             .gap_1()
@@ -171,6 +173,7 @@ impl Render for ContextStrip {
             .children(context.iter().map(|context| {
                 ContextPill::new_added(
                     context.clone(),
+                    duplicated_basenames.contains(&context.name),
                     Some({
                         let context = context.clone();
                         let context_store = self.context_store.clone();
