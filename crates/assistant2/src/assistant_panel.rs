@@ -300,6 +300,16 @@ impl AssistantPanel {
     fn render_toolbar(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
+        let title = if self.thread.read(cx).is_empty() {
+            "New Thread".to_string()
+        } else {
+            self.thread
+                .read(cx)
+                .summary(cx)
+                .map(|summary| summary.to_string())
+                .unwrap_or_else(|| "Loading Summary…".to_string())
+        };
+
         h_flex()
             .id("assistant-toolbar")
             .justify_between()
@@ -309,7 +319,7 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .child(h_flex().children(self.thread.read(cx).summary(cx).map(Label::new)))
+            .child(Label::new(title))
             .child(
                 h_flex()
                     .h_full()
