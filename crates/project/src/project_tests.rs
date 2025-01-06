@@ -1502,9 +1502,10 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": "x" })).await;
+    fs.insert_tree(to_path_string("/dir"), json!({ "a.rs": "x" }))
+        .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [to_path_string("/dir").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -1512,7 +1513,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
 
     let (buffer, _) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/a.rs"), cx)
         })
         .await
         .unwrap();
@@ -1520,7 +1521,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     // Publish diagnostics
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
-        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: Url::from_file_path(to_path_string("/dir/a.rs")).unwrap(),
         version: None,
         diagnostics: vec![lsp::Diagnostic {
             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
