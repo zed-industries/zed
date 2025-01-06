@@ -6,6 +6,7 @@ use language::Buffer;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
+use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
@@ -102,7 +103,7 @@ impl ContextStrip {
         }
 
         Some(SuggestedContext::Thread {
-            name: active_thread.summary().unwrap_or("Active Thread".into()),
+            name: active_thread.summary().unwrap_or("New Thread".into()),
             thread: weak_active_thread,
         })
     }
@@ -168,40 +169,35 @@ impl Render for ContextStrip {
                 }
             })
             .children(context.iter().map(|context| {
-                ContextPill::new(context.clone()).on_remove({
-                    let context = context.clone();
-                    let context_store = self.context_store.clone();
-                    Rc::new(cx.listener(move |_this, _event, cx| {
-                        context_store.update(cx, |this, _cx| {
-                            this.remove_context(&context.id);
-                        });
-                        cx.notify();
-                    }))
-                })
+                ContextPill::new_added(
+                    context.clone(),
+                    Some({
+                        let context = context.clone();
+                        let context_store = self.context_store.clone();
+                        Rc::new(cx.listener(move |_this, _event, cx| {
+                            context_store.update(cx, |this, _cx| {
+                                this.remove_context(&context.id);
+                            });
+                            cx.notify();
+                        }))
+                    }),
+                )
             }))
             .when_some(suggested_context, |el, suggested| {
-                el.child(
-                    Button::new("add-suggested-context", suggested.name().clone())
-                        .on_click({
-                            let context_store = self.context_store.clone();
+                el.child(ContextPill::new_suggested(
+                    suggested.name().clone(),
+                    suggested.kind(),
+                    {
+                        let context_store = self.context_store.clone();
+                        Rc::new(cx.listener(move |_this, _event, cx| {
+                            context_store.update(cx, |context_store, cx| {
+                                suggested.accept(context_store, cx);
+                            });
 
-                            cx.listener(move |_this, _event, cx| {
-                                context_store.update(cx, |context_store, cx| {
-                                    suggested.accept(context_store, cx);
-                                });
-                                cx.notify();
-                            })
-                        })
-                        .icon(IconName::Plus)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Filled)
-                        .tooltip(|cx| {
-                            Tooltip::with_meta("Suggested Context", None, "Click to add it", cx)
-                        }),
-                )
+                            cx.notify();
+                        }))
+                    },
+                ))
             })
             .when(!context.is_empty(), {
                 move |parent| {
@@ -259,6 +255,13 @@ impl SuggestedContext {
                     context_store.insert_thread(thread.read(cx));
                 };
             }
+        }
+    }
+
+    pub fn kind(&self) -> ContextKind {
+        match self {
+            Self::File { .. } => ContextKind::File,
+            Self::Thread { .. } => ContextKind::Thread,
         }
     }
 }

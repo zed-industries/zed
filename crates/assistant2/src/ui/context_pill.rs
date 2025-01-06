@@ -6,68 +6,115 @@ use ui::{prelude::*, IconButtonShape, Tooltip};
 use crate::context::{Context, ContextKind};
 
 #[derive(IntoElement)]
-pub struct ContextPill {
-    context: Context,
-    on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
+pub enum ContextPill {
+    Added {
+        context: Context,
+        on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
+    },
+    Suggested {
+        name: SharedString,
+        kind: ContextKind,
+        on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
+    },
 }
 
 impl ContextPill {
-    pub fn new(context: Context) -> Self {
-        Self {
-            context,
-            on_remove: None,
+    pub fn new_added(
+        context: Context,
+        on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
+    ) -> Self {
+        Self::Added { context, on_remove }
+    }
+
+    pub fn new_suggested(
+        name: SharedString,
+        kind: ContextKind,
+        on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
+    ) -> Self {
+        Self::Suggested { name, kind, on_add }
+    }
+
+    pub fn id(&self) -> ElementId {
+        match self {
+            Self::Added { context, .. } => {
+                ElementId::NamedInteger("context-pill".into(), context.id.0)
+            }
+            Self::Suggested { .. } => "suggested-context-pill".into(),
         }
     }
 
-    pub fn on_remove(mut self, on_remove: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>) -> Self {
-        self.on_remove = Some(on_remove);
-        self
+    pub fn kind(&self) -> &ContextKind {
+        match self {
+            Self::Added { context, .. } => &context.kind,
+            Self::Suggested { kind, .. } => kind,
+        }
     }
 }
 
 impl RenderOnce for ContextPill {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let padding_right = if self.on_remove.is_some() {
-            px(2.)
-        } else {
-            px(4.)
-        };
-
-        let icon = match self.context.kind {
+        let icon = match &self.kind() {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageCircle,
         };
 
-        h_flex()
-            .gap_1()
+        let color = cx.theme().colors();
+
+        let base_pill = h_flex()
+            .id(self.id())
+            .cursor_pointer()
             .pl_1()
-            .id(ElementId::NamedInteger(
-                "context-pill".into(),
-                self.context.id.0,
-            ))
-            .pr(padding_right)
             .pb(px(1.))
             .border_1()
-            .border_color(cx.theme().colors().border.opacity(0.5))
-            .bg(cx.theme().colors().element_background)
             .rounded_md()
-            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
-            .child(Label::new(self.context.name.clone()).size(LabelSize::Small))
-            .when_some(self.on_remove, |parent, on_remove| {
-                parent.child(
-                    IconButton::new(("remove", self.context.id.0), IconName::Close)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::XSmall)
-                        .on_click({
-                            let on_remove = on_remove.clone();
-                            move |event, cx| on_remove(event, cx)
-                        }),
+            .gap_1()
+            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
+
+        match &self {
+            ContextPill::Added { context, on_remove } => base_pill
+                .bg(color.element_background)
+                .border_color(color.border.opacity(0.5))
+                .pr(if on_remove.is_some() { px(4.) } else { px(2.) })
+                .child(Label::new(context.name.clone()).size(LabelSize::Small))
+                .when_some(on_remove.as_ref(), |element, on_remove| {
+                    element.child(
+                        IconButton::new(("remove", context.id.0), IconName::Close)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .tooltip(move |cx| Tooltip::text("Remove Context", cx))
+                            .on_click({
+                                let on_remove = on_remove.clone();
+                                move |event, cx| on_remove(event, cx)
+                            }),
+                    )
+                }),
+            ContextPill::Suggested { name, kind, on_add } => base_pill
+                .pr_1()
+                .border_color(color.border_variant.opacity(0.1))
+                .hover(|style| style.bg(color.element_hover))
+                .child(Label::new(name.clone()).size(LabelSize::Small))
+                .child(
+                    Label::new(match kind {
+                        ContextKind::File => "Open File",
+                        ContextKind::Thread | ContextKind::Directory | ContextKind::FetchedUrl => {
+                            "Active"
+                        }
+                    })
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
                 )
-            })
-            .when_some(self.context.full_name, |parent, full_name| {
-                parent.tooltip(move |cx| Tooltip::text(full_name.clone(), cx))
-            })
+                .child(
+                    Icon::new(IconName::Plus)
+                        .size(IconSize::XSmall)
+                        .into_any_element(),
+                )
+                .tooltip(|cx| Tooltip::with_meta("Suggested Context", None, "Click to add it", cx))
+                .on_click({
+                    let on_add = on_add.clone();
+                    move |event, cx| on_add(event, cx)
+                }),
+        }
     }
 }
