@@ -37,7 +37,10 @@ async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
 
     let (tx, mut rx) = futures::channel::mpsc::unbounded();
     let _thread = std::thread::spawn(move || {
+        #[cfg(not(target_os = "windows"))]
         std::fs::metadata("/tmp").unwrap();
+        #[cfg(target_os = "windows")]
+        std::fs::metadata("C:/Windows").unwrap();
         std::thread::sleep(Duration::from_millis(1000));
         tx.unbounded_send(1).unwrap();
     });
