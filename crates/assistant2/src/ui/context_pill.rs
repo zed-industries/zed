@@ -85,7 +85,7 @@ impl RenderOnce for ContextPill {
             } => base_pill
                 .bg(color.element_background)
                 .border_color(color.border.opacity(0.5))
-                .pr(if on_remove.is_some() { px(4.) } else { px(2.) })
+                .pr(if on_remove.is_some() { px(2.) } else { px(4.) })
                 .child(Label::new(context.name.clone()).size(LabelSize::Small))
                 .when_some(
                     context
