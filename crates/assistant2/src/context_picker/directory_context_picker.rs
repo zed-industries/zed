@@ -247,11 +247,15 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
-                        context_store.insert_context(
-                            ContextKind::Directory,
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
+                        if let Some(context_id) = context_store.id_for_directory(&path) {
+                            context_store.remove_context(&context_id);
+                        } else {
+                            context_store.insert_context(
+                                ContextKind::Directory(path.to_path_buf()),
+                                path.to_string_lossy().to_string(),
+                                text,
+                            );
+                        }
                     })?;
 
                 match confirm_behavior {
@@ -280,16 +284,26 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
         let directory_name = path_match.path.to_string_lossy().to_string();
+
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store
+                .read(cx)
+                .id_for_directory(&path_match.path)
+                .is_some()
+        });
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(h_flex().gap_2().child(Label::new(directory_name))),
+                .child(h_flex().gap_2().child(Label::new(directory_name)))
+                .when(added, |el| {
+                    el.end_slot(Label::new("Added").size(LabelSize::XSmall))
+                }),
         )
     }
 }

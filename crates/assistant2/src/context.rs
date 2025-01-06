@@ -28,7 +28,7 @@ pub struct Context {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextKind {
     File(PathBuf),
-    Directory,
+    Directory(PathBuf),
     FetchedUrl,
     Thread(ThreadId),
 }
@@ -48,7 +48,7 @@ pub fn attach_context_to_message(
                 file_context.push_str(&context.text);
                 file_context.push('\n');
             }
-            ContextKind::Directory => {
+            ContextKind::Directory(_) => {
                 directory_context.push_str(&context.text);
                 directory_context.push('\n');
             }
