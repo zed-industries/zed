@@ -205,7 +205,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/the-root",
+        to_path_string("/dir"),
         json!({
             ".zed": {
                 "settings.json": r#"{ "tab_size": 8 }"#,
@@ -233,7 +233,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [to_path_string("/dir").as_ref()], cx).await;
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let task_context = TaskContext::default();
 
@@ -286,8 +286,16 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    directory_in_worktree: PathBuf::from("b/.zed"),
-                    id_base: "local worktree tasks from directory \"b/.zed\"".into(),
+                    directory_in_worktree: if cfg!(target_os = "windows") {
+                        PathBuf::from("b\\.zed")
+                    } else {
+                        PathBuf::from("b/.zed")
+                    },
+                    id_base: if cfg!(target_os = "windows") {
+                        "local worktree tasks from directory \"b\\\\.zed\"".into()
+                    } else {
+                        "local worktree tasks from directory \"b/.zed\"".into()
+                    },
                 },
                 "cargo check".to_string(),
                 vec!["check".to_string()],
@@ -365,8 +373,16 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    directory_in_worktree: PathBuf::from("b/.zed"),
-                    id_base: "local worktree tasks from directory \"b/.zed\"".into(),
+                    directory_in_worktree: if cfg!(target_os = "windows") {
+                        PathBuf::from("b\\.zed")
+                    } else {
+                        PathBuf::from("b/.zed")
+                    },
+                    id_base: if cfg!(target_os = "windows") {
+                        "local worktree tasks from directory \"b\\\\.zed\"".into()
+                    } else {
+                        "local worktree tasks from directory \"b/.zed\"".into()
+                    },
                 },
                 "cargo check".to_string(),
                 vec!["check".to_string()],
