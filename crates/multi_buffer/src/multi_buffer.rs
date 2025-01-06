@@ -390,6 +390,7 @@ struct ExcerptBytes<'a> {
     reversed: bool,
 }
 
+#[derive(Debug)]
 struct BufferEdit {
     range: Range<usize>,
     new_text: Arc<str>,
@@ -780,7 +781,7 @@ impl MultiBuffer {
                 }
             } else {
                 let start_excerpt_range = buffer_start..start_region.buffer_range.end;
-                let end_excerpt_range = end_region.buffer_range.clone();
+                let end_excerpt_range = end_region.buffer_range.start..buffer_end;
                 if start_region.editable {
                     edited_excerpt_ids.push(start_region.excerpt_id);
                     buffer_edits
