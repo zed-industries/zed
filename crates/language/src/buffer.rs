@@ -208,10 +208,10 @@ pub struct Diagnostic {
     /// The human-readable message associated with this diagnostic.
     pub message: String,
     /// An id that identifies the group to which this diagnostic belongs.
-    /// 0 is used for diagnostics that do not come from a language server.
     ///
-    /// When a language server produces a diagnostic with one or more associated diagnostics, those
-    /// diagnostics are all assigned a single group ID.
+    /// When a language server produces a diagnostic with
+    /// one or more associated diagnostics, those diagnostics are all
+    /// assigned a single group ID.
     pub group_id: usize,
     /// Whether this diagnostic is the primary diagnostic for its group.
     ///
