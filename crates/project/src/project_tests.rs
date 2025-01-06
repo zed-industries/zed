@@ -4374,7 +4374,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "one.rs": "const ONE: usize = 1;",
             "two.rs": "const TWO: usize = one::ONE + one::ONE;",
@@ -4383,7 +4383,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [to_path_string("/dir").as_ref()], cx).await;
     assert_eq!(
         search(
             &project,
@@ -4402,14 +4402,28 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("dir/two.rs".to_string(), vec![6..9]),
-            ("dir/three.rs".to_string(), vec![37..40])
+            (
+                if cfg!(target_os = "windows") {
+                    "dir\\two.rs".to_string()
+                } else {
+                    "dir/two.rs".to_string()
+                },
+                vec![6..9]
+            ),
+            (
+                if cfg!(target_os = "windows") {
+                    "dir\\three.rs".to_string()
+                } else {
+                    "dir/three.rs".to_string()
+                },
+                vec![37..40]
+            )
         ])
     );
 
     let buffer_4 = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/four.rs", cx)
+            project.open_local_buffer(to_path_string("/dir/four.rs"), cx)
         })
         .await
         .unwrap();
@@ -4436,9 +4450,30 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("dir/two.rs".to_string(), vec![6..9]),
-            ("dir/three.rs".to_string(), vec![37..40]),
-            ("dir/four.rs".to_string(), vec![25..28, 36..39])
+            (
+                if cfg!(target_os = "windows") {
+                    "dir\\two.rs".to_string()
+                } else {
+                    "dir/two.rs".to_string()
+                },
+                vec![6..9]
+            ),
+            (
+                if cfg!(target_os = "windows") {
+                    "dir\\three.rs".to_string()
+                } else {
+                    "dir/three.rs".to_string()
+                },
+                vec![37..40]
+            ),
+            (
+                if cfg!(target_os = "windows") {
+                    "dir\\four.rs".to_string()
+                } else {
+                    "dir/four.rs".to_string()
+                },
+                vec![25..28, 36..39]
+            )
         ])
     );
 }
