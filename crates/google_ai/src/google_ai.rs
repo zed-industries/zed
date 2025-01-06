@@ -13,7 +13,7 @@ pub async fn stream_generate_content(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
-    request: GenerateContentRequest,
+    mut request: GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
     if request.contents.is_empty() {
         bail!("Request must contain at least one content item");
@@ -29,9 +29,11 @@ pub async fn stream_generate_content(
         }
     }
 
-    let model = request.model.clone();
-    let uri =
-        format!("{api_url}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}",);
+    let uri = format!(
+        "{api_url}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}",
+        model = request.model
+    );
+    request.model.clear();
 
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
