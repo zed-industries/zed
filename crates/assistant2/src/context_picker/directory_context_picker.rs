@@ -11,10 +11,8 @@ use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::ContextKind;
-use crate::context_picker::file_context_picker::codeblock_fence_for_path;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::ContextStore;
+use crate::context_store::{push_fenced_codeblock, ContextStore};
 
 pub struct DirectoryContextPicker {
     picker: View<Picker<DirectoryContextPickerDelegate>>,
@@ -189,6 +187,22 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
             return;
         };
         let path = mat.path.clone();
+
+        if self
+            .context_store
+            .update(cx, |context_store, _cx| {
+                if let Some(context_id) = context_store.included_directory(&path) {
+                    context_store.remove_context(&context_id);
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(true)
+        {
+            return;
+        }
+
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
@@ -235,23 +249,15 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 let mut text = String::new();
 
                 for buffer in buffers {
-                    text.push_str(&codeblock_fence_for_path(Some(&path), None));
-                    text.push_str(&buffer.read(cx).text());
-                    if !text.ends_with('\n') {
-                        text.push('\n');
-                    }
-
-                    text.push_str("```\n");
+                    let buffer = buffer.read(cx);
+                    let path = buffer.file().map_or(&path, |file| file.path());
+                    push_fenced_codeblock(&path, buffer.text(), &mut text);
                 }
 
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
-                        context_store.insert_context(
-                            ContextKind::Directory,
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
+                        context_store.insert_directory(&path, text);
                     })?;
 
                 match confirm_behavior {
@@ -280,16 +286,26 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
         let directory_name = path_match.path.to_string_lossy().to_string();
+
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store
+                .read(cx)
+                .included_directory(&path_match.path)
+                .is_some()
+        });
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(h_flex().gap_2().child(Label::new(directory_name))),
+                .child(h_flex().gap_2().child(Label::new(directory_name)))
+                .when(added, |el| {
+                    el.end_slot(Label::new("Added").size(LabelSize::XSmall))
+                }),
         )
     }
 }
