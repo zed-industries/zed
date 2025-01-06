@@ -4065,7 +4065,7 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "one.rs": "const ONE: usize = 1;",
             "two": {
@@ -4075,7 +4075,7 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [to_path_string("/dir").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -4119,7 +4119,7 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
 
     let _ = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/one.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/one.rs"), cx)
         })
         .await
         .unwrap();
@@ -4148,7 +4148,11 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
                     new_text: "This is not a drill".to_owned(),
                 })],
                 text_document: lsp::OptionalVersionedTextDocumentIdentifier {
-                    uri: Url::from_str("file:///dir/two/two.rs").unwrap(),
+                    uri: if cfg!(target_os = "windows") {
+                        Url::from_str("file:///C:/dir/two/two.rs").unwrap()
+                    } else {
+                        Url::from_str("file:///dir/two/two.rs").unwrap()
+                    },
                     version: Some(1337),
                 },
             }]
@@ -4165,8 +4169,22 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
                 let expected_edit = expected_edit.clone();
                 async move {
                     assert_eq!(params.files.len(), 1);
-                    assert_eq!(params.files[0].old_uri, "file:///dir/one.rs");
-                    assert_eq!(params.files[0].new_uri, "file:///dir/three.rs");
+                    assert_eq!(
+                        params.files[0].old_uri,
+                        if cfg!(target_os = "windows") {
+                            "file:///C:/dir/one.rs"
+                        } else {
+                            "file:///dir/one.rs"
+                        }
+                    );
+                    assert_eq!(
+                        params.files[0].new_uri,
+                        if cfg!(target_os = "windows") {
+                            "file:///C:/dir/three.rs"
+                        } else {
+                            "file:///dir/three.rs"
+                        }
+                    );
                     resolved_workspace_edit.set(expected_edit.clone()).unwrap();
                     Ok(Some(expected_edit))
                 }
@@ -4179,8 +4197,22 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
     fake_server
         .handle_notification::<DidRenameFiles, _>(|params, _| {
             assert_eq!(params.files.len(), 1);
-            assert_eq!(params.files[0].old_uri, "file:///dir/one.rs");
-            assert_eq!(params.files[0].new_uri, "file:///dir/three.rs");
+            assert_eq!(
+                params.files[0].old_uri,
+                if cfg!(target_os = "windows") {
+                    "file:///C:/dir/one.rs"
+                } else {
+                    "file:///dir/one.rs"
+                }
+            );
+            assert_eq!(
+                params.files[0].new_uri,
+                if cfg!(target_os = "windows") {
+                    "file:///C:/dir/three.rs"
+                } else {
+                    "file:///dir/three.rs"
+                }
+            );
         })
         .next()
         .await
