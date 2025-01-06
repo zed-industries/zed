@@ -9,7 +9,7 @@ use crate::context::{Context, ContextKind};
 pub enum ContextPill {
     Added {
         context: Context,
-        show_parent: bool,
+        dupe_name: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     },
     Suggested {
@@ -22,12 +22,12 @@ pub enum ContextPill {
 impl ContextPill {
     pub fn new_added(
         context: Context,
-        show_parent: bool,
+        dupe_name: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     ) -> Self {
         Self::Added {
             context,
-            show_parent,
+            dupe_name: dupe_name,
             on_remove,
         }
     }
@@ -81,42 +81,33 @@ impl RenderOnce for ContextPill {
         match &self {
             ContextPill::Added {
                 context,
-                show_parent,
+                dupe_name,
                 on_remove,
             } => base_pill
                 .bg(color.element_background)
                 .border_color(color.border.opacity(0.5))
                 .pr(if on_remove.is_some() { px(4.) } else { px(2.) })
                 .child(Label::new(context.name.clone()).size(LabelSize::Small))
-                .when_some(
-                    context
-                        .path
-                        .as_ref()
-                        .and_then(|path| path.parent())
-                        .and_then(|parent| parent.file_name()),
-                    |element, parent_name| {
-                        if *show_parent {
-                            element.child(
-                                Label::new(parent_name.to_string_lossy().into_owned())
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                        } else {
-                            element
-                        }
-                    },
-                )
-                .when_some(context.path.as_ref(), |element, path| {
-                    let path = path.to_string_lossy().into_owned();
-
-                    element.tooltip(move |cx| Tooltip::text(&path, cx))
+                .when_some(context.parent.as_ref(), |element, parent_name| {
+                    if *dupe_name {
+                        element.child(
+                            Label::new(parent_name.clone())
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    } else {
+                        element
+                    }
+                })
+                .when_some(context.tooltip.clone(),|element, tooltip| {
+                    element.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
                 })
                 .when_some(on_remove.as_ref(), |element, on_remove| {
                     element.child(
                         IconButton::new(("remove", context.id.0), IconName::Close)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
-                            .tooltip(move |cx| Tooltip::text("Remove Context", cx))
+                            .tooltip(|cx| Tooltip::text("Remove Context", cx))
                             .on_click({
                                 let on_remove = on_remove.clone();
                                 move |event, cx| on_remove(event, cx)

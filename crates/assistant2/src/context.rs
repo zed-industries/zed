@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use gpui::SharedString;
 use language_model::{LanguageModelRequestMessage, MessageContent};
 use serde::{Deserialize, Serialize};
@@ -19,7 +17,8 @@ impl ContextId {
 pub struct Context {
     pub id: ContextId,
     pub name: SharedString,
-    pub path: Option<PathBuf>,
+    pub parent: Option<SharedString>,
+    pub tooltip: Option<SharedString>,
     pub kind: ContextKind,
     pub text: SharedString,
 }
@@ -43,7 +42,7 @@ pub fn attach_context_to_message(
 
     for context in context.into_iter() {
         match context.kind {
-            ContextKind::File => {
+            ContextKind::File { .. } => {
                 file_context.push_str(&context.text);
                 file_context.push('\n');
             }
