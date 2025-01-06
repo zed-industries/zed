@@ -2212,14 +2212,14 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "a.rs": text.clone(),
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [to_path_string("/dir").as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -2228,7 +2228,7 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
 
     let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/a.rs"), cx)
         })
         .await
         .unwrap();
