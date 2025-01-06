@@ -301,13 +301,12 @@ impl AssistantPanel {
         let focus_handle = self.focus_handle(cx);
 
         let title = if self.thread.read(cx).is_empty() {
-            "New Thread".to_string()
+            SharedString::from("New Thread")
         } else {
             self.thread
                 .read(cx)
                 .summary(cx)
-                .map(|summary| summary.to_string())
-                .unwrap_or_else(|| "Loading Summary…".to_string())
+                .unwrap_or_else(|| SharedString::from("Loading Summary…"))
         };
 
         h_flex()
@@ -319,7 +318,7 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .child(Label::new(title))
+            .child(h_flex().child(Label::new(title)))
             .child(
                 h_flex()
                     .h_full()
