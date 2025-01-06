@@ -435,7 +435,7 @@
       "ctrl--": "pane::GoBack",
       "ctrl-shift--": "pane::GoForward",
       "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-shift-f": "project_search::ToggleFocus"
+      "cmd-shift-f": "pane::DeploySearch"
     }
   },
   {

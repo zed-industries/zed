@@ -27,6 +27,7 @@ use settings::Settings;
 use std::cmp;
 use std::sync::Arc;
 use theme::ThemeSettings;
+use ui::utils::WithRemSize;
 use ui::{
     prelude::*, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, PopoverMenuHandle, Tooltip,
 };
@@ -54,9 +55,10 @@ impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
 
 impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
         let mut buttons = Vec::new();
 
-        let left_gutter_spacing = match &self.mode {
+        let left_gutter_width = match &self.mode {
             PromptEditorMode::Buffer {
                 id: _,
                 codegen,
@@ -109,9 +111,13 @@ impl<T: 'static> Render for PromptEditor<T> {
                     .capture_action(cx.listener(Self::cycle_prev))
                     .capture_action(cx.listener(Self::cycle_next))
                     .child(
-                        h_flex()
+                        WithRemSize::new(ui_font_size)
+                            .flex()
+                            .flex_row()
+                            .flex_shrink_0()
+                            .items_center()
                             .h_full()
-                            .w(left_gutter_spacing)
+                            .w(left_gutter_width)
                             .justify_center()
                             .gap_2()
                             .child(self.render_close_button(cx))
@@ -171,19 +177,31 @@ impl<T: 'static> Render for PromptEditor<T> {
                             .w_full()
                             .justify_between()
                             .child(div().flex_1().child(self.render_editor(cx)))
-                            .child(h_flex().gap_1().children(buttons)),
+                            .child(
+                                WithRemSize::new(ui_font_size)
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_1()
+                                    .children(buttons),
+                            ),
                     ),
             )
             .child(
-                h_flex().child(div().w(left_gutter_spacing)).child(
-                    h_flex()
-                        .w_full()
-                        .pl_1()
-                        .items_start()
-                        .justify_between()
-                        .child(self.context_strip.clone())
-                        .child(self.model_selector.clone()),
-                ),
+                WithRemSize::new(ui_font_size)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(h_flex().flex_shrink_0().w(left_gutter_width))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .pl_1()
+                            .items_start()
+                            .justify_between()
+                            .child(self.context_strip.clone())
+                            .child(self.model_selector.clone()),
+                    ),
             )
     }
 }
@@ -680,9 +698,10 @@ impl<T: 'static> PromptEditor<T> {
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
 
         div()
-            .key_context("MessageEditor")
+            .key_context("InlineAssistEditor")
             .size_full()
             .p_2()
+            .pl_1()
             .bg(cx.theme().colors().editor_background)
             .child({
                 let settings = ThemeSettings::get_global(cx);

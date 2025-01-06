@@ -88,6 +88,7 @@ impl CloudModel {
             Self::Google(model) => match model {
                 google_ai::Model::Gemini15Pro
                 | google_ai::Model::Gemini15Flash
+                | google_ai::Model::Gemini20Flash
                 | google_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }

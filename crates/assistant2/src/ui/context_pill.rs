@@ -70,7 +70,6 @@ impl RenderOnce for ContextPill {
 
         let base_pill = h_flex()
             .id(self.id())
-            .cursor_pointer()
             .pl_1()
             .pb(px(1.))
             .border_1()
@@ -86,7 +85,7 @@ impl RenderOnce for ContextPill {
             } => base_pill
                 .bg(color.element_background)
                 .border_color(color.border.opacity(0.5))
-                .pr(if on_remove.is_some() { px(4.) } else { px(2.) })
+                .pr(if on_remove.is_some() { px(2.) } else { px(4.) })
                 .child(Label::new(context.name.clone()).size(LabelSize::Small))
                 .when_some(context.parent.as_ref(), |element, parent_name| {
                     if *dupe_name {
@@ -115,10 +114,15 @@ impl RenderOnce for ContextPill {
                     )
                 }),
             ContextPill::Suggested { name, kind, on_add } => base_pill
+                .cursor_pointer()
                 .pr_1()
-                .border_color(color.border_variant.opacity(0.1))
-                .hover(|style| style.bg(color.element_hover))
-                .child(Label::new(name.clone()).size(LabelSize::Small))
+                .border_color(color.border_variant.opacity(0.5))
+                .hover(|style| style.bg(color.element_hover.opacity(0.5)))
+                .child(
+                    Label::new(name.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
                 .child(
                     Label::new(match kind {
                         ContextKind::File => "Open File",
