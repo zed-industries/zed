@@ -316,7 +316,10 @@ impl PickerDelegate for FileContextPickerDelegate {
     }
 }
 
-fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<RangeInclusive<u32>>) -> String {
+pub(crate) fn codeblock_fence_for_path(
+    path: Option<&Path>,
+    row_range: Option<RangeInclusive<u32>>,
+) -> String {
     let mut text = String::new();
     write!(text, "```").unwrap();
 

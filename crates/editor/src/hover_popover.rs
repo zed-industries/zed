@@ -3,7 +3,7 @@ use crate::{
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
-    Hover, RangeToAnchorExt,
+    Hover,
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, FontWeight, Hsla, InteractiveElement, IntoElement,
@@ -266,24 +266,19 @@ fn show_hover(
             // If there's a diagnostic, assign it on the hover state and notify
             let mut local_diagnostic = snapshot
                 .buffer_snapshot
-                .diagnostics_in_range::<_, usize>(anchor..anchor, false)
+                .diagnostics_in_range(anchor..anchor, false)
                 // Find the entry with the most specific range
-                .min_by_key(|entry| entry.range.end - entry.range.start)
-                .map(|entry| DiagnosticEntry {
-                    diagnostic: entry.diagnostic,
-                    range: entry.range.to_anchors(&snapshot.buffer_snapshot),
+                .min_by_key(|entry| {
+                    let range = entry.range.to_offset(&snapshot.buffer_snapshot);
+                    range.end - range.start
                 });
 
             // Pull the primary diagnostic out so we can jump to it if the popover is clicked
             let primary_diagnostic = local_diagnostic.as_ref().and_then(|local_diagnostic| {
                 snapshot
                     .buffer_snapshot
-                    .diagnostic_group::<usize>(local_diagnostic.diagnostic.group_id)
+                    .diagnostic_group(local_diagnostic.diagnostic.group_id)
                     .find(|diagnostic| diagnostic.diagnostic.is_primary)
-                    .map(|entry| DiagnosticEntry {
-                        diagnostic: entry.diagnostic,
-                        range: entry.range.to_anchors(&snapshot.buffer_snapshot),
-                    })
             });
             if let Some(invisible) = snapshot
                 .buffer_snapshot

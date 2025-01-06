@@ -4,6 +4,8 @@ use project::ProjectEntryId;
 use serde::{Deserialize, Serialize};
 use util::post_inc;
 
+use crate::thread::ThreadId;
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextId(pub(crate) usize);
 
@@ -22,12 +24,12 @@ pub struct Context {
     pub text: SharedString,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextKind {
     File(ProjectEntryId),
     Directory,
     FetchedUrl,
-    Thread,
+    Thread(ThreadId),
 }
 
 pub fn attach_context_to_message(
@@ -55,7 +57,7 @@ pub fn attach_context_to_message(
                 fetch_context.push_str(&context.text);
                 fetch_context.push('\n');
             }
-            ContextKind::Thread => {
+            ContextKind::Thread(_) => {
                 thread_context.push_str(&context.name);
                 thread_context.push('\n');
                 thread_context.push_str(&context.text);

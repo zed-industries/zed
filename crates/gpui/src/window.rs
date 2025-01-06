@@ -1557,19 +1557,6 @@ impl<'a> WindowContext<'a> {
         let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self);
 
         let mut tooltip_bounds = Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
-        // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
-        // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
-        // Ensure it's not stuck around in such cases.
-        let invalidate_tooltip = !tooltip_request
-            .tooltip
-            .origin_bounds
-            .contains(&self.mouse_position())
-            && (!tooltip_request.tooltip.hoverable
-                || !tooltip_bounds.contains(&self.mouse_position()));
-        if invalidate_tooltip {
-            return None;
-        }
-
         let window_bounds = Bounds {
             origin: Point::default(),
             size: self.viewport_size(),
@@ -1597,6 +1584,19 @@ impl<'a> WindowContext<'a> {
                     tooltip_bounds.origin.y - tooltip_bounds.bottom() - window_bounds.bottom(),
                 );
             }
+        }
+
+        // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
+        // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
+        // Ensure it's not stuck around in such cases.
+        let invalidate_tooltip = !tooltip_request
+            .tooltip
+            .origin_bounds
+            .contains(&self.mouse_position())
+            && (!tooltip_request.tooltip.hoverable
+                || !tooltip_bounds.contains(&self.mouse_position()));
+        if invalidate_tooltip {
+            return None;
         }
 
         self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
@@ -4880,6 +4880,8 @@ pub enum ElementId {
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, usize),
+    /// A path
+    Path(Arc<std::path::Path>),
 }
 
 impl Display for ElementId {
@@ -4891,6 +4893,7 @@ impl Display for ElementId {
             ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
+            ElementId::Path(path) => write!(f, "{}", path.display())?,
         }
 
         Ok(())
@@ -4924,6 +4927,12 @@ impl From<i32> for ElementId {
 impl From<SharedString> for ElementId {
     fn from(name: SharedString) -> Self {
         ElementId::Name(name)
+    }
+}
+
+impl From<Arc<std::path::Path>> for ElementId {
+    fn from(path: Arc<std::path::Path>) -> Self {
+        ElementId::Path(path)
     }
 }
 

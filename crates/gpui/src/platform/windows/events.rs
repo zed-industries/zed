@@ -47,6 +47,7 @@ pub(crate) fn handle_msg(
         WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
         WM_MOUSELEAVE => handle_mouse_leave_msg(state_ptr),
         WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state_ptr),
+        WM_NCMOUSELEAVE => handle_nc_mouse_leave_msg(state_ptr),
         WM_NCLBUTTONDOWN => {
             handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
         }
@@ -312,6 +313,18 @@ fn handle_mouse_move_msg(
         return result;
     }
     Some(1)
+}
+
+fn handle_nc_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.hovered = false;
+    if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+        drop(lock);
+        callback(false);
+        state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+    }
+
+    Some(0)
 }
 
 fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -969,6 +982,27 @@ fn handle_nc_mouse_move_msg(
 ) -> Option<isize> {
     if !state_ptr.hide_title_bar {
         return None;
+    }
+
+    let mut lock = state_ptr.state.borrow_mut();
+    if !lock.hovered {
+        lock.hovered = true;
+        unsafe {
+            TrackMouseEvent(&mut TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE | TME_NONCLIENT,
+                hwndTrack: handle,
+                dwHoverTime: HOVER_DEFAULT,
+            })
+            .log_err()
+        };
+        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+            drop(lock);
+            callback(true);
+            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+        }
+    } else {
+        drop(lock);
     }
 
     let mut lock = state_ptr.state.borrow_mut();

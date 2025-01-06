@@ -569,9 +569,9 @@ impl LocalBufferStore {
                     buffer_change_sets
                         .into_iter()
                         .filter_map(|(change_set, buffer_snapshot, path)| {
-                            let (repo_entry, local_repo_entry) = snapshot.repo_for_path(&path)?;
-                            let relative_path = repo_entry.relativize(&snapshot, &path).ok()?;
-                            let base_text = local_repo_entry.repo().load_index_text(&relative_path);
+                            let local_repo = snapshot.local_repo_for_path(&path)?;
+                            let relative_path = local_repo.relativize(&path).ok()?;
+                            let base_text = local_repo.repo().load_index_text(&relative_path);
                             Some((change_set, buffer_snapshot, base_text))
                         })
                         .collect::<Vec<_>>()
@@ -1161,16 +1161,16 @@ impl BufferStore {
             Worktree::Local(worktree) => {
                 let worktree = worktree.snapshot();
                 let blame_params = maybe!({
-                    let (repo_entry, local_repo_entry) = match worktree.repo_for_path(&file.path) {
+                    let local_repo = match worktree.local_repo_for_path(&file.path) {
                         Some(repo_for_path) => repo_for_path,
                         None => return Ok(None),
                     };
 
-                    let relative_path = repo_entry
-                        .relativize(&worktree, &file.path)
+                    let relative_path = local_repo
+                        .relativize(&file.path)
                         .context("failed to relativize buffer path")?;
 
-                    let repo = local_repo_entry.repo().clone();
+                    let repo = local_repo.repo().clone();
 
                     let content = match version {
                         Some(version) => buffer.rope_for_version(&version).clone(),
@@ -1247,7 +1247,7 @@ impl BufferStore {
                     });
                 };
 
-                let path = match repo_entry.relativize(worktree, file.path()) {
+                let path = match repo_entry.relativize(file.path()) {
                     Ok(RepoPath(path)) => path,
                     Err(e) => return Task::ready(Err(e)),
                 };

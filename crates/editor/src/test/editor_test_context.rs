@@ -230,6 +230,7 @@ impl EditorTestContext {
         self.cx.background_executor.run_until_parked();
     }
 
+    #[track_caller]
     pub fn ranges(&mut self, marked_text: &str) -> Vec<Range<usize>> {
         let (unmarked_text, ranges) = marked_text_ranges(marked_text, false);
         assert_eq!(self.buffer_text(), unmarked_text);
