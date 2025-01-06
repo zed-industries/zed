@@ -4227,7 +4227,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "one.rs": "const ONE: usize = 1;",
             "two.rs": "const TWO: usize = one::ONE + one::ONE;"
@@ -4235,7 +4235,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [to_path_string("/dir").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -4255,7 +4255,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
 
     let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/one.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/one.rs"), cx)
         })
         .await
         .unwrap();
@@ -4267,7 +4267,14 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     });
     fake_server
         .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
-            assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+            assert_eq!(
+                params.text_document.uri.as_str(),
+                if cfg!(target_os = "windows") {
+                    "file:///C:/dir/one.rs"
+                } else {
+                    "file:///dir/one.rs"
+                }
+            );
             assert_eq!(params.position, lsp::Position::new(0, 7));
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
                 lsp::Position::new(0, 6),
@@ -4291,7 +4298,11 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
-                "file:///dir/one.rs"
+                if cfg!(target_os = "windows") {
+                    "file:///C:/dir/one.rs"
+                } else {
+                    "file:///dir/one.rs"
+                }
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -4302,14 +4313,14 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
                 changes: Some(
                     [
                         (
-                            lsp::Url::from_file_path("/dir/one.rs").unwrap(),
+                            lsp::Url::from_file_path(to_path_string("/dir/one.rs")).unwrap(),
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                                 "THREE".to_string(),
                             )],
                         ),
                         (
-                            lsp::Url::from_file_path("/dir/two.rs").unwrap(),
+                            lsp::Url::from_file_path(to_path_string("/dir/two.rs")).unwrap(),
                             vec![
                                 lsp::TextEdit::new(
                                     lsp::Range::new(
